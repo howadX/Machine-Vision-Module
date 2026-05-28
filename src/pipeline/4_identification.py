@@ -162,7 +162,15 @@ cv2.destroyAllWindows()
 
 import pickle
 
-# ── Маппинг эмоций LightGBM (английские метки → русские) ──
+# ── Маппинг эмоций LightGBM AffectNet 7 классов ──
+LGB_AFFECTNET_RU = {
+    "anger": "Злость", "disgust": "Отвращение", "fear": "Страх",
+    "happy": "Радость", "neutral": "Нейтральная", "sad": "Грусть",
+    "surprise": "Удивление",
+}
+EMOTIONS_AFFECTNET = ["anger", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+
+# ── Маппинг эмоций LightGBM (старая 468-модель) ──
 LGB_EN_TO_RU = {
     "angry": "Злость", "disgust": "Отвращение", "fear": "Страх",
     "happy": "Радость", "sad": "Грусть", "surprise": "Удивление",
@@ -171,8 +179,9 @@ LGB_EN_TO_RU = {
 EMOTIONS_LGB = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
 
 def compute_geometric_features(face_landmarks):
-    """Вычисляет 468 расстояний от кончика носа (landmark 4),
-    нормированных на межзрачковое расстояние (landmarks 33 ↔ 263)."""
+    """Вычисляет N расстояний от кончика носа (landmark 4),
+    нормированных на межзрачковое расстояние (landmarks 33 ↔ 263).
+    MediaPipe может вернуть 468 или 478 landmarks — функция возвращает все."""
     pts = np.array([[lm.x, lm.y, lm.z] for lm in face_landmarks], dtype=np.float32)
     nose_tip = pts[4]
     left_eye = pts[33]
@@ -181,28 +190,40 @@ def compute_geometric_features(face_landmarks):
     if interocular < 1e-6:
         interocular = 1.0
     dists = np.linalg.norm(pts - nose_tip, axis=1) / interocular
-    return dists.reshape(1, -1)   # shape (1, 468)
+    return dists.reshape(1, -1)   # shape (1, N) — 468 или 478
 
 # ── Фаза 2: эмоции ───────────────────────────────────
 nn=20
 P_em=0.5
 
-# ── Загрузка классификатора: LightGBM (геометрические признаки) → EfficientNet (fallback) ──
+# ── Загрузка классификатора: AffectNet 7cls → старая 468 → EfficientNet (fallback) ──
 use_lgb = False
 lgb_clf = None
+lgb_is_468 = False  # True если загружена старая 468-модель
+_fallback_msg = ""
 try:
-    _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
+    _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_affectnet_7cls.pkl')
     lgb_clf = pickle.load(open(_lgb_path, 'rb'))
     use_lgb = True
-    print("[Фаза 2] LightGBM (геометрические признаки) загружен")
-except Exception:
-    print("[Фаза 2] LightGBM не найден, fallback на EfficientNet")
+    lgb_is_468 = False
+    print("[Фаза 2] LightGBM AffectNet 7 классов (478 признаков) загружен")
+except Exception as e:
+    _fallback_msg = f"AffectNet не загружен: {e}"
+    try:
+        _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
+        lgb_clf = pickle.load(open(_lgb_path, 'rb'))
+        use_lgb = True
+        lgb_is_468 = True
+        print("[Фаза 2] LightGBM (468 признаков, старая модель) загружен")
+    except Exception as e2:
+        print(f"[Фаза 2] {_fallback_msg}; 468-модель тоже не загружена: {e2}")
+        print("[Фаза 2] LightGBM не найден, fallback на EfficientNet")
 
 if not use_lgb:
     from emotion import EmotionClassifier
     ec = EmotionClassifier(use_gpu=True)
 font= ImageFont.truetype(font_path, 18)
-emotions=['Радость', 'Удивление', 'Грусть', 'Злость', 'Отвращение', 'Презрение', 'Страх']
+emotions=['Радость', 'Удивление', 'Грусть', 'Злость', 'Отвращение', 'Нейтральная', 'Страх']
 pictures=['1.jpg','2.jpg','3.jpg','4.jpg','5.jpg','6.jpg','7.jpg']
 print("[Фаза 2] Тренировка эмоций.")
 
@@ -245,9 +266,15 @@ for i, em in enumerate(emotions):
                 # ── Предикт эмоции: LightGBM (геометрия) либо EfficientNet (fallback) ──
                 if use_lgb and res.face_landmarks:
                     X = compute_geometric_features(res.face_landmarks[0])
+                    if lgb_is_468:
+                        X = X[:, :468]   # старая модель ждёт 468 признаков
                     pred_en_idx = int(lgb_clf.predict(X)[0])
-                    name_en = EMOTIONS_LGB[pred_en_idx]
-                    name_ru = LGB_EN_TO_RU.get(name_en, name_en)
+                    if lgb_is_468:
+                        name_en = EMOTIONS_LGB[pred_en_idx]
+                        name_ru = LGB_EN_TO_RU.get(name_en, name_en)
+                    else:
+                        name_en = EMOTIONS_AFFECTNET[pred_en_idx]
+                        name_ru = LGB_AFFECTNET_RU.get(name_en, name_en)
                     if name_ru in emotions:
                         em_idx = emotions.index(name_ru) + 1
                 elif not use_lgb:

@@ -40,3 +40,5 @@ models/references/mp3/
 .DS_Store
 Thumbs.db
 models/descriptors/geometric_affectnet.csv
+data/datasets/affectnet/
+data/datasets/rusemo/
