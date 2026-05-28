@@ -6,6 +6,8 @@ from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 import os as _os
 import sys, select, tty, termios
+import warnings
+warnings.filterwarnings("ignore", message="X does not have valid feature names")
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
 dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
