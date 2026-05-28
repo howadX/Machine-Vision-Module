@@ -1,10 +1,32 @@
 import cv2
 import time
+import glob
 import os as _os
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
 dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
-cam = cv2.VideoCapture(0) # захватываем изображение
+
+def find_camera():
+    """Ищет первую рабочую камеру через /dev/video* + CAP_V4L2."""
+    devices = sorted(glob.glob("/dev/video*"), key=lambda x: int(x.replace("/dev/video", "")))
+    for dev in devices:
+        idx = int(dev.replace("/dev/video", ""))
+        for method in ["path", "index"]:
+            cam = cv2.VideoCapture(dev if method == "path" else idx, cv2.CAP_V4L2)
+            if cam.isOpened():
+                for _ in range(5):
+                    ret, frame = cam.read()
+                    if ret and frame is not None and frame.mean() > 10:
+                        cam.release()
+                        return dev
+                cam.release()
+    return None
+
+cam_path = find_camera()
+if cam_path is None:
+    print("❌ Камера не найдена. Проверь: ls /dev/video*")
+    exit(1)
+cam = cv2.VideoCapture(cam_path, cv2.CAP_V4L2) # захватываем изображение
 cam.set(3, 800) # устанавливаем высоту кадра
 cam.set(4, 600) # устанавливаем ширину кадра
 face_detector = cv2.CascadeClassifier(dat_path+'haarcascade_frontalface_default.xml') # Установим классификатор лица, предоставляемый библиотекой OpenCV

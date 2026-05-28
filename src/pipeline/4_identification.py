@@ -16,6 +16,23 @@ emotion_path = _os.path.join(_ROOT, 'models', 'emotion') + '/'
 mp3_pic_path = _os.path.join(_ROOT, 'models', 'references') + '/'
 assets_path = _os.path.join(_ROOT, 'assets', 'emotion_examples') + '/'
 font_path = _os.path.join(_ROOT, 'assets', 'fonts', 'DejaVuSans.ttf')
+
+def find_camera():
+    """Ищет первую рабочую камеру через /dev/video* + CAP_V4L2."""
+    devices = sorted(glob.glob("/dev/video*"), key=lambda x: int(x.replace("/dev/video", "")))
+    for dev in devices:
+        idx = int(dev.replace("/dev/video", ""))
+        for method in ["path", "index"]:
+            cam = cv2.VideoCapture(dev if method == "path" else idx, cv2.CAP_V4L2)
+            if cam.isOpened():
+                for _ in range(5):
+                    ret, frame = cam.read()
+                    if ret and frame is not None and frame.mean() > 10:
+                        cam.release()
+                        return dev
+                cam.release()
+    return None
+
 def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA): # Инициализация размера изображения, которое нужно изменить, и захват его размера
     dim = None
     (h, w) = image.shape[:2]
@@ -32,7 +49,11 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA): # 
 detector = dlib.get_frontal_face_detector() # создаем объект, который выделяет лицо прямоугольником
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat') # загрузка(шаблона) данных обучения для точек на лице
 facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat') # загрузка данных обучения нейросети resnet
-video_capture = cv2.VideoCapture(0) # подключение камеры
+cam_path = find_camera()
+if cam_path is None:
+    print("❌ Камера не найдена. Проверь: ls /dev/video*")
+    exit(1)
+video_capture = cv2.VideoCapture(cam_path, cv2.CAP_V4L2) # подключение камеры
 video_capture.set(3, 360) # задаем размеры кадра камеры   160x120
 video_capture.set(4, 240) # 360x240
 img_path = ['p_D.jpg','p_N.jpg','p_I.jpg','p_V.jpg']         #'p_V.jpg'
