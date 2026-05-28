@@ -131,7 +131,7 @@ while(1):
         if res.face_landmarks:
             vision.drawing_utils.draw_landmarks(
                 frame, res.face_landmarks[0],
-                vision.FaceLandmarksConnections.FACEMESH_CONTOURS,
+                vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
                 landmark_drawing_spec=None,
                 connection_drawing_spec=vision.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1))
 
@@ -206,7 +206,7 @@ for i, em in enumerate(emotions):
                 if res.face_landmarks:
                     vision.drawing_utils.draw_landmarks(
                         frame, res.face_landmarks[0],
-                        vision.FaceLandmarksConnections.FACEMESH_CONTOURS,
+                        vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
                         landmark_drawing_spec=None,
                         connection_drawing_spec=vision.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1))
                 print(em_idx)
