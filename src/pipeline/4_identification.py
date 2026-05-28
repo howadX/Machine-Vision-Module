@@ -1,4 +1,3 @@
-from scipy.spatial import distance
 from time import sleep
 import glob, cv2, dlib
 from PIL import ImageFont, ImageDraw, Image
@@ -71,7 +70,6 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
 # ── Фаза 1: идентификация ────────────────────────────
 face_id_detector = FaceID()
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat')
-facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat')
 cam_path = find_camera()
 if cam_path is None:
     print("❌ Камера не найдена. Проверь: ls /dev/video*")
@@ -80,40 +78,49 @@ video_capture = cv2.VideoCapture(cam_path, cv2.CAP_V4L2)
 video_capture.set(3, 640)
 video_capture.set(4, 480)
 img_path = ['p_D.jpg','p_N.jpg','p_I.jpg','p_V.jpg']
-fdi = []
+fdi = {}
 names = ['Даня','Никита','Белла','Вадим']
 ind_u=0
 
-for im in img_path:
+for im, name in zip(img_path, names):
     img = cv2.imread(mp3_pic_path+im)
-    bboxes, _ = face_id_detector.app.det_model.detect(img)
-    if bboxes.shape[0] == 0:
-        detections = []
+    emb = face_id_detector.get_embedding(img)
+    if emb is not None:
+        fdi[name] = emb
+        print(f"  [Галерея] {name}: эмбеддинг {emb.shape}")
     else:
-        detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
-    for k,d in enumerate(detections):
-        shape = predictor(img, d)
-        face_descriptor_img = facerec.compute_face_descriptor(img, shape)
-        fdi.append(face_descriptor_img)
+        print(f"  [Галерея] {name}: лицо не найдено")
 ind_d,ind_u,ind_p,j=0,0,0,0
 print("[Фаза 1] Идентификация. Нажми Q для перехода к эмоциям.")
 kb_init()
 while(1):
     ret, frame = video_capture.read()
-    bboxes, _ = face_id_detector.app.det_model.detect(frame)
-    if bboxes.shape[0] == 0:
-        detections = []
+    face_embedding = None
+
+    if j % 3 == 0:
+        # Каждый 3-й кадр: app.get() для bbox + embedding (ArcFace 512d)
+        faces = face_id_detector.app.get(frame)
+        if not faces:
+            detections = []
+        else:
+            best = max(faces, key=lambda f: f.get("det_score", 0))
+            bbox = best["bbox"]  # [x1, y1, x2, y2]
+            face_embedding = np.asarray(best.get("embedding"), dtype=np.float32)
+            detections = [dlib.rectangle(int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))]
     else:
-        detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
-    face_descriptor_frame =0
+        # Остальные кадры: det_model.detect() только bbox
+        bboxes, _ = face_id_detector.app.det_model.detect(frame)
+        if bboxes.shape[0] == 0:
+            detections = []
+        else:
+            detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
+
     if len(detections) == 0:
         if not ind_d:
             print('нет никого в кадре')
             ind_d,ind_p,ind_u=1,0,0
     for k,d in enumerate(detections):
-        if j%3==0:
-            shape = predictor(frame, d)
-            face_descriptor_frame = facerec.compute_face_descriptor(frame, shape)
+        shape = predictor(frame, d)
         cv2.rectangle(frame, (detections[0].left(), detections[0].top()), (detections[0].right(), detections[0].bottom()), (0, 0, 255), 1)
         for k in range(0,17):
             cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,0,255), 1)
@@ -127,12 +134,14 @@ while(1):
             cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0,0,255), 1)
         cv2.circle(frame, (shape.part(30).x, shape.part(30).y), 1, (0,255,255), 1)
 
-        if j%3==0:
+        if j % 3 == 0 and face_embedding is not None:
             if not ind_p:
-                for c,fd in enumerate(fdi):
-                    q = distance.euclidean(fd,face_descriptor_frame)
-                    if q<0.6:
-                        print('Привет {}!'.format(names[c]))
+                for name, ref_emb in fdi.items():
+                    emb_norm = face_embedding / np.linalg.norm(face_embedding)
+                    ref_norm = ref_emb / np.linalg.norm(ref_emb)
+                    sim = float(np.dot(emb_norm, ref_norm))
+                    if sim > 0.35:
+                        print('Привет {}!'.format(name))
                         print('нажмите Q чтобы продолжить')
                         ind_p,ind_d,ind_u=1,0,1
             if not ind_u:
