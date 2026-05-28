@@ -1,0 +1,9 @@
+opencv-python>=4.0
+opencv-contrib-python>=4.0
+dlib>=19.0
+numpy>=1.18
+scipy>=1.4
+scikit-learn>=0.22
+pygame-ce>=2.5
+keyboard>=0.13
+Pillow>=7.0

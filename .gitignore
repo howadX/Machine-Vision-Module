@@ -1,41 +1,41 @@
-dataset
-datatest
-nick
-__pycache__
-D
-DataSet
-dataset_d
-project
-dataset.txt
-datatest.txt
-PythonApplication1.pyproj
-PythonApplication1.py
-dataset1.txt
+# Виртуальное окружение
+venv/
 
-Em_1/
-Em_2/
-Em_3/
-Em_4/
-Em_5/
-Em_6/
-Em_7/
-Project.pyproj
-Project.sln
-Untitled.ipynb
-alpha1.0.0.py
-alpha1.0.0.pyproj
-dataset1/
-dataset2.txt
-dataset2/
-dataset3/
-dataset4/
-dataset5/
-dataset6.txt
-dataset7.txt
-dataset7/
-datasetV/
-val/
-Project.py
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
 
-/env/
-.gitignore
+# IDE
+.vs/
+.vscode/
+.idea/
+*.suo
+
+# Данные (большие бинарные файлы — отдельно)
+models/face_detection/shape_predictor_68_face_landmarks.dat
+models/face_recognition/dlib_face_recognition_resnet_model_v1.dat
+models/emotion/svm_dat.dat
+models/emotion/svm_dat1.dat
+
+# EEG-сырые данные (тяжёлые JSON)
+eeg/raw/JsonData/
+eeg/raw/*.JSON
+
+# Аудио
+models/references/mp3/
+
+# Временные файлы
+/tmp/
+*.tmp
+*.bak
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Системные файлы
+.DS_Store
+Thumbs.db
