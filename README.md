@@ -86,7 +86,7 @@ Video Recognition Module/
 
 - **Python** 3.11+
 - **CUDA** 12.x (опционально — работает и на CPU)
-- **GPU** с ≥4GB VRAM (RTX 4070 Ti рекомендуется)
+- **GPU** с ≥4GB VRAM (RTX 2070 Ti рекомендуется)
 - Веб-камера
 
 ### Установка
