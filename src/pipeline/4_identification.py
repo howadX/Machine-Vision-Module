@@ -1,5 +1,7 @@
 from time import sleep
 import glob, cv2, mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
 from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 import os as _os
@@ -67,9 +69,10 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
 
 # ── Фаза 1: идентификация ────────────────────────────
 face_id_detector = FaceID()
-mp_face_mesh = mp.solutions.face_mesh
-mp_drawing = mp.solutions.drawing_utils
-face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, refine_landmarks=True)
+_MODEL_PATH = _os.path.join(_ROOT, 'models', 'mediapipe', 'face_landmarker.task')
+_mp_base = mp_python.BaseOptions(model_asset_path=_MODEL_PATH)
+_mp_opts = vision.FaceLandmarkerOptions(base_options=_mp_base, num_faces=1, running_mode=vision.RunningMode.IMAGE)
+face_landmarker = vision.FaceLandmarker.create_from_options(_mp_opts)
 cam_path = find_camera()
 if cam_path is None:
     print("❌ Камера не найдена. Проверь: ls /dev/video*")
@@ -123,13 +126,14 @@ while(1):
         d = detections[0]
         cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(frame_rgb)
-        if results.multi_face_landmarks:
-            mp_drawing.draw_landmarks(
-                frame, results.multi_face_landmarks[0],
-                mp_face_mesh.FACEMESH_CONTOURS,
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+        res = face_landmarker.detect(mp_img)
+        if res.face_landmarks:
+            vision.drawing_utils.draw_landmarks(
+                frame, res.face_landmarks[0],
+                vision.FaceLandmarksConnections.FACEMESH_CONTOURS,
                 landmark_drawing_spec=None,
-                connection_drawing_spec=mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1))
+                connection_drawing_spec=vision.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1))
 
         if j % 3 == 0 and face_embedding is not None:
             if not ind_p:
@@ -197,13 +201,14 @@ for i, em in enumerate(emotions):
                             em_idx = emotions.index(name_ru) + 1
                 cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = face_mesh.process(frame_rgb)
-                if results.multi_face_landmarks:
-                    mp_drawing.draw_landmarks(
-                        frame, results.multi_face_landmarks[0],
-                        mp_face_mesh.FACEMESH_CONTOURS,
+                mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+                res = face_landmarker.detect(mp_img)
+                if res.face_landmarks:
+                    vision.drawing_utils.draw_landmarks(
+                        frame, res.face_landmarks[0],
+                        vision.FaceLandmarksConnections.FACEMESH_CONTOURS,
                         landmark_drawing_spec=None,
-                        connection_drawing_spec=mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1))
+                        connection_drawing_spec=vision.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1))
                 print(em_idx)
                 if em_idx == i + 1:
                     emotion_result += 1
