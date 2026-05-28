@@ -158,11 +158,47 @@ while(1):
     j+=1
 cv2.destroyAllWindows()
 
+import pickle
+
+# ── Маппинг эмоций LightGBM (английские метки → русские) ──
+LGB_EN_TO_RU = {
+    "angry": "Злость", "disgust": "Отвращение", "fear": "Страх",
+    "happy": "Радость", "sad": "Грусть", "surprise": "Удивление",
+    "neutral": "Нейтральная",
+}
+EMOTIONS_LGB = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+
+def compute_geometric_features(face_landmarks):
+    """Вычисляет 468 расстояний от кончика носа (landmark 4),
+    нормированных на межзрачковое расстояние (landmarks 33 ↔ 263)."""
+    pts = np.array([[lm.x, lm.y, lm.z] for lm in face_landmarks], dtype=np.float32)
+    nose_tip = pts[4]
+    left_eye = pts[33]
+    right_eye = pts[263]
+    interocular = np.linalg.norm(left_eye - right_eye)
+    if interocular < 1e-6:
+        interocular = 1.0
+    dists = np.linalg.norm(pts - nose_tip, axis=1) / interocular
+    return dists.reshape(1, -1)   # shape (1, 468)
+
 # ── Фаза 2: эмоции ───────────────────────────────────
 nn=20
 P_em=0.5
-from emotion import EmotionClassifier
-ec = EmotionClassifier(use_gpu=True)
+
+# ── Загрузка классификатора: LightGBM (геометрические признаки) → EfficientNet (fallback) ──
+use_lgb = False
+lgb_clf = None
+try:
+    _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
+    lgb_clf = pickle.load(open(_lgb_path, 'rb'))
+    use_lgb = True
+    print("[Фаза 2] LightGBM (геометрические признаки) загружен")
+except Exception:
+    print("[Фаза 2] LightGBM не найден, fallback на EfficientNet")
+
+if not use_lgb:
+    from emotion import EmotionClassifier
+    ec = EmotionClassifier(use_gpu=True)
 font= ImageFont.truetype(font_path, 18)
 emotions=['Радость', 'Удивление', 'Грусть', 'Злость', 'Отвращение', 'Презрение', 'Страх']
 pictures=['1.jpg','2.jpg','3.jpg','4.jpg','5.jpg','6.jpg','7.jpg']
@@ -191,14 +227,8 @@ for i, em in enumerate(emotions):
                 print(em_idx)
             for k, d in enumerate(detections):
                 frames_with_face += 1
-                if j % 1 == 0:
-                    b = bboxes[k]
-                    x1, y1, x2, y2 = int(b[0]), int(b[1]), int(b[2]), int(b[3])
-                    face_crop = frame[y1:y2, x1:x2]
-                    if face_crop.size > 0:
-                        name_ru, conf = ec.predict(face_crop)
-                        if name_ru in emotions:
-                            em_idx = emotions.index(name_ru) + 1
+
+                # ── Детекция лендмарок MediaPipe (общая для обоих методов) ──
                 cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
@@ -209,12 +239,34 @@ for i, em in enumerate(emotions):
                         vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
                         landmark_drawing_spec=None,
                         connection_drawing_spec=vision.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1))
+
+                # ── Предикт эмоции: LightGBM (геометрия) либо EfficientNet (fallback) ──
+                if use_lgb and res.face_landmarks:
+                    X = compute_geometric_features(res.face_landmarks[0])
+                    pred_en_idx = int(lgb_clf.predict(X)[0])
+                    name_en = EMOTIONS_LGB[pred_en_idx]
+                    name_ru = LGB_EN_TO_RU.get(name_en, name_en)
+                    if name_ru in emotions:
+                        em_idx = emotions.index(name_ru) + 1
+                elif not use_lgb:
+                    if j % 1 == 0:
+                        b = bboxes[k]
+                        x1, y1, x2, y2 = int(b[0]), int(b[1]), int(b[2]), int(b[3])
+                        face_crop = frame[y1:y2, x1:x2]
+                        if face_crop.size > 0:
+                            name_ru, conf = ec.predict(face_crop)
+                            if name_ru in emotions:
+                                em_idx = emotions.index(name_ru) + 1
+
                 print(em_idx)
                 if em_idx == i + 1:
                     emotion_result += 1
+
+                # ── Отрисовка текста эмоции ──
                 img_pil = Image.fromarray(frame)
                 draw = ImageDraw.Draw(img_pil)
-                draw.text((d[0], d[1] - 20), emotions[em_idx - 1], font=font, fill=(0, 0, 255))
+                display_idx = em_idx - 1 if em_idx > 0 else 0
+                draw.text((d[0], d[1] - 20), emotions[display_idx], font=font, fill=(0, 0, 255))
                 frame = np.array(img_pil)
             cv2.waitKey(10)
             cv2.imshow('camera', image_resize(frame, height=600))
