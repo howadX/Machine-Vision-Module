@@ -141,8 +141,8 @@ for i, em in enumerate(emotions):
             ret, frame = video_capture.read()
             detections = detector(frame, 1)
             if len(detections) == 0:
-                    em_n=0
-                    print(em_n)
+                    em_idx=0
+                    print(em_idx)
             for k,d in enumerate(detections):
                 if j%1==0:
                     shape = predictor(frame, d)
@@ -150,6 +150,7 @@ for i, em in enumerate(emotions):
                     dat=[]
                     dat.append(face_descriptor)
                     em_n=clf.predict(dat)
+                    em_idx = int(em_n[0])
                 cv2.rectangle(frame, (detections[0].left(), detections[0].top()), (detections[0].right(), detections[0].bottom()), (0, 0, 255), 1)
                 for k in range(0,17):
                     cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,0,255), 1)
@@ -162,12 +163,12 @@ for i, em in enumerate(emotions):
                 for k in range(49,68):
                     cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0,0,255), 1)
                 cv2.circle(frame, (shape.part(30).x, shape.part(30).y), 1, (0,255,255), 1)
-                print(em_n)
-                if em_n==i+1:
+                print(em_idx)
+                if em_idx==i+1:
                     emotion_result+=1
                 img_pil = Image.fromarray(frame)
                 draw = ImageDraw.Draw(img_pil)
-                draw.text( (detections[0].left(), detections[0].top()-20),  emotions[int(em_n)-1], font=font, fill=(0,0,255))
+                draw.text( (detections[0].left(), detections[0].top()-20),  emotions[em_idx-1], font=font, fill=(0,0,255))
                 frame = np.array(img_pil)
             cv2.waitKey(10)
             cv2.imshow('camera', image_resize(frame, height = 600))
