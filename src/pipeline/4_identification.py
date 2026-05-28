@@ -54,8 +54,8 @@ if cam_path is None:
     print("❌ Камера не найдена. Проверь: ls /dev/video*")
     exit(1)
 video_capture = cv2.VideoCapture(cam_path, cv2.CAP_V4L2)
-video_capture.set(3, 360)
-video_capture.set(4, 240)
+video_capture.set(3, 640)
+video_capture.set(4, 480)
 img_path = ['p_D.jpg','p_N.jpg','p_I.jpg','p_V.jpg']
 fdi = []
 names = ['Даня','Никита','Белла','Вадим']
@@ -130,55 +130,62 @@ print("[Фаза 2] Тренировка эмоций.")
 
 for i, em in enumerate(emotions):
     tries = 0
-    emotion_result=0
-    while emotion_result<P_em:
+    emotion_result = 0
+    max_tries = 5
+    while emotion_result < P_em and tries < max_tries:
         tries += 1
-        img =cv2.imread(assets_path+pictures[i])
+        frames_with_face = 0
+        img = cv2.imread(assets_path + pictures[i])
         cv2.imshow('example', img)
-        cv2.moveWindow('example', 150,150)
-        print("Покажите нам "+ em)
+        cv2.moveWindow('example', 150, 150)
+        print("Покажите нам " + em)
         for j in range(nn):
+            em_idx = 0  # всегда определён, даже если нет детекций
             ret, frame = video_capture.read()
             detections = detector(frame, 1)
             if len(detections) == 0:
-                    em_idx=0
-                    print(em_idx)
-            for k,d in enumerate(detections):
-                if j%1==0:
+                print(em_idx)
+            for k, d in enumerate(detections):
+                frames_with_face += 1
+                if j % 1 == 0:
                     shape = predictor(frame, d)
                     face_descriptor = facerec.compute_face_descriptor(frame, shape)
-                    dat=[]
+                    dat = []
                     dat.append(face_descriptor)
-                    em_n=clf.predict(dat)
+                    em_n = clf.predict(dat)
                     em_idx = int(em_n[0])
                 cv2.rectangle(frame, (detections[0].left(), detections[0].top()), (detections[0].right(), detections[0].bottom()), (0, 0, 255), 1)
-                for k in range(0,17):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,0,255), 1)
-                for k in range(18,26):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,255,255), 1)
-                for k in range(27,36):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0,255,0), 1)
-                for k in range(36,48):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,0,0), 1)
-                for k in range(49,68):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0,0,255), 1)
-                cv2.circle(frame, (shape.part(30).x, shape.part(30).y), 1, (0,255,255), 1)
+                for k in range(0, 17):
+                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255, 0, 255), 1)
+                for k in range(18, 26):
+                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255, 255, 255), 1)
+                for k in range(27, 36):
+                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0, 255, 0), 1)
+                for k in range(36, 48):
+                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255, 0, 0), 1)
+                for k in range(49, 68):
+                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0, 0, 255), 1)
+                cv2.circle(frame, (shape.part(30).x, shape.part(30).y), 1, (0, 255, 255), 1)
                 print(em_idx)
-                if em_idx==i+1:
-                    emotion_result+=1
+                if em_idx == i + 1:
+                    emotion_result += 1
                 img_pil = Image.fromarray(frame)
                 draw = ImageDraw.Draw(img_pil)
-                draw.text( (detections[0].left(), detections[0].top()-20),  emotions[em_idx-1], font=font, fill=(0,0,255))
+                draw.text((detections[0].left(), detections[0].top() - 20), emotions[em_idx - 1], font=font, fill=(0, 0, 255))
                 frame = np.array(img_pil)
             cv2.waitKey(10)
-            cv2.imshow('camera', image_resize(frame, height = 600))
-            cv2.moveWindow('camera', 600,150)
-        emotion_result=emotion_result/nn
-        if emotion_result>=P_em:
-            print("Молодец  "+"{0:.2f}".format(emotion_result*100)+'%')
+            cv2.imshow('camera', image_resize(frame, height=600))
+            cv2.moveWindow('camera', 600, 150)
+        emotion_result = emotion_result / nn
+        print("[DEBUG] tries={}, emotion_result={:.2f}, frames_with_face={}".format(tries, emotion_result, frames_with_face))
+        if emotion_result >= P_em:
+            print("Молодец  " + "{0:.2f}".format(emotion_result * 100) + '%')
+            sleep(2)
+        elif tries >= max_tries:
+            print("Пропускаем {} — лицо не найдено".format(em))
             sleep(2)
         else:
-            print("Попробуте еще " +"{0:.2f}".format(emotion_result*100)+'%')
+            print("Попробуте еще " + "{0:.2f}".format(emotion_result * 100) + '%')
             sleep(2)
 video_capture.release()
 cv2.destroyAllWindows()
