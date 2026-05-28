@@ -7,3 +7,5 @@ scikit-learn>=0.22
 pygame-ce>=2.5
 keyboard>=0.13
 Pillow>=7.0
+insightface>=1.0
+onnxruntime-gpu>=1.26
