@@ -1,5 +1,5 @@
 from time import sleep
-import glob, cv2, mediapipe as mp
+import glob, cv2
 from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 import os as _os
@@ -67,9 +67,7 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
 
 # ── Фаза 1: идентификация ────────────────────────────
 face_id_detector = FaceID()
-mp_face_mesh = mp.solutions.face_mesh
-mp_drawing = mp.solutions.drawing_utils
-face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, refine_landmarks=True)
+
 cam_path = find_camera()
 if cam_path is None:
     print("❌ Камера не найдена. Проверь: ls /dev/video*")
@@ -97,6 +95,7 @@ while(1):
     ret, frame = video_capture.read()
     face_embedding = None
 
+    current_kps = None
     if j % 3 == 0:
         # Каждый 3-й кадр: app.get() для bbox + embedding (ArcFace 512d)
         faces = face_id_detector.app.get(frame)
@@ -107,13 +106,15 @@ while(1):
             bbox = best["bbox"]  # [x1, y1, x2, y2]
             face_embedding = np.asarray(best.get("embedding"), dtype=np.float32)
             detections = [(int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))]
+            current_kps = best.kps  # (5,2) SCRFD landmarks
     else:
-        # Остальные кадры: det_model.detect() только bbox
-        bboxes, _ = face_id_detector.app.det_model.detect(frame)
+        # Остальные кадры: det_model.detect() bbox + kpss
+        bboxes, kpss = face_id_detector.app.det_model.detect(frame)
         if bboxes.shape[0] == 0:
             detections = []
         else:
             detections = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
+            current_kps = kpss[0]  # (5,2) SCRFD landmarks для первого лица
 
     if len(detections) == 0:
         if not ind_d:
@@ -122,14 +123,12 @@ while(1):
     if len(detections) > 0:
         d = detections[0]
         cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(frame_rgb)
-        if results.multi_face_landmarks:
-            mp_drawing.draw_landmarks(
-                frame, results.multi_face_landmarks[0],
-                mp_face_mesh.FACEMESH_CONTOURS,
-                landmark_drawing_spec=None,
-                connection_drawing_spec=mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1))
+        # SCRFD 5 landmarks: правый глаз, левый глаз, нос, правый рот, левый рот
+        if current_kps is not None and current_kps.shape[0] >= 5:
+            colors = [(0,255,255), (255,255,0), (0,255,0), (255,0,255), (0,0,255)]
+            for i, color in enumerate(colors):
+                x, y = current_kps[i]
+                cv2.circle(frame, (int(x), int(y)), 2, color, -1)
 
         if j % 3 == 0 and face_embedding is not None:
             if not ind_p:
@@ -178,7 +177,7 @@ for i, em in enumerate(emotions):
         for j in range(nn):
             em_idx = 0  # всегда определён, даже если нет детекций
             ret, frame = video_capture.read()
-            bboxes, _ = face_id_detector.app.det_model.detect(frame)
+            bboxes, kpss = face_id_detector.app.det_model.detect(frame)
             if bboxes.shape[0] == 0:
                 detections = []
             else:
@@ -196,14 +195,12 @@ for i, em in enumerate(emotions):
                         if name_ru in emotions:
                             em_idx = emotions.index(name_ru) + 1
                 cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = face_mesh.process(frame_rgb)
-                if results.multi_face_landmarks:
-                    mp_drawing.draw_landmarks(
-                        frame, results.multi_face_landmarks[0],
-                        mp_face_mesh.FACEMESH_CONTOURS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1))
+                # SCRFD 5 landmarks: правый глаз, левый глаз, нос, правый рот, левый рот
+                if kpss is not None and kpss.shape[0] > k and kpss.shape[1] >= 5:
+                    colors = [(0,255,255), (255,255,0), (0,255,0), (255,0,255), (0,0,255)]
+                    for i, color in enumerate(colors):
+                        x, y = kpss[k][i]
+                        cv2.circle(frame, (int(x), int(y)), 2, color, -1)
                 print(em_idx)
                 if em_idx == i + 1:
                     emotion_result += 1
