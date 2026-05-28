@@ -12,6 +12,7 @@ _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
 dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
 dis_path = _os.path.join(_ROOT, 'models', 'descriptors') + '/'
+face_rec_path = _os.path.join(_ROOT, 'models', 'face_recognition') + '/'
 faces_folder_path = 'dataset/'  #Расположение изображений  
 face_id = input('\n введите номер эмоции и нажмите enter ==>  ') # Для каждой эмоции, устанавливаем свой id
 Em_num='Em_'+ face_id
@@ -40,7 +41,7 @@ def get_landmarks(image): #Функция, рассчитывающая два �
         face_descriptor=0
     return xlist,ylist,meannp,landmarks_vectorised,face_descriptor #Возвращаем дискрипторы1, количество выделенных лиц
 nn=0
-facerec = dlib.face_recognition_model_v1(dat_path+'dlib_face_recognition_resnet_model_v1.dat') #Извлекаем 128 дискрипторов
+facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat') #Извлекаем 128 дискрипторов
 detector = dlib.get_frontal_face_detector() #Создаем объект который может выделять лица в прямоугольник 
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat') #Загрузка данных для извлечения 68 точек лица
 im_par=[] #Список для записи 68 дискрипторов

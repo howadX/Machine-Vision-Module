@@ -11,7 +11,11 @@ import os as _os
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
 dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
+face_rec_path = _os.path.join(_ROOT, 'models', 'face_recognition') + '/'
+emotion_path = _os.path.join(_ROOT, 'models', 'emotion') + '/'
 mp3_pic_path = _os.path.join(_ROOT, 'models', 'references') + '/'
+assets_path = _os.path.join(_ROOT, 'assets', 'emotion_examples') + '/'
+font_path = _os.path.join(_ROOT, 'assets', 'fonts', 'DejaVuSans.ttf')
 def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA): # Инициализация размера изображения, которое нужно изменить, и захват его размера
     dim = None
     (h, w) = image.shape[:2]
@@ -27,7 +31,7 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA): # 
     return resized # Возвращаем измененный размер изображения
 detector = dlib.get_frontal_face_detector() # создаем объект, который выделяет лицо прямоугольником
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat') # загрузка(шаблона) данных обучения для точек на лице
-facerec = dlib.face_recognition_model_v1(dat_path+'dlib_face_recognition_resnet_model_v1.dat') # загрузка данных обучения нейросети resnet
+facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat') # загрузка данных обучения нейросети resnet
 video_capture = cv2.VideoCapture(0) # подключение камеры
 video_capture.set(3, 360) # задаем размеры кадра камеры   160x120
 video_capture.set(4, 240) # 360x240
@@ -109,13 +113,13 @@ P_em=0.5 # уровень подтвержения эмоций(если выш�
 #Функция отвечающая за вывод окна с картинками
 detector = dlib.get_frontal_face_detector() # создаем объект, который выделяет лицо прямоугольником
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat') # загрузка(шаблона) данных обучения для точек на лице
-facerec = dlib.face_recognition_model_v1(dat_path+'dlib_face_recognition_resnet_model_v1.dat') # загрузка данных обучения нейросети resnet
-font= ImageFont.truetype("DejaVuSans.ttf", 18) # добавляем файл шрифта ttf с поддержкой кирилицы
+facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat') # загрузка данных обучения нейросети resnet
+font= ImageFont.truetype(font_path, 18) # добавляем файл шрифта ttf с поддержкой кирилицы
 emotions=['Радость', 'Удивление', 'Грусть', 'Злость', 'Отвращение', 'Презрение', 'Страх'] #Список эмоций, которые будут выводиться в консоль
 sound=['1.mp3', '2.mp3', '3.mp3', '4.mp3', '5.mp3', '6.mp3', '7.mp3'] #Звуковые дорожки, содержащие обращение к каждой из эмоций
 sound1 = ['1_h.mp3', '2_h.mp3', '3_h.mp3', '4_h.mp3', '5_h.mp3', '6_h.mp3', '7_h.mp3'] #Звуковые дорожки, содержащие обращение к подсказке по каждой из эмоций
 pictures=['1.jpg','2.jpg','3.jpg','4.jpg','5.jpg','6.jpg','7.jpg'] #Изображения, содержащие подсказки к каждой из эмоций
-f=open(dat_path+'svm_dat.dat','rb') # открываем файл svm_dat.dat для чтения как двоичный
+f=open(emotion_path+'svm_dat.dat','rb') # открываем файл svm_dat.dat для чтения как двоичный
 clf=pickle.load(f)# загружаем обученный метод svm
 f.close # закрываем файл
 mixer.init() #Инициализация mixer из pygame
@@ -142,7 +146,7 @@ for i, em in enumerate(emotions): #Начало цикла, проходящем
     emotion_result=0 #Переменная, содержащия в себе процент того, насколько оператор показывает похожую эмоцию
     while emotion_result<P_em: #Начало цикла, который будет просить показать эмоцию, попробовать еще раз, или перейти к следующей в зависимости от схожести с примером
         tries += 1
-        img =cv2.imread(mp3_pic_path+pictures[i])
+        img =cv2.imread(assets_path+pictures[i])
         cv2.waitKey(10) # задержка изображений
         cv2.imshow('example', img) # выводим картинку с камеры
         cv2.moveWindow('example', 150,150)
