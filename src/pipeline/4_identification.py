@@ -223,13 +223,13 @@ for i, em in enumerate(emotions):
         print("[DEBUG] tries={}, emotion_result={:.2f}, frames_with_face={}".format(tries, emotion_result, frames_with_face))
         if emotion_result >= P_em:
             print("Молодец  " + "{0:.2f}".format(emotion_result * 100) + '%')
-            sleep(2)
+            sleep(1)
         elif tries >= max_tries:
             print("Пропускаем {} — лицо не найдено".format(em))
-            sleep(2)
+            sleep(1)
         else:
             print("Попробуте еще " + "{0:.2f}".format(emotion_result * 100) + '%')
-            sleep(2)
+            sleep(0.5)
 video_capture.release()
 kb_restore()
 cv2.destroyAllWindows()
