@@ -1,9 +1,7 @@
 from time import sleep
 import glob, cv2, dlib
 from PIL import ImageFont, ImageDraw, Image
-import pickle
 import numpy as np
-import random
 import os as _os
 import sys, select, tty, termios
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
@@ -160,15 +158,12 @@ cv2.destroyAllWindows()
 # ── Фаза 2: эмоции ───────────────────────────────────
 nn=20
 P_em=0.5
-# detector уже создан глобально — используем face_id_detector
+from emotion import EmotionClassifier
+ec = EmotionClassifier(use_gpu=True)
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat')
-facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat')
 font= ImageFont.truetype(font_path, 18)
 emotions=['Радость', 'Удивление', 'Грусть', 'Злость', 'Отвращение', 'Презрение', 'Страх']
 pictures=['1.jpg','2.jpg','3.jpg','4.jpg','5.jpg','6.jpg','7.jpg']
-f=open(emotion_path+'svm_dat.dat','rb')
-clf=pickle.load(f)
-f.close
 print("[Фаза 2] Тренировка эмоций.")
 
 for i, em in enumerate(emotions):
@@ -196,11 +191,13 @@ for i, em in enumerate(emotions):
                 frames_with_face += 1
                 if j % 1 == 0:
                     shape = predictor(frame, d)
-                    face_descriptor = facerec.compute_face_descriptor(frame, shape)
-                    dat = []
-                    dat.append(face_descriptor)
-                    em_n = clf.predict(dat)
-                    em_idx = int(em_n[0])
+                    b = bboxes[k]
+                    x1, y1, x2, y2 = int(b[0]), int(b[1]), int(b[2]), int(b[3])
+                    face_crop = frame[y1:y2, x1:x2]
+                    if face_crop.size > 0:
+                        name_ru, conf = ec.predict(face_crop)
+                        if name_ru in emotions:
+                            em_idx = emotions.index(name_ru) + 1
                 cv2.rectangle(frame, (detections[0].left(), detections[0].top()), (detections[0].right(), detections[0].bottom()), (0, 0, 255), 1)
                 for k in range(0, 17):
                     cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255, 0, 255), 1)
