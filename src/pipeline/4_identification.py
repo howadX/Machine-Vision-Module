@@ -1,5 +1,5 @@
 from time import sleep
-import glob, cv2, dlib
+import glob, cv2, mediapipe as mp
 from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 import os as _os
@@ -67,7 +67,9 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
 
 # ── Фаза 1: идентификация ────────────────────────────
 face_id_detector = FaceID()
-predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat')
+mp_face_mesh = mp.solutions.face_mesh
+mp_drawing = mp.solutions.drawing_utils
+face_mesh = mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1, refine_landmarks=True)
 cam_path = find_camera()
 if cam_path is None:
     print("❌ Камера не найдена. Проверь: ls /dev/video*")
@@ -104,33 +106,30 @@ while(1):
             best = max(faces, key=lambda f: f.get("det_score", 0))
             bbox = best["bbox"]  # [x1, y1, x2, y2]
             face_embedding = np.asarray(best.get("embedding"), dtype=np.float32)
-            detections = [dlib.rectangle(int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))]
+            detections = [(int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))]
     else:
         # Остальные кадры: det_model.detect() только bbox
         bboxes, _ = face_id_detector.app.det_model.detect(frame)
         if bboxes.shape[0] == 0:
             detections = []
         else:
-            detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
+            detections = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
 
     if len(detections) == 0:
         if not ind_d:
             print('нет никого в кадре')
             ind_d,ind_p,ind_u=1,0,0
-    for k,d in enumerate(detections):
-        shape = predictor(frame, d)
-        cv2.rectangle(frame, (detections[0].left(), detections[0].top()), (detections[0].right(), detections[0].bottom()), (0, 0, 255), 1)
-        for k in range(0,17):
-            cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,0,255), 1)
-        for k in range(18,26):
-            cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,255,255), 1)
-        for k in range(27,36):
-            cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0,255,0), 1)
-        for k in range(36,48):
-            cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255,0,0), 1)
-        for k in range(49,68):
-            cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0,0,255), 1)
-        cv2.circle(frame, (shape.part(30).x, shape.part(30).y), 1, (0,255,255), 1)
+    if len(detections) > 0:
+        d = detections[0]
+        cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = face_mesh.process(frame_rgb)
+        if results.multi_face_landmarks:
+            mp_drawing.draw_landmarks(
+                frame, results.multi_face_landmarks[0],
+                mp_face_mesh.FACEMESH_CONTOURS,
+                landmark_drawing_spec=None,
+                connection_drawing_spec=mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1))
 
         if j % 3 == 0 and face_embedding is not None:
             if not ind_p:
@@ -160,7 +159,6 @@ nn=20
 P_em=0.5
 from emotion import EmotionClassifier
 ec = EmotionClassifier(use_gpu=True)
-predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat')
 font= ImageFont.truetype(font_path, 18)
 emotions=['Радость', 'Удивление', 'Грусть', 'Злость', 'Отвращение', 'Презрение', 'Страх']
 pictures=['1.jpg','2.jpg','3.jpg','4.jpg','5.jpg','6.jpg','7.jpg']
@@ -184,13 +182,12 @@ for i, em in enumerate(emotions):
             if bboxes.shape[0] == 0:
                 detections = []
             else:
-                detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
+                detections = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
             if len(detections) == 0:
                 print(em_idx)
             for k, d in enumerate(detections):
                 frames_with_face += 1
                 if j % 1 == 0:
-                    shape = predictor(frame, d)
                     b = bboxes[k]
                     x1, y1, x2, y2 = int(b[0]), int(b[1]), int(b[2]), int(b[3])
                     face_crop = frame[y1:y2, x1:x2]
@@ -198,24 +195,21 @@ for i, em in enumerate(emotions):
                         name_ru, conf = ec.predict(face_crop)
                         if name_ru in emotions:
                             em_idx = emotions.index(name_ru) + 1
-                cv2.rectangle(frame, (detections[0].left(), detections[0].top()), (detections[0].right(), detections[0].bottom()), (0, 0, 255), 1)
-                for k in range(0, 17):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255, 0, 255), 1)
-                for k in range(18, 26):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255, 255, 255), 1)
-                for k in range(27, 36):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0, 255, 0), 1)
-                for k in range(36, 48):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (255, 0, 0), 1)
-                for k in range(49, 68):
-                    cv2.circle(frame, (shape.part(k).x, shape.part(k).y), 1, (0, 0, 255), 1)
-                cv2.circle(frame, (shape.part(30).x, shape.part(30).y), 1, (0, 255, 255), 1)
+                cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = face_mesh.process(frame_rgb)
+                if results.multi_face_landmarks:
+                    mp_drawing.draw_landmarks(
+                        frame, results.multi_face_landmarks[0],
+                        mp_face_mesh.FACEMESH_CONTOURS,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=1))
                 print(em_idx)
                 if em_idx == i + 1:
                     emotion_result += 1
                 img_pil = Image.fromarray(frame)
                 draw = ImageDraw.Draw(img_pil)
-                draw.text((detections[0].left(), detections[0].top() - 20), emotions[em_idx - 1], font=font, fill=(0, 0, 255))
+                draw.text((d[0], d[1] - 20), emotions[em_idx - 1], font=font, fill=(0, 0, 255))
                 frame = np.array(img_pil)
             cv2.waitKey(10)
             cv2.imshow('camera', image_resize(frame, height=600))
