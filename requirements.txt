@@ -9,3 +9,5 @@ keyboard>=0.13
 Pillow>=7.0
 insightface>=1.0
 onnxruntime-gpu>=1.26
+torch>=2.0
+timm>=0.9
