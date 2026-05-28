@@ -86,8 +86,11 @@ ind_u=0
 
 for im in img_path:
     img = cv2.imread(mp3_pic_path+im)
-    faces = face_id_detector.app.get(img)
-    detections = [dlib.rectangle(int(f.bbox[0]), int(f.bbox[1]), int(f.bbox[2]), int(f.bbox[3])) for f in faces]
+    bboxes, _ = face_id_detector.app.det_model.detect(img)
+    if bboxes.shape[0] == 0:
+        detections = []
+    else:
+        detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
     for k,d in enumerate(detections):
         shape = predictor(img, d)
         face_descriptor_img = facerec.compute_face_descriptor(img, shape)
@@ -97,8 +100,11 @@ print("[Фаза 1] Идентификация. Нажми Q для перехо
 kb_init()
 while(1):
     ret, frame = video_capture.read()
-    faces = face_id_detector.app.get(frame)
-    detections = [dlib.rectangle(int(f.bbox[0]), int(f.bbox[1]), int(f.bbox[2]), int(f.bbox[3])) for f in faces]
+    bboxes, _ = face_id_detector.app.det_model.detect(frame)
+    if bboxes.shape[0] == 0:
+        detections = []
+    else:
+        detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
     face_descriptor_frame =0
     if len(detections) == 0:
         if not ind_d:
@@ -170,8 +176,11 @@ for i, em in enumerate(emotions):
         for j in range(nn):
             em_idx = 0  # всегда определён, даже если нет детекций
             ret, frame = video_capture.read()
-            faces = face_id_detector.app.get(frame)
-            detections = [dlib.rectangle(int(f.bbox[0]), int(f.bbox[1]), int(f.bbox[2]), int(f.bbox[3])) for f in faces]
+            bboxes, _ = face_id_detector.app.det_model.detect(frame)
+            if bboxes.shape[0] == 0:
+                detections = []
+            else:
+                detections = [dlib.rectangle(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
             if len(detections) == 0:
                 print(em_idx)
             for k, d in enumerate(detections):
