@@ -271,8 +271,12 @@ for i, em in enumerate(emotions):
                     X = compute_geometric_features(res.face_landmarks[0],
                                                    landmark_indices=lgb_landmark_indices)
                     pred_en_idx = int(lgb_clf.predict(X)[0])
-                    # Определяем метку по classes_ модели (работает для всех трёх LightGBM)
-                    name_en = lgb_clf.classes_[pred_en_idx]
+                    # Маппинг индекса → имя эмоции (classes_ модели — целые числа 0-6)
+                    _LGB_IDX_TO_EN = ["anger", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+                    try:
+                        name_en = _LGB_IDX_TO_EN[int(pred_en_idx)]
+                    except (IndexError, ValueError):
+                        name_en = str(pred_en_idx)
                     # Единый маппинг EN → RU (покрывает оба набора классов)
                     _ALL_LGB_RU = {
                         "anger": "Злость", "angry": "Злость",
