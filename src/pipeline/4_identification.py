@@ -162,26 +162,14 @@ cv2.destroyAllWindows()
 
 import pickle
 
-# ── Маппинг эмоций LightGBM AffectNet 7 классов ──
-LGB_AFFECTNET_RU = {
-    "anger": "Злость", "disgust": "Отвращение", "fear": "Страх",
-    "happy": "Радость", "neutral": "Нейтральная", "sad": "Грусть",
-    "surprise": "Удивление",
-}
-EMOTIONS_AFFECTNET = ["anger", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+# ── Единый маппинг EN → RU для всех LightGBM моделей (определён ниже в коде) ──
 
-# ── Маппинг эмоций LightGBM (старая 468-модель) ──
-LGB_EN_TO_RU = {
-    "angry": "Злость", "disgust": "Отвращение", "fear": "Страх",
-    "happy": "Радость", "sad": "Грусть", "surprise": "Удивление",
-    "neutral": "Нейтральная",
-}
-EMOTIONS_LGB = ["angry", "disgust", "fear", "happy", "sad", "surprise", "neutral"]
+def compute_geometric_features(face_landmarks, landmark_indices=None):
+    """Вычисляет расстояния от кончика носа (landmark 4) до выбранных лендмарок,
+    нормированные на межзрачковое расстояние (landmarks 33 ↔ 263).
 
-def compute_geometric_features(face_landmarks):
-    """Вычисляет N расстояний от кончика носа (landmark 4),
-    нормированных на межзрачковое расстояние (landmarks 33 ↔ 263).
-    MediaPipe может вернуть 468 или 478 landmarks — функция возвращает все."""
+    Если landmark_indices передан (list[int]), возвращаются признаки только для
+    указанных индексов. Иначе — для всех лендмарок (468 или 478)."""
     pts = np.array([[lm.x, lm.y, lm.z] for lm in face_landmarks], dtype=np.float32)
     nose_tip = pts[4]
     left_eye = pts[33]
@@ -189,35 +177,50 @@ def compute_geometric_features(face_landmarks):
     interocular = np.linalg.norm(left_eye - right_eye)
     if interocular < 1e-6:
         interocular = 1.0
+    # Если заданы индексы — выбираем только нужные лендмарки
+    if landmark_indices is not None:
+        pts = pts[landmark_indices]
     dists = np.linalg.norm(pts - nose_tip, axis=1) / interocular
-    return dists.reshape(1, -1)   # shape (1, N) — 468 или 478
+    return dists.reshape(1, -1)   # shape (1, N)
 
 # ── Фаза 2: эмоции ───────────────────────────────────
 nn=20
 P_em=0.5
 
-# ── Загрузка классификатора: AffectNet 7cls → старая 468 → EfficientNet (fallback) ──
+# ── Загрузка классификатора: regions (167 признаков) → AffectNet 7cls (478) → старая 468 → EfficientNet ──
 use_lgb = False
 lgb_clf = None
-lgb_is_468 = False  # True если загружена старая 468-модель
+lgb_landmark_indices = None  # список индексов для модели с отбором регионов
 _fallback_msg = ""
 try:
-    _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_affectnet_7cls.pkl')
-    lgb_clf = pickle.load(open(_lgb_path, 'rb'))
+    # 1) Новая модель с отбором регионов (167 признаков)
+    _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_emotion_regions.pkl')
+    _lgb_data = pickle.load(open(_lgb_path, 'rb'))
+    # Формат: {'model': LGBMClassifier, 'landmark_indices': [167 индексов], 'num_features': 167}
+    lgb_clf = _lgb_data['model']
+    lgb_landmark_indices = _lgb_data['landmark_indices']
     use_lgb = True
-    lgb_is_468 = False
-    print("[Фаза 2] LightGBM AffectNet 7 классов (478 признаков) загружен")
+    print(f"[Фаза 2] LightGBM Emotion Regions ({_lgb_data['num_features']} признаков) загружен")
 except Exception as e:
-    _fallback_msg = f"AffectNet не загружен: {e}"
+    _fallback_msg = f"Regions не загружен: {e}"
     try:
-        _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
+        # 2) AffectNet 7cls (478 признаков, все лендмарки)
+        _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_affectnet_7cls.pkl')
         lgb_clf = pickle.load(open(_lgb_path, 'rb'))
         use_lgb = True
-        lgb_is_468 = True
-        print("[Фаза 2] LightGBM (468 признаков, старая модель) загружен")
+        print("[Фаза 2] LightGBM AffectNet 7 классов (478 признаков) загружен")
     except Exception as e2:
-        print(f"[Фаза 2] {_fallback_msg}; 468-модель тоже не загружена: {e2}")
-        print("[Фаза 2] LightGBM не найден, fallback на EfficientNet")
+        _fallback_msg = f"AffectNet не загружен: {e2}"
+        try:
+            # 3) Старая 468-модель
+            _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
+            lgb_clf = pickle.load(open(_lgb_path, 'rb'))
+            use_lgb = True
+            lgb_landmark_indices = list(range(468))  # обрезаем до 468 (модель не ждёт 478)
+            print("[Фаза 2] LightGBM (468 признаков, старая модель) загружен")
+        except Exception as e3:
+            print(f"[Фаза 2] {_fallback_msg}; 468-модель тоже не загружена: {e3}")
+            print("[Фаза 2] LightGBM не найден, fallback на EfficientNet")
 
 if not use_lgb:
     from emotion import EmotionClassifier
@@ -265,16 +268,19 @@ for i, em in enumerate(emotions):
 
                 # ── Предикт эмоции: LightGBM (геометрия) либо EfficientNet (fallback) ──
                 if use_lgb and res.face_landmarks:
-                    X = compute_geometric_features(res.face_landmarks[0])
-                    if lgb_is_468:
-                        X = X[:, :468]   # старая модель ждёт 468 признаков
+                    X = compute_geometric_features(res.face_landmarks[0],
+                                                   landmark_indices=lgb_landmark_indices)
                     pred_en_idx = int(lgb_clf.predict(X)[0])
-                    if lgb_is_468:
-                        name_en = EMOTIONS_LGB[pred_en_idx]
-                        name_ru = LGB_EN_TO_RU.get(name_en, name_en)
-                    else:
-                        name_en = EMOTIONS_AFFECTNET[pred_en_idx]
-                        name_ru = LGB_AFFECTNET_RU.get(name_en, name_en)
+                    # Определяем метку по classes_ модели (работает для всех трёх LightGBM)
+                    name_en = lgb_clf.classes_[pred_en_idx]
+                    # Единый маппинг EN → RU (покрывает оба набора классов)
+                    _ALL_LGB_RU = {
+                        "anger": "Злость", "angry": "Злость",
+                        "disgust": "Отвращение", "fear": "Страх",
+                        "happy": "Радость", "neutral": "Нейтральная",
+                        "sad": "Грусть", "surprise": "Удивление",
+                    }
+                    name_ru = _ALL_LGB_RU.get(name_en, name_en)
                     if name_ru in emotions:
                         em_idx = emotions.index(name_ru) + 1
                 elif not use_lgb:
