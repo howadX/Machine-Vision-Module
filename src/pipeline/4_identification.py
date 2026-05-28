@@ -10,6 +10,8 @@ import sys, select, tty, termios
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
 dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
+sys.path.insert(0, _os.path.join(_ROOT, 'src', 'utils'))
+from face_id import FaceID
 face_rec_path = _os.path.join(_ROOT, 'models', 'face_recognition') + '/'
 emotion_path = _os.path.join(_ROOT, 'models', 'emotion') + '/'
 mp3_pic_path = _os.path.join(_ROOT, 'models', 'references') + '/'
@@ -67,7 +69,7 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
     return resized
 
 # ── Фаза 1: идентификация ────────────────────────────
-detector = dlib.get_frontal_face_detector()
+face_id_detector = FaceID()
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat')
 facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat')
 cam_path = find_camera()
@@ -84,7 +86,8 @@ ind_u=0
 
 for im in img_path:
     img = cv2.imread(mp3_pic_path+im)
-    detections = detector(img, 1)
+    faces = face_id_detector.app.get(img)
+    detections = [dlib.rectangle(int(f.bbox[0]), int(f.bbox[1]), int(f.bbox[2]), int(f.bbox[3])) for f in faces]
     for k,d in enumerate(detections):
         shape = predictor(img, d)
         face_descriptor_img = facerec.compute_face_descriptor(img, shape)
@@ -94,7 +97,8 @@ print("[Фаза 1] Идентификация. Нажми Q для перехо
 kb_init()
 while(1):
     ret, frame = video_capture.read()
-    detections = detector(frame, 1)
+    faces = face_id_detector.app.get(frame)
+    detections = [dlib.rectangle(int(f.bbox[0]), int(f.bbox[1]), int(f.bbox[2]), int(f.bbox[3])) for f in faces]
     face_descriptor_frame =0
     if len(detections) == 0:
         if not ind_d:
@@ -141,7 +145,7 @@ cv2.destroyAllWindows()
 # ── Фаза 2: эмоции ───────────────────────────────────
 nn=20
 P_em=0.5
-detector = dlib.get_frontal_face_detector()
+# detector уже создан глобально — используем face_id_detector
 predictor = dlib.shape_predictor(dat_path+'shape_predictor_68_face_landmarks.dat')
 facerec = dlib.face_recognition_model_v1(face_rec_path+'dlib_face_recognition_resnet_model_v1.dat')
 font= ImageFont.truetype(font_path, 18)
@@ -166,7 +170,8 @@ for i, em in enumerate(emotions):
         for j in range(nn):
             em_idx = 0  # всегда определён, даже если нет детекций
             ret, frame = video_capture.read()
-            detections = detector(frame, 1)
+            faces = face_id_detector.app.get(frame)
+            detections = [dlib.rectangle(int(f.bbox[0]), int(f.bbox[1]), int(f.bbox[2]), int(f.bbox[3])) for f in faces]
             if len(detections) == 0:
                 print(em_idx)
             for k, d in enumerate(detections):
