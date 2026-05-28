@@ -14,6 +14,7 @@ dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
 face_rec_path = _os.path.join(_ROOT, 'models', 'face_recognition') + '/'
 emotion_path = _os.path.join(_ROOT, 'models', 'emotion') + '/'
 mp3_pic_path = _os.path.join(_ROOT, 'models', 'references') + '/'
+mp3_path = _os.path.join(_ROOT, 'models', 'references', 'mp3') + '/'
 assets_path = _os.path.join(_ROOT, 'assets', 'emotion_examples') + '/'
 font_path = _os.path.join(_ROOT, 'assets', 'fonts', 'DejaVuSans.ttf')
 
@@ -102,14 +103,14 @@ while(1): # цикл обработки nn кадров
                 for c,fd in enumerate(fdi):
                     q = distance.euclidean(fd,face_descriptor_frame)
                     if q<0.6:
-                        mixer.music.load(mp3_pic_path+audio[c]) #Загрузка звуковой дорожки, содержащихся в списке sound, с последующим ее проигрыванием
+                        mixer.music.load(mp3_path+audio[c]) #Загрузка звуковой дорожки, содержащихся в списке sound, с последующим ее проигрыванием
                         mixer.music.play()
                         print('Привет {}!'.format(names[c]))
                         print('нажмите Q чтобы продолжить')
                         ind_p,ind_d,ind_u=1,0,1
             if not ind_u:
                 print('Пользователь не распознан')
-                mixer.music.load(mp3_pic_path+audio[4]) #Загрузка звуковой дорожки, содержащихся в списке sound, с последующим ее проигрыванием
+                mixer.music.load(mp3_path+audio[4]) #Загрузка звуковой дорожки, содержащихся в списке sound, с последующим ее проигрыванием
                 mixer.music.play()
                 ind_u,ind_d=1,0
     cv2.imshow('camera', image_resize(frame, height = 300)) # выводим картинку с камеры
@@ -171,7 +172,7 @@ for i, em in enumerate(emotions): #Начало цикла, проходящем
         cv2.waitKey(10) # задержка изображений
         cv2.imshow('example', img) # выводим картинку с камеры
         cv2.moveWindow('example', 150,150)
-        mixer.music.load(mp3_pic_path+sound[i]) #Загрузка звуковой дорожки, содержащихся в списке sound, с последующим ее проигрыванием
+        mixer.music.load(mp3_path+sound[i]) #Загрузка звуковой дорожки, содержащихся в списке sound, с последующим ее проигрыванием
         mixer.music.play()
         print("Покажите нам "+ em) #Выводит в консоль просьбу показать эмоцию из списка emotions
         for j in range(nn): # цикл обработки nn кадров
@@ -211,17 +212,17 @@ for i, em in enumerate(emotions): #Начало цикла, проходящем
             cv2.moveWindow('camera', 600,150)
         emotion_result=emotion_result/nn # считаем долю правильно воспроизведенных эмоций
         if emotion_result>=P_em: #Условие, если проецнт совпадения с эмоцией оператора больше или равен P_em процентам
-            mixer.music.load(mp3_pic_path+'8.mp3') #Запускает звуковую дорожку, содержащую в себе похвалу оператора
+            mixer.music.load(mp3_path+'8.mp3') #Запускает звуковую дорожку, содержащую в себе похвалу оператора
             mixer.music.play()
             print("Молодец  "+"{0:.2f}".format(emotion_result*100)+'%') #Выводит в консоль "Молодец"
             sleep(2)
         else:
-            mixer.music.load(mp3_pic_path+'9.mp3') #Запускает звуковую дорожку, содержащую в себе прозьбу оператора попробовать еще
+            mixer.music.load(mp3_path+'9.mp3') #Запускает звуковую дорожку, содержащую в себе прозьбу оператора попробовать еще
             mixer.music.play()
             print("Попробуте еще " +"{0:.2f}".format(emotion_result*100)+'%') #Выводит в консоль "Попробуй еще"
             sleep(2)
             if tries % 3 == 2:
-                mixer.music.load(mp3_pic_path + sound1[i])
+                mixer.music.load(mp3_path + sound1[i])
                 mixer.music.play()
                 sleep(6) #Делает паузу в исполнении скрипта, чтобы дорожка полностью проигралась
 video_capture.release() # закрываем камеру
