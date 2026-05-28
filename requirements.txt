@@ -12,3 +12,4 @@ onnxruntime-gpu>=1.26
 torch>=2.0
 timm>=0.9
 mediapipe
+lightgbm>=4.0
