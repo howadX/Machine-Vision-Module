@@ -6,6 +6,7 @@ import pickle
 import numpy as np
 import random
 import os as _os
+import sys, select, tty, termios
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
 dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
@@ -30,6 +31,26 @@ def find_camera():
                         return dev
                 cam.release()
     return None
+
+# ── Чтение клавиш из терминала (работает без фокуса на окне) ──
+_term_fd = sys.stdin.fileno()
+_term_old = termios.tcgetattr(_term_fd)
+
+def kb_init():
+    """Переводит терминал в cbreak-режим для чтения одиночных нажатий."""
+    tty.setcbreak(_term_fd)
+
+def kb_restore():
+    """Восстанавливает исходный режим терминала."""
+    termios.tcsetattr(_term_fd, termios.TCSADRAIN, _term_old)
+
+def kb_hit():
+    """True если в stdin есть данные (клавиша нажата)."""
+    return select.select([sys.stdin], [], [], 0)[0]
+
+def kb_get():
+    """Читает один символ из stdin (без ожидания)."""
+    return sys.stdin.read(1) if kb_hit() else None
 
 def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
     dim = None
@@ -70,6 +91,7 @@ for im in img_path:
         fdi.append(face_descriptor_img)
 ind_d,ind_u,ind_p,j=0,0,0,0
 print("[Фаза 1] Идентификация. Нажми Q для перехода к эмоциям.")
+kb_init()
 while(1):
     ret, frame = video_capture.read()
     detections = detector(frame, 1)
@@ -108,9 +130,11 @@ while(1):
                 ind_u,ind_d=1,0
     cv2.imshow('camera', image_resize(frame, height = 300))
     cv2.moveWindow('camera', 600,400)
-    if cv2.waitKey(10) & 0xFF == ord('q'):
-        print('вы нажали q. Переход к эмоциям...')
-        break
+    if cv2.waitKey(1) == -1 and kb_hit():
+        ch = kb_get()
+        if ch and ch.lower() == 'q':
+            print('вы нажали q. Переход к эмоциям...')
+            break
     j+=1
 cv2.destroyAllWindows()
 
@@ -188,4 +212,5 @@ for i, em in enumerate(emotions):
             print("Попробуте еще " + "{0:.2f}".format(emotion_result * 100) + '%')
             sleep(2)
 video_capture.release()
+kb_restore()
 cv2.destroyAllWindows()
