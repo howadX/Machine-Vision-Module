@@ -276,17 +276,16 @@ while True:
 
         # ── Модель А: ЛИЦО → эмоции ────────────────
         if results.face_landmarks:
-            face_lm = results.face_landmarks[0]
             if DRAW_LANDMARKS:
                 vision.drawing_utils.draw_landmarks(
-                    frame, face_lm,
+                    frame, results.face_landmarks,
                     vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
                     landmark_drawing_spec=None,
                     connection_drawing_spec=vision.drawing_utils.DrawingSpec(
                         color=(255, 255, 255), thickness=1))
 
             if use_lgb:
-                face_pts = np.array([[lm.x, lm.y, lm.z] for lm in face_lm], dtype=np.float32)
+                face_pts = np.array([[lm.x, lm.y, lm.z] for lm in results.face_landmarks], dtype=np.float32)
                 nose_tip = face_pts[4]
                 left_eye = face_pts[33]
                 right_eye = face_pts[263]
@@ -311,7 +310,7 @@ while True:
             body_status = "тело: есть"
             if DRAW_LANDMARKS:
                 vision.drawing_utils.draw_landmarks(
-                    frame, results.pose_landmarks[0],
+                    frame, results.pose_landmarks,
                     vision.PoseLandmarksConnections.POSE_LANDMARKS,
                     landmark_drawing_spec=None,
                     connection_drawing_spec=vision.drawing_utils.DrawingSpec(
