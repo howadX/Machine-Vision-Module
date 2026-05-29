@@ -58,6 +58,8 @@ absl.logging.set_verbosity(absl.logging.ERROR)
 absl.logging.use_absl_handler()
 
 import glob, cv2, mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision
 from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 sys.stderr = _stderr_backup  # восстанавливаем stderr
@@ -71,7 +73,7 @@ _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
 _sys.path.insert(0, _os.path.join(_ROOT, 'src', 'utils'))
 from face_id import FaceID
 
-_MODEL_PATH = _os.path.join(_ROOT, 'models', 'mediapipe', 'face_landmarker.task')
+_MODEL_PATH = _os.path.join(_ROOT, 'models', 'mediapipe', 'holistic_landmarker.task')
 REFERENCES_DIR = _os.path.join(_ROOT, 'models', 'references')
 FONT_PATH = _os.path.join(_ROOT, 'assets', 'fonts', 'DejaVuSans.ttf')
 
@@ -160,14 +162,13 @@ video_capture.set(4, 480)
 # Face ID (SCRFD + ArcFace)
 face_id_detector = FaceID()
 
-# MediaPipe Holistic (face + body + hands, один вызов)
-holistic = mp.solutions.holistic.Holistic(
-    static_image_mode=False,
-    model_complexity=1,
-    refine_face_landmarks=True,
-    min_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
+# MediaPipe Holistic Landmarker (face + body + hands, Tasks API)
+_mp_base = mp_python.BaseOptions(model_asset_path=_MODEL_PATH)
+_mp_opts = vision.HolisticLandmarkerOptions(
+    base_options=_mp_base,
+    running_mode=vision.RunningMode.IMAGE,
 )
+holistic_landmarker = vision.HolisticLandmarker.create_from_options(_mp_opts)
 
 # Галерея эталонов (для добавления: положить фото в models/references/p_Имя.jpg)
 IMG_NAMES = ['p_V.jpg']
@@ -268,21 +269,24 @@ while True:
         if DRAW_BBOX:
             cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 255, 0), 1)
 
-        # MediaPipe Holistic (face + body + hands — один вызов)
+        # MediaPipe Holistic (face + body + hands — Tasks API)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = holistic.process(frame_rgb)
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+        results = holistic_landmarker.detect(mp_img)
 
         # ── Модель А: ЛИЦО → эмоции ────────────────
         if results.face_landmarks:
+            face_lm = results.face_landmarks[0]
             if DRAW_LANDMARKS:
-                mp.solutions.drawing_utils.draw_landmarks(
-                    frame, results.face_landmarks,
-                    mp.solutions.face_mesh.FACEMESH_CONTOURS,
+                vision.drawing_utils.draw_landmarks(
+                    frame, face_lm,
+                    vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
                     landmark_drawing_spec=None,
-                    connection_drawing_spec=mp.solutions.drawing_styles.get_default_face_mesh_contours_style())
+                    connection_drawing_spec=vision.drawing_utils.DrawingSpec(
+                        color=(255, 255, 255), thickness=1))
 
             if use_lgb:
-                face_pts = np.array([[lm.x, lm.y, lm.z] for lm in results.face_landmarks.landmark], dtype=np.float32)
+                face_pts = np.array([[lm.x, lm.y, lm.z] for lm in face_lm], dtype=np.float32)
                 nose_tip = face_pts[4]
                 left_eye = face_pts[33]
                 right_eye = face_pts[263]
@@ -306,9 +310,12 @@ while True:
         if results.pose_landmarks:
             body_status = "тело: есть"
             if DRAW_LANDMARKS:
-                mp.solutions.drawing_utils.draw_landmarks(
-                    frame, results.pose_landmarks,
-                    mp.solutions.pose.POSE_CONNECTIONS)
+                vision.drawing_utils.draw_landmarks(
+                    frame, results.pose_landmarks[0],
+                    vision.PoseLandmarksConnections.POSE_LANDMARKS,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=vision.drawing_utils.DrawingSpec(
+                        color=(0, 255, 0), thickness=2))
         else:
             body_status = "тело: нет"
 
