@@ -84,7 +84,7 @@ EMOTION_EVERY_N = 5      # эмоции — каждый кадр (LightGBM ~0.0
 FACEID_THRESHOLD = 0.35
 DRAW_BBOX = True          # отрисовка bounding box
 DRAW_LANDMARKS = True    # отрисовка контуров лица (дорого!)
-DRAW_POSE = False         # отрисовка скелета тела
+DRAW_POSE = True         # отрисовка скелета тела
 
 # ── Утилиты ──────────────────────────────────────────
 
@@ -321,30 +321,22 @@ while True:
         # ── Модель Б: ТЕЛО → поза ──────────────────
         if results.pose_landmarks:
             pose_lm = results.pose_landmarks
-            # Эвристика: standing/sitting/lying по геометрии 33 точек
-            pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_lm], dtype=np.float32)
-            visible = pts[:, 3] > 0.5
-            
-            if visible.sum() >= 10:
-                # Плечи (11, 12) и бёдра (23, 24)
-                shoulder_y = (pts[11, 1] + pts[12, 1]) / 2
-                hip_y = (pts[23, 1] + pts[24, 1]) / 2
-                knee_y = (pts[25, 1] + pts[26, 1]) / 2
+            if body_clf is not None:
+                # Маппинг 33 MediaPipe → 17 COCO ключевых точек
+                mp_to_coco = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
+                pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_lm], dtype=np.float32)
+                coco_pts = pts[mp_to_coco]  # (17, 4)
                 
-                dy_shoulder_hip = hip_y - shoulder_y  # >0 если плечи выше бёдер
-                dy_hip_knee = knee_y - hip_y
+                # Референс = центр таза, нормализатор = межплечевое
+                hip_center = (coco_pts[11, :2] + coco_pts[12, :2]) / 2  # COCO 11,12 = бёдра
+                shoulder_w = np.linalg.norm(coco_pts[5, :2] - coco_pts[6, :2])
+                if shoulder_w < 1e-6: shoulder_w = 1.0
                 
-                # Ширина плеч / высота туловища
-                shoulder_w = abs(pts[11, 0] - pts[12, 0])
-                torso_h = dy_shoulder_hip if dy_shoulder_hip > 0 else 0.01
-                aspect = shoulder_w / torso_h
+                X = np.linalg.norm(coco_pts[:, :2] - hip_center, axis=1) / shoulder_w
+                X = X.reshape(1, -1)
                 
-                if dy_shoulder_hip > 0.05 and aspect < 1.5:
-                    body_posture = "standing"
-                elif dy_shoulder_hip > 0.02:
-                    body_posture = "sitting"
-                else:
-                    body_posture = "lying"
+                pred = int(body_clf.predict(X)[0])
+                body_posture = POSTURE_NAMES[pred]
             else:
                 body_posture = "unknown"
             
