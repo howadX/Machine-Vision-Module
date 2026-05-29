@@ -84,6 +84,7 @@ EMOTION_EVERY_N = 5      # эмоции — каждый кадр (LightGBM ~0.0
 FACEID_THRESHOLD = 0.35
 DRAW_BBOX = True          # отрисовка bounding box
 DRAW_LANDMARKS = True    # отрисовка контуров лица (дорого!)
+DRAW_POSE = False         # отрисовка скелета тела
 
 # ── Утилиты ──────────────────────────────────────────
 
@@ -218,6 +219,18 @@ if not use_lgb:
     ec = EmotionClassifier(use_gpu=True)
     print("[Эмоции] Fallback на EfficientNet")
 
+# Модель Б: позы тела (COCO 17 точек → standing/sitting/lying)
+body_clf = None
+try:
+    _body_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_body_posture.pkl')
+    body_clf = pickle.load(open(_body_path, 'rb'))
+    print("[Тело] LightGBM позы (78.4% на COCO, 17 точек) загружен")
+except Exception as e:
+    print(f"[Тело] Модель не загружена: {e}. Fallback на эвристики.")
+
+POSTURE_NAMES = ["standing", "sitting", "lying"]
+POSTURE_RU = {"standing": "стоит", "sitting": "сидит", "lying": "лежит"}
+
 # Маппинги
 _LGB_IDX_TO_EN = ["anger", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 _ALL_LGB_RU = {
@@ -305,12 +318,40 @@ while True:
                     name_en = str(pred_idx)
                 current_emotion = _ALL_LGB_RU.get(name_en, name_en)
 
-        # ── Модель Б: ТЕЛО → поза (заглушка) ──────
+        # ── Модель Б: ТЕЛО → поза ──────────────────
         if results.pose_landmarks:
-            body_status = "тело: есть"
-            if DRAW_LANDMARKS:
+            pose_lm = results.pose_landmarks
+            # Эвристика: standing/sitting/lying по геометрии 33 точек
+            pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_lm], dtype=np.float32)
+            visible = pts[:, 3] > 0.5
+            
+            if visible.sum() >= 10:
+                # Плечи (11, 12) и бёдра (23, 24)
+                shoulder_y = (pts[11, 1] + pts[12, 1]) / 2
+                hip_y = (pts[23, 1] + pts[24, 1]) / 2
+                knee_y = (pts[25, 1] + pts[26, 1]) / 2
+                
+                dy_shoulder_hip = hip_y - shoulder_y  # >0 если плечи выше бёдер
+                dy_hip_knee = knee_y - hip_y
+                
+                # Ширина плеч / высота туловища
+                shoulder_w = abs(pts[11, 0] - pts[12, 0])
+                torso_h = dy_shoulder_hip if dy_shoulder_hip > 0 else 0.01
+                aspect = shoulder_w / torso_h
+                
+                if dy_shoulder_hip > 0.05 and aspect < 1.5:
+                    body_posture = "standing"
+                elif dy_shoulder_hip > 0.02:
+                    body_posture = "sitting"
+                else:
+                    body_posture = "lying"
+            else:
+                body_posture = "unknown"
+            
+            body_status = f"тело: {POSTURE_RU.get(body_posture, body_posture)}"
+            if DRAW_POSE:
                 vision.drawing_utils.draw_landmarks(
-                    frame, results.pose_landmarks,
+                    frame, pose_lm,
                     vision.PoseLandmarksConnections.POSE_LANDMARKS,
                     landmark_drawing_spec=None,
                     connection_drawing_spec=vision.drawing_utils.DrawingSpec(
