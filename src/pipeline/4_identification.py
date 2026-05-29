@@ -58,8 +58,6 @@ absl.logging.set_verbosity(absl.logging.ERROR)
 absl.logging.use_absl_handler()
 
 import glob, cv2, mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision
 from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 sys.stderr = _stderr_backup  # восстанавливаем stderr
@@ -162,14 +160,14 @@ video_capture.set(4, 480)
 # Face ID (SCRFD + ArcFace)
 face_id_detector = FaceID()
 
-# MediaPipe FaceLandmarker
-_mp_base = mp_python.BaseOptions(model_asset_path=_MODEL_PATH)
-_mp_opts = vision.FaceLandmarkerOptions(
-    base_options=_mp_base,
-    num_faces=1,
-    running_mode=vision.RunningMode.IMAGE,
+# MediaPipe Holistic (face + body + hands, один вызов)
+holistic = mp.solutions.holistic.Holistic(
+    static_image_mode=False,
+    model_complexity=1,
+    refine_face_landmarks=True,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5,
 )
-face_landmarker = vision.FaceLandmarker.create_from_options(_mp_opts)
 
 # Галерея эталонов (для добавления: положить фото в models/references/p_Имя.jpg)
 IMG_NAMES = ['p_V.jpg']
@@ -245,6 +243,7 @@ fps_val = 0.0
 current_name = None
 current_emotion = "—"
 emotion_conf = 0.0
+body_status = "тело: нет"
 last_detections = []  # кеш bbox между детекциями
 
 while True:
@@ -269,25 +268,31 @@ while True:
         if DRAW_BBOX:
             cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 255, 0), 1)
 
-        # MediaPipe landmarks (всегда по последнему bbox)
+        # MediaPipe Holistic (face + body + hands — один вызов)
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-        res = face_landmarker.detect(mp_img)
+        results = holistic.process(frame_rgb)
 
-        if res.face_landmarks:
+        # ── Модель А: ЛИЦО → эмоции ────────────────
+        if results.face_landmarks:
             if DRAW_LANDMARKS:
-                vision.drawing_utils.draw_landmarks(
-                    frame, res.face_landmarks[0],
-                    vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame, results.face_landmarks,
+                    mp.solutions.face_mesh.FACEMESH_CONTOURS,
                     landmark_drawing_spec=None,
-                    connection_drawing_spec=vision.drawing_utils.DrawingSpec(
-                        color=(255, 255, 255), thickness=1))
+                    connection_drawing_spec=mp.solutions.drawing_styles.get_default_face_mesh_contours_style())
 
-            # ── Эмоция (LightGBM) ─────────────────
             if use_lgb:
-                X = compute_geometric_features(
-                    res.face_landmarks[0],
-                    landmark_indices=lgb_landmark_indices)
+                face_pts = np.array([[lm.x, lm.y, lm.z] for lm in results.face_landmarks.landmark], dtype=np.float32)
+                nose_tip = face_pts[4]
+                left_eye = face_pts[33]
+                right_eye = face_pts[263]
+                interocular = np.linalg.norm(left_eye - right_eye)
+                if interocular < 1e-6: interocular = 1.0
+                if lgb_landmark_indices is not None:
+                    face_pts = face_pts[lgb_landmark_indices]
+                X = np.linalg.norm(face_pts - nose_tip, axis=1) / interocular
+                X = X.reshape(1, -1)
+
                 proba = lgb_clf.predict_proba(X)[0]
                 pred_idx = int(proba.argmax())
                 emotion_conf = float(proba.max())
@@ -296,6 +301,16 @@ while True:
                 except (IndexError, ValueError):
                     name_en = str(pred_idx)
                 current_emotion = _ALL_LGB_RU.get(name_en, name_en)
+
+        # ── Модель Б: ТЕЛО → поза (заглушка) ──────
+        if results.pose_landmarks:
+            body_status = "тело: есть"
+            if DRAW_LANDMARKS:
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame, results.pose_landmarks,
+                    mp.solutions.pose.POSE_CONNECTIONS)
+        else:
+            body_status = "тело: нет"
 
         # ── Face ID (каждый FACEID_EVERY_N кадр) ──
         if frame_count % FACEID_EVERY_N == 0 and face_embedding is not None:
@@ -313,6 +328,7 @@ while True:
     else:
         current_name = None
         current_emotion = "—"
+        body_status = "тело: нет"
 
     # ── Оверлей (PIL, кириллица) ──────────────────
     img_pil = Image.fromarray(frame)
@@ -323,6 +339,7 @@ while True:
     if current_emotion != "—":
         emo_text = f"{current_emotion} ({emotion_conf:.0%})"
         draw.text((10, 40), emo_text, font=font_emotion, fill=(0, 200, 255))
+    draw.text((10, 70), body_status, font=font_fps, fill=(200, 200, 100))
 
     # FPS (мгновенный + сглаженный)
     now = time.perf_counter()
@@ -330,7 +347,7 @@ while True:
     last_frame_time = now
     instant_fps = 1.0 / delta if delta > 0 else 0
     fps_val = 0.9 * fps_val + 0.1 * instant_fps if fps_val > 0 else instant_fps
-    draw.text((10, 70), f"FPS: {fps_val:.0f}", font=font_fps, fill=(200, 200, 200))
+    draw.text((10, 100), f"FPS: {fps_val:.0f}", font=font_fps, fill=(200, 200, 200))
 
     frame = np.array(img_pil)
 
