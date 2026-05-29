@@ -171,7 +171,7 @@ _mp_opts = vision.FaceLandmarkerOptions(
 )
 face_landmarker = vision.FaceLandmarker.create_from_options(_mp_opts)
 
-# Галерея эталонов
+# Галерея эталонов (для добавления: положить фото в models/references/p_Имя.jpg)
 IMG_NAMES = ['p_V.jpg']
 NAMES = ['Вадим']
 gallery = {}
