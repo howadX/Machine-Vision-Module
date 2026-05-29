@@ -1,23 +1,91 @@
-from time import sleep
+#!/usr/bin/env python3
+"""
+4_identification.py — Реалтайм-распознавание лиц и эмоций.
+
+Определение личности (Face ID) и эмоций в реальном времени.
+Без игровой механики тренировки. Максимальный FPS.
+
+Управление: Q — выход.
+"""
+import os as _os, sys
+
+# ── Предзагрузка CUDA-библиотек (onnxruntime-gpu) ──
+def _preload_cuda_libs():
+    """Загружает CUDA-библиотеки из nvidia-* pip-пакетов ДО импорта onnxruntime."""
+    import ctypes, glob as _glob
+    venv_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    nvidia_base = _os.path.join(venv_root, "venv", "lib", f"python{sys.version_info.major}.{sys.version_info.minor}", "site-packages", "nvidia")
+    if not _os.path.isdir(nvidia_base):
+        return
+    libs = []
+    for so in _glob.iglob(_os.path.join(nvidia_base, "**", "lib", "*.so*"), recursive=True):
+        libs.append(so)
+    # Приоритет: сначала cublas, cudnn, cufft, curand...
+    def _key(path):
+        name = _os.path.basename(path).lower()
+        for i, p in enumerate(["cublas", "cudnn", "cufft", "curand", "cusolver", "cusparse", "cuda_runtime"]):
+            if p in name:
+                return i
+        return 99
+    libs.sort(key=_key)
+    for lib in libs:
+        try:
+            ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
+        except OSError:
+            pass
+
+_preload_cuda_libs()
+
+# Подавление warnings ДО импортов
+_os.environ["GRPC_VERBOSITY"] = "ERROR"
+_os.environ["GLOG_minloglevel"] = "2"
+_os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+_os.environ["QT_LOGGING_RULES"] = "*.debug=false"
+_os.environ["QT_QPA_PLATFORM"] = "xcb"
+_os.environ["OPENCV_LOG_LEVEL"] = "ERROR"
+_os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
+_os.environ["EGL_LOG_LEVEL"] = "fatal"
+
+# Перенаправляем stderr на время шумных импортов
+import io as _io
+_stderr_backup = sys.stderr
+sys.stderr = _io.StringIO()
+
+import warnings
+warnings.filterwarnings("ignore")
+import absl.logging
+absl.logging.set_verbosity(absl.logging.ERROR)
+absl.logging.use_absl_handler()
+
 import glob, cv2, mediapipe as mp
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 from PIL import ImageFont, ImageDraw, Image
 import numpy as np
-import os as _os
-import sys, select, tty, termios
-import warnings
-warnings.filterwarnings("ignore", message="X does not have valid feature names")
+sys.stderr = _stderr_backup  # восстанавливаем stderr
+import sys as _sys, select, tty, termios
+import pickle
+import time
+
+# ── Пути ─────────────────────────────────────────────
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
-dat_path = _os.path.join(_ROOT, 'models', 'face_detection') + '/'
-sys.path.insert(0, _os.path.join(_ROOT, 'src', 'utils'))
+_sys.path.insert(0, _os.path.join(_ROOT, 'src', 'utils'))
 from face_id import FaceID
-face_rec_path = _os.path.join(_ROOT, 'models', 'face_recognition') + '/'
-emotion_path = _os.path.join(_ROOT, 'models', 'emotion') + '/'
-mp3_pic_path = _os.path.join(_ROOT, 'models', 'references') + '/'
-assets_path = _os.path.join(_ROOT, 'assets', 'emotion_examples') + '/'
-font_path = _os.path.join(_ROOT, 'assets', 'fonts', 'DejaVuSans.ttf')
+
+_MODEL_PATH = _os.path.join(_ROOT, 'models', 'mediapipe', 'face_landmarker.task')
+REFERENCES_DIR = _os.path.join(_ROOT, 'models', 'references')
+FONT_PATH = _os.path.join(_ROOT, 'assets', 'fonts', 'DejaVuSans.ttf')
+
+# ── Конфигурация ─────────────────────────────────────
+DETECT_EVERY_N = 2       # SCRFD + ArcFace — каждый N-й кадр
+FACEID_EVERY_N = 10       # Face ID сверка — каждый N-й кадр (тяжелее)
+EMOTION_EVERY_N = 5      # эмоции — каждый кадр (LightGBM ~0.05ms)
+FACEID_THRESHOLD = 0.35
+DRAW_BBOX = True          # отрисовка bounding box
+DRAW_LANDMARKS = True    # отрисовка контуров лица (дорого!)
+
+# ── Утилиты ──────────────────────────────────────────
 
 def find_camera():
     """Ищет первую рабочую камеру через /dev/video* + CAP_V4L2."""
@@ -35,28 +103,23 @@ def find_camera():
                 cam.release()
     return None
 
-# ── Чтение клавиш из терминала (работает без фокуса на окне) ──
-_term_fd = sys.stdin.fileno()
+# Клавиатура
+_term_fd = _sys.stdin.fileno()
 _term_old = termios.tcgetattr(_term_fd)
 
 def kb_init():
-    """Переводит терминал в cbreak-режим для чтения одиночных нажатий."""
     tty.setcbreak(_term_fd)
 
 def kb_restore():
-    """Восстанавливает исходный режим терминала."""
     termios.tcsetattr(_term_fd, termios.TCSADRAIN, _term_old)
 
 def kb_hit():
-    """True если в stdin есть данные (клавиша нажата)."""
-    return select.select([sys.stdin], [], [], 0)[0]
+    return select.select([_sys.stdin], [], [], 0)[0]
 
 def kb_get():
-    """Читает один символ из stdin (без ожидания)."""
-    return sys.stdin.read(1) if kb_hit() else None
+    return _sys.stdin.read(1) if kb_hit() else None
 
-def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
-    dim = None
+def image_resize(image, width=None, height=None, inter=cv2.INTER_AREA):
     (h, w) = image.shape[:2]
     if width is None and height is None:
         return image
@@ -66,110 +129,13 @@ def image_resize(image, width = None, height = None, inter = cv2.INTER_AREA):
     else:
         r = width / float(w)
         dim = (width, int(h * r))
-    resized = cv2.resize(image, dim, interpolation = inter)
-    return resized
+    return cv2.resize(image, dim, interpolation=inter)
 
-# ── Фаза 1: идентификация ────────────────────────────
-face_id_detector = FaceID()
-_MODEL_PATH = _os.path.join(_ROOT, 'models', 'mediapipe', 'face_landmarker.task')
-_mp_base = mp_python.BaseOptions(model_asset_path=_MODEL_PATH)
-_mp_opts = vision.FaceLandmarkerOptions(base_options=_mp_base, num_faces=1, running_mode=vision.RunningMode.IMAGE)
-face_landmarker = vision.FaceLandmarker.create_from_options(_mp_opts)
-cam_path = find_camera()
-if cam_path is None:
-    print("❌ Камера не найдена. Проверь: ls /dev/video*")
-    exit(1)
-video_capture = cv2.VideoCapture(cam_path, cv2.CAP_V4L2)
-video_capture.set(3, 640)
-video_capture.set(4, 480)
-img_path = ['p_D.jpg','p_N.jpg','p_I.jpg','p_V.jpg']
-fdi = {}
-names = ['Даня','Никита','Белла','Вадим']
-ind_u=0
-
-for im, name in zip(img_path, names):
-    img = cv2.imread(mp3_pic_path+im)
-    emb = face_id_detector.get_embedding(img)
-    if emb is not None:
-        fdi[name] = emb
-        print(f"  [Галерея] {name}: эмбеддинг {emb.shape}")
-    else:
-        print(f"  [Галерея] {name}: лицо не найдено")
-ind_d,ind_u,ind_p,j=0,0,0,0
-print("[Фаза 1] Идентификация. Нажми Q для перехода к эмоциям.")
-kb_init()
-while(1):
-    ret, frame = video_capture.read()
-    face_embedding = None
-
-    if j % 3 == 0:
-        # Каждый 3-й кадр: app.get() для bbox + embedding (ArcFace 512d)
-        faces = face_id_detector.app.get(frame)
-        if not faces:
-            detections = []
-        else:
-            best = max(faces, key=lambda f: f.get("det_score", 0))
-            bbox = best["bbox"]  # [x1, y1, x2, y2]
-            face_embedding = np.asarray(best.get("embedding"), dtype=np.float32)
-            detections = [(int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))]
-    else:
-        # Остальные кадры: det_model.detect() только bbox
-        bboxes, _ = face_id_detector.app.det_model.detect(frame)
-        if bboxes.shape[0] == 0:
-            detections = []
-        else:
-            detections = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
-
-    if len(detections) == 0:
-        if not ind_d:
-            print('нет никого в кадре')
-            ind_d,ind_p,ind_u=1,0,0
-    if len(detections) > 0:
-        d = detections[0]
-        cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-        res = face_landmarker.detect(mp_img)
-        if res.face_landmarks:
-            vision.drawing_utils.draw_landmarks(
-                frame, res.face_landmarks[0],
-                vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
-                landmark_drawing_spec=None,
-                connection_drawing_spec=vision.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1))
-
-        if j % 3 == 0 and face_embedding is not None:
-            if not ind_p:
-                for name, ref_emb in fdi.items():
-                    emb_norm = face_embedding / np.linalg.norm(face_embedding)
-                    ref_norm = ref_emb / np.linalg.norm(ref_emb)
-                    sim = float(np.dot(emb_norm, ref_norm))
-                    if sim > 0.35:
-                        print('Привет {}!'.format(name))
-                        print('нажмите Q чтобы продолжить')
-                        ind_p,ind_d,ind_u=1,0,1
-            if not ind_u:
-                print('Пользователь не распознан')
-                ind_u,ind_d=1,0
-    cv2.imshow('camera', image_resize(frame, height = 300))
-    cv2.moveWindow('camera', 600,400)
-    if cv2.waitKey(1) == -1 and kb_hit():
-        ch = kb_get()
-        if ch and ch.lower() == 'q':
-            print('вы нажали q. Переход к эмоциям...')
-            break
-    j+=1
-cv2.destroyAllWindows()
-
-import pickle
-
-# ── Единый маппинг EN → RU для всех LightGBM моделей (определён ниже в коде) ──
+# ── Геометрические признаки ──────────────────────────
 
 def compute_geometric_features(face_landmarks, landmark_indices=None):
-    """Вычисляет расстояния от кончика носа (landmark 4) до выбранных лендмарок,
-    нормированные на межзрачковое расстояние (landmarks 33 ↔ 263).
-
-    Если landmark_indices передан (list[int]), возвращаются признаки только для
-    указанных индексов. Иначе — для всех лендмарок (468 или 478)."""
+    """Расстояния от кончика носа (landmark 4) до выбранных точек,
+    нормированные на межзрачковое расстояние (33 ↔ 263)."""
     pts = np.array([[lm.x, lm.y, lm.z] for lm in face_landmarks], dtype=np.float32)
     nose_tip = pts[4]
     left_eye = pts[33]
@@ -177,150 +143,211 @@ def compute_geometric_features(face_landmarks, landmark_indices=None):
     interocular = np.linalg.norm(left_eye - right_eye)
     if interocular < 1e-6:
         interocular = 1.0
-    # Если заданы индексы — выбираем только нужные лендмарки
     if landmark_indices is not None:
         pts = pts[landmark_indices]
     dists = np.linalg.norm(pts - nose_tip, axis=1) / interocular
-    return dists.reshape(1, -1)   # shape (1, N)
+    return dists.reshape(1, -1)
 
-# ── Фаза 2: эмоции ───────────────────────────────────
-nn=20
-P_em=0.5
+# ── Инициализация ────────────────────────────────────
 
-# ── Загрузка классификатора: regions (167 признаков) → AffectNet 7cls (478) → старая 468 → EfficientNet ──
+# Камера
+cam_path = find_camera()
+if cam_path is None:
+    print("❌ Камера не найдена. Проверь: ls /dev/video*")
+    exit(1)
+video_capture = cv2.VideoCapture(cam_path, cv2.CAP_V4L2)
+video_capture.set(3, 640)
+video_capture.set(4, 480)
+
+# Face ID (SCRFD + ArcFace)
+face_id_detector = FaceID()
+
+# MediaPipe FaceLandmarker
+_mp_base = mp_python.BaseOptions(model_asset_path=_MODEL_PATH)
+_mp_opts = vision.FaceLandmarkerOptions(
+    base_options=_mp_base,
+    num_faces=1,
+    running_mode=vision.RunningMode.IMAGE,
+)
+face_landmarker = vision.FaceLandmarker.create_from_options(_mp_opts)
+
+# Галерея эталонов
+IMG_NAMES = ['p_V.jpg']
+NAMES = ['Вадим']
+gallery = {}
+for img_name, name in zip(IMG_NAMES, NAMES):
+    img = cv2.imread(_os.path.join(REFERENCES_DIR, img_name))
+    emb = face_id_detector.get_embedding(img)
+    if emb is not None:
+        gallery[name] = emb
+        print(f"  [Галерея] {name}: эмбеддинг {emb.shape}")
+    else:
+        print(f"  [Галерея] {name}: лицо не найдено")
+
+# LightGBM классификатор эмоций
 use_lgb = False
 lgb_clf = None
-lgb_landmark_indices = None  # список индексов для модели с отбором регионов
+lgb_landmark_indices = None
 _fallback_msg = ""
 try:
-    # 1) Новая модель с отбором регионов (167 признаков)
     _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_emotion_regions.pkl')
     _lgb_data = pickle.load(open(_lgb_path, 'rb'))
-    # Формат: {'model': LGBMClassifier, 'landmark_indices': [167 индексов], 'num_features': 167}
     lgb_clf = _lgb_data['model']
     lgb_landmark_indices = _lgb_data['landmark_indices']
     use_lgb = True
-    print(f"[Фаза 2] LightGBM Emotion Regions ({_lgb_data['num_features']} признаков) загружен")
+    print(f"[Эмоции] LightGBM Regions ({_lgb_data['num_features']} признаков) загружен")
 except Exception as e:
-    _fallback_msg = f"Regions не загружен: {e}"
+    _fallback_msg = f"Regions: {e}"
     try:
-        # 2) AffectNet 7cls (478 признаков, все лендмарки)
         _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_affectnet_7cls.pkl')
         lgb_clf = pickle.load(open(_lgb_path, 'rb'))
         use_lgb = True
-        print("[Фаза 2] LightGBM AffectNet 7 классов (478 признаков) загружен")
+        print("[Эмоции] LightGBM AffectNet 7 классов загружен")
     except Exception as e2:
-        _fallback_msg = f"AffectNet не загружен: {e2}"
+        _fallback_msg += f" | AffectNet: {e2}"
         try:
-            # 3) Старая 468-модель
             _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
             lgb_clf = pickle.load(open(_lgb_path, 'rb'))
             use_lgb = True
-            lgb_landmark_indices = list(range(468))  # обрезаем до 468 (модель не ждёт 478)
-            print("[Фаза 2] LightGBM (468 признаков, старая модель) загружен")
+            lgb_landmark_indices = list(range(468))
+            print("[Эмоции] LightGBM 468 (старая модель) загружен")
         except Exception as e3:
-            print(f"[Фаза 2] {_fallback_msg}; 468-модель тоже не загружена: {e3}")
-            print("[Фаза 2] LightGBM не найден, fallback на EfficientNet")
+            print(f"[Эмоции] LightGBM не загружен: {_fallback_msg} | 468: {e3}")
 
 if not use_lgb:
     from emotion import EmotionClassifier
     ec = EmotionClassifier(use_gpu=True)
-font= ImageFont.truetype(font_path, 18)
-emotions=['Радость', 'Удивление', 'Грусть', 'Злость', 'Отвращение', 'Нейтральная', 'Страх']
-pictures=['1.jpg','2.jpg','3.jpg','4.jpg','5.jpg','6.jpg','7.jpg']
-print("[Фаза 2] Тренировка эмоций.")
+    print("[Эмоции] Fallback на EfficientNet")
 
-for i, em in enumerate(emotions):
-    tries = 0
-    emotion_result = 0
-    max_tries = 5
-    while emotion_result < P_em and tries < max_tries:
-        tries += 1
-        frames_with_face = 0
-        img = cv2.imread(assets_path + pictures[i])
-        cv2.imshow('example', img)
-        cv2.moveWindow('example', 150, 150)
-        print("Покажите нам " + em)
-        for j in range(nn):
-            em_idx = 0  # всегда определён, даже если нет детекций
-            ret, frame = video_capture.read()
-            bboxes, _ = face_id_detector.app.det_model.detect(frame)
-            if bboxes.shape[0] == 0:
-                detections = []
-            else:
-                detections = [(int(b[0]), int(b[1]), int(b[2]), int(b[3])) for b in bboxes]
-            if len(detections) == 0:
-                print(em_idx)
-            for k, d in enumerate(detections):
-                frames_with_face += 1
+# Маппинги
+_LGB_IDX_TO_EN = ["anger", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
+_ALL_LGB_RU = {
+    "anger": "Злость", "angry": "Злость",
+    "disgust": "Отвращение", "fear": "Страх",
+    "happy": "Радость", "neutral": "Нейтральная",
+    "sad": "Грусть", "surprise": "Удивление",
+}
+EMOTIONS_RU = ['Злость', 'Отвращение', 'Страх', 'Радость', 'Нейтральная', 'Грусть', 'Удивление']
 
-                # ── Детекция лендмарок MediaPipe (общая для обоих методов) ──
-                cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 0, 255), 1)
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-                res = face_landmarker.detect(mp_img)
-                if res.face_landmarks:
-                    vision.drawing_utils.draw_landmarks(
-                        frame, res.face_landmarks[0],
-                        vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=vision.drawing_utils.DrawingSpec(color=(255, 255, 255), thickness=1))
+# Шрифты
+font_name = ImageFont.truetype(FONT_PATH, 22) if _os.path.exists(FONT_PATH) else ImageFont.load_default()
+font_emotion = ImageFont.truetype(FONT_PATH, 22) if _os.path.exists(FONT_PATH) else ImageFont.load_default()
+font_fps = ImageFont.truetype(FONT_PATH, 14) if _os.path.exists(FONT_PATH) else ImageFont.load_default()
 
-                # ── Предикт эмоции: LightGBM (геометрия) либо EfficientNet (fallback) ──
-                if use_lgb and res.face_landmarks:
-                    X = compute_geometric_features(res.face_landmarks[0],
-                                                   landmark_indices=lgb_landmark_indices)
-                    pred_en_idx = int(lgb_clf.predict(X)[0])
-                    # Маппинг индекса → имя эмоции (classes_ модели — целые числа 0-6)
-                    _LGB_IDX_TO_EN = ["anger", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
-                    try:
-                        name_en = _LGB_IDX_TO_EN[int(pred_en_idx)]
-                    except (IndexError, ValueError):
-                        name_en = str(pred_en_idx)
-                    # Единый маппинг EN → RU (покрывает оба набора классов)
-                    _ALL_LGB_RU = {
-                        "anger": "Злость", "angry": "Злость",
-                        "disgust": "Отвращение", "fear": "Страх",
-                        "happy": "Радость", "neutral": "Нейтральная",
-                        "sad": "Грусть", "surprise": "Удивление",
-                    }
-                    name_ru = _ALL_LGB_RU.get(name_en, name_en)
-                    if name_ru in emotions:
-                        em_idx = emotions.index(name_ru) + 1
-                elif not use_lgb:
-                    if j % 1 == 0:
-                        b = bboxes[k]
-                        x1, y1, x2, y2 = int(b[0]), int(b[1]), int(b[2]), int(b[3])
-                        face_crop = frame[y1:y2, x1:x2]
-                        if face_crop.size > 0:
-                            name_ru, conf = ec.predict(face_crop)
-                            if name_ru in emotions:
-                                em_idx = emotions.index(name_ru) + 1
+# ── Главный цикл ─────────────────────────────────────
 
-                print(em_idx)
-                if em_idx == i + 1:
-                    emotion_result += 1
+print("\n[Запуск] Q — выход.\n")
+kb_init()
 
-                # ── Отрисовка текста эмоции ──
-                img_pil = Image.fromarray(frame)
-                draw = ImageDraw.Draw(img_pil)
-                display_idx = em_idx - 1 if em_idx > 0 else 0
-                draw.text((d[0], d[1] - 20), emotions[display_idx], font=font, fill=(0, 0, 255))
-                frame = np.array(img_pil)
-            cv2.waitKey(10)
-            cv2.imshow('camera', image_resize(frame, height=600))
-            cv2.moveWindow('camera', 600, 150)
-        emotion_result = emotion_result / nn
-        print("[DEBUG] tries={}, emotion_result={:.2f}, frames_with_face={}".format(tries, emotion_result, frames_with_face))
-        if emotion_result >= P_em:
-            print("Молодец  " + "{0:.2f}".format(emotion_result * 100) + '%')
-            sleep(1)
-        elif tries >= max_tries:
-            print("Пропускаем {} — лицо не найдено".format(em))
-            sleep(1)
-        else:
-            print("Попробуте еще " + "{0:.2f}".format(emotion_result * 100) + '%')
-            sleep(0.5)
+frame_count = 0
+last_frame_time = time.perf_counter()
+fps_val = 0.0
+current_name = None
+current_emotion = "—"
+emotion_conf = 0.0
+last_detections = []  # кеш bbox между детекциями
+
+while True:
+    ret, frame = video_capture.read()
+    if not ret:
+        continue
+
+    face_embedding = None
+
+    # ── Детекция (каждый DETECT_EVERY_N кадр) ──────
+    if frame_count % DETECT_EVERY_N == 0:
+        faces = face_id_detector.app.get(frame)
+        if faces:
+            best = max(faces, key=lambda f: f.get("det_score", 0))
+            bbox = best["bbox"]
+            face_embedding = np.asarray(best.get("embedding"), dtype=np.float32)
+            last_detections = [(int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))]
+
+    # ── На каждый кадр с лицом ────────────────────
+    if last_detections:
+        d = last_detections[0]
+        if DRAW_BBOX:
+            cv2.rectangle(frame, (d[0], d[1]), (d[2], d[3]), (0, 255, 0), 1)
+
+        # MediaPipe landmarks (всегда по последнему bbox)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+        res = face_landmarker.detect(mp_img)
+
+        if res.face_landmarks:
+            if DRAW_LANDMARKS:
+                vision.drawing_utils.draw_landmarks(
+                    frame, res.face_landmarks[0],
+                    vision.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=vision.drawing_utils.DrawingSpec(
+                        color=(255, 255, 255), thickness=1))
+
+            # ── Эмоция (LightGBM) ─────────────────
+            if use_lgb:
+                X = compute_geometric_features(
+                    res.face_landmarks[0],
+                    landmark_indices=lgb_landmark_indices)
+                proba = lgb_clf.predict_proba(X)[0]
+                pred_idx = int(proba.argmax())
+                emotion_conf = float(proba.max())
+                try:
+                    name_en = _LGB_IDX_TO_EN[pred_idx]
+                except (IndexError, ValueError):
+                    name_en = str(pred_idx)
+                current_emotion = _ALL_LGB_RU.get(name_en, name_en)
+
+        # ── Face ID (каждый FACEID_EVERY_N кадр) ──
+        if frame_count % FACEID_EVERY_N == 0 and face_embedding is not None:
+            emb_norm = face_embedding / np.linalg.norm(face_embedding)
+            best_sim = 0.0
+            best_name = None
+            for name, ref_emb in gallery.items():
+                ref_norm = ref_emb / np.linalg.norm(ref_emb)
+                sim = float(np.dot(emb_norm, ref_norm))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_name = name
+            current_name = best_name if best_sim > FACEID_THRESHOLD else None
+
+    else:
+        current_name = None
+        current_emotion = "—"
+
+    # ── Оверлей (PIL, кириллица) ──────────────────
+    img_pil = Image.fromarray(frame)
+    draw = ImageDraw.Draw(img_pil)
+
+    if current_name:
+        draw.text((10, 10), current_name, font=font_name, fill=(0, 255, 0))
+    if current_emotion != "—":
+        emo_text = f"{current_emotion} ({emotion_conf:.0%})"
+        draw.text((10, 40), emo_text, font=font_emotion, fill=(0, 200, 255))
+
+    # FPS (мгновенный + сглаженный)
+    now = time.perf_counter()
+    delta = now - last_frame_time
+    last_frame_time = now
+    instant_fps = 1.0 / delta if delta > 0 else 0
+    fps_val = 0.9 * fps_val + 0.1 * instant_fps if fps_val > 0 else instant_fps
+    draw.text((10, 70), f"FPS: {fps_val:.0f}", font=font_fps, fill=(200, 200, 200))
+
+    frame = np.array(img_pil)
+
+    # ── Отрисовка ─────────────────────────────────
+    cv2.imshow('MVM', image_resize(frame, height=540))
+    cv2.moveWindow('MVM', 100, 100)
+
+    # ── Клавиатура ────────────────────────────────
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q') or (key == -1 and kb_hit() and kb_get() == 'q'):
+        print("\n[Выход] Q нажата.")
+        break
+
+    frame_count += 1
+
+# ── Очистка ──────────────────────────────────────────
 video_capture.release()
 kb_restore()
 cv2.destroyAllWindows()
+print(f"[Стоп] Кадров: {frame_count}")
