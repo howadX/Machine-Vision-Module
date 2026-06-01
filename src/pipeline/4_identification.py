@@ -219,14 +219,14 @@ if not use_lgb:
     ec = EmotionClassifier(use_gpu=True)
     print("[Эмоции] Fallback на EfficientNet")
 
-# Модель Б: позы тела (COCO 17 точек → standing/sitting/lying)
+# Модель Б: позы тела (33 Holistic точки → standing/sitting/lying)
 body_clf = None
 try:
-    _body_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_body_posture.pkl')
+    _body_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_body_holistic_33.pkl')
     body_clf = pickle.load(open(_body_path, 'rb'))
-    print("[Тело] LightGBM позы (78.4% на COCO, 17 точек) загружен")
+    print("[Тело] LightGBM Holistic 44 признака (71.7% на COCO) загружен")
 except Exception as e:
-    print(f"[Тело] Модель не загружена: {e}. Fallback на эвристики.")
+    print(f"[Тело] Модель не загружена: {e}")
 
 POSTURE_NAMES = ["standing", "sitting", "lying"]
 POSTURE_RU = {"standing": "стоит", "sitting": "сидит", "lying": "лежит"}
@@ -318,27 +318,40 @@ while True:
                     name_en = str(pred_idx)
                 current_emotion = _ALL_LGB_RU.get(name_en, name_en)
 
-        # ── Модель Б: ТЕЛО → поза ──────────────────
+        # ── Модель Б: ТЕЛО → поза (2 этапа) ──────
         if results.pose_landmarks:
             pose_lm = results.pose_landmarks
-            if body_clf is not None:
-                # Маппинг 33 MediaPipe → 17 COCO ключевых точек
-                mp_to_coco = [0, 2, 5, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28]
-                pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_lm], dtype=np.float32)
-                coco_pts = pts[mp_to_coco]  # (17, 4)
-                
-                # Референс = центр таза, нормализатор = межплечевое
-                hip_center = (coco_pts[11, :2] + coco_pts[12, :2]) / 2  # COCO 11,12 = бёдра
-                shoulder_w = np.linalg.norm(coco_pts[5, :2] - coco_pts[6, :2])
-                if shoulder_w < 1e-6: shoulder_w = 1.0
-                
-                X = np.linalg.norm(coco_pts[:, :2] - hip_center, axis=1) / shoulder_w
-                X = X.reshape(1, -1)
-                
+            # Этап 1: эвристика lying (foot/head > 1.15 → стопы дальше от таза = лежит)
+            pts_xy = np.array([[lm.x, lm.y] for lm in pose_lm])
+            hip_center = (pts_xy[23] + pts_xy[24]) / 2
+            shoulder_w = np.linalg.norm(pts_xy[11] - pts_xy[12]) or 1.0
+            d_head = np.linalg.norm(pts_xy[0] - hip_center) / shoulder_w  # нос
+            d_feet = (np.linalg.norm(pts_xy[27] - hip_center) + np.linalg.norm(pts_xy[28] - hip_center)) / 2 / shoulder_w
+            
+            foot_head_ratio = d_feet / max(d_head, 1e-6)
+            
+            if foot_head_ratio > 1.25:
+                body_posture = "lying"
+            elif body_clf is not None:
+                # Этап 2: ML для standing vs sitting
+                pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_lm], dtype=np.float64)
+                d = np.linalg.norm(pts[:, :2] - hip_center, axis=1) / max(shoulder_w, 1e-6)
+                extra = [
+                    d[11]/max(d[23],1e-6), d[12]/max(d[24],1e-6),
+                    (d[11]+d[12])/max(d[23]+d[24],1e-6),
+                    d[25]/max(d[26],1e-6), d[27]/max(d[28],1e-6),
+                    d[13]/max(d[14],1e-6), d[15]/max(d[16],1e-6),
+                    d[0]/max((d[23]+d[24])/2,1e-6),
+                    (d[27]+d[28])/2 / max(d[0],1e-6),
+                    abs(d[27]-d[28])/max(d[23]+d[24],1e-6),
+                    (d[29]+d[30])/max(d[27]+d[28],1e-6),
+                ]
+                X = np.concatenate([d, extra] + [[d[11]/max(d[23],1e-6)], [d[12]/max(d[24],1e-6)], [foot_head_ratio]]).reshape(1, -1)
+                X = X[:, :38]  # модель на 38 признаках
                 pred = int(body_clf.predict(X)[0])
-                body_posture = POSTURE_NAMES[pred]
+                body_posture = POSTURE_NAMES[pred] if pred <= 1 else "sitting"
             else:
-                body_posture = "unknown"
+                body_posture = "upright"
             
             body_status = f"тело: {POSTURE_RU.get(body_posture, body_posture)}"
             if DRAW_POSE:
