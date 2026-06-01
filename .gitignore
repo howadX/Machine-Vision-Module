@@ -20,6 +20,7 @@ models/face_detection/shape_predictor_68_face_landmarks.dat
 models/face_recognition/dlib_face_recognition_resnet_model_v1.dat
 models/emotion/svm_dat.dat
 models/emotion/svm_dat1.dat
+data/datasets/
 
 # EEG-сырые данные (тяжёлые JSON)
 eeg/raw/JsonData/
@@ -42,3 +43,7 @@ Thumbs.db
 models/descriptors/geometric_affectnet.csv
 data/datasets/affectnet/
 data/datasets/rusemo/
+data/datasets/coco/val2017/
+data/datasets/coco/val2017.zip
+data/datasets/coco/annotations/
+data/datasets/coco/annotations.zip
