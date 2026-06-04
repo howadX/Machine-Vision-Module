@@ -25,7 +25,9 @@ def _setup_cuda_libs():
     # face_id.py лежит в src/utils/ → 2 уровня вверх = корень проекта, + venv/
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
     venv_root = os.path.join(project_root, "venv")
-    nvidia_base = os.path.join(venv_root, "lib", "python3.14", "site-packages", "nvidia")
+    # Авто-определение версии Python в venv
+    py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    nvidia_base = os.path.join(venv_root, "lib", py_ver, "site-packages", "nvidia")
     if not os.path.isdir(nvidia_base):
         return
     # Предзагружаем ключевые .so
@@ -64,7 +66,7 @@ class FaceID:
         Args:
             model_name: buffalo_l (SCRFD + ArcFace) — лучший баланс скорость/качество.
                         Также доступны: buffalo_m, buffalo_s, antelopev2.
-            use_gpu: True = CUDA (твоя RTX 4070 Ti), False = CPU (onnxruntime).
+            use_gpu: True = CUDA (RTX 4070 Ti), False = CPU (onnxruntime).
         """
         self.model_name = model_name
         providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if use_gpu else ["CPUExecutionProvider"]

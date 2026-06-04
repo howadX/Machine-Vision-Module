@@ -1,0 +1,193 @@
+{
+  "dataset": {
+    "source": "local Kaggle-style AffectNet under data/datasets/affectnet/Train",
+    "descriptor_csv": "/home/dawoh/repos/Machine Vision Module/models/descriptors/geometric_affectnet.csv",
+    "original_rows_8class": 16052,
+    "used_rows_7class_no_contempt": 14496,
+    "features": 478,
+    "class_counts": [
+      1485,
+      1223,
+      1505,
+      2337,
+      2758,
+      3074,
+      2114
+    ],
+    "label_order": [
+      "anger",
+      "disgust",
+      "fear",
+      "happy",
+      "neutral",
+      "sad",
+      "surprise"
+    ],
+    "split": "fixed stratified 80/20 holdout, random_state=2026; contempt dropped before split"
+  },
+  "results": {
+    "dummy_stratified": {
+      "holdout_accuracy": 0.1596551724137931,
+      "holdout_balanced_accuracy": 0.14763676480254273,
+      "seconds": 0.0
+    },
+    "lgb_all_478": {
+      "holdout_accuracy": 0.5155172413793103,
+      "holdout_balanced_accuracy": 0.47716494738172477,
+      "seconds": 39.43
+    },
+    "select167_lgb": {
+      "holdout_accuracy": 0.4496551724137931,
+      "holdout_balanced_accuracy": 0.41410634732787255,
+      "seconds": 41.82
+    },
+    "logreg_scaled": {
+      "holdout_accuracy": 0.5596551724137931,
+      "holdout_balanced_accuracy": 0.5467681280027584,
+      "seconds": 149.55
+    },
+    "linear_svc_calibrated": {
+      "holdout_accuracy": 0.5782758620689655,
+      "holdout_balanced_accuracy": 0.5285466095890187,
+      "seconds": 75.99,
+      "confusion_matrix": [
+        [
+          106,
+          28,
+          10,
+          12,
+          51,
+          77,
+          13
+        ],
+        [
+          27,
+          74,
+          8,
+          22,
+          32,
+          61,
+          21
+        ],
+        [
+          20,
+          6,
+          92,
+          4,
+          31,
+          60,
+          88
+        ],
+        [
+          1,
+          2,
+          2,
+          408,
+          30,
+          15,
+          9
+        ],
+        [
+          18,
+          6,
+          11,
+          19,
+          361,
+          101,
+          36
+        ],
+        [
+          31,
+          17,
+          12,
+          28,
+          91,
+          401,
+          35
+        ],
+        [
+          18,
+          7,
+          51,
+          23,
+          52,
+          37,
+          235
+        ]
+      ],
+      "classification_report": {
+        "anger": {
+          "precision": 0.4796380090497738,
+          "recall": 0.3569023569023569,
+          "f1-score": 0.4092664092664093,
+          "support": 297.0
+        },
+        "disgust": {
+          "precision": 0.5285714285714286,
+          "recall": 0.3020408163265306,
+          "f1-score": 0.38441558441558443,
+          "support": 245.0
+        },
+        "fear": {
+          "precision": 0.4946236559139785,
+          "recall": 0.30564784053156147,
+          "f1-score": 0.37782340862423,
+          "support": 301.0
+        },
+        "happy": {
+          "precision": 0.7906976744186046,
+          "recall": 0.8736616702355461,
+          "f1-score": 0.8301119023397762,
+          "support": 467.0
+        },
+        "neutral": {
+          "precision": 0.5570987654320988,
+          "recall": 0.6539855072463768,
+          "f1-score": 0.6016666666666667,
+          "support": 552.0
+        },
+        "sad": {
+          "precision": 0.5332446808510638,
+          "recall": 0.6520325203252032,
+          "f1-score": 0.5866861741038771,
+          "support": 615.0
+        },
+        "surprise": {
+          "precision": 0.5377574370709383,
+          "recall": 0.5555555555555556,
+          "f1-score": 0.5465116279069767,
+          "support": 423.0
+        },
+        "accuracy": 0.5782758620689655,
+        "macro avg": {
+          "precision": 0.5602330930439837,
+          "recall": 0.5285466095890187,
+          "f1-score": 0.5337831104747887,
+          "support": 2900.0
+        },
+        "weighted avg": {
+          "precision": 0.5700087642049338,
+          "recall": 0.5782758620689655,
+          "f1-score": 0.5659405040693263,
+          "support": 2900.0
+        }
+      }
+    },
+    "extra_trees": {
+      "holdout_accuracy": 0.47413793103448276,
+      "holdout_balanced_accuracy": 0.42309322538786176,
+      "seconds": 1.38
+    }
+  },
+  "best_model": "linear_svc_calibrated",
+  "best_train_cv3_accuracy": [
+    0.58277289187791,
+    0.5689521345407503,
+    0.5873221216041398
+  ],
+  "best_train_cv3_mean": 0.5796823826742667,
+  "target_70_reached_on_holdout": false,
+  "saved_experimental_model": "/home/dawoh/repos/Machine Vision Module/models/emotion/kaggle_affectnet_linear_svc.pkl",
+  "saved_experimental_model_holdout_accuracy": 0.5782758620689655,
+  "saved_experimental_model_holdout_balanced_accuracy": 0.5285466095890187
+}

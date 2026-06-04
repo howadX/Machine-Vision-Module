@@ -184,35 +184,47 @@ for img_name, name in zip(IMG_NAMES, NAMES):
     else:
         print(f"  [Галерея] {name}: лицо не найдено")
 
-# LightGBM классификатор эмоций
+# LightGBM/экспериментальный классификатор эмоций
 use_lgb = False
 lgb_clf = None
 lgb_landmark_indices = None
+lgb_label_order = ["anger", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 _fallback_msg = ""
 try:
-    _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_emotion_regions.pkl')
+    _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'kaggle_affectnet_linear_svc.pkl')
     _lgb_data = pickle.load(open(_lgb_path, 'rb'))
     lgb_clf = _lgb_data['model']
     lgb_landmark_indices = _lgb_data['landmark_indices']
+    lgb_label_order = _lgb_data.get('label_order', lgb_label_order)
     use_lgb = True
-    print(f"[Эмоции] LightGBM Regions ({_lgb_data['num_features']} признаков) загружен")
+    print(f"[Эмоции] Experimental Kaggle AffectNet LinearSVC ({_lgb_data['num_features']} признаков) загружен")
 except Exception as e:
-    _fallback_msg = f"Regions: {e}"
+    _fallback_msg = f"Experimental: {e}"
     try:
-        _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_affectnet_7cls.pkl')
-        lgb_clf = pickle.load(open(_lgb_path, 'rb'))
+        _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_emotion_regions.pkl')
+        _lgb_data = pickle.load(open(_lgb_path, 'rb'))
+        lgb_clf = _lgb_data['model']
+        lgb_landmark_indices = _lgb_data['landmark_indices']
+        lgb_label_order = _lgb_data.get('label_order', lgb_label_order)
         use_lgb = True
-        print("[Эмоции] LightGBM AffectNet 7 классов загружен")
-    except Exception as e2:
-        _fallback_msg += f" | AffectNet: {e2}"
+        print(f"[Эмоции] LightGBM Regions ({_lgb_data['num_features']} признаков) загружен")
+    except Exception as e:
+        _fallback_msg += f" | Regions: {e}"
         try:
-            _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
+            _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_affectnet_7cls.pkl')
             lgb_clf = pickle.load(open(_lgb_path, 'rb'))
             use_lgb = True
-            lgb_landmark_indices = list(range(468))
-            print("[Эмоции] LightGBM 468 (старая модель) загружен")
-        except Exception as e3:
-            print(f"[Эмоции] LightGBM не загружен: {_fallback_msg} | 468: {e3}")
+            print("[Эмоции] LightGBM AffectNet 7 классов загружен")
+        except Exception as e2:
+            _fallback_msg += f" | AffectNet: {e2}"
+            try:
+                _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'lightgbm_geometric.pkl')
+                lgb_clf = pickle.load(open(_lgb_path, 'rb'))
+                use_lgb = True
+                lgb_landmark_indices = list(range(468))
+                print("[Эмоции] LightGBM 468 (старая модель) загружен")
+            except Exception as e3:
+                print(f"[Эмоции] LightGBM не загружен: {_fallback_msg} | 468: {e3}")
 
 if not use_lgb:
     from emotion import EmotionClassifier
@@ -313,7 +325,7 @@ while True:
                 pred_idx = int(proba.argmax())
                 emotion_conf = float(proba.max())
                 try:
-                    name_en = _LGB_IDX_TO_EN[pred_idx]
+                    name_en = str(lgb_label_order[pred_idx])
                 except (IndexError, ValueError):
                     name_en = str(pred_idx)
                 current_emotion = _ALL_LGB_RU.get(name_en, name_en)
