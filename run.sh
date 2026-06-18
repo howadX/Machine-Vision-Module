@@ -4,7 +4,7 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV="$PROJECT_DIR/venv"
-PIPELINE_DIR="$PROJECT_DIR/src/pipeline"
+PIPELINE_DIR="$PROJECT_DIR/pipeline"
 
 if [ ! -d "$VENV" ]; then
     echo "[ERROR] venv не найден. Запусти сначала: python3 -m venv venv && venv/bin/pip install -r requirements.txt"
@@ -18,4 +18,4 @@ echo "=== EmoZid v4: идентификация + тренировка эмоц�
 echo "Нажми Q в окне камеры для выхода в меню сценариев"
 echo "===================================================="
 
-exec python3 "$PIPELINE_DIR/4_identification.py"
+exec python3 "$PROJECT_DIR/pipeline/rlm.py"
