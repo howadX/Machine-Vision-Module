@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""sight.py — Полный визуальный анализ для Sight.
+"""sight.py — Полный визуальный анализ для Sight (v2: Pose-first + two-pass FaceLM).
+
 Вызов: python sight.py [--json]
-Архитектура: два кропа на человека (лицо + тело).
-Эмоции: MLP (PyTorch) на 468 геометрических признаках (FaceLandmarker).
-Поза: VAE (PoseVAE) + PoseClassifier на 33 COCO landmarks (PoseLandmarker).
+
+Архитектура:
+  PoseLandmarker (full frame) → body_bbox
+    └─ head_crop
+         └─ FaceLM PASS 1 → face_bbox + 5 kps
+              ├─ 5 kps → ArcFace (HD) → identity
+              ├─ tight_crop → FaceLM PASS 2 → MLP → emotion
+              └─ (far) HSEmotion CNN → emotion
+  VAE posture — прямо с PoseLM landmarks
 """
 import os, sys, glob, time, warnings, logging, pickle, json
 from contextlib import contextmanager
@@ -44,9 +51,7 @@ def suppress_stderr():
     devnull = os.open(os.devnull, os.O_WRONLY)
     os.dup2(devnull, 2)
     try: yield
-    finally:
-        os.dup2(old_err_fd, 2)
-        os.close(devnull); os.close(old_err_fd)
+    finally: os.dup2(old_err_fd, 2); os.close(devnull)
 
 with suppress_all():
     import cv2
@@ -59,36 +64,40 @@ with suppress_all():
 
 sys.path.insert(0, os.path.join(MVM_ROOT, 'core'))
 from face_id import FaceID
+from pose_vae import PoseVAE
+from pose_heads import PoseClassifier
+from pose_encoder import normalize_landmarks
+from emotion_hse import HSEmotionClassifier
 
 # ── Конфигурация ──────────────────────────────────────────
 GALLERY_DIR = os.path.join(MVM_ROOT, 'models', 'references')
 THRESHOLD = 0.35
 NAME_MAP = {'V': 'Вадим', 'D': 'Даня', 'N': 'Никита', 'B': 'Белла'}
 
-# MLP эмоции
 MLP_MODEL = os.path.join(MVM_ROOT, 'models', 'emotion', 'mlp_emotion.pth')
 MLP_SCALER = os.path.join(MVM_ROOT, 'models', 'emotion', 'mlp_emotion_scaler.pkl')
-MLP_CONFIG = os.path.join(MVM_ROOT, 'models', 'emotion', 'mlp_emotion_config.json')
-
-# VAE поза тела
 VAE_PATH = os.path.join(MVM_ROOT, 'models', 'emotion', 'vposer_coco33.pth')
 CLF_PATH = os.path.join(MVM_ROOT, 'models', 'emotion', 'pose_classifier.pth')
 CLF_CONFIG = os.path.join(MVM_ROOT, 'models', 'emotion', 'pose_classifier_config.json')
-
-# MediaPipe
-POSE_MODEL = os.path.join(MVM_ROOT, 'models', 'mediapipe', 'pose_landmarker.task')
 FACE_LM_MODEL = os.path.join(MVM_ROOT, 'models', 'mediapipe', 'face_landmarker.task')
+POSE_MODEL = os.path.join(MVM_ROOT, 'models', 'mediapipe', 'pose_landmarker.task')
 
-import json as _json
-with open(CLF_CONFIG) as f:
-    _clf_cfg = _json.load(f)
+with open(CLF_CONFIG) as f: _clf_cfg = json.load(f)
 POSTURE_CLASSES_RU = _clf_cfg['class_names_ru']
-POSTURE_CLASSES_EN = _clf_cfg['class_names']
 
 CLASSES = ['anger', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
-RU_MAP = {'anger':'Злость','disgust':'Отвращение','fear':'Страх',
-          'happy':'Радость','neutral':'Нейтральная','sad':'Грусть','surprise':'Удивление'}
-POSTURE_CLASSES_EN = POSTURE_CLASSES_EN  # уже определено выше
+RU_MAP = {
+    'anger': 'Злость', 'disgust': 'Отвращение', 'fear': 'Страх',
+    'happy': 'Радость', 'neutral': 'Нейтральная', 'sad': 'Грусть', 'surprise': 'Удивление',
+}
+HSE_RU_MAP = {
+    'Anger': 'Злость', 'Contempt': 'Презрение', 'Disgust': 'Отвращение',
+    'Fear': 'Страх', 'Happiness': 'Радость', 'Neutral': 'Нейтральная',
+    'Sadness': 'Грусть', 'Surprise': 'Удивление',
+}
+
+FACE_SIZE_THRESHOLD = 70  # px: лицо шире → 2-pass MLP, уже → HSEmotion
+FACELM_TO_ARCFACE = {'reye': 33, 'leye': 263, 'nose': 4, 'rmouth': 61, 'lmouth': 291}
 
 
 # ── MLP модель ────────────────────────────────────────────
@@ -111,60 +120,65 @@ def find_camera():
     devices = sorted(glob.glob('/dev/video*'), key=lambda x: int(x.replace('/dev/video','')))
     for dev in devices:
         idx = int(dev.replace('/dev/video',''))
-        for method in ['path','index']:
-            cap = cv2.VideoCapture(dev if method=='path' else idx, cv2.CAP_V4L2)
-            if cap.isOpened():
-                for _ in range(5):
-                    ret, frame = cap.read()
-                    if ret and frame is not None and frame.mean()>10:
-                        cap.release(); return dev
-                cap.release()
+        cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+        if cap.isOpened():
+            for _ in range(5):
+                ret, frame = cap.read()
+                if ret and frame is not None and frame.mean()>10:
+                    cap.release(); return dev
+            cap.release()
     return None
 
-def capture_frame(cam_path):
+def capture_frame_hd(cam_path):
     cam_idx = int(cam_path.replace('/dev/video',''))
-    ret, frame = False, None
     for _ in range(3):
         cap = cv2.VideoCapture(cam_path, cv2.CAP_V4L2)
         if not cap.isOpened(): cap = cv2.VideoCapture(cam_idx, cv2.CAP_V4L2)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,640); cap.set(cv2.CAP_PROP_FRAME_HEIGHT,480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         for __ in range(5): ret, frame = cap.read()
         cap.release()
-        if ret and frame is not None and frame.mean()>10: return frame
+        if ret and frame is not None and frame.mean() > 10:
+            frame_sd = cv2.resize(frame, (640, 480))
+            return frame, frame_sd
         time.sleep(0.3)
-    return None
+    return None, None
 
 
-# ── Кропы ─────────────────────────────────────────────────
-def crop_face(frame, bbox, pad_ratio=0.2):
-    x1,y1,x2,y2 = [int(v) for v in bbox]
-    h,w = frame.shape[:2]
-    fw, fh = x2-x1, y2-y1
-    px, py = int(fw*pad_ratio), int(fh*pad_ratio)
-    x1=max(0,x1-px); y1=max(0,y1-py)
-    x2=min(w,x2+px); y2=min(h,y2+py)
-    if x2<=x1 or y2<=y1: return None
-    return frame[y1:y2, x1:x2]
+# ── Детекция тел ──────────────────────────────────────────
+def detect_bodies(pose_lm, frame_rgb, w, h):
+    mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+    with suppress_stderr():
+        result = pose_lm.detect(mp_img)
+    bodies = []
+    if result.pose_landmarks:
+        for lm in result.pose_landmarks:
+            vis_torso = np.mean([lm[i].visibility for i in [11, 12, 23, 24]])
+            if vis_torso < 0.35: continue
+            xs = [min(max(p.x,0),1)*w for p in lm if p.visibility > 0.3]
+            ys = [min(max(p.y,0),1)*h for p in lm if p.visibility > 0.3]
+            if not xs: continue
+            bbox = [max(0, min(xs)), max(0, min(ys)), min(w, max(xs)), min(h, max(ys))]
+            pts = np.array([[p.x, p.y, p.z, p.visibility] for p in lm], dtype=np.float32)
+            bodies.append({'bbox': bbox, 'landmarks': lm, 'pts_33': pts})
+    return bodies
 
-def crop_body(frame, bbox, side_ratio=0.3, up_ratio=0.2, down_ratio=2.5):
-    x1,y1,x2,y2 = [int(v) for v in bbox]
-    h,w = frame.shape[:2]
-    fw, fh = x2-x1, y2-y1
-    px, pu, pd = int(fw*side_ratio), int(fh*up_ratio), int(fh*down_ratio)
-    x1=max(0,x1-px); y1=max(0,y1-pu)
-    x2=min(w,x2+px); y2=min(h,y2+pd)
-    if x2<=x1 or y2<=y1: return None
-    return frame[y1:y2, x1:x2]
+
+# ── Кроп головы ───────────────────────────────────────────
+def head_crop_from_body(frame, body_bbox, head_ratio=0.5):
+    x1, y1, x2, y2 = [int(v) for v in body_bbox]
+    h, w = frame.shape[:2]
+    body_h = y2 - y1; body_w = x2 - x1
+    if body_h < 40: return None, 0, 0
+    head_x1 = max(0, x1 - int(body_w * 0.3))
+    head_y1 = max(0, y1 - int(body_h * 0.4))
+    head_x2 = min(w, x2 + int(body_w * 0.3))
+    head_y2 = min(h, y1 + int(body_h * head_ratio))
+    if head_x2 <= head_x1 or head_y2 <= head_y1: return None, 0, 0
+    return frame[head_y1:head_y2, head_x1:head_x2], head_x1, head_y1
 
 
 # ── Сцена ─────────────────────────────────────────────────
-def estimate_distance(bbox, frame_shape):
-    x1,y1,x2,y2 = bbox
-    ratio = ((x2-x1)*(y2-y1))/(frame_shape[0]*frame_shape[1])
-    if ratio>0.12: return 'near'
-    elif ratio>0.04: return 'medium'
-    return 'far'
-
 def estimate_lighting(frame):
     m = float(frame.mean())
     if m>150: return 'bright',m
@@ -172,17 +186,15 @@ def estimate_lighting(frame):
     return 'dim',m
 
 
-# ── Эмоции (MLP) ──────────────────────────────────────────
+# ── Эмоции ────────────────────────────────────────────────
 def compute_features_468(face_landmarks):
-    """468 нормированных расстояний от кончика носа."""
-    pts = np.array([[lm.x,lm.y,lm.z] for lm in face_landmarks], dtype=np.float32)
+    pts = np.array([[lm.x, lm.y, lm.z] for lm in face_landmarks], dtype=np.float32)
     nose_tip=pts[4]; left_eye=pts[33]; right_eye=pts[263]
     interocular = np.linalg.norm(left_eye-right_eye)
     if interocular<1e-6: interocular=1.0
     return (np.linalg.norm(pts-nose_tip, axis=1)/interocular)[:468]
 
 def classify_emotion_mlp(face_landmarks, model, scaler, device):
-    """MLP: 468 признаков → StandardScaler → model → (emotion_ru, confidence)."""
     feats = compute_features_468(face_landmarks).reshape(1, -1)
     feats_scaled = scaler.transform(feats).astype(np.float32)
     with torch.no_grad():
@@ -190,49 +202,33 @@ def classify_emotion_mlp(face_landmarks, model, scaler, device):
         logits = model(tensor)
         proba = torch.softmax(logits, dim=1)[0].cpu().numpy()
     pred_idx = int(proba.argmax())
-    emotion_ru = RU_MAP.get(CLASSES[pred_idx], CLASSES[pred_idx])
-    return emotion_ru, round(float(proba.max()), 2)
+    return RU_MAP.get(CLASSES[pred_idx], CLASSES[pred_idx]), round(float(proba.max()), 2)
 
 
-# ── Поза (VAE + PoseClassifier) ───────────────────────────
+# ── Поза ──────────────────────────────────────────────────
 def load_vae_pose(device):
-    """Загружает VAE + PoseClassifier."""
-    from pose_vae import PoseVAE
-    from pose_heads import PoseClassifier
-    import json as _j
-
     vae_ckpt = torch.load(VAE_PATH, map_location=device, weights_only=True)
     vae_cfg = vae_ckpt['config']
     vae = PoseVAE(
         input_dim=vae_cfg['input_dim'], latent_dim=vae_cfg['latent_dim'],
         hidden_dims=tuple(vae_cfg['hidden_dims']), dropout=vae_cfg['dropout'],
     ).to(device)
-    vae.load_state_dict(vae_ckpt['model_state_dict'])
-    vae.eval()
+    vae.load_state_dict(vae_ckpt['model_state_dict']); vae.eval()
 
-    with open(CLF_CONFIG) as f:
-        clf_cfg = _j.load(f)
+    with open(CLF_CONFIG) as f: clf_cfg = json.load(f)
     clf = PoseClassifier(
         latent_dim=clf_cfg['latent_dim'], num_classes=clf_cfg['num_classes'],
         hidden_dim=clf_cfg['hidden_dim'], dropout=clf_cfg['dropout'],
     ).to(device)
     clf_ckpt = torch.load(CLF_PATH, map_location=device, weights_only=True)
-    clf.load_state_dict(clf_ckpt['model_state_dict'])
-    clf.eval()
-
-    return vae, clf, clf_cfg['class_names_ru'], clf_cfg['class_names']
-
+    clf.load_state_dict(clf_ckpt['model_state_dict']); clf.eval()
+    return vae, clf, clf_cfg['class_names_ru']
 
 def classify_posture_vae(pose_landmarks, vae, clf, class_names, device):
-    """VAE + PoseClassifier: landmarks → z → класс позы + confidence."""
-    from pose_encoder import normalize_landmarks
-    import numpy as np
-
     pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_landmarks], dtype=np.float32)
     norm, _meta = normalize_landmarks(pts)
     flat = norm.reshape(1, -1).astype(np.float32)
     x = torch.from_numpy(flat).to(device)
-
     with torch.no_grad():
         z = vae.encode_to_z(x)
         logits = clf(z)
@@ -240,37 +236,15 @@ def classify_posture_vae(pose_landmarks, vae, clf, class_names, device):
         recon, _, _ = vae(x)
         recon_err = float(torch.nn.functional.mse_loss(recon, x).item())
         logpz = float(vae.log_prob_z(x).item())
-
     pred_idx = int(probs.argmax())
     conf = float(probs.max())
     name = class_names[pred_idx] if pred_idx < len(class_names) else f'class_{pred_idx}'
-
     return name, conf, recon_err, logpz
 
 
-# ── Обработка кропов ──────────────────────────────────────
-def run_face_landmarker(landmarker, bgr_crop):
-    if bgr_crop is None: return None
-    rgb = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2RGB)
-    mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    with suppress_stderr():
-        res = landmarker.detect(mp_img)
-    if res.face_landmarks:
-        return res.face_landmarks[0]
-    return None
-
-def run_pose_landmarker(landmarker, bgr_crop):
-    if bgr_crop is None: return None
-    rgb = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2RGB)
-    mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    with suppress_stderr():
-        res = landmarker.detect(mp_img)
-    if res.pose_landmarks:
-        return res.pose_landmarks[0]
-    return None
-
-
-# ── Главное ───────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════
+#  MAIN
+# ═══════════════════════════════════════════════════════════
 def main():
     sys.stdout.reconfigure(line_buffering=True)
     use_json = '--json' in sys.argv
@@ -279,24 +253,31 @@ def main():
     if cam_path is None:
         result = {"camera":"none","error":"camera not found","face_count":0}
         if use_json: print(json.dumps(result, ensure_ascii=False))
+        else: print("camera: none\nerror: camera not found")
         return
 
-    frame = capture_frame(cam_path)
-    if frame is None:
+    frame_hd, frame_sd = capture_frame_hd(cam_path)
+    if frame_hd is None:
         result = {"camera":cam_path,"error":"failed to capture frame","face_count":0}
         if use_json: print(json.dumps(result, ensure_ascii=False))
+        else: print(f"camera: {cam_path}\nerror: failed to capture frame")
         return
 
-    h, w = frame.shape[:2]
-    lighting_level, lighting_val = estimate_lighting(frame)
+    h_hd, w_hd = frame_hd.shape[:2]
+    h_sd, w_sd = frame_sd.shape[:2]
+    scale_x = w_hd / w_sd; scale_y = h_hd / h_sd
+    lighting_level, lighting_val = estimate_lighting(frame_sd)
 
     # ── Модели ────────────────────────────────────────────
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     with suppress_all():
         face_id = FaceID(use_gpu=True)
-        
+
         face_lm_opts = vision.FaceLandmarkerOptions(
-            base_options=mp_python.BaseOptions(model_asset_path=FACE_LM_MODEL),
+            base_options=mp_python.BaseOptions(
+                model_asset_path=FACE_LM_MODEL,
+                delegate=mp_python.BaseOptions.Delegate.CPU,
+            ),
             output_face_blendshapes=False,
             output_facial_transformation_matrixes=False,
             num_faces=1, running_mode=vision.RunningMode.IMAGE,
@@ -305,39 +286,46 @@ def main():
 
         pose_opts = vision.PoseLandmarkerOptions(
             base_options=mp_python.BaseOptions(
-                model_asset_path=POSE_MODEL, delegate=mp_python.BaseOptions.Delegate.CPU,
+                model_asset_path=POSE_MODEL,
+                delegate=mp_python.BaseOptions.Delegate.CPU,
             ),
-            running_mode=vision.RunningMode.IMAGE, num_poses=1,
+            running_mode=vision.RunningMode.IMAGE, num_poses=3,
             output_segmentation_masks=False,
         )
         pose_lm = vision.PoseLandmarker.create_from_options(pose_opts)
 
-        vae, pose_clf, pose_names_ru, pose_names_en = load_vae_pose(device)
+        vae, pose_clf, pose_names_ru = load_vae_pose(device)
 
-        # MLP эмоции
         mlp = EmotionMLP()
         mlp.load_state_dict(torch.load(MLP_MODEL, map_location=device, weights_only=True))
-        mlp.to(device)
-        mlp.eval()
-        with open(MLP_SCALER, 'rb') as f:
-            scaler = pickle.load(f)
+        mlp.to(device); mlp.eval()
+        with open(MLP_SCALER, 'rb') as f: scaler = pickle.load(f)
+
+    hse = HSEmotionClassifier(model_name='enet_b0_8_best_vgaf', use_gpu=True)
 
     # Галерея
     gallery = {}
     for fname in sorted(os.listdir(GALLERY_DIR)):
         if not fname.endswith('.jpg'): continue
         name_key = fname[2:-4]
-        img = cv2.imread(os.path.join(GALLERY_DIR,fname))
+        img = cv2.imread(os.path.join(GALLERY_DIR, fname))
         if img is None: continue
         with suppress_all(): emb = face_id.get_embedding(img)
-        if emb is not None: gallery[NAME_MAP.get(name_key,name_key)] = emb
+        if emb is not None: gallery[NAME_MAP.get(name_key, name_key)] = emb
 
-    # SCRFD
-    with suppress_stderr():
-        raw_faces = face_id.app.get(frame)
+    # Прогрев
+    frame_sd_rgb = cv2.cvtColor(frame_sd, cv2.COLOR_BGR2RGB)
+    _ = pose_lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_sd_rgb))
+    rec = face_id.app.models['recognition']
 
-    if not raw_faces:
-        result = {"camera":cam_path,"face_count":0,"lighting":lighting_level,"brightness":lighting_val}
+    # ── PoseLandmarker → тела ──
+    bodies = detect_bodies(pose_lm, frame_sd_rgb, w_sd, h_sd)
+
+    if not bodies:
+        result = {
+            "camera": cam_path, "face_count": 0,
+            "lighting": lighting_level, "brightness": round(lighting_val),
+        }
         if use_json: print(json.dumps(result, ensure_ascii=False))
         else:
             print(f"camera: {cam_path}")
@@ -347,67 +335,132 @@ def main():
         _update_state(cam_path, [], lighting_level, lighting_val)
         return
 
-    raw_faces.sort(key=lambda f: f.get('det_score',0), reverse=True)
+    # ── Обработка каждого тела ──
     faces_out = []
 
-    for i, face in enumerate(raw_faces, 1):
-        bbox = face['bbox'].tolist()
-        det_score = float(face.get('det_score',0))
-        emb = np.asarray(face['embedding'], dtype=np.float32)
-
-        if gallery: name, sim = face_id.identify(emb, gallery, THRESHOLD)
-        else: name, sim = None, 0.0
-
-        dist = estimate_distance(bbox, frame.shape)
-        face_w = int(bbox[2]-bbox[0]); face_h = int(bbox[3]-bbox[1])
-
+    for i, body in enumerate(bodies, 1):
         face_info = {
-            'index': i, 'identity': name if name else 'unknown',
-            'confidence': round(sim, 2), 'det_score': round(det_score, 2),
-            'bbox': [int(v) for v in bbox], 'size': f"{face_w}x{face_h}", 'distance': dist,
+            'index': i, 'identity': 'unknown', 'confidence': 0.0,
             'emotion': None, 'emotion_confidence': None,
             'posture': None, 'posture_confidence': None,
             'recon_error': None, 'plausibility': None,
         }
 
-        face_crop = crop_face(frame, bbox)
-        body_crop = crop_body(frame, bbox)
+        # ── Head crop → FaceLM PASS 1 → face_bbox + kps ──
+        head_crop_sd, hx1, hy1 = head_crop_from_body(frame_sd, body['bbox'])
+        if head_crop_sd is not None:
+            head_rgb = cv2.cvtColor(head_crop_sd, cv2.COLOR_BGR2RGB)
+            mp_head = mp.Image(image_format=mp.ImageFormat.SRGB, data=head_rgb)
+            with suppress_stderr():
+                face_lm_result = face_lm.detect(mp_head)
 
-        # Кроп лица → FaceLandmarker → MLP → эмоция
-        face_lm_result = run_face_landmarker(face_lm, face_crop)
-        if face_lm_result:
-            try:
-                emo_name, emo_conf = classify_emotion_mlp(face_lm_result, mlp, scaler, device)
-                face_info['emotion'] = emo_name
-                face_info['emotion_confidence'] = emo_conf
-            except Exception: pass
+            if face_lm_result and face_lm_result.face_landmarks:
+                lm_pass1 = face_lm_result.face_landmarks[0]
+                hc_h, hc_w = head_crop_sd.shape[:2]
+                face_xs = [p.x * hc_w for p in lm_pass1]
+                face_ys = [p.y * hc_h for p in lm_pass1]
+                face_w = max(face_xs) - min(face_xs)
 
-        # Кроп тела → PoseLandmarker → VAE → поза
-        pose_lm_result = run_pose_landmarker(pose_lm, body_crop)
-        if pose_lm_result:
-            try:
-                pos_name, pos_conf, recon_err, logpz = classify_posture_vae(
-                    pose_lm_result, vae, pose_clf, pose_names_ru, device
-                )
-                face_info['posture'] = pos_name
-                face_info['posture_confidence'] = round(pos_conf, 2)
-                face_info['recon_error'] = round(recon_err, 4)
-                face_info['plausibility'] = 'normal' if logpz < 14.3 else 'unusual'
-            except Exception: pass
+                # ── PASS 2: tight crop → FaceLM → MLP ──
+                if face_w > FACE_SIZE_THRESHOLD:
+                    px = int(face_w * 0.2)
+                    py = int((max(face_ys) - min(face_ys)) * 0.2)
+                    fx1 = max(0, int(min(face_xs)) - px)
+                    fy1 = max(0, int(min(face_ys)) - py)
+                    fx2 = min(hc_w, int(max(face_xs)) + px)
+                    fy2 = min(hc_h, int(max(face_ys)) + py)
+                    tight_crop = head_crop_sd[fy1:fy2, fx1:fx2]
+
+                    if tight_crop.size > 0:
+                        tight_rgb = cv2.cvtColor(tight_crop, cv2.COLOR_BGR2RGB)
+                        mp_tight = mp.Image(image_format=mp.ImageFormat.SRGB, data=tight_rgb)
+                        with suppress_stderr():
+                            tight_result = face_lm.detect(mp_tight)
+                        if tight_result and tight_result.face_landmarks:
+                            emo, conf = classify_emotion_mlp(
+                                tight_result.face_landmarks[0], mlp, scaler, device
+                            )
+                            face_info['emotion'] = emo
+                            face_info['emotion_confidence'] = conf
+                        elif hse is not None:
+                            hse_name, hse_conf = hse.predict(tight_crop)
+                            face_info['emotion'] = HSE_RU_MAP.get(hse_name, hse_name)
+                            face_info['emotion_confidence'] = round(float(hse_conf), 2)
+                else:
+                    # Far: HSEmotion
+                    if hse is not None:
+                        px, py = int(face_w * 0.2), int((max(face_ys)-min(face_ys)) * 0.2)
+                        fx1 = max(0, int(min(face_xs)) - px)
+                        fy1 = max(0, int(min(face_ys)) - py)
+                        fx2 = min(hc_w, int(max(face_xs)) + px)
+                        fy2 = min(hc_h, int(max(face_ys)) + py)
+                        face_crop = head_crop_sd[fy1:fy2, fx1:fx2]
+                        if face_crop.size > 0:
+                            hse_name, hse_conf = hse.predict(face_crop)
+                            face_info['emotion'] = HSE_RU_MAP.get(hse_name, hse_name)
+                            face_info['emotion_confidence'] = round(float(hse_conf), 2)
+
+                # ── Identity: ArcFace на HD ──
+                try:
+                    kps_sd = np.array([
+                        [lm_pass1[FACELM_TO_ARCFACE['reye']].x * hc_w + hx1,
+                         lm_pass1[FACELM_TO_ARCFACE['reye']].y * hc_h + hy1],
+                        [lm_pass1[FACELM_TO_ARCFACE['leye']].x * hc_w + hx1,
+                         lm_pass1[FACELM_TO_ARCFACE['leye']].y * hc_h + hy1],
+                        [lm_pass1[FACELM_TO_ARCFACE['nose']].x * hc_w + hx1,
+                         lm_pass1[FACELM_TO_ARCFACE['nose']].y * hc_h + hy1],
+                        [lm_pass1[FACELM_TO_ARCFACE['rmouth']].x * hc_w + hx1,
+                         lm_pass1[FACELM_TO_ARCFACE['rmouth']].y * hc_h + hy1],
+                        [lm_pass1[FACELM_TO_ARCFACE['lmouth']].x * hc_w + hx1,
+                         lm_pass1[FACELM_TO_ARCFACE['lmouth']].y * hc_h + hy1],
+                    ], dtype=np.float32)
+                    kps_hd = kps_sd.copy()
+                    kps_hd[:, 0] *= scale_x
+                    kps_hd[:, 1] *= scale_y
+
+                    emb = rec.get(frame_hd, type('Stub', (), {'kps': kps_hd})())
+                    if gallery:
+                        name, sim = face_id.identify(emb, gallery, THRESHOLD)
+                        face_info['identity'] = name if name else 'unknown'
+                        face_info['confidence'] = round(sim, 2)
+                except Exception:
+                    pass
+
+            else:
+                # FaceLM не нашёл лицо → HSEmotion на всём head_crop
+                if hse is not None:
+                    try:
+                        hse_name, hse_conf = hse.predict(head_crop_sd)
+                        face_info['emotion'] = HSE_RU_MAP.get(hse_name, hse_name)
+                        face_info['emotion_confidence'] = round(float(hse_conf), 2)
+                    except Exception:
+                        pass
+
+        # ── Поза: VAE с PoseLM ──
+        try:
+            pos, conf, rerr, logpz = classify_posture_vae(
+                body['landmarks'], vae, pose_clf, pose_names_ru, device
+            )
+            face_info['posture'] = pos
+            face_info['posture_confidence'] = conf
+            face_info['recon_error'] = round(rerr, 4)
+            face_info['plausibility'] = 'normal' if logpz < 14.3 else 'unusual'
+        except Exception:
+            pass
 
         faces_out.append(face_info)
 
     # ── Вывод ─────────────────────────────────────────────
     if use_json:
         output = {
-            'camera': cam_path, 'face_count': len(raw_faces),
-            'lighting': lighting_level, 'brightness': round(lighting_val, 0),
+            'camera': cam_path, 'face_count': len(bodies),
+            'lighting': lighting_level, 'brightness': round(lighting_val),
             'faces': faces_out,
         }
         print(json.dumps(output, ensure_ascii=False))
     else:
         print(f"camera: {cam_path}")
-        print(f"face_count: {len(raw_faces)}")
+        print(f"face_count: {len(bodies)}")
         print(f"lighting: {lighting_level}")
         print(f"brightness: {lighting_val:.0f}")
         for f in faces_out:
@@ -417,18 +470,16 @@ def main():
             if f['emotion']:
                 print(f"  emotion: {f['emotion']}")
                 print(f"  emotion_confidence: {f['emotion_confidence']:.2f}")
-            else: print(f"  emotion: none")
+            else:
+                print(f"  emotion: none")
             if f['posture']:
                 print(f"  posture: {f['posture']}")
                 print(f"  posture_confidence: {f['posture_confidence']:.2f}")
-            else: print(f"  posture: none")
+            else:
+                print(f"  posture: none")
             if f.get('recon_error') is not None:
                 print(f"  recon_error: {f['recon_error']:.4f}")
                 print(f"  plausibility: {f['plausibility']}")
-            print(f"  det_score: {f['det_score']:.2f}")
-            print(f"  bbox: {','.join(map(str,f['bbox']))}")
-            print(f"  size: {f['size']}")
-            print(f"  distance: {f['distance']}")
 
     _update_state(cam_path, faces_out, lighting_level, lighting_val)
 

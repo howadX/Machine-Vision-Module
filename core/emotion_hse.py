@@ -18,7 +18,15 @@ from pathlib import Path
 from typing import Optional
 
 
-# ── Фикс для PyTorch 2.6+ ─────────────────────────────
+# ── Фикс для PyTorch 2.6+ (weights_only=True по умолчанию) ──
+# HSEmotion-модель загружается через torch.load с weights_only=False
+import torch as _torch
+_orig_load = _torch.load
+def _load_with_weights_only_false(*args, **kwargs):
+    kwargs.setdefault('weights_only', False)
+    return _orig_load(*args, **kwargs)
+_torch.load = _load_with_weights_only_false
+
 torch.serialization.add_safe_globals([timm.models.efficientnet.EfficientNet])
 
 # ── Фикс совместимости старой HSEmotion-модели с новым timm ──

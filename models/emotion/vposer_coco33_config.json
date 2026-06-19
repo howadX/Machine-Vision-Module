@@ -8,12 +8,12 @@
   ],
   "dropout": 0.2,
   "beta": 0.001,
-  "epochs_trained": 688,
-  "best_val_loss": 0.01745208539068699,
-  "final_train_loss": 0.0305038078555039,
-  "final_val_loss": 0.01779597206041217,
-  "final_recon_loss": 0.02140700843717371,
-  "final_kl_loss": 9.096799101148333,
+  "epochs_trained": 265,
+  "best_val_loss": 0.05076497532427311,
+  "final_train_loss": 0.06577189908259445,
+  "final_val_loss": 0.05163693092763424,
+  "final_recon_loss": 0.05425073496169514,
+  "final_kl_loss": 11.521163807974922,
   "parameters": 48617,
   "device": "cuda"
 }

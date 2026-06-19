@@ -5,8 +5,8 @@
   "hidden_dim": 64,
   "dropout": 0.3,
   "epochs_trained": 200,
-  "val_accuracy": 0.9590643274853801,
-  "test_accuracy": 0.9824561403508771,
+  "val_accuracy": 0.9181286549707602,
+  "test_accuracy": 0.9707602339181286,
   "class_names": [
     "standing",
     "sitting",

@@ -21,7 +21,7 @@ from pose_encoder import normalize_landmarks
 from pose_vae import PoseVAE, vae_loss
 
 # ── Конфигурация ──────────────────────────────────────────
-CSV_PATH = os.path.join(ROOT, 'pipeline', 'poses_dataset.csv')
+CSV_PATH = os.path.join(ROOT, 'pipeline', 'poses_dataset_full.csv')
 MODEL_DIR = os.path.join(ROOT, 'models', 'emotion')
 MODEL_PATH = os.path.join(MODEL_DIR, 'vposer_coco33.pth')
 CONFIG_PATH = os.path.join(MODEL_DIR, 'vposer_coco33_config.json')
