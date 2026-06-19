@@ -69,7 +69,7 @@ import time
 
 # ── Пути ─────────────────────────────────────────────
 _SCRIPT_DIR = _os.path.dirname(_os.path.abspath(__file__))
-_ROOT = _os.path.dirname(_os.path.dirname(_SCRIPT_DIR))
+_ROOT = _os.path.dirname(_SCRIPT_DIR)
 _sys.path.insert(0, _os.path.join(_ROOT, 'core'))
 from face_id import FaceID
 
