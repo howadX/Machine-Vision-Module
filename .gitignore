@@ -21,6 +21,9 @@ data/my_emotions/
 *.csv
 !requirements.txt
 
+# Модели (скачиваются отдельно)
+models/mediapipe/pose_landmarker.task
+
 # Архив (legacy)
 legacy/
 

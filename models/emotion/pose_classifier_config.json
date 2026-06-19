@@ -1,0 +1,27 @@
+{
+  "model": "PoseClassifier",
+  "latent_dim": 32,
+  "num_classes": 6,
+  "hidden_dim": 64,
+  "dropout": 0.3,
+  "epochs_trained": 200,
+  "val_accuracy": 0.9590643274853801,
+  "test_accuracy": 0.9824561403508771,
+  "class_names": [
+    "standing",
+    "sitting",
+    "lying_back",
+    "lying_side",
+    "arms_crossed",
+    "sitting_at_desk"
+  ],
+  "class_names_ru": [
+    "стоит",
+    "сидит",
+    "лежит_на_спине",
+    "лежит_на_боку",
+    "руки_скрещены",
+    "сидит_за_ПК"
+  ],
+  "parameters": 4390
+}

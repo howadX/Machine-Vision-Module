@@ -200,7 +200,9 @@ _MODEL_CHAIN = [
 
 for model_file, model_name, model_type in _MODEL_CHAIN:
     try:
-        _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', model_file)
+        _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', 'fallback', model_file)
+        if not _os.path.exists(_lgb_path):
+            _lgb_path = _os.path.join(_ROOT, 'models', 'emotion', model_file)
         if model_type == "dict":
             _lgb_data = pickle.load(open(_lgb_path, 'rb'))
             lgb_clf = _lgb_data['model']
@@ -217,9 +219,14 @@ for model_file, model_name, model_type in _MODEL_CHAIN:
         print(f"[Эмоции] {model_name}: {e}")
 
 if not use_lgb:
-    from emotion import EmotionClassifier
-    ec = EmotionClassifier(use_gpu=True)
-    print("[Эмоции] Fallback на EfficientNet")
+    try:
+        from emotion import EmotionClassifier
+        ec = EmotionClassifier(use_gpu=True)
+        print("[Эмоции] Fallback на EfficientNet")
+    except Exception as e:
+        print(f"[Эмоции] EfficientNet не загружен: {e}")
+        print("[Эмоции] Эмоции отключены")
+        use_lgb = False  # остаёмся без эмоций
 
 # Модель Б: позы тела (33 Holistic точки → standing/sitting/lying)
 body_clf = None
@@ -229,6 +236,45 @@ try:
     print("[Тело] LightGBM Holistic 44 признака (71.7% на COCO) загружен")
 except Exception as e:
     print(f"[Тело] Модель не загружена: {e}")
+
+# Модель В: VAE + PoseClassifier (новая)
+import torch
+import torch.nn as nn
+_use_vae = False
+_vae_model = None
+_vae_clf = None
+_vae_class_names = None
+_vae_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+try:
+    from pose_vae import PoseVAE
+    from pose_heads import PoseClassifier
+    import json as _j
+    _vae_ckpt = torch.load(_os.path.join(_ROOT, 'models', 'emotion', 'vposer_coco33.pth'),
+                            map_location=_vae_device, weights_only=True)
+    _vae_cfg = _vae_ckpt['config']
+    _vae_model = PoseVAE(
+        input_dim=_vae_cfg['input_dim'], latent_dim=_vae_cfg['latent_dim'],
+        hidden_dims=tuple(_vae_cfg['hidden_dims']), dropout=_vae_cfg['dropout'],
+    ).to(_vae_device)
+    _vae_model.load_state_dict(_vae_ckpt['model_state_dict'])
+    _vae_model.eval()
+
+    with open(_os.path.join(_ROOT, 'models', 'emotion', 'pose_classifier_config.json')) as f:
+        _clf_cfg = _j.load(f)
+    _vae_clf = PoseClassifier(
+        latent_dim=_clf_cfg['latent_dim'], num_classes=_clf_cfg['num_classes'],
+        hidden_dim=_clf_cfg['hidden_dim'], dropout=_clf_cfg['dropout'],
+    ).to(_vae_device)
+    _clf_ckpt = torch.load(_os.path.join(_ROOT, 'models', 'emotion', 'pose_classifier.pth'),
+                            map_location=_vae_device, weights_only=True)
+    _vae_clf.load_state_dict(_clf_ckpt['model_state_dict'])
+    _vae_clf.eval()
+    _vae_class_names = _clf_cfg['class_names_ru']
+    _use_vae = True
+    print(f"[Тело] VAE + PoseClassifier ({_clf_cfg['num_classes']} классов, {_clf_cfg['test_accuracy']:.1%}) загружен")
+    print(f"       Классы: {', '.join(_vae_class_names)}")
+except Exception as e:
+    print(f"[Тело] VAE не загружен: {e}")
 
 POSTURE_NAMES = ["standing", "sitting", "lying"]
 POSTURE_RU = {"standing": "стоит", "sitting": "сидит", "lying": "лежит"}
@@ -260,6 +306,7 @@ current_name = None
 current_emotion = "—"
 emotion_conf = 0.0
 body_status = "тело: нет"
+_vae_status = ""
 last_detections = []  # кеш bbox между детекциями
 
 while True:
@@ -299,7 +346,7 @@ while True:
                     connection_drawing_spec=vision.drawing_utils.DrawingSpec(
                         color=(255, 255, 255), thickness=1))
 
-            if use_lgb:
+            if use_lgb:  # LightGBM эмоции
                 face_pts = np.array([[lm.x, lm.y, lm.z] for lm in results.face_landmarks], dtype=np.float32)
                 nose_tip = face_pts[4]
                 left_eye = face_pts[33]
@@ -356,6 +403,29 @@ while True:
                 body_posture = "upright"
             
             body_status = f"тело: {POSTURE_RU.get(body_posture, body_posture)}"
+            # ── VAE классификация (новая модель) ──
+            _vae_status = ""
+            if _use_vae:
+                try:
+                    from pose_encoder import normalize_landmarks
+                    _pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_lm], dtype=np.float32)
+                    _norm, _ = normalize_landmarks(_pts)
+                    _flat = _norm.reshape(1, -1).astype(np.float32)
+                    _x = torch.from_numpy(_flat).to(_vae_device)
+                    with torch.no_grad():
+                        _z = _vae_model.encode_to_z(_x)
+                        _logits = _vae_clf(_z)
+                        _probs = torch.softmax(_logits, dim=1)[0].cpu().numpy()
+                        _recon, _, _ = _vae_model(_x)
+                        _recon_err = float(nn.functional.mse_loss(_recon, _x).item())
+                        _logpz = float(_vae_model.log_prob_z(_x).item())
+                    _pred_idx = int(_probs.argmax())
+                    _vae_conf = float(_probs.max())
+                    _vae_name = _vae_class_names[_pred_idx] if _pred_idx < len(_vae_class_names) else f'c{_pred_idx}'
+                    _plaus = 'ok' if _logpz < 14.3 else 'NEW!'
+                    _vae_status = f"VAE: {_vae_name} ({_vae_conf:.0%}) err={_recon_err:.3f} {_plaus}"
+                except Exception:
+                    _vae_status = "VAE: err"
             if DRAW_POSE:
                 vision.drawing_utils.draw_landmarks(
                     frame, pose_lm,
@@ -383,6 +453,7 @@ while True:
         current_name = None
         current_emotion = "—"
         body_status = "тело: нет"
+        _vae_status = ""
 
     # ── Оверлей (PIL, кириллица) ──────────────────
     img_pil = Image.fromarray(frame)
@@ -394,6 +465,8 @@ while True:
         emo_text = f"{current_emotion} ({emotion_conf:.0%})"
         draw.text((10, 40), emo_text, font=font_emotion, fill=(0, 200, 255))
     draw.text((10, 70), body_status, font=font_fps, fill=(200, 200, 100))
+    if _vae_status:
+        draw.text((10, 90), _vae_status, font=font_fps, fill=(100, 255, 150))
 
     # FPS (мгновенный + сглаженный)
     now = time.perf_counter()
@@ -401,7 +474,7 @@ while True:
     last_frame_time = now
     instant_fps = 1.0 / delta if delta > 0 else 0
     fps_val = 0.9 * fps_val + 0.1 * instant_fps if fps_val > 0 else instant_fps
-    draw.text((10, 100), f"FPS: {fps_val:.0f}", font=font_fps, fill=(200, 200, 200))
+    draw.text((10, 120), f"FPS: {fps_val:.0f}", font=font_fps, fill=(200, 200, 200))
 
     frame = np.array(img_pil)
 

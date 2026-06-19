@@ -3,7 +3,7 @@
 Вызов: python sight.py [--json]
 Архитектура: два кропа на человека (лицо + тело).
 Эмоции: MLP (PyTorch) на 468 геометрических признаках (FaceLandmarker).
-Поза: LightGBM на pose_landmarks (Holistic).
+Поза: VAE (PoseVAE) + PoseClassifier на 33 COCO landmarks (PoseLandmarker).
 """
 import os, sys, glob, time, warnings, logging, pickle, json
 from contextlib import contextmanager
@@ -70,17 +70,25 @@ MLP_MODEL = os.path.join(MVM_ROOT, 'models', 'emotion', 'mlp_emotion.pth')
 MLP_SCALER = os.path.join(MVM_ROOT, 'models', 'emotion', 'mlp_emotion_scaler.pkl')
 MLP_CONFIG = os.path.join(MVM_ROOT, 'models', 'emotion', 'mlp_emotion_config.json')
 
-# LightGBM поза тела
-LGB_BODY = os.path.join(MVM_ROOT, 'models', 'emotion', 'lightgbm_body_holistic_33.pkl')
+# VAE поза тела
+VAE_PATH = os.path.join(MVM_ROOT, 'models', 'emotion', 'vposer_coco33.pth')
+CLF_PATH = os.path.join(MVM_ROOT, 'models', 'emotion', 'pose_classifier.pth')
+CLF_CONFIG = os.path.join(MVM_ROOT, 'models', 'emotion', 'pose_classifier_config.json')
 
 # MediaPipe
-HOLISTIC_MODEL = os.path.join(MVM_ROOT, 'models', 'mediapipe', 'holistic_landmarker.task')
+POSE_MODEL = os.path.join(MVM_ROOT, 'models', 'mediapipe', 'pose_landmarker.task')
 FACE_LM_MODEL = os.path.join(MVM_ROOT, 'models', 'mediapipe', 'face_landmarker.task')
+
+import json as _json
+with open(CLF_CONFIG) as f:
+    _clf_cfg = _json.load(f)
+POSTURE_CLASSES_RU = _clf_cfg['class_names_ru']
+POSTURE_CLASSES_EN = _clf_cfg['class_names']
 
 CLASSES = ['anger', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
 RU_MAP = {'anger':'Злость','disgust':'Отвращение','fear':'Страх',
           'happy':'Радость','neutral':'Нейтральная','sad':'Грусть','surprise':'Удивление'}
-POSTURE_RU = {'standing':'стоит','sitting':'сидит','lying':'лежит'}
+POSTURE_CLASSES_EN = POSTURE_CLASSES_EN  # уже определено выше
 
 
 # ── MLP модель ────────────────────────────────────────────
@@ -186,31 +194,58 @@ def classify_emotion_mlp(face_landmarks, model, scaler, device):
     return emotion_ru, round(float(proba.max()), 2)
 
 
-# ── Поза (LightGBM) ──────────────────────────────────────
-POSTURE_NAMES = ['standing','sitting','lying']
+# ── Поза (VAE + PoseClassifier) ───────────────────────────
+def load_vae_pose(device):
+    """Загружает VAE + PoseClassifier."""
+    from pose_vae import PoseVAE
+    from pose_heads import PoseClassifier
+    import json as _j
 
-def classify_posture(pose_landmarks, body_clf):
-    pts_xy = np.array([[lm.x,lm.y] for lm in pose_landmarks])
-    hip_center = (pts_xy[23]+pts_xy[24])/2
-    shoulder_w = np.linalg.norm(pts_xy[11]-pts_xy[12]) or 1.0
-    d_head = np.linalg.norm(pts_xy[0]-hip_center)/shoulder_w
-    d_feet = (np.linalg.norm(pts_xy[27]-hip_center)+np.linalg.norm(pts_xy[28]-hip_center))/2/shoulder_w
-    foot_head_ratio = d_feet/max(d_head,1e-6)
-    if foot_head_ratio>1.25: return POSTURE_RU['lying'],0.99
-    if body_clf is None: return POSTURE_RU['standing'],0.0
-    pts = np.array([[lm.x,lm.y,lm.z,lm.visibility] for lm in pose_landmarks], dtype=np.float64)
-    d = np.linalg.norm(pts[:,:2]-hip_center,axis=1)/max(shoulder_w,1e-6)
-    extra = [d[11]/max(d[23],1e-6),d[12]/max(d[24],1e-6),
-             (d[11]+d[12])/max(d[23]+d[24],1e-6),d[25]/max(d[26],1e-6),d[27]/max(d[28],1e-6),
-             d[13]/max(d[14],1e-6),d[15]/max(d[16],1e-6),d[0]/max((d[23]+d[24])/2,1e-6),
-             (d[27]+d[28])/2/max(d[0],1e-6),abs(d[27]-d[28])/max(d[23]+d[24],1e-6),
-             (d[29]+d[30])/max(d[27]+d[28],1e-6)]
-    X = np.concatenate([d,extra]+[[d[11]/max(d[23],1e-6)],[d[12]/max(d[24],1e-6)],[foot_head_ratio]]).reshape(1,-1)
-    X = X[:,:38]
-    proba = body_clf.predict_proba(X)[0]
-    pred_idx = int(proba.argmax())
-    posture_en = POSTURE_NAMES[pred_idx] if pred_idx<=2 else 'standing'
-    return POSTURE_RU.get(posture_en,posture_en), float(proba.max())
+    vae_ckpt = torch.load(VAE_PATH, map_location=device, weights_only=True)
+    vae_cfg = vae_ckpt['config']
+    vae = PoseVAE(
+        input_dim=vae_cfg['input_dim'], latent_dim=vae_cfg['latent_dim'],
+        hidden_dims=tuple(vae_cfg['hidden_dims']), dropout=vae_cfg['dropout'],
+    ).to(device)
+    vae.load_state_dict(vae_ckpt['model_state_dict'])
+    vae.eval()
+
+    with open(CLF_CONFIG) as f:
+        clf_cfg = _j.load(f)
+    clf = PoseClassifier(
+        latent_dim=clf_cfg['latent_dim'], num_classes=clf_cfg['num_classes'],
+        hidden_dim=clf_cfg['hidden_dim'], dropout=clf_cfg['dropout'],
+    ).to(device)
+    clf_ckpt = torch.load(CLF_PATH, map_location=device, weights_only=True)
+    clf.load_state_dict(clf_ckpt['model_state_dict'])
+    clf.eval()
+
+    return vae, clf, clf_cfg['class_names_ru'], clf_cfg['class_names']
+
+
+def classify_posture_vae(pose_landmarks, vae, clf, class_names, device):
+    """VAE + PoseClassifier: landmarks → z → класс позы + confidence."""
+    from pose_encoder import normalize_landmarks
+    import numpy as np
+
+    pts = np.array([[lm.x, lm.y, lm.z, lm.visibility] for lm in pose_landmarks], dtype=np.float32)
+    norm, _meta = normalize_landmarks(pts)
+    flat = norm.reshape(1, -1).astype(np.float32)
+    x = torch.from_numpy(flat).to(device)
+
+    with torch.no_grad():
+        z = vae.encode_to_z(x)
+        logits = clf(z)
+        probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
+        recon, _, _ = vae(x)
+        recon_err = float(torch.nn.functional.mse_loss(recon, x).item())
+        logpz = float(vae.log_prob_z(x).item())
+
+    pred_idx = int(probs.argmax())
+    conf = float(probs.max())
+    name = class_names[pred_idx] if pred_idx < len(class_names) else f'class_{pred_idx}'
+
+    return name, conf, recon_err, logpz
 
 
 # ── Обработка кропов ──────────────────────────────────────
@@ -224,13 +259,15 @@ def run_face_landmarker(landmarker, bgr_crop):
         return res.face_landmarks[0]
     return None
 
-def run_holistic_body(holistic, bgr_crop):
+def run_pose_landmarker(landmarker, bgr_crop):
     if bgr_crop is None: return None
     rgb = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2RGB)
     mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
     with suppress_stderr():
-        res = holistic.detect(mp_img)
-    return res.pose_landmarks
+        res = landmarker.detect(mp_img)
+    if res.pose_landmarks:
+        return res.pose_landmarks[0]
+    return None
 
 
 # ── Главное ───────────────────────────────────────────────
@@ -266,11 +303,16 @@ def main():
         )
         face_lm = vision.FaceLandmarker.create_from_options(face_lm_opts)
 
-        mp_base = mp_python.BaseOptions(model_asset_path=HOLISTIC_MODEL, delegate=mp_python.BaseOptions.Delegate.CPU)
-        mp_opts = vision.HolisticLandmarkerOptions(base_options=mp_base, running_mode=vision.RunningMode.IMAGE)
-        holistic = vision.HolisticLandmarker.create_from_options(mp_opts)
+        pose_opts = vision.PoseLandmarkerOptions(
+            base_options=mp_python.BaseOptions(
+                model_asset_path=POSE_MODEL, delegate=mp_python.BaseOptions.Delegate.CPU,
+            ),
+            running_mode=vision.RunningMode.IMAGE, num_poses=1,
+            output_segmentation_masks=False,
+        )
+        pose_lm = vision.PoseLandmarker.create_from_options(pose_opts)
 
-        body_clf = pickle.load(open(LGB_BODY,'rb'))
+        vae, pose_clf, pose_names_ru, pose_names_en = load_vae_pose(device)
 
         # MLP эмоции
         mlp = EmotionMLP()
@@ -325,6 +367,7 @@ def main():
             'bbox': [int(v) for v in bbox], 'size': f"{face_w}x{face_h}", 'distance': dist,
             'emotion': None, 'emotion_confidence': None,
             'posture': None, 'posture_confidence': None,
+            'recon_error': None, 'plausibility': None,
         }
 
         face_crop = crop_face(frame, bbox)
@@ -339,13 +382,17 @@ def main():
                 face_info['emotion_confidence'] = emo_conf
             except Exception: pass
 
-        # Кроп тела → Holistic → LightGBM → поза
-        pose_lm = run_holistic_body(holistic, body_crop)
-        if pose_lm:
+        # Кроп тела → PoseLandmarker → VAE → поза
+        pose_lm_result = run_pose_landmarker(pose_lm, body_crop)
+        if pose_lm_result:
             try:
-                pos_name, pos_conf = classify_posture(pose_lm, body_clf)
+                pos_name, pos_conf, recon_err, logpz = classify_posture_vae(
+                    pose_lm_result, vae, pose_clf, pose_names_ru, device
+                )
                 face_info['posture'] = pos_name
                 face_info['posture_confidence'] = round(pos_conf, 2)
+                face_info['recon_error'] = round(recon_err, 4)
+                face_info['plausibility'] = 'normal' if logpz < 14.3 else 'unusual'
             except Exception: pass
 
         faces_out.append(face_info)
@@ -375,6 +422,9 @@ def main():
                 print(f"  posture: {f['posture']}")
                 print(f"  posture_confidence: {f['posture_confidence']:.2f}")
             else: print(f"  posture: none")
+            if f.get('recon_error') is not None:
+                print(f"  recon_error: {f['recon_error']:.4f}")
+                print(f"  plausibility: {f['plausibility']}")
             print(f"  det_score: {f['det_score']:.2f}")
             print(f"  bbox: {','.join(map(str,f['bbox']))}")
             print(f"  size: {f['size']}")
@@ -388,6 +438,8 @@ def _update_state(cam_path, faces, lighting_level, lighting_val):
     known = [f['identity'] for f in faces if f['identity'] != 'unknown']
     person_str = ', '.join(known) if known else 'none'
     dominant = faces[0]['emotion'] if faces and faces[0].get('emotion') else 'none'
+    posture = faces[0]['posture'] if faces and faces[0].get('posture') else 'none'
+    plausibility = faces[0].get('plausibility', 'unknown') if faces else 'unknown'
     status = 'occupied' if faces else 'empty'
 
     content = (
@@ -398,6 +450,8 @@ def _update_state(cam_path, faces, lighting_level, lighting_val):
         f"- Face count: {len(faces)}\n"
         f"- Persons visible: {person_str}\n"
         f"- Dominant emotion: {dominant}\n"
+        f"- Posture: {posture}\n"
+        f"- Plausibility: {plausibility}\n"
         f"- Status: {status}\n"
     )
     os.makedirs(SIGHT_WORKSPACE, exist_ok=True)
