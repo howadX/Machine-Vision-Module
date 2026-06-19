@@ -254,6 +254,7 @@ def main():
         result = {"camera":"none","error":"camera not found","face_count":0}
         if use_json: print(json.dumps(result, ensure_ascii=False))
         else: print("camera: none\nerror: camera not found")
+        _update_state("none", [], "unknown", 0)
         return
 
     frame_hd, frame_sd = capture_frame_hd(cam_path)
@@ -261,6 +262,7 @@ def main():
         result = {"camera":cam_path,"error":"failed to capture frame","face_count":0}
         if use_json: print(json.dumps(result, ensure_ascii=False))
         else: print(f"camera: {cam_path}\nerror: failed to capture frame")
+        _update_state(cam_path, [], "unknown", 0)
         return
 
     h_hd, w_hd = frame_hd.shape[:2]
