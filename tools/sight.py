@@ -255,7 +255,7 @@ def main():
         result = {"camera":"none","error":"camera not found","face_count":0}
         if use_json: print(json.dumps(result, ensure_ascii=False))
         else: print("camera: none\nerror: camera not found")
-        _update_state("none", [], "unknown", 0)
+        _update_state("none", [], "unknown", 0, status="error")
         return
 
     frame_hd, frame_sd = capture_frame_hd(cam_path)
@@ -263,7 +263,7 @@ def main():
         result = {"camera":cam_path,"error":"failed to capture frame","face_count":0}
         if use_json: print(json.dumps(result, ensure_ascii=False))
         else: print(f"camera: {cam_path}\nerror: failed to capture frame")
-        _update_state(cam_path, [], "unknown", 0)
+        _update_state(cam_path, [], "unknown", 0, status="error")
         return
 
     h_hd, w_hd = frame_hd.shape[:2]
@@ -523,19 +523,28 @@ def main():
     _update_state(cam_path, faces_out, lighting_level, lighting_val)
 
 
-def _update_state(cam_path, faces, lighting_level, lighting_val):
+def _update_state(cam_path, faces, lighting_level, lighting_val, status=None):
     now = datetime.now(TZ).isoformat(timespec='minutes')
     known = [f['identity'] for f in faces if f['identity'] != 'unknown']
     person_str = ', '.join(known) if known else 'none'
     dominant = faces[0]['emotion'] if faces and faces[0].get('emotion') else 'none'
     posture = faces[0]['posture'] if faces and faces[0].get('posture') else 'none'
     plausibility = faces[0].get('plausibility', 'unknown') if faces else 'unknown'
-    status = 'occupied' if faces else 'empty'
 
-    # 3D-позиция первого лица
-    distance = faces[0].get('distance') if faces else None
-    pos_x = faces[0].get('position_x') if faces else None
-    pos_y = faces[0].get('position_y') if faces else None
+    if status is None:
+        status = 'occupied' if faces else 'empty'
+
+    # 3D-позиция первого лица (или прочерки)
+    if faces and faces[0].get('distance') is not None:
+        distance = faces[0]['distance']
+        pos_x = faces[0].get('position_x', 0)
+        pos_y = faces[0].get('position_y', 0)
+        pos_z = faces[0].get('position_z', 0)
+        distance_str = f"{distance:.2f}m"
+        position_str = f"({pos_x:.2f}, {pos_y:.2f}, {pos_z:.2f})m"
+    else:
+        distance_str = "—"
+        position_str = "—"
 
     content = (
         f"# Camera State\n"
@@ -547,8 +556,8 @@ def _update_state(cam_path, faces, lighting_level, lighting_val):
         f"- Dominant emotion: {dominant}\n"
         f"- Posture: {posture}\n"
         f"- Plausibility: {plausibility}\n"
-        + (f"- Distance: {distance:.2f}m\n" if distance is not None else "") +
-        (f"- Position: ({pos_x:.2f}, {pos_y:.2f}, {distance:.2f})m\n" if distance is not None else "") +
+        f"- Distance: {distance_str}\n"
+        f"- Position: {position_str}\n"
         f"- Status: {status}\n"
     )
     os.makedirs(SIGHT_WORKSPACE, exist_ok=True)
