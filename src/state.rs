@@ -89,6 +89,22 @@ impl StateFile {
                 lines.push(format!("  - age: {} frames", t.age));
                 lines.push(format!("  - emotion: {emotion}{emo_conf}"));
                 lines.push(format!("  - posture: {posture}{pos_conf}"));
+                // 3D fields
+                if let Some(d) = t.distance {
+                    lines.push(format!("  - distance: {d:.2}"));
+                }
+                if let (Some(x), Some(y), Some(z)) = (t.position_x, t.position_y, t.position_z) {
+                    lines.push(format!("  - position: ({x:.2}, {y:.2}, {z:.2})m"));
+                }
+                if let Some(ws) = t.ws_confidence {
+                    lines.push(format!("  - ws_confidence: {ws:.2}"));
+                }
+                if let Some(re) = t.recon_error {
+                    lines.push(format!("  - recon_error: {re:.4}"));
+                }
+                if let Some(ref pl) = t.plausibility {
+                    lines.push(format!("  - plausibility: {pl}"));
+                }
             }
         } else {
             lines.push("- Persons visible: none".to_string());
@@ -127,6 +143,8 @@ mod tests {
             identity: None, identity_confidence: None,
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
         }
     }
 
@@ -159,6 +177,8 @@ mod tests {
             emotion_confidence: Some(0.65),
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
         }]);
 
         sf.write(&tracker, 25.5).unwrap();
@@ -204,12 +224,16 @@ mod tests {
                 identity: Some("Вадим".into()), identity_confidence: Some(0.8),
                 emotion: Some("Нейтральная".into()), emotion_confidence: Some(0.6),
                 posture: Some("сидит".into()), posture_confidence: Some(0.9),
+                distance: None, position_x: None, position_y: None, position_z: None,
+                ws_confidence: None, recon_error: None, plausibility: None,
             },
             Detection {
                 bbox: BBox { x1: 0.6, y1: 0.2, x2: 0.9, y2: 0.7 },
                 identity: Some("Даня".into()), identity_confidence: Some(0.75),
                 emotion: Some("Радость".into()), emotion_confidence: Some(0.7),
                 posture: Some("стоит".into()), posture_confidence: Some(0.85),
+                distance: None, position_x: None, position_y: None, position_z: None,
+                ws_confidence: None, recon_error: None, plausibility: None,
             },
         ]);
 

@@ -31,6 +31,22 @@ struct RawDetection {
     posture: Option<String>,
     #[serde(default)]
     posture_confidence: Option<f32>,
+    // 3D Workspace fields (optional, only when body matched)
+    #[serde(default)]
+    distance: Option<f32>,
+    #[serde(default)]
+    position_x: Option<f32>,
+    #[serde(default)]
+    position_y: Option<f32>,
+    #[serde(default)]
+    position_z: Option<f32>,
+    #[serde(default)]
+    ws_confidence: Option<f32>,
+    // Posture quality fields
+    #[serde(default)]
+    recon_error: Option<f32>,
+    #[serde(default)]
+    plausibility: Option<String>,
 }
 
 /// Top-level JSON message from bridge.
@@ -125,6 +141,13 @@ impl Camera {
                 emotion_confidence: d.emotion_confidence,
                 posture: d.posture,
                 posture_confidence: d.posture_confidence,
+                distance: d.distance,
+                position_x: d.position_x,
+                position_y: d.position_y,
+                position_z: d.position_z,
+                ws_confidence: d.ws_confidence,
+                recon_error: d.recon_error,
+                plausibility: d.plausibility,
             })
             .collect();
 

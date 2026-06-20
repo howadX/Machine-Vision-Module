@@ -202,6 +202,7 @@ pose_lm = None
 pose_vae = None
 pose_classifier = None
 pose_class_names = None
+ws_3d = None
 
 if pose_enabled:
     pose_lm_path = str(ROOT / "models" / "mediapipe" / "pose_landmarker.task")
@@ -220,6 +221,7 @@ if pose_enabled:
         from core.pose_vae import PoseVAE
         from core.pose_heads import PoseClassifier
         from core.pose_encoder import prepare_vae_input
+        from core.workspace_3d import Workspace3D
 
         vae_path = str(ROOT / "models" / "emotion" / "vposer_coco33.pth")
         vae_config_path = str(ROOT / "models" / "emotion" / "vposer_coco33_config.json")
@@ -246,6 +248,9 @@ if pose_enabled:
         pose_classifier.eval()
 
         sys.stderr.write(f"  bridge: pose pipeline ready ({len(pose_class_names)} classes)\n")
+
+        # ── 3D Workspace ─────────────────────────────────────
+        ws_3d = Workspace3D(image_width=640, image_height=480)
     else:
         sys.stderr.write("  bridge: pose_landmarker.task not found, posture disabled\n")
     sys.stderr.flush()
@@ -285,10 +290,15 @@ def compute_posture(landmarks):
     with torch.no_grad():
         x = torch.tensor(raw, dtype=torch.float32, device=pose_device).unsqueeze(0)
         z = pose_vae.encode_to_z(x)
+        recon = pose_vae.decode(z)
+        mse = torch.nn.functional.mse_loss(recon, x).item()
+        logpz = pose_vae.log_prob(z).item()
         logits = pose_classifier(z)
         probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
     idx = int(np.argmax(probs))
-    return pose_class_names[idx], round(float(probs[idx]), 3)
+    posture_name = pose_class_names[idx]
+    posture_conf = round(float(probs[idx]), 3)
+    return posture_name, posture_conf, round(mse, 4), round(logpz, 2)
 
 def match_face_to_body(face_bbox, body_bboxes):
     fx = (face_bbox[0] + face_bbox[2]) / 2
@@ -317,16 +327,27 @@ try:
         # Pose detection
         body_bboxes = []
         posture_results = []
+        pose_landmarks_all = []  # stored for 3D matching
         if pose_lm is not None:
             mp_image = mp_python.Image(image_format=mp_python.ImageFormat.SRGB, data=frame_rgb)
             pose_result = pose_lm.detect(mp_image)
             if pose_result.pose_landmarks:
-                for lm in pose_result.pose_landmarks:
+                pose_landmarks_all = pose_result.pose_landmarks
+                for lm in pose_landmarks_all:
                     bb = pose_to_body_bbox(lm, w, h)
                     if bb is not None:
                         body_bboxes.append(bb)
-                        name, conf = compute_posture(lm)
-                        posture_results.append({"name": name, "confidence": conf})
+                        name, conf, rerr, logpz_val = compute_posture(lm)
+                        posture_results.append({
+                            "name": name, "confidence": conf,
+                            "recon_error": rerr, "plausibility": "normal" if logpz_val < 14.3 else "unusual",
+                        })
+                # 3D Workspace calibration (once per frame, first valid body)
+                if ws_3d is not None:
+                    for lm in pose_result.pose_landmarks:
+                        pts = np.array([[p.x, p.y, p.z, p.visibility] for p in lm], dtype=np.float32)
+                        if ws_3d.calibrate(pts):
+                            break
 
         # Face detection
         detections = []
@@ -397,13 +418,31 @@ try:
                 except Exception:
                     pass  # silent fallback — emotion stays None
 
-        # Match faces → bodies (posture)
+        # Match faces → bodies (posture + 3D)
         for det in detections:
             face_bbox = [det["x1"], det["y1"], det["x2"], det["y2"]]
             body_idx = match_face_to_body(face_bbox, body_bboxes)
             if body_idx is not None and body_idx < len(posture_results):
-                det["posture"] = posture_results[body_idx]["name"]
-                det["posture_confidence"] = posture_results[body_idx]["confidence"]
+                pr = posture_results[body_idx]
+                det["posture"] = pr["name"]
+                det["posture_confidence"] = pr["confidence"]
+                det["recon_error"] = pr["recon_error"]
+                det["plausibility"] = pr["plausibility"]
+
+            # 3D Workspace: attach distance/position to face via matched body
+            if ws_3d is not None and ws_3d.is_calibrated and body_idx is not None and body_idx < len(pose_landmarks_all):
+                try:
+                    body_lm = pose_landmarks_all[body_idx]
+                    pts = np.array([[p.x, p.y, p.z, p.visibility] for p in body_lm], dtype=np.float32)
+                    body_xyz = ws_3d.to_metric(pts)
+                    hip_center = (body_xyz[23] + body_xyz[24]) / 2.0
+                    det["distance"] = round(float(hip_center[2]), 2)
+                    det["position_x"] = round(float(hip_center[0]), 2)
+                    det["position_y"] = round(float(hip_center[1]), 2)
+                    det["position_z"] = round(float(hip_center[2]), 2)
+                    det["ws_confidence"] = round(ws_3d.confidence, 2)
+                except Exception:
+                    pass
 
         elapsed = time.monotonic() - start_time
         msg = {"frame": frame_id, "elapsed": round(elapsed, 3), "detections": detections}

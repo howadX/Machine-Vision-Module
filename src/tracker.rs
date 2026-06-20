@@ -43,6 +43,29 @@ pub struct Detection {
     pub emotion_confidence: Option<f32>,
     pub posture: Option<String>,
     pub posture_confidence: Option<f32>,
+    // 3D Workspace
+    pub distance: Option<f32>,
+    pub position_x: Option<f32>,
+    pub position_y: Option<f32>,
+    pub position_z: Option<f32>,
+    pub ws_confidence: Option<f32>,
+    // Posture quality
+    pub recon_error: Option<f32>,
+    pub plausibility: Option<String>,
+}
+
+impl Detection {
+    /// Convenience constructor: bbox-only detection, all enrichment None.
+    pub fn bare(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+        Self {
+            bbox: BBox { x1, y1, x2, y2 },
+            identity: None, identity_confidence: None,
+            emotion: None, emotion_confidence: None,
+            posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+        }
+    }
 }
 
 /// A tracked person — persistent across frames.
@@ -61,6 +84,15 @@ pub struct PersonTrack {
     /// Most recent posture.
     pub posture: Option<String>,
     pub posture_confidence: Option<f32>,
+    /// Most recent 3D position.
+    pub distance: Option<f32>,
+    pub position_x: Option<f32>,
+    pub position_y: Option<f32>,
+    pub position_z: Option<f32>,
+    pub ws_confidence: Option<f32>,
+    /// Posture quality (latest snapshot).
+    pub recon_error: Option<f32>,
+    pub plausibility: Option<String>,
 }
 
 /// Multi-person tracker.
@@ -129,6 +161,20 @@ impl PersonTracker {
                         t.posture = det.posture.clone();
                         t.posture_confidence = det.posture_confidence;
                     }
+                    // Propagate 3D fields (latest snapshot)
+                    if det.distance.is_some() {
+                        t.distance = det.distance;
+                        t.position_x = det.position_x;
+                        t.position_y = det.position_y;
+                        t.position_z = det.position_z;
+                        t.ws_confidence = det.ws_confidence;
+                    }
+                    if det.recon_error.is_some() {
+                        t.recon_error = det.recon_error;
+                    }
+                    if det.plausibility.is_some() {
+                        t.plausibility = det.plausibility.clone();
+                    }
 
                     matched_ids.push(id);
                 }
@@ -147,6 +193,13 @@ impl PersonTracker {
                     emotion_confidence: det.emotion_confidence,
                     posture: det.posture.clone(),
                     posture_confidence: det.posture_confidence,
+                    distance: det.distance,
+                    position_x: det.position_x,
+                    position_y: det.position_y,
+                    position_z: det.position_z,
+                    ws_confidence: det.ws_confidence,
+                    recon_error: det.recon_error,
+                    plausibility: det.plausibility.clone(),
                 });
             }
         }
@@ -252,6 +305,8 @@ mod tests {
             emotion_confidence: None,
             posture: None,
             posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
         }]
     }
 
@@ -276,6 +331,8 @@ mod tests {
             emotion_confidence: Some(0.65),
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
         }];
         t.tick(&enriched);
         let active: Vec<_> = t.active().collect();
@@ -294,6 +351,8 @@ mod tests {
             identity_confidence: Some(0.30),
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
         }]);
         // Second detection: higher confidence, same bbox
         t.tick(&vec![Detection {
@@ -302,6 +361,8 @@ mod tests {
             identity_confidence: Some(0.72),
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].identity.as_deref(), Some("Вадим"));
@@ -317,6 +378,8 @@ mod tests {
             emotion_confidence: Some(0.6),
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
+                distance: None, position_x: None, position_y: None, position_z: None,
+                ws_confidence: None, recon_error: None, plausibility: None,
         }]);
         // Same person, new emotion
         t.tick(&vec![Detection {
@@ -325,6 +388,8 @@ mod tests {
             emotion_confidence: Some(0.8),
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
+                distance: None, position_x: None, position_y: None, position_z: None,
+                ws_confidence: None, recon_error: None, plausibility: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].emotion.as_deref(), Some("Радость"));
@@ -345,8 +410,8 @@ mod tests {
     fn tracker_creates_separate_tracks_for_non_overlapping() {
         let mut t = PersonTracker::new();
         t.tick(&vec![
-            Detection { bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.5 }, identity: None, identity_confidence: None, emotion: None, emotion_confidence: None, posture: None, posture_confidence: None },
-            Detection { bbox: BBox { x1: 0.7, y1: 0.1, x2: 0.9, y2: 0.5 }, identity: None, identity_confidence: None, emotion: None, emotion_confidence: None, posture: None, posture_confidence: None },
+            Detection { bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.5 }, identity: None, identity_confidence: None, emotion: None, emotion_confidence: None, posture: None, posture_confidence: None, distance: None, position_x: None, position_y: None, position_z: None, ws_confidence: None, recon_error: None, plausibility: None },
+            Detection { bbox: BBox { x1: 0.7, y1: 0.1, x2: 0.9, y2: 0.5 }, identity: None, identity_confidence: None, emotion: None, emotion_confidence: None, posture: None, posture_confidence: None, distance: None, position_x: None, position_y: None, position_z: None, ws_confidence: None, recon_error: None, plausibility: None },
         ]);
         assert_eq!(t.track_count(), 2);
     }
