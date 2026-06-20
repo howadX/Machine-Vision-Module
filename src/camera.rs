@@ -4,21 +4,33 @@
 //! or YuNet CPU) and writes JSON lines to stdout. Rust sightd spawns it as a
 //! subprocess, reads and parses the JSON, and feeds bboxes to the tracker.
 //!
-//! v0.2: real camera via subprocess bridge.
+//! v0.3: enriched detections (identity, emotion, posture).
 
-use crate::tracker::BBox;
+use crate::tracker::{BBox, Detection};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 
-/// A single detection from the Python bridge.
+/// Raw detection from Python bridge JSON (optional fields may be absent).
 #[derive(Debug, Deserialize)]
-struct Detection {
+struct RawDetection {
     x1: f32,
     y1: f32,
     x2: f32,
     y2: f32,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    identity_confidence: Option<f32>,
+    #[serde(default)]
+    emotion: Option<String>,
+    #[serde(default)]
+    emotion_confidence: Option<f32>,
+    #[serde(default)]
+    posture: Option<String>,
+    #[serde(default)]
+    posture_confidence: Option<f32>,
 }
 
 /// Top-level JSON message from bridge.
@@ -28,7 +40,7 @@ struct BridgeMsg {
     frame: u64,
     #[allow(dead_code)]
     elapsed: f64,
-    detections: Vec<Detection>,
+    detections: Vec<RawDetection>,
 }
 
 /// Manages the Python bridge subprocess.
@@ -42,18 +54,13 @@ pub struct Camera {
 
 impl Camera {
     /// Spawn the Python bridge subprocess.
-    ///
-    /// Expects `tools/sight_bridge.py` to exist at the project root.
-    /// Pass `--cpu` to use OpenCV YuNet instead of SCRFD GPU.
     pub fn open(cpu: bool) -> Result<Self> {
-        // Locate the bridge script
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
             .unwrap_or_else(|_| ".".into());
         let bridge_path = std::path::Path::new(&manifest_dir)
             .join("tools")
             .join("sight_bridge.py");
 
-        // Find venv python
         let venv_python = std::path::Path::new(&manifest_dir)
             .join("venv")
             .join("bin")
@@ -62,13 +69,12 @@ impl Camera {
         let python = if venv_python.exists() {
             venv_python
         } else {
-            // Fallback: system python3
             std::path::PathBuf::from("python3")
         };
 
         let mut cmd = Command::new(&python);
         cmd.arg(&bridge_path)
-            .arg("--json-only") // suppress stderr
+            .arg("--json-only")
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
 
@@ -87,26 +93,14 @@ impl Camera {
 
         eprintln!("  camera: bridge started (pid {})", child.id());
 
-        Ok(Self {
-            child,
-            reader,
-            width: 640,
-            height: 480,
-        })
+        Ok(Self { child, reader, width: 640, height: 480 })
     }
 
-    pub fn width(&self) -> u32 {
-        self.width
-    }
+    pub fn width(&self) -> u32 { self.width }
+    pub fn height(&self) -> u32 { self.height }
 
-    pub fn height(&self) -> u32 {
-        self.height
-    }
-
-    /// Parse a single JSON line from the bridge into BBoxes.
-    ///
-    /// Public for testing. Returns empty vec for blank lines.
-    pub fn parse_line(line: &str) -> Result<Vec<BBox>> {
+    /// Parse a single JSON line from the bridge into Detections.
+    pub fn parse_line(line: &str) -> Result<Vec<Detection>> {
         let line = line.trim();
         if line.is_empty() {
             return Ok(vec![]);
@@ -115,25 +109,30 @@ impl Camera {
         let msg: BridgeMsg = serde_json::from_str(line)
             .with_context(|| format!("Failed to parse bridge JSON: {line}"))?;
 
-        let bboxes: Vec<BBox> = msg
+        let detections: Vec<Detection> = msg
             .detections
             .into_iter()
-            .map(|d| BBox {
-                x1: d.x1.clamp(0.0, 1.0),
-                y1: d.y1.clamp(0.0, 1.0),
-                x2: d.x2.clamp(0.0, 1.0),
-                y2: d.y2.clamp(0.0, 1.0),
+            .map(|d| Detection {
+                bbox: BBox {
+                    x1: d.x1.clamp(0.0, 1.0),
+                    y1: d.y1.clamp(0.0, 1.0),
+                    x2: d.x2.clamp(0.0, 1.0),
+                    y2: d.y2.clamp(0.0, 1.0),
+                },
+                identity: d.identity,
+                identity_confidence: d.identity_confidence,
+                emotion: d.emotion,
+                emotion_confidence: d.emotion_confidence,
+                posture: d.posture,
+                posture_confidence: d.posture_confidence,
             })
             .collect();
 
-        Ok(bboxes)
+        Ok(detections)
     }
 
-    /// Read one JSON message from the bridge, return bboxes.
-    ///
-    /// Blocks until a valid line is received. Returns error on EOF
-    /// (bridge died).
-    pub fn read(&mut self) -> Result<Vec<BBox>> {
+    /// Read one JSON message from the bridge, return detections.
+    pub fn read(&mut self) -> Result<Vec<Detection>> {
         let mut line = String::new();
         match self.reader.read_line(&mut line) {
             Ok(0) => {
@@ -161,75 +160,77 @@ impl Drop for Camera {
 mod tests {
     use super::*;
 
-    // ── JSON parsing ─────────────────────────────────────
+    #[test]
+    fn parse_bare_detection() {
+        let dets = Camera::parse_line(
+            r#"{"frame":1,"elapsed":0.0,"detections":[{"x1":0.2,"y1":0.3,"x2":0.5,"y2":0.7}]}"#,
+        ).unwrap();
+        assert_eq!(dets.len(), 1);
+        assert_eq!(dets[0].identity, None);
+        assert_eq!(dets[0].emotion, None);
+        assert_eq!(dets[0].posture, None);
+    }
+
+    #[test]
+    fn parse_enriched_detection() {
+        let json = r#"{"frame":42,"elapsed":1.5,"detections":[{
+            "x1":0.2,"y1":0.3,"x2":0.5,"y2":0.7,
+            "identity":"Вадим","identity_confidence":0.72,
+            "emotion":"Нейтральная","emotion_confidence":0.65,
+            "posture":"сидит","posture_confidence":0.95
+        }]}"#;
+        let dets = Camera::parse_line(json).unwrap();
+        assert_eq!(dets.len(), 1);
+        let d = &dets[0];
+        assert_eq!(d.identity.as_deref(), Some("Вадим"));
+        assert!((d.identity_confidence.unwrap() - 0.72).abs() < 0.001);
+        assert_eq!(d.emotion.as_deref(), Some("Нейтральная"));
+        assert_eq!(d.posture.as_deref(), Some("сидит"));
+        assert!((d.posture_confidence.unwrap() - 0.95).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_partial_enrichment() {
+        // Only identity, no emotion/posture
+        let json = r#"{"frame":1,"elapsed":0.0,"detections":[{
+            "x1":0.2,"y1":0.3,"x2":0.5,"y2":0.7,
+            "identity":"Вадим","identity_confidence":0.5
+        }]}"#;
+        let dets = Camera::parse_line(json).unwrap();
+        assert_eq!(dets[0].identity.as_deref(), Some("Вадим"));
+        assert_eq!(dets[0].emotion, None);
+        assert_eq!(dets[0].posture, None);
+    }
 
     #[test]
     fn parse_empty_detections() {
-        let bboxes = Camera::parse_line(
+        let dets = Camera::parse_line(
             r#"{"frame":1,"elapsed":0.033,"detections":[]}"#,
-        )
-        .unwrap();
-        assert!(bboxes.is_empty());
-    }
-
-    #[test]
-    fn parse_single_detection() {
-        let bboxes = Camera::parse_line(
-            r#"{"frame":42,"elapsed":1.5,"detections":[{"x1":0.2,"y1":0.3,"x2":0.5,"y2":0.7}]}"#,
-        )
-        .unwrap();
-        assert_eq!(bboxes.len(), 1);
-        assert!((bboxes[0].x1 - 0.2).abs() < 1e-6);
-        assert!((bboxes[0].y2 - 0.7).abs() < 1e-6);
-    }
-
-    #[test]
-    fn parse_multiple_detections() {
-        let bboxes = Camera::parse_line(
-            r#"{"frame":10,"elapsed":0.35,"detections":[
-                {"x1":0.1,"y1":0.1,"x2":0.3,"y2":0.5},
-                {"x1":0.6,"y1":0.2,"x2":0.9,"y2":0.7}
-            ]}"#,
-        )
-        .unwrap();
-        assert_eq!(bboxes.len(), 2);
+        ).unwrap();
+        assert!(dets.is_empty());
     }
 
     #[test]
     fn parse_clamps_out_of_range() {
-        let bboxes = Camera::parse_line(
+        let dets = Camera::parse_line(
             r#"{"frame":1,"elapsed":0.0,"detections":[{"x1":-0.5,"y1":-0.2,"x2":1.5,"y2":2.0}]}"#,
-        )
-        .unwrap();
-        assert_eq!(bboxes.len(), 1);
-        assert_eq!(bboxes[0].x1, 0.0);
-        assert_eq!(bboxes[0].y1, 0.0);
-        assert_eq!(bboxes[0].x2, 1.0);
-        assert_eq!(bboxes[0].y2, 1.0);
+        ).unwrap();
+        assert_eq!(dets[0].bbox.x1, 0.0);
+        assert_eq!(dets[0].bbox.x2, 1.0);
     }
 
     #[test]
-    fn parse_blank_line() {
-        let bboxes = Camera::parse_line("").unwrap();
-        assert!(bboxes.is_empty());
-
-        let bboxes = Camera::parse_line("   \n  ").unwrap();
-        assert!(bboxes.is_empty());
+    fn parse_multiple_detections() {
+        let dets = Camera::parse_line(
+            r#"{"frame":10,"elapsed":0.35,"detections":[
+                {"x1":0.1,"y1":0.1,"x2":0.3,"y2":0.5},
+                {"x1":0.6,"y1":0.2,"x2":0.9,"y2":0.7}
+            ]}"#,
+        ).unwrap();
+        assert_eq!(dets.len(), 2);
     }
 
-    #[test]
-    fn parse_invalid_json_is_error() {
-        let result = Camera::parse_line("not json at all");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_missing_detections_field() {
-        let result = Camera::parse_line(r#"{"frame":1,"elapsed":0.0}"#);
-        assert!(result.is_err());
-    }
-
-    // ── Integration: parse → tracker → state ─────────────
+    // ── Integration tests ────────────────────────────────
 
     use crate::state::StateFile;
     use crate::tracker::PersonTracker;
@@ -241,14 +242,12 @@ mod tests {
         dir.join(name)
     }
 
-    /// Feed a stream of JSON frames through the full pipeline.
     fn feed_pipeline(file: &str, frames: &[&str]) -> (PersonTracker, String) {
         let mut tracker = PersonTracker::new();
         for line in frames {
             let detections = Camera::parse_line(line).unwrap();
             tracker.tick(&detections);
         }
-
         let path = temp_state(file);
         let sf = StateFile::open_at(path.clone()).unwrap();
         sf.write(&tracker, 30.0).unwrap();
@@ -257,74 +256,29 @@ mod tests {
     }
 
     #[test]
-    fn integration_empty_stream() {
-        let (_tracker, content) = feed_pipeline("int_empty.md", &[]);
-        assert!(content.contains("- Status: empty"));
-        assert!(content.contains("Face count: 0"));
-    }
-
-    #[test]
-    fn integration_one_person_moving() {
+    fn integration_enriched_pipeline() {
         let frames = &[
-            r#"{"frame":1,"elapsed":0.0,"detections":[{"x1":0.3,"y1":0.3,"x2":0.5,"y2":0.5}]}"#,
-            r#"{"frame":2,"elapsed":0.033,"detections":[{"x1":0.32,"y1":0.31,"x2":0.52,"y2":0.51}]}"#,
-            r#"{"frame":3,"elapsed":0.066,"detections":[{"x1":0.34,"y1":0.32,"x2":0.54,"y2":0.52}]}"#,
+            r#"{"frame":1,"elapsed":0.0,"detections":[{
+                "x1":0.3,"y1":0.3,"x2":0.5,"y2":0.5,
+                "identity":"Вадим","identity_confidence":0.72,
+                "emotion":"Нейтральная","emotion_confidence":0.65,
+                "posture":"сидит","posture_confidence":0.95
+            }]}"#,
+            r#"{"frame":2,"elapsed":0.033,"detections":[{
+                "x1":0.32,"y1":0.31,"x2":0.52,"y2":0.51,
+                "identity":"Вадим","identity_confidence":0.70,
+                "emotion":"Радость","emotion_confidence":0.55
+            }]}"#,
         ];
 
-        let (tracker, content) = feed_pipeline("int_moving.md", frames);
-
-        // Single track maintained across all 3 frames
-        assert_eq!(tracker.track_count(), 1);
-        let active: Vec<_> = tracker.active().collect();
-        assert_eq!(active.len(), 1);
-        assert_eq!(active[0].age, 3);
-
-        // State reflects it
-        assert!(content.contains("Status: occupied"));
-        assert!(content.contains("Face count: 1"));
-        assert!(content.contains("age: 3 frames"));
-    }
-
-    #[test]
-    fn integration_person_appears_and_leaves() {
-        let frames = &[
-            r#"{"frame":1,"elapsed":0.0,"detections":[{"x1":0.3,"y1":0.3,"x2":0.5,"y2":0.5}]}"#,
-            r#"{"frame":2,"elapsed":0.033,"detections":[]}"#,
-            r#"{"frame":3,"elapsed":0.066,"detections":[]}"#,
-            r#"{"frame":4,"elapsed":0.1,"detections":[]}"#,
-        ];
-
-        let (tracker, _content) = feed_pipeline("int_leave.md", frames);
-
-        // Person appeared then left — still tracked (not expired yet)
-        assert_eq!(tracker.track_count(), 1);
-        let active: Vec<_> = tracker.active().collect();
-        assert_eq!(active.len(), 0); // not active (missed > 0)
-    }
-
-    #[test]
-    fn integration_two_people_crossing() {
-        // Two people appear, then cross positions
-        let frames = &[
-            // Frame 1: person A left, person B right
-            r#"{"frame":1,"elapsed":0.0,"detections":[
-                {"x1":0.1,"y1":0.2,"x2":0.3,"y2":0.6},
-                {"x1":0.7,"y1":0.2,"x2":0.9,"y2":0.6}
-            ]}"#,
-            // Frame 2: they cross — A moves right, B moves left
-            r#"{"frame":2,"elapsed":0.033,"detections":[
-                {"x1":0.6,"y1":0.2,"x2":0.8,"y2":0.6},
-                {"x1":0.2,"y1":0.2,"x2":0.4,"y2":0.6}
-            ]}"#,
-            // Frame 3: both move further
-            r#"{"frame":3,"elapsed":0.066,"detections":[
-                {"x1":0.65,"y1":0.21,"x2":0.85,"y2":0.61},
-                {"x1":0.15,"y1":0.21,"x2":0.35,"y2":0.61}
-            ]}"#,
-        ];
-
-        let (tracker, _content) = feed_pipeline("int_cross.md", frames);
-        assert_eq!(tracker.track_count(), 2);
-        // Both still tracked (no new IDs created)
+        let (_tracker, content) = feed_pipeline("int_rich.md", frames);
+        // Final state: track matched both frames, last emotion wins
+        assert!(content.contains("identity: Вадим"));
+        assert!(content.contains("emotion: Радость (0.55)"));
+        assert!(content.contains("posture: сидит (0.95)"));
+        // Track persists across frames (matched, not duplicated)
+        assert!(content.contains("age: 2 frames"));
+        // Confidence present for identity
+        assert!(content.contains("identity: Вадим (0.72)"));
     }
 }

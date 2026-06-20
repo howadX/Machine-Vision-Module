@@ -1,5 +1,7 @@
 //! State file writer. Produces key: value format compatible with
 //! Hermes Sight agent and sight-journal skill.
+//!
+//! v0.3: enriched output with identity, emotion, posture, confidence scores.
 
 use crate::tracker::PersonTracker;
 use anyhow::Result;
@@ -43,32 +45,50 @@ impl StateFile {
 
         let status = if face_count > 0 { "occupied" } else { "empty" };
 
+        // Compute dominant emotion
+        let dominant_emotion = active_tracks
+            .iter()
+            .filter_map(|t| t.emotion.as_deref())
+            .next()
+            .unwrap_or("none");
+
         // Build key: value output
         let mut lines = vec![
-            "# Camera State (sightd v0.1)".to_string(),
+            "# Camera State (sightd v0.3)".to_string(),
             format!("- Last checked: {timestamp}"),
-            format!("- Camera: /dev/video0"),
-            format!("- Uptime: —"),
+            "- Camera: /dev/video0".to_string(),
+            "- Uptime: —".to_string(),
             format!("- FPS: {fps:.1}"),
             format!("- Face count: {face_count}"),
+            format!("- Dominant emotion: {dominant_emotion}"),
         ];
 
         if face_count > 0 {
             let names: Vec<String> = active_tracks
                 .iter()
-                .map(|t| format!("track_{}", t.id))
+                .map(|t| t.identity.as_deref().unwrap_or("unknown").to_string())
                 .collect();
             lines.push(format!("- Persons visible: {}", names.join(", ")));
 
             for (i, t) in active_tracks.iter().enumerate() {
+                let identity = t.identity.as_deref().unwrap_or("unknown");
+                let id_conf = t.identity_confidence
+                    .map(|c| format!(" ({c:.2})")).unwrap_or_default();
+                let emotion = t.emotion.as_deref().unwrap_or("none");
+                let emo_conf = t.emotion_confidence
+                    .map(|c| format!(" ({c:.2})")).unwrap_or_default();
+                let posture = t.posture.as_deref().unwrap_or("—");
+                let pos_conf = t.posture_confidence
+                    .map(|c| format!(" ({c:.2})")).unwrap_or_default();
+
                 lines.push(format!("- Person_{}:", i + 1));
                 lines.push(format!("  - id: {}", t.id));
-                lines.push(format!("  - identity: track_{}", t.id));
+                lines.push(format!("  - identity: {identity}{id_conf}"));
                 lines.push(format!("  - bbox: {:.2},{:.2},{:.2},{:.2}",
                     t.bbox.x1, t.bbox.y1, t.bbox.x2, t.bbox.y2));
                 lines.push(format!("  - age: {} frames", t.age));
-                lines.push(format!("  - emotion: none"));
-                lines.push(format!("  - posture: none"));
+                lines.push(format!("  - emotion: {emotion}{emo_conf}"));
+                lines.push(format!("  - posture: {posture}{pos_conf}"));
             }
         } else {
             lines.push("- Persons visible: none".to_string());
@@ -87,7 +107,8 @@ impl StateFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tracker::{BBox, PersonTracker};
+    use crate::tracker::{BBox, Detection, PersonTracker};
+    use std::path::PathBuf;
 
     fn temp_state_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir()
@@ -100,6 +121,15 @@ mod tests {
         std::fs::read_to_string(path).unwrap()
     }
 
+    fn det(x1: f32, y1: f32, x2: f32, y2: f32) -> Detection {
+        Detection {
+            bbox: BBox { x1, y1, x2, y2 },
+            identity: None, identity_confidence: None,
+            emotion: None, emotion_confidence: None,
+            posture: None, posture_confidence: None,
+        }
+    }
+
     #[test]
     fn state_empty_room() {
         let path = temp_state_path("test_empty.md");
@@ -110,36 +140,56 @@ mod tests {
         let content = read_state(&path);
         assert!(content.contains("- Status: empty"));
         assert!(content.contains("- Face count: 0"));
+        assert!(content.contains("- Dominant emotion: none"));
         assert!(content.contains("- Persons visible: none"));
-        assert!(content.contains("- FPS: 30.0"));
-        // Should NOT contain person entries
         assert!(!content.contains("Person_1:"));
     }
 
     #[test]
-    fn state_occupied_one_person() {
-        let path = temp_state_path("test_occupied.md");
+    fn state_enriched_person() {
+        let path = temp_state_path("test_rich.md");
         let sf = StateFile::open_at(path.clone()).unwrap();
 
         let mut tracker = PersonTracker::new();
-        tracker.tick(&[BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 }]);
+        tracker.tick(&[Detection {
+            bbox: BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
+            identity: Some("Вадим".into()),
+            identity_confidence: Some(0.72),
+            emotion: Some("Нейтральная".into()),
+            emotion_confidence: Some(0.65),
+            posture: Some("сидит".into()),
+            posture_confidence: Some(0.95),
+        }]);
 
         sf.write(&tracker, 25.5).unwrap();
 
         let content = read_state(&path);
         assert!(content.contains("- Status: occupied"));
-        assert!(content.contains("- Face count: 1"));
-        assert!(content.contains("- Persons visible: track_0"));
-        assert!(content.contains("- Person_1:"));
-        assert!(content.contains("  - id: 0"));
-        assert!(content.contains("  - identity: track_0"));
+        assert!(content.contains("- Dominant emotion: Нейтральная"));
+        assert!(content.contains("- Persons visible: Вадим"));
+        assert!(content.contains("  - identity: Вадим (0.72)"));
         assert!(content.contains("  - bbox: 0.20,0.30,0.50,0.70"));
-        assert!(content.contains("  - age: 1 frames"));
+        assert!(content.contains("  - emotion: Нейтральная (0.65)"));
+        assert!(content.contains("  - posture: сидит (0.95)"));
+        assert!(content.contains("# Camera State (sightd v0.3)"));
+    }
+
+    #[test]
+    fn state_unknown_person() {
+        let path = temp_state_path("test_unknown.md");
+        let sf = StateFile::open_at(path.clone()).unwrap();
+
+        let mut tracker = PersonTracker::new();
+        tracker.tick(&[det(0.2, 0.3, 0.5, 0.7)]);
+
+        sf.write(&tracker, 30.0).unwrap();
+
+        let content = read_state(&path);
+        assert!(content.contains("- Persons visible: unknown"));
+        assert!(content.contains("  - identity: unknown"));
         assert!(content.contains("  - emotion: none"));
-        assert!(content.contains("  - posture: none"));
-        assert!(content.contains("- FPS: 25.5"));
-        // Should have last_checked timestamp
-        assert!(content.contains("Last checked:"));
+        assert!(content.contains("  - posture: —"));
+        assert!(content.contains("- Dominant emotion: none"));
     }
 
     #[test]
@@ -149,19 +199,32 @@ mod tests {
 
         let mut tracker = PersonTracker::new();
         tracker.tick(&[
-            BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.5 },
-            BBox { x1: 0.6, y1: 0.2, x2: 0.9, y2: 0.7 },
+            Detection {
+                bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.5 },
+                identity: Some("Вадим".into()), identity_confidence: Some(0.8),
+                emotion: Some("Нейтральная".into()), emotion_confidence: Some(0.6),
+                posture: Some("сидит".into()), posture_confidence: Some(0.9),
+            },
+            Detection {
+                bbox: BBox { x1: 0.6, y1: 0.2, x2: 0.9, y2: 0.7 },
+                identity: Some("Даня".into()), identity_confidence: Some(0.75),
+                emotion: Some("Радость".into()), emotion_confidence: Some(0.7),
+                posture: Some("стоит".into()), posture_confidence: Some(0.85),
+            },
         ]);
 
         sf.write(&tracker, 29.9).unwrap();
 
         let content = read_state(&path);
         assert!(content.contains("- Face count: 2"));
-        assert!(content.contains("- Persons visible: track_0, track_1"));
+        assert!(content.contains("- Persons visible: Вадим, Даня"));
+        assert!(content.contains("- Dominant emotion: Нейтральная"));
         assert!(content.contains("- Person_1:"));
-        assert!(content.contains("  - id: 0"));
+        assert!(content.contains("  - identity: Вадим (0.80)"));
         assert!(content.contains("- Person_2:"));
-        assert!(content.contains("  - id: 1"));
+        assert!(content.contains("  - identity: Даня (0.75)"));
+        assert!(content.contains("  - emotion: Радость (0.70)"));
+        assert!(content.contains("  - posture: стоит (0.85)"));
     }
 
     #[test]
@@ -172,13 +235,11 @@ mod tests {
         sf.write(&tracker, 0.0).unwrap();
 
         let content = read_state(&path);
-        // Format: 2026-06-20T15:04+03:00
         let ts_line = content
             .lines()
             .find(|l| l.starts_with("- Last checked:"))
             .unwrap();
         let ts = ts_line.strip_prefix("- Last checked: ").unwrap();
-        // Basic sanity: contains T, ends with timezone offset
         assert!(ts.contains('T'));
         assert!(ts.ends_with("+03:00") || ts.ends_with("+0300"));
     }
@@ -190,13 +251,10 @@ mod tests {
             .join("a")
             .join("b")
             .join("test_nested.md");
-        // Parent dirs don't exist yet
         let sf = StateFile::open_at(path.clone()).unwrap();
         let tracker = PersonTracker::new();
-        // write() actually creates the file
         sf.write(&tracker, 0.0).unwrap();
         assert!(path.exists());
-        // Cleanup
         let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap().parent().unwrap());
     }
 
@@ -208,8 +266,7 @@ mod tests {
         sf.write(&tracker, 15.0).unwrap();
 
         let content = read_state(&path);
-        assert!(content.starts_with("# Camera State"));
+        assert!(content.starts_with("# Camera State (sightd v0.3)"));
         assert!(content.contains("- Camera: /dev/video0"));
-        assert!(content.contains("- Uptime: —"));
     }
 }

@@ -40,7 +40,7 @@ fn parse_args() -> (bool, u64, bool) {
 fn main() -> Result<()> {
     let (use_cpu, dump_secs, once) = parse_args();
 
-    eprintln!("sightd v0.2.0 — starting (dump every {dump_secs}s, {}mode)",
+    eprintln!("sightd v0.3.0 — starting (dump every {dump_secs}s, {}mode)",
         if once { "once, " } else { "" });
 
     let mut cam = camera::Camera::open(use_cpu)?;
