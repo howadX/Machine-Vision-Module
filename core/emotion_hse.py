@@ -32,11 +32,13 @@ torch.serialization.add_safe_globals([timm.models.efficientnet.EfficientNet])
 # ── Фикс совместимости старой HSEmotion-модели с новым timm ──
 # В старых версиях timm conv_s2d → в новых conv_dw
 def _patch_depthwise_separable_conv(module):
-    """Рекурсивно добавляет conv_s2d как alias для conv_dw."""
+    """Рекурсивно добавляет conv_s2d/bn_s2d как alias для conv_dw/bn_dw."""
     from timm.models._efficientnet_blocks import DepthwiseSeparableConv
     if isinstance(module, DepthwiseSeparableConv):
         if not hasattr(module, 'conv_s2d') and hasattr(module, 'conv_dw'):
             object.__setattr__(module, 'conv_s2d', module.conv_dw)
+        if not hasattr(module, 'bn_s2d') and hasattr(module, 'bn_dw'):
+            object.__setattr__(module, 'bn_s2d', module.bn_dw)
     for child in module.children():
         _patch_depthwise_separable_conv(child)
 
