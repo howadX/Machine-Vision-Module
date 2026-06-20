@@ -133,3 +133,210 @@ impl PersonTracker {
         self.tracks.len()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── BBox ──────────────────────────────────────────────
+
+    #[test]
+    fn bbox_area_unit_square() {
+        let b = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        assert!((b.area() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bbox_area_half_frame() {
+        let b = BBox { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 };
+        assert!((b.area() - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn bbox_area_zero_width() {
+        let b = BBox { x1: 0.5, y1: 0.0, x2: 0.5, y2: 1.0 };
+        assert_eq!(b.area(), 0.0);
+    }
+
+    #[test]
+    fn bbox_area_inverted() {
+        // x2 < x1, y2 < y1 — should clamp to 0
+        let b = BBox { x1: 0.8, y1: 0.8, x2: 0.2, y2: 0.2 };
+        assert_eq!(b.area(), 0.0);
+    }
+
+    #[test]
+    fn iou_identical() {
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let b = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        assert!((a.iou(&b) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn iou_half_overlap() {
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 0.6, y2: 1.0 };
+        let b = BBox { x1: 0.4, y1: 0.0, x2: 1.0, y2: 1.0 };
+        // inter = 0.2*1.0 = 0.2, union = 0.6+0.6-0.2 = 1.0, iou = 0.2
+        assert!((a.iou(&b) - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn iou_no_overlap() {
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 0.4, y2: 1.0 };
+        let b = BBox { x1: 0.6, y1: 0.0, x2: 1.0, y2: 1.0 };
+        assert_eq!(a.iou(&b), 0.0);
+    }
+
+    #[test]
+    fn iou_one_inside_another() {
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let b = BBox { x1: 0.2, y1: 0.2, x2: 0.8, y2: 0.8 };
+        // b полностью внутри a. inter = 0.36, union = 1.0
+        assert!((a.iou(&b) - 0.36).abs() < 1e-5);
+    }
+
+    #[test]
+    fn iou_edge_touching() {
+        // касаются границей, без перекрытия
+        let a = BBox { x1: 0.0, y1: 0.0, x2: 0.5, y2: 1.0 };
+        let b = BBox { x1: 0.5, y1: 0.0, x2: 1.0, y2: 1.0 };
+        assert_eq!(a.iou(&b), 0.0);
+    }
+
+    #[test]
+    fn iou_symmetric() {
+        let a = BBox { x1: 0.1, y1: 0.2, x2: 0.7, y2: 0.9 };
+        let b = BBox { x1: 0.3, y1: 0.1, x2: 0.9, y2: 0.8 };
+        assert_eq!(a.iou(&b), b.iou(&a));
+    }
+
+    // ── PersonTracker ─────────────────────────────────────
+
+    /// Helper: single detection at centre of frame.
+    fn det(x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<BBox> {
+        vec![BBox { x1, y1, x2, y2 }]
+    }
+
+    #[test]
+    fn tracker_creates_new_track_on_first_detection() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.3, 0.3, 0.7, 0.7));
+        assert_eq!(t.track_count(), 1);
+        let active: Vec<_> = t.active().collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, 0);
+        assert_eq!(active[0].age, 1);
+        assert_eq!(active[0].missed, 0);
+    }
+
+    #[test]
+    fn tracker_matches_by_iou() {
+        let mut t = PersonTracker::new();
+        // Frame 1
+        t.tick(&det(0.3, 0.3, 0.7, 0.7));
+        // Frame 2: slight shift, should match same track
+        t.tick(&det(0.32, 0.31, 0.72, 0.71));
+        assert_eq!(t.track_count(), 1);
+        let active: Vec<_> = t.active().collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, 0);
+        assert_eq!(active[0].age, 2);
+    }
+
+    #[test]
+    fn tracker_creates_separate_tracks_for_non_overlapping() {
+        let mut t = PersonTracker::new();
+        // Two distinct people
+        t.tick(&vec![
+            BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.5 },
+            BBox { x1: 0.7, y1: 0.1, x2: 0.9, y2: 0.5 },
+        ]);
+        assert_eq!(t.track_count(), 2);
+        let active: Vec<_> = t.active().collect();
+        assert_eq!(active.len(), 2);
+        assert_ne!(active[0].id, active[1].id);
+    }
+
+    #[test]
+    fn tracker_does_not_match_below_threshold() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.0, 0.0, 0.2, 0.2));
+        // Far away detection — below 0.3 IoU threshold
+        t.tick(&det(0.7, 0.7, 0.9, 0.9));
+        assert_eq!(t.track_count(), 2); // new track, not a match
+    }
+
+    #[test]
+    fn tracker_increments_missed_when_not_seen() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.3, 0.3, 0.7, 0.7));
+        t.tick(&[]); // empty frame — person left
+        let all: Vec<_> = t.all().values().collect();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].missed, 1);
+        assert_eq!(all[0].age, 1); // age doesn't grow when unmatched
+    }
+
+    #[test]
+    fn tracker_expires_stale_tracks() {
+        let mut t = PersonTracker::new();
+        // Manually lower timeout for testing
+        t.timeout_frames = 3;
+        t.tick(&det(0.3, 0.3, 0.7, 0.7));
+        t.tick(&[]);
+        t.tick(&[]);
+        t.tick(&[]); // 3 missed → expired
+        assert_eq!(t.track_count(), 0);
+    }
+
+    #[test]
+    fn tracker_ema_smoothing() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.3, 0.3, 0.5, 0.5));
+        // Slight shift right (overlapping). alpha=0.3:
+        //   x1: 0.3*0.35 + 0.7*0.3 = 0.105 + 0.21 = 0.315
+        //   x2: 0.3*0.55 + 0.7*0.5 = 0.165 + 0.35 = 0.515
+        t.tick(&det(0.35, 0.3, 0.55, 0.5));
+        let active: Vec<_> = t.active().collect();
+        let b = active[0].bbox;
+        assert!((b.x1 - 0.315).abs() < 0.01);
+        assert!((b.x2 - 0.515).abs() < 0.01);
+        // y unchanged
+        assert!((b.y1 - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn tracker_active_filters_missed() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.1, 0.1, 0.3, 0.3));
+        t.tick(&det(0.7, 0.7, 0.9, 0.9)); // new person, old one missed
+        // First track (id=0) has missed=1, second (id=1) has missed=0
+        let active: Vec<_> = t.active().collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, 1);
+    }
+
+    #[test]
+    fn tracker_id_increments() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.0, 0.0, 0.2, 0.2));
+        // empty frame — track 0 becomes missed
+        t.tick(&[]);
+        // new detection far away — gets id=1
+        t.tick(&det(0.5, 0.5, 0.7, 0.7));
+        assert_eq!(t.track_count(), 2);
+        let ids: Vec<u32> = t.all().keys().copied().collect();
+        assert!(ids.contains(&0));
+        assert!(ids.contains(&1));
+    }
+
+    #[test]
+    fn tracker_empty_ticks() {
+        let mut t = PersonTracker::new();
+        for _ in 0..100 {
+            t.tick(&[]);
+        }
+        assert_eq!(t.track_count(), 0);
+        assert_eq!(t.active().count(), 0);
+    }
+}
