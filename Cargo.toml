@@ -2,5 +2,8 @@
 name = "sightd"
 version = "0.1.0"
 edition = "2024"
+description = "MVM daemon — continuous person tracking and state observation"
 
 [dependencies]
+anyhow = "1"
+chrono = "0.4"
