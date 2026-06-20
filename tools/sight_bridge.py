@@ -150,6 +150,33 @@ RU_EMOTION = {
     "surprise": "Удивление",
 }
 
+# ── HSEmotion fallback (GPU) for small/distant faces ──────
+hse_classifier = None
+HSE_GPU_AVAILABLE = torch.cuda.is_available()
+if HSE_GPU_AVAILABLE:
+    try:
+        # PyTorch 2.6 fix: monkey-patch torch.load
+        import torch as _torch
+        _orig_load = _torch.load
+        def _load_with_weights_only_false(*args, **kwargs):
+            kwargs.setdefault('weights_only', False)
+            return _orig_load(*args, **kwargs)
+        _torch.load = _load_with_weights_only_false
+
+        # HSEmotion prints model info to stdout — capture it
+        import io, contextlib
+        with contextlib.redirect_stdout(io.StringIO()):
+            from core.emotion_hse import HSEmotionClassifier
+            hse_classifier = HSEmotionClassifier(model_name='enet_b0_8_best_vgaf', use_gpu=True)
+
+        sys.stderr.write("  bridge: HSEmotion GPU fallback ready\n")
+    except Exception as e:
+        sys.stderr.write(f"  bridge: HSEmotion load failed ({e}), skipping\n")
+    sys.stderr.flush()
+
+# Face size threshold: below this, use HSEmotion instead of MLP
+FACE_SIZE_THRESHOLD = 70  # pixels
+
 def compute_emotion_mlp(landmarks, crop_w, crop_h):
     pts = np.array([[p.x * crop_w, p.y * crop_h] for p in landmarks], dtype=np.float32)
     nose_tip = pts[4]
@@ -333,21 +360,42 @@ try:
                         det["identity"] = name if name else "unknown"
                         det["identity_confidence"] = round(float(sim), 3)
 
-        # Emotion
+        # Emotion — MLP for close faces, HSEmotion for distant
         for det in detections:
-            fx1 = max(0, int(det["x1"] * w - 5))
-            fy1 = max(0, int(det["y1"] * h - 5))
-            fx2 = min(w, int(det["x2"] * w + 5))
-            fy2 = min(h, int(det["y2"] * h + 5))
+            # Percentage-based padding (like sight.py: bbox + 20%)
+            fw = int((det["x2"] - det["x1"]) * w)
+            fh = int((det["y2"] - det["y1"]) * h)
+            px = int(fw * 0.3)
+            py = int(fh * 0.3)
+            fx1 = max(0, int(det["x1"] * w) - px)
+            fy1 = max(0, int(det["y1"] * h) - py)
+            fx2 = min(w, int(det["x2"] * w) + px)
+            fy2 = min(h, int(det["y2"] * h) + py)
             face_crop = frame_rgb[fy1:fy2, fx1:fx2]
-            if face_crop.size > 0:
-                mp_face = mp_python.Image(image_format=mp_python.ImageFormat.SRGB, data=face_crop)
-                lm_result = face_landmarker.detect(mp_face)
-                if lm_result.face_landmarks:
-                    name, conf = compute_emotion_mlp(
-                        lm_result.face_landmarks[0], face_crop.shape[1], face_crop.shape[0])
-                    det["emotion"] = name
-                    det["emotion_confidence"] = round(conf, 3)
+
+            if face_crop.size == 0:
+                continue
+
+            face_w = fx2 - fx1
+
+            # Try FaceLandmarker → MLP first
+            mp_face = mp_python.Image(image_format=mp_python.ImageFormat.SRGB, data=face_crop)
+            lm_result = face_landmarker.detect(mp_face)
+
+            if lm_result.face_landmarks and face_w >= FACE_SIZE_THRESHOLD:
+                # Close face: MLP (fast, CPU)
+                name, conf = compute_emotion_mlp(
+                    lm_result.face_landmarks[0], face_crop.shape[1], face_crop.shape[0])
+                det["emotion"] = name
+                det["emotion_confidence"] = round(conf, 3)
+            elif hse_classifier is not None:
+                # Distant/small face: HSEmotion CNN (GPU)
+                try:
+                    hse_name, hse_conf = hse_classifier.predict(face_crop)
+                    det["emotion"] = hse_name
+                    det["emotion_confidence"] = round(float(hse_conf), 3)
+                except Exception:
+                    pass  # silent fallback — emotion stays None
 
         # Match faces → bodies (posture)
         for det in detections:
