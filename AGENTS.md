@@ -59,6 +59,22 @@ Fusion — не ML-модель. Fusion — набор правил и геом�
 
 **Главный вызов:** с ростом числа агентов сложность fusion-логики растёт экспоненциально. Архитектура должна быть устойчивой с самого начала — каждый слой изолирован, каждый fusion-оператор заменяем.
 
+### Архитектурные принципы (из нейронауки сознания)
+
+Проект опирается на пересечение нейронауки сознания и ML-архитектур. Полный анализ: `~/wiki/machine-vision/02-consciousness-ml-research.md` и `~/wiki/machine-vision/03-architecture-principles.md`.
+
+| Принцип | Нейронаучная основа | Реализация в MVM |
+|----------|-------------------|------------------|
+| **Feedforward = бессознательное** | Feedforward sweep (150ms) — классификация без осознания (Lamme 2000) | MLP-агенты: 1 проход, <1ms |
+| **Рекуррентность = осознание** | Recurrent loops (150-500ms) — conscious access (Dehaene 2006) | PersonTracker: связь кадров во времени |
+| **Global Workspace = StateFile** | GWT (Baars/Dehaene): broadcast информации | StateFile.write(): момент «осознания» |
+| **System 1 / System 2** | Kahneman + Bengio (NeurIPS 2019) | MLP=System 1, CoT/LLM=System 2 |
+| **Confidence-first** | Индикаторы сознания (Butlin/Bengio et al. 2023) | Каждый сигнал агента имеет confidence |
+| **Attention = conscious access** | Attention bottleneck (VanRullen & Kanai 2021) | Будущее: attention поверх MLP для селекции |
+| **Деградация без подтверждения** | Memory decay без recurrent reactivation | PersonTracker: −0.02/с decay confidence |
+
+**Ключевая мантра:** MVM-агент не «осознаёт» в нейронаучном смысле. И это правильно — его задача не требует осознания. Осознание происходит в fusion-слое, когда разрозненные сигналы собираются в целостную картину.
+
 ## Проект
 
 ```
