@@ -235,20 +235,21 @@ mod tests {
     use crate::tracker::PersonTracker;
 
     fn temp_state(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("sightd_integration_test");
+        let dir = std::env::temp_dir()
+            .join(format!("sightd_int_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
     }
 
     /// Feed a stream of JSON frames through the full pipeline.
-    fn feed_pipeline(frames: &[&str]) -> (PersonTracker, String) {
+    fn feed_pipeline(file: &str, frames: &[&str]) -> (PersonTracker, String) {
         let mut tracker = PersonTracker::new();
         for line in frames {
             let detections = Camera::parse_line(line).unwrap();
             tracker.tick(&detections);
         }
 
-        let path = temp_state("integration_test.md");
+        let path = temp_state(file);
         let sf = StateFile::open_at(path.clone()).unwrap();
         sf.write(&tracker, 30.0).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -257,7 +258,7 @@ mod tests {
 
     #[test]
     fn integration_empty_stream() {
-        let (_tracker, content) = feed_pipeline(&[]);
+        let (_tracker, content) = feed_pipeline("int_empty.md", &[]);
         assert!(content.contains("- Status: empty"));
         assert!(content.contains("Face count: 0"));
     }
@@ -270,7 +271,7 @@ mod tests {
             r#"{"frame":3,"elapsed":0.066,"detections":[{"x1":0.34,"y1":0.32,"x2":0.54,"y2":0.52}]}"#,
         ];
 
-        let (tracker, content) = feed_pipeline(frames);
+        let (tracker, content) = feed_pipeline("int_moving.md", frames);
 
         // Single track maintained across all 3 frames
         assert_eq!(tracker.track_count(), 1);
@@ -293,7 +294,7 @@ mod tests {
             r#"{"frame":4,"elapsed":0.1,"detections":[]}"#,
         ];
 
-        let (tracker, _content) = feed_pipeline(frames);
+        let (tracker, _content) = feed_pipeline("int_leave.md", frames);
 
         // Person appeared then left — still tracked (not expired yet)
         assert_eq!(tracker.track_count(), 1);
@@ -322,7 +323,7 @@ mod tests {
             ]}"#,
         ];
 
-        let (tracker, _content) = feed_pipeline(frames);
+        let (tracker, _content) = feed_pipeline("int_cross.md", frames);
         assert_eq!(tracker.track_count(), 2);
         // Both still tracked (no new IDs created)
     }

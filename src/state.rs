@@ -90,7 +90,8 @@ mod tests {
     use crate::tracker::{BBox, PersonTracker};
 
     fn temp_state_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("sightd_test");
+        let dir = std::env::temp_dir()
+            .join(format!("sightd_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
     }
