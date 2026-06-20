@@ -68,6 +68,7 @@ from pose_vae import PoseVAE
 from pose_heads import PoseClassifier
 from pose_encoder import normalize_landmarks
 from emotion_hse import HSEmotionClassifier
+from workspace_3d import Workspace3D
 
 # ── Конфигурация ──────────────────────────────────────────
 GALLERY_DIR = os.path.join(MVM_ROOT, 'models', 'references')
@@ -305,6 +306,9 @@ def main():
 
     hse = HSEmotionClassifier(model_name='enet_b0_8_best_vgaf', use_gpu=True)
 
+    # ── 3D Workspace ──────────────────────────────────────
+    ws = Workspace3D(image_width=w_sd, image_height=h_sd)
+
     # Галерея
     gallery = {}
     for fname in sorted(os.listdir(GALLERY_DIR)):
@@ -322,6 +326,10 @@ def main():
 
     # ── PoseLandmarker → тела ──
     bodies = detect_bodies(pose_lm, frame_sd_rgb, w_sd, h_sd)
+
+    # Калибровка 3D Workspace по первому телу
+    if bodies:
+        ws.calibrate(bodies[0]['pts_33'])
 
     if not bodies:
         result = {
@@ -358,6 +366,15 @@ def main():
 
             if face_lm_result and face_lm_result.face_landmarks:
                 lm_pass1 = face_lm_result.face_landmarks[0]
+
+                # Fallback-калибровка 3D Workspace по лицу
+                if not ws.is_calibrated and face_lm_result.face_landmarks:
+                    face_pts = np.array(
+                        [[p.x, p.y, p.z, 1.0] for p in face_lm_result.face_landmarks[0]],
+                        dtype=np.float32,
+                    )
+                    ws._calibrate_from_face(face_pts)
+
                 hc_h, hc_w = head_crop_sd.shape[:2]
                 face_xs = [p.x * hc_w for p in lm_pass1]
                 face_ys = [p.y * hc_h for p in lm_pass1]
@@ -450,6 +467,20 @@ def main():
         except Exception:
             pass
 
+        # ── 3D Workspace: метрическая позиция ──
+        if ws.is_calibrated:
+            try:
+                body_xyz = ws.to_metric(body['pts_33'])
+                # Центр таза как позиция человека (landmarks 23, 24)
+                hip_center = (body_xyz[23] + body_xyz[24]) / 2.0
+                face_info['distance'] = round(float(hip_center[2]), 2)
+                face_info['position_x'] = round(float(hip_center[0]), 2)
+                face_info['position_y'] = round(float(hip_center[1]), 2)
+                face_info['position_z'] = round(float(hip_center[2]), 2)
+                face_info['ws_confidence'] = round(ws.confidence, 2)
+            except Exception:
+                pass
+
         faces_out.append(face_info)
 
     # ── Вывод ─────────────────────────────────────────────
@@ -482,6 +513,12 @@ def main():
             if f.get('recon_error') is not None:
                 print(f"  recon_error: {f['recon_error']:.4f}")
                 print(f"  plausibility: {f['plausibility']}")
+            if f.get('distance') is not None:
+                print(f"  distance: {f['distance']:.2f}")
+                print(f"  position_x: {f['position_x']:.2f}")
+                print(f"  position_y: {f['position_y']:.2f}")
+                print(f"  position_z: {f['position_z']:.2f}")
+                print(f"  ws_confidence: {f['ws_confidence']:.2f}")
 
     _update_state(cam_path, faces_out, lighting_level, lighting_val)
 
@@ -495,6 +532,11 @@ def _update_state(cam_path, faces, lighting_level, lighting_val):
     plausibility = faces[0].get('plausibility', 'unknown') if faces else 'unknown'
     status = 'occupied' if faces else 'empty'
 
+    # 3D-позиция первого лица
+    distance = faces[0].get('distance') if faces else None
+    pos_x = faces[0].get('position_x') if faces else None
+    pos_y = faces[0].get('position_y') if faces else None
+
     content = (
         f"# Camera State\n"
         f"- Last checked: {now}\n"
@@ -505,6 +547,8 @@ def _update_state(cam_path, faces, lighting_level, lighting_val):
         f"- Dominant emotion: {dominant}\n"
         f"- Posture: {posture}\n"
         f"- Plausibility: {plausibility}\n"
+        + (f"- Distance: {distance:.2f}m\n" if distance is not None else "") +
+        (f"- Position: ({pos_x:.2f}, {pos_y:.2f}, {distance:.2f})m\n" if distance is not None else "") +
         f"- Status: {status}\n"
     )
     os.makedirs(SIGHT_WORKSPACE, exist_ok=True)
