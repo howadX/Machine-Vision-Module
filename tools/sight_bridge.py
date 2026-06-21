@@ -292,7 +292,7 @@ def compute_posture(landmarks):
         z = pose_vae.encode_to_z(x)
         recon = pose_vae.decode(z)
         mse = torch.nn.functional.mse_loss(recon, x).item()
-        logpz = pose_vae.log_prob(z).item()
+        logpz = pose_vae.log_prob_z(x).item()
         logits = pose_classifier(z)
         probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
     idx = int(np.argmax(probs))
