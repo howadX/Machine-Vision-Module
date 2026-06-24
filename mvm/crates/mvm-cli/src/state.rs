@@ -77,6 +77,10 @@ struct JsonFace {
     emotion: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     emotion_conf: Option<f32>,
+    /// Full 8-class softmax distribution from Rust ONNX model (phase 6.4).
+    /// Absent when only Python bridge prediction is available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emotion_distribution: Option<[f32; 8]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     posture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -88,11 +92,23 @@ struct JsonFace {
 }
 
 #[derive(Serialize)]
+struct JsonRelation {
+    a: u32,
+    b: u32,
+    dist_m: f32,
+    overlap: f32,
+    kind: &'static str,
+}
+
+#[derive(Serialize)]
 struct JsonFrame<'a> {
     ts: String,
     fps: f64,
     status: &'a str,
     faces: Vec<JsonFace>,
+    /// Relational scene-graph: zones (connected components) and edges (phase 6.4).
+    zones: Vec<Vec<u32>>,
+    relations: Vec<JsonRelation>,
 }
 
 pub struct StateFile {
@@ -216,13 +232,48 @@ impl StateFile {
     }
 
     /// Serialise current tracker state to a single JSON line.
+    /// Includes relational scene-graph (zones + edges) from mvm-fusion (phase 6.4).
     pub fn to_json_line(&self, tracker: &PersonTracker, fps: f64) -> String {
+        use mvm_core::types::{Entity, EntityKind};
+
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
         let mut active: Vec<_> = tracker.active().collect();
         active.sort_by_key(|t| t.id);
         let status = if active.is_empty() { "empty" } else { "occupied" };
+
+        // Build entities for the scene-graph. Entities without a 3D position use (0,0,0)
+        // with pos_conf=0 so they still participate in 2D overlap relations.
+        let entities: Vec<Entity> = active.iter().map(|t| {
+            let pos_3d = match (t.position_x, t.position_y, t.position_z) {
+                (Some(x), Some(y), Some(z)) => [x, y, z],
+                _ => [0.0, 0.0, 0.0],
+            };
+            Entity {
+                id: t.id,
+                kind: EntityKind::Person,
+                bbox: t.bbox,
+                pos_3d,
+                radius_m: 0.15, // rough head radius
+                pos_conf: t.ws_confidence.unwrap_or(0.0),
+                identity: t.identity.clone(),
+                emotion: t.emotion.clone(),
+                emotion_distribution: t.emotion_distribution,
+            }
+        }).collect();
+
+        let scene = mvm_fusion::build_scene(entities);
+
+        let relations: Vec<JsonRelation> = scene.relations.iter().map(|r| {
+            use mvm_core::types::RelationKind;
+            let kind = match r.kind {
+                RelationKind::Near        => "near",
+                RelationKind::Overlapping => "overlapping",
+                RelationKind::PartOf      => "part_of",
+            };
+            JsonRelation { a: r.a, b: r.b, dist_m: r.distance_m, overlap: r.overlap, kind }
+        }).collect();
 
         let faces: Vec<JsonFace> = active.iter().map(|t| {
             let pos = match (t.position_x, t.position_y, t.position_z) {
@@ -235,6 +286,7 @@ impl StateFile {
                 identity_conf: t.identity_confidence,
                 emotion: t.emotion.clone(),
                 emotion_conf: t.emotion_confidence,
+                emotion_distribution: t.emotion_distribution,
                 posture: t.posture.clone(),
                 posture_conf: t.posture_confidence,
                 dist_m: t.distance,
@@ -242,7 +294,7 @@ impl StateFile {
             }
         }).collect();
 
-        let frame = JsonFrame { ts, fps, status, faces };
+        let frame = JsonFrame { ts, fps, status, faces, zones: scene.zones, relations };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
     }
 
@@ -416,6 +468,7 @@ mod tests {
             ws_confidence: None,
             recon_error: None,
             plausibility: None,
+            emotion_distribution: None,
         }]);
 
         sf.write(&tracker, 25.5).unwrap();
@@ -474,6 +527,7 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
+                emotion_distribution: None,
             },
             Detection {
                 bbox: mvm_core::BBox {
@@ -495,6 +549,7 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
+                emotion_distribution: None,
             },
         ]);
 
@@ -589,6 +644,7 @@ mod tests {
             ws_confidence: Some(0.9),
             recon_error: None,
             plausibility: None,
+            emotion_distribution: None,
         }]);
         let line = sf.to_json_line(&tracker, 29.9);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -626,7 +682,7 @@ mod tests {
             emotion_confidence: Some(0.80),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
         }]);
         let debug = vec![EmotionDebugEntry {
             id: 0,
@@ -658,7 +714,7 @@ mod tests {
             emotion: Some("Грусть".into()), emotion_confidence: Some(0.6),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
         }]);
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();

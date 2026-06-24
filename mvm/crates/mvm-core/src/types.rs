@@ -52,6 +52,9 @@ pub struct Detection {
     // Posture quality
     pub recon_error: Option<f32>,
     pub plausibility: Option<String>,
+    /// Full softmax distribution over 8 emotion classes (from Rust ONNX model).
+    /// None when coming from Python bridge (which only passes label+conf).
+    pub emotion_distribution: Option<[f32; 8]>,
 }
 
 impl Detection {
@@ -64,6 +67,7 @@ impl Detection {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
+            emotion_distribution: None,
         }
     }
 }
@@ -97,6 +101,71 @@ pub struct PersonTrack {
     pub plausibility: Option<String>,
     /// EMA state for native depth smoothing (phase 6.2). None until first native 3D estimate.
     pub depth_ema: Option<crate::space::DepthEma>,
+    /// Latest emotion distribution from Rust model (8 classes). Used by temporal PoE (6.4b).
+    pub emotion_distribution: Option<[f32; 8]>,
+}
+
+// ── Scene-graph types (phase 6.4) ─────────────────────────────────────────────
+
+/// Kind of entity in the scene-graph. Object(class) is the extension point for phase 7.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EntityKind {
+    Person,
+    Face,
+    Hand,
+    BodyPart,
+    Object(String),
+}
+
+/// A scene entity: one node in the 3D scene-graph.
+/// Constructed from PersonTrack (face/person) or future detectors (objects).
+#[derive(Debug, Clone)]
+pub struct Entity {
+    pub id: u32,
+    pub kind: EntityKind,
+    pub bbox: BBox,
+    /// Metric 3D position in metres, origin = camera. [x, y, z].
+    pub pos_3d: [f32; 3],
+    /// Approximate radius in metres derived from bbox + depth. Used for proximity zones.
+    pub radius_m: f32,
+    /// Confidence of the 3D position estimate (from ws_confidence).
+    pub pos_conf: f32,
+    // Flat attributes — Attributes struct introduced in phase 7 when more types land.
+    pub identity: Option<String>,
+    pub emotion: Option<String>,
+    pub emotion_distribution: Option<[f32; 8]>,
+}
+
+/// Kind of relation between two entities.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RelationKind {
+    /// Closer than the proximity threshold.
+    Near,
+    /// Bboxes overlap (IoU > 0).
+    Overlapping,
+    /// One entity is spatially contained within another (future use).
+    PartOf,
+}
+
+/// A directed edge in the scene-graph.
+#[derive(Debug, Clone)]
+pub struct Relation {
+    pub a: u32,
+    pub b: u32,
+    pub distance_m: f32,
+    pub overlap: f32,
+    pub kind: RelationKind,
+}
+
+/// The full metric 3D scene-graph for one frame.
+/// Entities = nodes with 3D positions; relations = weighted edges;
+/// zones = connected components (contextual interaction groups).
+#[derive(Debug, Clone)]
+pub struct Scene {
+    pub entities: Vec<Entity>,
+    pub relations: Vec<Relation>,
+    /// Each zone is a list of entity IDs that are spatially connected.
+    pub zones: Vec<Vec<u32>>,
 }
 
 #[cfg(test)]

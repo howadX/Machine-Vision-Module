@@ -350,8 +350,11 @@ dependencies = [
  "mvm-core",
  "mvm-detect",
  "mvm-emotion",
+ "mvm-fusion",
  "mvm-identity",
  "mvm-pipeline",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

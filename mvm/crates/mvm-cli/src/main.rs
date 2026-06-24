@@ -327,6 +327,8 @@ fn main() -> Result<()> {
                         if let Ok(result) = emo.classify(&face) {
                             let py_emotion = det.emotion.clone();
                             let py_conf = det.emotion_confidence;
+                            // Always store the full distribution for PoE fusion (6.4).
+                            det.emotion_distribution = Some(result.distribution);
                             let winner = if emotion_wins(&result, det.emotion_confidence) {
                                 det.emotion = Some(result.label.clone());
                                 det.emotion_confidence = Some(result.calibrated_conf);

@@ -130,6 +130,7 @@ impl YunetDetector {
                     ws_confidence: None,
                     recon_error: None,
                     plausibility: None,
+                    emotion_distribution: None,
                 });
             }
         }

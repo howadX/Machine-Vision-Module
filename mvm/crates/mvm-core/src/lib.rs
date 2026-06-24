@@ -13,7 +13,7 @@ pub mod config;
 pub mod kalman;
 pub mod space;
 
-pub use types::{BBox, Detection, PersonTrack};
+pub use types::{BBox, Detection, PersonTrack, EntityKind, Entity, RelationKind, Relation, Scene};
 pub use tracker::PersonTracker;
 pub use module::{Module, ModuleMetadata};
 pub use config::Config;

@@ -140,6 +140,7 @@ impl Camera {
             ws_confidence: d.ws_confidence,
             recon_error: d.recon_error,
             plausibility: d.plausibility,
+            emotion_distribution: None, // Python bridge doesn't output distributions
         }).collect())
     }
 
