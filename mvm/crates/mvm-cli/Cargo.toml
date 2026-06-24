@@ -1,0 +1,20 @@
+[package]
+name = "mvm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MVM CLI — binary entry point and state file writer"
+
+[features]
+default = []
+embed-models = ["mvm-detect/embed-model"]
+
+[dependencies]
+mvm-core = { path = "../mvm-core" }
+mvm-detect = { path = "../mvm-detect" }
+mvm-emotion = { path = "../mvm-emotion" }
+mvm-identity = { path = "../mvm-identity" }
+mvm-pipeline = { path = "../mvm-pipeline" }
+anyhow = "1"
+chrono = "0.4"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

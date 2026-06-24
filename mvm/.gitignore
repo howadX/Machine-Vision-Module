@@ -1,0 +1,11 @@
+# Large ONNX models (download separately)
+models/enet_b0_8_best_vgaf.onnx
+models/face_recognition_sface_2021dec.onnx
+
+# Build artifacts
+/target/
+/dist/mvm
+
+# Python MVM (if symlinked)
+__pycache__/
+*.pyc

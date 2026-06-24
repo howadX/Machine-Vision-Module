@@ -4,3 +4,5 @@
 /models/
 __pycache__/
 *.pyc
+mvm/target/
+mvm/dist/
