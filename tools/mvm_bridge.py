@@ -18,6 +18,7 @@ parser.add_argument("--cpu", action="store_true")
 parser.add_argument("--json-only", action="store_true")
 parser.add_argument("--no-posture", action="store_true")
 parser.add_argument("--max-frames", type=int, default=0)
+parser.add_argument("--write-frame", type=str, default=None, help="Save current frame to this path on each tick")
 args = parser.parse_args()
 
 if args.json_only:
@@ -57,14 +58,15 @@ gallery_dir = ROOT / "models" / "references"
 NAME_MAP = {"V": "Вадим", "D": "Даня", "N": "Никита", "B": "Белла"}
 gallery = {}
 if gallery_dir.exists():
+    # Группируем multi-angle файлы: p_V_01.jpg, p_V_02.jpg → Вадим
+    ref_paths: dict[str, list[str]] = {}
     for f in sorted(gallery_dir.glob("p_*.jpg")):
-        name_key = f.stem[2:]
-        img = cv2.imread(str(f))
-        if img is None:
-            continue
-        emb = face_id.get_embedding(img)
-        if emb is not None:
-            gallery[f.stem] = (NAME_MAP.get(name_key, name_key), emb)
+        stem = f.stem[2:]  # V_01 или V
+        base = stem.split("_")[0]
+        if base in NAME_MAP:
+            ref_paths.setdefault(NAME_MAP[base], []).append(str(f))
+    if ref_paths:
+        gallery = face_id.build_gallery(ref_paths)
 
 # ═══════════════════════════════════════════════════════════
 # Emotion: HSEmotion (GPU) — works on faces of any size
@@ -264,16 +266,9 @@ try:
 
             # Identity
             emb = face.embedding
-            identity = None
-            identity_confidence = None
-            best_sim = 0.0
-            for ref_name, (person_name, ref_emb) in gallery.items():
-                sim = float(np.dot(emb, ref_emb))
-                if sim > best_sim:
-                    best_sim = sim
-                    if sim > 0.35:
-                        identity = person_name
-                        identity_confidence = sim
+            name, sim = face_id.identify(emb, gallery)
+            identity = name
+            identity_confidence = round(float(sim), 3) if sim is not None else None
 
             # Emotion: HSEmotion on face crop
             fx1 = int(x1 * w); fy1 = int(y1 * h); fx2 = int(x2 * w); fy2 = int(y2 * h)
@@ -326,6 +321,15 @@ try:
 
         elapsed = time.time() - t0
         msg = {"frame": frame_n, "elapsed": round(elapsed, 4), "detections": detections}
+
+        # Write frame to disk for Rust native enrichment (--write-frame)
+        if args.write_frame:
+            try:
+                cv2.imwrite(args.write_frame, frame)
+                msg["frame_file"] = args.write_frame
+            except Exception:
+                pass
+
         sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 

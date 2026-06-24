@@ -55,6 +55,7 @@ class CalibrationState:
     last_torso_mp: float = 0.0
     last_torso_m: float = 0.0
     confidence: float = 0.0       # 0—1, качество калибровки
+    estimated_distance: float = 0.0  # pinhole-оценка расстояния (метры)
 
 
 class Workspace3D:
@@ -145,6 +146,17 @@ class Workspace3D:
 
         # scale = метров на «пиксельную» единицу (включая z)
         raw_scale = TORSO_LENGTH_M / torso_mp
+
+        # Pinhole distance estimation: z = (fx × TORSO_LENGTH_M) / torso_px
+        torso_2d = float(np.linalg.norm(torso_vec[:2]))
+        if torso_2d > 0:
+            raw_dist = (self.fx * TORSO_LENGTH_M) / torso_2d
+            if self._state.estimated_distance > 0:
+                self._state.estimated_distance = (
+                    self._alpha * self._state.estimated_distance +
+                    (1 - self._alpha) * raw_dist)
+            else:
+                self._state.estimated_distance = raw_dist
 
         # Валидация: восстановленный torsо должен быть в разумных пределах
         torso_m_check = torso_mp * raw_scale
@@ -246,7 +258,11 @@ class Workspace3D:
         # (делим на кадр-координату, потом умножаем на z_scale)
         pts[:, 0] = (pts[:, 0] - 0.5) * self.w * scale
         pts[:, 1] = (pts[:, 1] - 0.5) * self.h * scale
-        pts[:, 2] = pts[:, 2] * scale
+        # Z: pinhole distance (м) — всё тело примерно на одном расстоянии
+        if self._state.estimated_distance > 0:
+            pts[:, 2] = self._state.estimated_distance
+        else:
+            pts[:, 2] = pts[:, 2] * scale
 
         return pts.astype(np.float32)
 
@@ -298,6 +314,10 @@ class Workspace3D:
     @property
     def frames_calibrated(self) -> int:
         return self._state.frames_calibrated
+
+    @property
+    def estimated_distance(self) -> float:
+        return self._state.estimated_distance
 
     @property
     def last_torso_m(self) -> float:

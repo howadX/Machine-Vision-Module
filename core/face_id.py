@@ -126,15 +126,19 @@ class FaceID:
     def identify(
         self,
         embedding: np.ndarray,
-        gallery: dict[str, np.ndarray],
+        gallery: dict,
         threshold: float = 0.35,
     ) -> tuple[str | None, float]:
         """
         Идентифицирует человека по эмбеддингу.
 
+        Поддерживает multi-angle галерею: значение может быть
+        одним np.ndarray или списком [emb1, emb2, ...].
+        Берётся максимальное косинусное сходство по всем эталонам человека.
+
         Args:
             embedding: эмбеддинг живого лица (512d).
-            gallery: словарь {имя: эмбеддинг}.
+            gallery: {имя: np.ndarray | list[np.ndarray]}.
             threshold: порог косинусного сходства (0..1).
                        0.35 = уверенное совпадение, 0.25 = слабое.
 
@@ -146,40 +150,54 @@ class FaceID:
 
         emb_norm = embedding / np.linalg.norm(embedding)
 
-        for name, ref_emb in gallery.items():
-            ref_norm = ref_emb / np.linalg.norm(ref_emb)
-            sim = float(np.dot(emb_norm, ref_norm))  # косинусное сходство
-            if sim > best_sim:
-                best_sim = sim
-                best_name = name
+        for name, ref in gallery.items():
+            # Приводим к списку: и одиночный эмбеддинг, и список
+            refs = ref if isinstance(ref, list) else [ref]
+            for ref_emb in refs:
+                ref_norm = ref_emb / np.linalg.norm(ref_emb)
+                sim = float(np.dot(emb_norm, ref_norm))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_name = name
 
         if best_sim < threshold:
             return None, best_sim
         return best_name, best_sim
 
     def build_gallery(
-        self, image_paths: dict[str, str]
-    ) -> dict[str, np.ndarray]:
+        self, image_paths: dict
+    ) -> dict[str, list[np.ndarray]]:
         """
-        Строит галерею эталонов: {имя: путь} → {имя: эмбеддинг}.
+        Строит multi-angle галерею эталонов.
+
+        Принимает одиночный путь (str) или список путей (list[str])
+        на человека. Возвращает {имя: [emb1, emb2, ...]}.
 
         Args:
-            image_paths: {имя: путь_к_фото}
+            image_paths: {имя: путь | [путь1, путь2, ...]}
 
         Returns:
-            {имя: np.array(512,)} — только для успешно распознанных.
+            {имя: [np.array(512,), ...]} — только для успешно распознанных.
         """
         gallery = {}
-        for name, path in image_paths.items():
-            img = _read_bgr(path)
-            if img is None:
-                print(f"  [WARN] Галерея: {name} — не удалось прочитать {path}")
-                continue
-            emb = self.get_embedding(img)
-            if emb is None:
-                print(f"  [WARN] Галерея: {name} — лицо не найдено в {path}")
-                continue
-            gallery[name] = emb
+        for name, paths in image_paths.items():
+            if isinstance(paths, str):
+                paths = [paths]
+            embs = []
+            for path in paths:
+                img = _read_bgr(path)
+                if img is None:
+                    print(f"  [WARN] Галерея: {name} — не удалось прочитать {path}")
+                    continue
+                emb = self.get_embedding(img)
+                if emb is None:
+                    print(f"  [WARN] Галерея: {name} — лицо не найдено в {path}")
+                    continue
+                embs.append(emb)
+            if embs:
+                gallery[name] = embs
+            else:
+                print(f"  [WARN] Галерея: {name} — ни одного валидного эмбеддинга")
         return gallery
 
 
