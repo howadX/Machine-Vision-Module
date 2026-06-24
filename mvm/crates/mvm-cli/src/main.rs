@@ -15,34 +15,63 @@ use mvm_core::Detection;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-/// Returns true when Rust emotion should replace the current (Python bridge) prediction.
-/// Rust wins only if its confidence is strictly higher.
-fn emotion_wins(rust_conf: f32, current_conf: Option<f32>) -> bool {
-    rust_conf > current_conf.unwrap_or(0.0)
+/// Returns true when the Rust emotion result should replace the current (Python bridge) prediction.
+/// Comparison uses `calibrated_conf` (prob × (1 - entropy)) — a high-entropy prediction
+/// loses even if its raw probability looks reasonable.
+fn emotion_wins(rust: &mvm_emotion::EmotionResult, py_conf: Option<f32>) -> bool {
+    rust.calibrated_conf > py_conf.unwrap_or(0.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mvm_emotion::EmotionResult;
+
+    fn make_result(calibrated_conf: f32) -> EmotionResult {
+        EmotionResult {
+            label: "test".into(),
+            prob: calibrated_conf,
+            distribution: [0.0; 8],
+            entropy: 0.0,
+            uncertainty: 0.0,
+            calibrated_conf,
+        }
+    }
 
     #[test]
     fn emotion_wins_when_no_python_conf() {
-        assert!(emotion_wins(0.6, None));
+        assert!(emotion_wins(&make_result(0.6), None));
     }
 
     #[test]
     fn emotion_wins_when_rust_higher() {
-        assert!(emotion_wins(0.8, Some(0.5)));
+        assert!(emotion_wins(&make_result(0.8), Some(0.5)));
     }
 
     #[test]
     fn emotion_loses_when_python_higher() {
-        assert!(!emotion_wins(0.5, Some(0.8)));
+        assert!(!emotion_wins(&make_result(0.5), Some(0.8)));
     }
 
     #[test]
     fn emotion_loses_on_tie() {
-        assert!(!emotion_wins(0.7, Some(0.7)));
+        assert!(!emotion_wins(&make_result(0.7), Some(0.7)));
+    }
+
+    /// High-entropy result loses even if raw prob would win.
+    #[test]
+    fn emotion_wins_uses_calibrated_conf() {
+        // Rust prob=0.8, but high entropy → calibrated_conf = 0.8 * (1-0.9) = 0.08
+        let uncertain = EmotionResult {
+            label: "test".into(),
+            prob: 0.8,
+            distribution: [0.0; 8],
+            entropy: 0.9,
+            uncertainty: 0.9,
+            calibrated_conf: 0.08,
+        };
+        // Python only has 0.1 confidence, but uncertain Rust should still lose
+        assert!(!emotion_wins(&uncertain, Some(0.1)), "uncertain prediction should lose");
     }
 }
 
@@ -293,14 +322,14 @@ fn main() -> Result<()> {
                     let y2 = (det.bbox.y2 * fh as f32) as u32;
                     let face = frame.crop_imm(x1, y1, x2 - x1, y2 - y1);
 
-                    // Emotion: keep higher-confidence prediction (Rust or Python bridge)
+                    // Emotion: keep higher calibrated-confidence prediction (Rust or Python bridge)
                     if let Some(ref mut emo) = emotion_mod {
-                        if let Ok((label, conf)) = emo.classify(&face) {
+                        if let Ok(result) = emo.classify(&face) {
                             let py_emotion = det.emotion.clone();
                             let py_conf = det.emotion_confidence;
-                            let winner = if emotion_wins(conf, det.emotion_confidence) {
-                                det.emotion = Some(label.clone());
-                                det.emotion_confidence = Some(conf);
+                            let winner = if emotion_wins(&result, det.emotion_confidence) {
+                                det.emotion = Some(result.label.clone());
+                                det.emotion_confidence = Some(result.calibrated_conf);
                                 "rust"
                             } else {
                                 "python"
@@ -308,8 +337,8 @@ fn main() -> Result<()> {
                             if args.emotion_debug {
                                 emotion_debug_entries.push(state::EmotionDebugEntry {
                                     id: det_idx as u32,
-                                    rust_emotion: label,
-                                    rust_conf: conf,
+                                    rust_emotion: result.label,
+                                    rust_conf: result.calibrated_conf,
                                     py_emotion,
                                     py_conf,
                                     winner,
