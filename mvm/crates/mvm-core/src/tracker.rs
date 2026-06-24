@@ -10,7 +10,7 @@ use crate::types::{Detection, PersonTrack};
 pub struct PersonTracker {
     next_id: u32,
     tracks: HashMap<u32, PersonTrack>,
-    timeout_frames: u64,
+    pub timeout_frames: u64,
     /// Frames of no detection before emotion confidence starts decaying.
     pub decay_start_frames: u64,
     /// Per-frame multiplier applied to emotion_confidence during decay.
