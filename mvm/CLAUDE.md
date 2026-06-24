@@ -9,6 +9,25 @@ MVM проектируется от сборки наружу, а не от ко
 **Принцип:** если модуль добавить легко — архитектура останется чистой по умолчанию.
 **Цель:** один бинарник. Скачал — запустил — работает. Без Python, без pip, без GPU.
 
+## Фундаментальный стек
+
+Три инварианта, которые определяют каждое архитектурное решение. Если фича их нарушает — она не входит в MVM.
+
+1. **Минимализм / чистая арифметика.** Логика fusion, трекинга, 3D, uncertainty — это умножения, деления, скалярные фильтры над данными, которые уже в памяти. **Ноль новых зависимостей** на каждую новую интеллектуальную фичу. Не тянем linalg-крейты, не обучаем MLP там, где работает замкнутая форма. Footprint растёт только когда добавляется новый ONNX-эксперт.
+2. **CPU-first, $0.** Ни рантайм, ни модели не требуют GPU. Никаких внешних API. Цель задержки — `<50ms` на CPU.
+3. **Полный нативный Rust-пайплайн.** Python-модели (`mvm_bridge.py`, HSEmotion, MediaPipe) — это **прототипы-эксперты, строительные леса**. Боевой кластер целиком на Rust; Python планомерно сносится (фаза 7). Новый код не должен углублять связь с Python.
+
+### Что производит MVM
+
+**Метрический 3D scene-graph каждый кадр.** Не плоский список людей, а граф: узлы-сущности с метрической 3D-позицией (origin = камера), рёбра-отношения между ними.
+
+- **3D-позиция** считается **pinhole-геометрией с known-size априорами** (`z = fx · real_size / pixel_size`), а не depth-estimation сетью. Это чистая арифметика — фундаментальная фича для робототехники: чтобы действовать в мире, нужны метрические координаты.
+- **Fusion** имеет две операции, и пространственная — главная:
+  - **Реляционная (основная):** N сущностей → граф близости/пересечений → контекстные зоны (связные компоненты). «Голова + тело + рука + чашка в общей зоне; расстояния между объектами = тонкий контекст взаимодействия».
+  - **Атрибутивная (частный случай):** слияние нескольких оценок одного атрибута (эмоция во времени / разные модели) через Product-of-Experts.
+
+Текущий тяжёлый стек (оправдан): `ort` (ONNX inference, CPU) + `ndarray` + `image` — мост к ML-моделям без Python. Всё остальное (`anyhow`, `serde`, `chrono`) тривиально. Фундаментальные фичи фазы 6 (Kalman, 3D, entropy, реляционная fusion) **не добавляют ни одной зависимости**.
+
 ## Почему MVM, а не VLM?
 
 Vision-Language Models (GPT-4V, Claude Vision, LLaVA) делают всё: изображение → текст.
@@ -212,13 +231,14 @@ mvm/
 | PersonTracker: emotion decay при missed > N кадров | 🔜 |
 | Интеграционные тесты: bridge + Rust pipeline | 🔜 |
 
-### 🟢 Фаза 6 — Predictive State
+### 🟢 Фаза 6 — Metric 3D Scene-Graph (чистая арифметика, ноль новых deps)
 
 | Задача | Статус |
 |--------|--------|
-| SG-LKF: MLP-предсказатель bbox | 🔜 |
-| Evidential DL: softmax→softplus confidence | 🔜 |
-| PDF fusion (Mono/Holo-Confidence) | 🔜 |
+| 6.1 SG-KF: Kalman bbox (4× скаляр + State-Gating) | 🔜 |
+| 6.2 Метрический 3D (порт pinhole-геометрии в Rust) | 🔜 |
+| 6.3 Uncertainty: entropy-based confidence для emotion | 🔜 |
+| 6.4 Fusion: реляционный scene-graph (осн.) + атрибутивный PoE (доп.) | 🔜 |
 
 ### 🟢 Фаза 7 — Нативный детектор
 
@@ -240,41 +260,73 @@ mvm/
 
 ---
 
-## Фаза 6 — Predictive State: детальный план
+## Фаза 6 — Metric 3D Scene-Graph: детальный план
 
 > **Для:** brainstorm с Opus / делегирование Claude Code.
-> **Статус базы:** 70 тестов, все зелёные. Фаза 5.2 завершена.
+> **Статус базы:** все тесты зелёные. Фаза 5.2 завершена.
+> **Принцип фазы:** чистая арифметика, CPU, **ноль новых зависимостей**, всё в нативном Rust (без углубления связи с Python).
+
+### Цель фазы
+
+Превратить плоский список детекций в **метрический 3D scene-graph**: узлы-сущности с 3D-позицией (origin = камера), рёбра-отношения между ними. Это перцептивный субстрат для робототехники.
+
+Несущая абстракция (живёт в `mvm-core/src/types.rs`):
+
+```rust
+pub struct Entity {
+    pub id: u32,
+    pub kind: EntityKind,      // Person | Face | Hand | BodyPart | Object(class)
+    pub bbox: BBox,            // 2D, сглажен Kalman (6.1)
+    pub pos_3d: [f32; 3],      // метры, origin = камера (pinhole, 6.2)
+    pub radius_m: f32,         // габарит из bbox+глубины (для зон/дистанций)
+    pub pos_conf: f32,         // confidence калибровки 3D
+    pub attrs: Attributes,     // identity, emotion{dist[8]+uncertainty}, ...
+}
+
+// mvm-fusion
+pub struct Relation { pub a: u32, pub b: u32, pub distance_m: f32, pub overlap: f32, pub kind: RelationKind }
+pub struct Scene { pub entities: Vec<Entity>, pub relations: Vec<Relation>, pub zones: Vec<Vec<u32>> }
+```
+
+`EntityKind::Object(class)` — точка расширения: чашку/предмет добавит генерик-детектор фазы 7, движок отношений не меняется (object-agnostic).
 
 ### Контекст: что есть сейчас после фазы 5.2
 
 ```
 PersonTracker
   ├─ IoU-матчинг (threshold 0.3)
-  ├─ EMA bbox-сглаживание (α = 0.3)
+  ├─ EMA bbox-сглаживание (α = 0.3)              → заменяет 6.1 (Kalman)
   ├─ identity: best-confidence persistence
-  ├─ emotion: latest snapshot + decay (missed > 5 → ×0.8/кадр → None при conf < 0.05)
+  ├─ emotion: latest snapshot + decay (×0.8/кадр) → заменяет 6.4 (атрибутивный PoE)
   └─ timeout: 1800 кадров (30s @ 60fps)
 
 mvm-emotion
-  └─ classify() → (label: String, conf: f32)  // max(softmax), 8 классов VGAF
+  └─ classify() → (label: String, conf: f32)      → расширяет 6.3 (EmotionResult+entropy)
 
-mvm-fusion   🔶 заглушка
+Workspace3D (Python prototype, core/workspace_3d.py) → порт в Rust = 6.2
+mvm-fusion   🔶 заглушка                           → реляционный движок = 6.4
 mvm-posture  🔶 заглушка
 ```
 
 **Проблема EMA:** реактивен. При occluded-кадрах bbox не движется → IoU с новыми детекциями падает → трек теряется раньше срока.
 
-**Проблема confidence:** `max(softmax) = 0.8` может означать «уверен» (7 классов ≈ 0) или «не уверен» (7 классов ≈ 0.03 каждый). Без меры uncertainty downstream-агенты не различают эти случаи.
+**Проблема 3D:** метрические координаты считаются только в Python (`Workspace3D`), в нативном пайплайне их нет → fusion нечем мерить расстояния.
 
-**Проблема fusion:** два источника emotion (Rust EmotiEffLib + Python HSEmotion) сейчас сравниваются по одному скалярному числу, хотя оба дают вектор из 8 вероятностей.
+**Проблема confidence:** `max(softmax) = 0.8` может означать «уверен» (7 классов ≈ 0) или «не уверен» (7 классов ≈ 0.03 каждый). Без меры uncertainty downstream-агенты не различают эти случаи, и атрибутивная fusion не знает весов экспертов.
+
+**Проблема fusion:** заглушка. Главная её задача — не слияние эмоций (это частный случай), а **реляционная**: понять, как сущности связаны в пространстве (близость, пересечение bbox, контекстные зоны).
 
 ---
 
 ### Задача 6.1 — SG-KF: Kalman Filter для bbox
 
-**Цель:** заменить EMA на Linear Kalman Filter с constant-velocity motion model.
+**Цель:** заменить EMA на Linear Kalman Filter с constant-velocity motion model. Независима от остальных.
 
-#### State vector (8D)
+> **Реализация: декомпозированная форма (минимализм).** При диагональных Q, R, P восемь координат не связаны → 8D-фильтр **тождественно распадается на 4 независимых скалярных 2D-фильтра** (по одному на `cx, cy, w, h`, каждый со state `[pos, vel]`, `F=[[1,1],[0,1]]`, `H=[1,0]`, `S` — скаляр). **Никакого обращения матриц, никакого linalg-крейта** — ~50 строк скалярной арифметики. Матричная форма ниже — это спецификация; кодим декомпозицию. Тесты не меняются.
+>
+> **6.1 даёт 3D бесплатно:** сглаженный размер bbox (`w/h`) — вход для pinhole-глубины (6.2). 6.1 и 6.2 не дублируют работу, а складываются.
+
+#### State vector (8D) — спецификация
 
 ```
 x = [cx, cy, w, h, vcx, vcy, vw, vh]
@@ -357,7 +409,60 @@ pub struct PersonTrack {
 
 ---
 
-### Задача 6.2 — Uncertainty Estimation для emotion
+### Задача 6.2 — Метрический 3D (порт pinhole-геометрии в Rust)
+
+**Цель:** каждая `Entity` получает метрическую `pos_3d` (origin = камера). Порт `core/workspace_3d.py` в нативный Rust. Независима от 6.1 по логике, но использует её сглаженный bbox как вход.
+
+**Метод — чистая pinhole-геометрия с known-size априорами (НЕ depth-сеть):**
+
+```
+z = (fx · real_size) / pixel_size          // глубина из известного размера объекта
+x = (px − cx) · z / fx                      // обратная проекция в метры
+y = (py − cy) · z / fy
+```
+
+**Калибровка fx / scale** — по известным размерам (приоры из прототипа):
+
+```
+TORSO_LENGTH_M  = 0.50    // плечи→бёдра (основная)
+FACE_HEIGHT_M   = 0.19    // лицо (fallback)
+INTEROCULAR_M   = 0.063   // межзрачковое (fallback)
+```
+
+EMA-сглаживание `z_scale` и `estimated_distance` (α из Config). Валидация: восстановленный размер в разумных пределах → иначе `uncalibrated`, `pos_conf = 0`.
+
+**Источник `pixel_size` сейчас:** для лиц/тел — высота bbox (сглажена 6.1) + соответствующий приор. Для body-parts/hand из позы — landmark'и от Python bridge (временно, до нативной позы фазы 7). Геометрия от источника не зависит.
+
+#### Что меняется в коде
+
+```rust
+// mvm-core/src/space.rs  (новый файл)
+pub struct Pinhole { pub fx: f32, pub fy: f32, pub cx: f32, pub cy: f32 }
+
+pub struct Calibration { pub z_scale: f32, pub distance_m: f32, pub conf: f32, pub calibrated: bool }
+
+impl Pinhole {
+    pub fn pixel_to_3d(&self, px: f32, py: f32, z: f32) -> [f32; 3] { ... }   // обратная проекция
+    pub fn distance_from_size(&self, pixel_size: f32, real_size: f32) -> f32 { ... } // z = fx·real/pixel
+}
+pub fn calibrate(prev: &Calibration, observed_px: f32, real_m: f32, alpha: f32) -> Calibration { ... }
+```
+
+`Entity.pos_3d` и `radius_m` заполняются здесь после Kalman-update трека.
+
+#### TDD тесты для 6.2
+
+| Тест | Что проверяет |
+|------|--------------|
+| `distance_from_size_pinhole` | известный размер + fx → корректная z (метры) |
+| `pixel_to_3d_backprojection` | центр кадра → x≈0,y≈0; угол → знак x,y верный |
+| `calibrate_smooths_scale` | EMA: scale стабилизируется за N кадров |
+| `calibrate_rejects_implausible` | torso вне [0.3,0.75] → uncalibrated |
+| `closer_object_larger_bbox_smaller_z` | больше bbox → меньше дистанция (монотонность) |
+
+---
+
+### Задача 6.3 — Uncertainty Estimation для emotion
 
 **Цель:** `classify()` возвращает не только `(label, prob)`, но и `entropy` / `uncertainty` — меру сомнения модели.
 
@@ -418,7 +523,7 @@ fn emotion_wins(rust: &EmotionResult, py_conf: Option<f32>) -> bool {
 }
 ```
 
-#### TDD тесты для 6.2
+#### TDD тесты для 6.3
 
 | Тест | Что проверяет |
 |------|--------------|
@@ -430,89 +535,101 @@ fn emotion_wins(rust: &EmotionResult, py_conf: Option<f32>) -> bool {
 
 ---
 
-### Задача 6.3 — PDF Fusion в mvm-fusion
+### Задача 6.4 — Fusion: реляционный scene-graph + атрибутивный PoE
 
-**Цель:** `mvm-fusion` из заглушки → Product-of-Experts fusion двух emotion-распределений.
+**Цель:** `mvm-fusion` из заглушки → ядро кластера. Две операции; **пространственная — главная**.
 
-#### Product of Experts
+#### 6.4a — Реляционная fusion (основная): scene-graph
 
-Если Rust даёт `p_rust[8]` и Python даёт `p_py[8]`:
+Над `Vec<Entity>` (3D-позиции из 6.2, bbox из 6.1) строим граф. Чистая арифметика, ноль зависимостей:
 
 ```
-p_fused[i] = (p_rust[i] ^ w_rust) * (p_py[i] ^ w_py) / Z
+Для каждой пары (i, j):
+  distance_m = ‖pos_3d_i − pos_3d_j‖        // 3D евклид
+  overlap    = IoU(bbox_i, bbox_j)          // 2D
 
-где:
-  w_rust = (1 - rust.uncertainty)   // вес = уверенность
-  w_py   = (1 - py_uncertainty)     // аналогично
-  Z      = Σ_j (p_rust[j] ^ w_rust * p_py[j] ^ w_py)  // нормировка
+Ребро есть, если distance_m < d_thresh ИЛИ overlap > 0.
+Контекстные зоны = связные компоненты графа рёбер (union-find, ~30 строк).
 ```
 
-**Семантика:** эксперт с низкой uncertainty получает больший вес. При uncertainty=1 (равномерное) — фактически исключается из fusion.
+**Семантика:** «голова + тело + рука + чашка» в одной зоне = связная компонента. Дистанции на рёбрах = тонкий контекст взаимодействия (рука близко к чашке → тянется/держит). `RelationKind` — атрибут ребра (`Near | Overlapping | PartOf`).
 
-**Mono-Confidence** (текущий подход): `max(p_fused)`.
-**Holo-Confidence** (новый): весь вектор `p_fused[8]` передаётся downstream.
+**Object-agnostic:** движок не знает тип узла. Чашку добавит генерик-детектор фазы 7 как `EntityKind::Object` — рёбра считаются той же математикой, код не меняется. Сейчас обкатываем на person/face/body-part.
 
-#### Деградация до текущего поведения
+#### 6.4b — Атрибутивная fusion (частный случай): Product-of-Experts
 
-При `w_rust=1, w_py=0`: `p_fused = p_rust` (чистый Rust).
-При `w_rust=0, w_py=1`: `p_fused = p_py` (чистый Python).
-→ Текущий `emotion_wins()` — частный случай PoE при бинарных весах.
+Source-agnostic комбинатор распределений. Единственный публичный контракт:
 
-#### Что меняется в коде
+```rust
+pub struct Expert { pub distribution: [f32; 8], pub weight: f32 }  // weight = 1 - uncertainty, clamp[0,1]
+
+// Log-linear pooling = PoE. Нормировка = softmax(Σ w·ln p). Численно устойчиво.
+pub fn fuse(experts: &[Expert]) -> FusedEmotion;
+```
+
+Один `fuse()`, два вызова:
+
+```rust
+// ФАЗА 6 — temporal: эксперты = (накопленный приор трека) + (наблюдение кадра).
+// Заменяет хак ×0.8/кадр принципиальным забыванием.
+track.emotion_dist = fuse(&[
+    Expert { distribution: track.emotion_dist, weight: LAMBDA },          // приор + забывание
+    Expert { distribution: emo.distribution,  weight: 1.0 - emo.uncertainty }, // кадр
+]).distribution;
+
+// ФАЗА 7 — cluster: эксперты = несколько нативных моделей. Та же функция, длиннее слайс.
+fuse(&[expert_emotieff, expert_model2, ...]);
+```
+
+> **Подвох — схлопывание.** Наивный PoE распределения с самим собой концентрирует массу → за сотни кадров эмоция «застынет» в one-hot. Поэтому temporal-форма **рекурсивна с забыванием**: вес приора `LAMBDA < 1` (экспоненциальное забывание в лог-пространстве). Cluster-вызов забывания не имеет, веса = уверенности экспертов.
+
+**Mono-Confidence** = `max(p_fused)`. **Holo-Confidence** = весь вектор `p_fused[8]` наружу (новый JSON-field `emotion_distribution: [f32;8]` в `to_json_line()`). Деградация: при бинарных весах `fuse()` ≡ текущий `emotion_wins()`.
 
 ```rust
 // mvm-fusion/src/lib.rs
-pub struct FusedEmotion {
-    pub label: String,
-    pub prob: f32,                  // max(p_fused)
-    pub distribution: [f32; 8],    // Holo-Confidence
-    pub uncertainty: f32,           // entropy(p_fused)
-    pub rust_weight: f32,           // w_rust использованный при fusion
-    pub py_weight: f32,             // w_py
-}
-
-pub fn fuse_emotions(
-    rust: &EmotionResult,
-    py_probs: &[f32; 8],
-    py_uncertainty: f32,
-) -> FusedEmotion { ... }
+pub struct FusedEmotion { pub label: String, pub prob: f32, pub distribution: [f32;8], pub uncertainty: f32 }
 ```
 
-#### TDD тесты для 6.3
+#### TDD тесты для 6.4
 
 | Тест | Что проверяет |
 |------|--------------|
-| `fuse_identical_distributions_unchanged` | p_rust == p_py → p_fused ≈ p_rust |
-| `fuse_zero_weight_expert_ignored` | uncertainty=1.0 → expert excluded |
-| `fuse_confident_expert_dominates` | u_rust=0, u_py=1 → p_fused ≈ p_rust |
-| `fuse_distribution_sums_to_one` | Σ p_fused ≈ 1.0 (нормировка корректна) |
-| `fuse_disagreement_raises_uncertainty` | Расходящиеся эксперты → выше entropy результата |
+| `relation_distance_3d_euclidean` | дистанция между двумя `pos_3d` корректна |
+| `zone_connected_components` | пересекающиеся/близкие сущности → одна зона |
+| `zone_far_entities_separate` | далёкие сущности → разные зоны |
+| `object_agnostic_relations` | граф считается для смешанных `EntityKind` |
+| `fuse_identical_distributions_unchanged` | эксперты идентичны → p_fused ≈ вход |
+| `fuse_zero_weight_expert_ignored` | weight=0 (uncertainty=1) → эксперт исключён |
+| `fuse_distribution_sums_to_one` | Σ p_fused ≈ 1.0 (нормировка) |
+| `fuse_disagreement_raises_uncertainty` | расходящиеся эксперты → выше entropy результата |
+| `temporal_no_collapse_with_forgetting` | LAMBDA<1 → распределение не схлопывается за N кадров |
 
 ---
 
 ### Зависимости и порядок реализации
 
 ```
-6.1 Kalman bbox   ─────────────────────────────────────── независима
-6.2 Uncertainty   ────────────── нужна для 6.3
-6.3 PDF fusion    ─ зависит от 6.2 (нужен entropy/uncertainty)
+6.1 Kalman bbox   ──┬──────────────────── независима (даёт сглаженный bbox)
+6.2 Метрический 3D ─┴── использует bbox из 6.1 → pos_3d
+6.3 Uncertainty   ──────────────────────── независима (даёт веса экспертов)
+6.4 Fusion        ── 6.4a нужны pos_3d (6.2); 6.4b нужен uncertainty (6.3)
 ```
 
-**Рекомендуемый порядок:** 6.1 → 6.2 → 6.3.
+**Рекомендуемый порядок:** 6.1 → 6.2 (геометрия, складываются) → 6.3 → 6.4.
 
-### Открытые архитектурные вопросы для brainstorm
+### Решённые вопросы (зафиксировано)
 
-1. **Kalman vs MLP predictor:** roadmap говорит "MLP-предсказатель". MLP обучается на данных движения — нужен dataset. KF работает без обучения. Что выбрать для первой итерации?
+1. ✅ **Kalman vs MLP** → **Kalman** (декомпозированный, 4× скаляр). MLP требует датасет и второй inference-путь → нарушает «чистую арифметику». Roadmap-формулировка «MLP-предсказатель» отменена.
+2. ✅ **Entropy vs True EDL** → **entropy-approximation**. True EDL требует переобучения ONNX (GPU-день) → откладывается на 7+. Достаточно для Hermes.
+3. ✅ **Python uncertainty / patch bridge** → **не нужен**. Атрибутивная fusion в фазе 6 — temporal (один нативный эксперт во времени), не cross-source с Python. Bridge не трогаем.
+4. ✅ **Holo-Confidence downstream** → **да**, добавляем `emotion_distribution: [f32;8]` в `to_json_line()`. Downstream начинает читать вектор, а не только `emotion: String`.
 
-2. **Где живёт KalmanBBox:** в `PersonTrack` (всегда) или в `PersonTracker` как внешний map `HashMap<u32, KalmanBBox>`? Первое чище для трейтов, второе — для тестируемости без полного трека.
+### Открытые вопросы для brainstorm
 
-3. **Матрица Q и R:** hardcoded или из Config? Для 30fps и статичной сцены (монитор) параметры процессного шума отличаются от динамичной.
-
-4. **Entropy vs True EDL:** стоит ли переобучить EmotiEffLib B0 с EDL loss? Нужен датасет AffectNet/VGAF, ~1 GPU-день. Или entropy-approximation достаточна для Hermes?
-
-5. **Python uncertainty:** HSEmotion не возвращает логиты, только top-1 emotion+conf. Для PoE нужен полный вектор p_py[8]. Придётся патчить `mvm_bridge.py` чтобы отдавал `emotion_probs: [f32; 8]`.
-
-6. **Holo-Confidence downstream:** что с ним делает Hermes/Alter? Если downstream читает только `emotion: String`, то Holo ничего не даёт. Нужен ли JSON-field `emotion_distribution: [f32; 8]` в `to_json_line()`?
+1. **Параметры в Config:** Q, R (6.1), known-size приоры + α (6.2), LAMBDA-забывание (6.4). Единое решение — все поля `Config` с дефолтами (статичная сцена-монитор ≠ динамичная). Подтвердить.
+2. **3D-позиция сущности — точка или объём?** Старт: центроид `[f32;3]` + `radius_m` (из bbox+глубины). Хватает для дистанций/зон; полноценный объём — позже. Ок?
+3. **`Scene` в JSON целиком?** Если да — `to_json_line()` отдаёт entities+relations+zones, и это новый стабильный контракт для Hermes (структурированный 3D-снимок вместо плоского списка людей). Подтвердить формат.
+4. **Где живёт KalmanBBox / Calibration:** в `PersonTrack` (чище для трейтов) или внешним map в `PersonTracker` (тестируемость без полного трека)?
 
 ---
 
