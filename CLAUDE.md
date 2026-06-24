@@ -12,7 +12,7 @@ Machine Vision Module/
 ├── models/         # Веса: PyTorch (.pth), ONNX, MediaPipe (.task), references/
 ├── venv/           # Python 3.11+ virtualenv
 ├── src/            # sightd (legacy Rust daemon, заменён на mvm/)
-└── mvm/            # 🆕 Rust workspace (8 крейтов, 47 тестов, фаза 5.1)
+└── mvm/            # 🆕 Rust workspace (8 крейтов, 56 тестов, фаза 5.2)
     ├── crates/     # mvm-core, detect, identity, emotion, posture, fusion, pipeline, cli
     ├── docs/       # phase-5.1-claude-prompt.md
     └── CLAUDE.md   # ← детальный контекст Rust-части
@@ -28,7 +28,12 @@ venv/bin/python3 tools/mvm_bridge.py --json-only --max-frames 1
 
 # Rust mvm-cli (запускает bridge как subprocess)
 cd mvm && cargo run --release -- --native --once --dump-interval 1
+
+# С machine-readable JSON выводом
+cd mvm && target/release/mvm-cli --native --once --dump-interval 1 --dump-json
 ```
+
+**Камера:** `tools/mvm_bridge.py` использует `cv2.CAP_FFMPEG` (не V4L2) — обход PipeWire на Ubuntu 24+.
 
 ## Актуальная ветка
 

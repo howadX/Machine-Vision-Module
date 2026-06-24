@@ -55,15 +55,15 @@ MVM покрывает 80% практических сценариев (прис
 
 ---
 
-## Текущий статус (24 июня 2026)
+## Текущий статус (24 июня 2026, фаза 5.2)
 
-### Что работает при `mvm-cli --native --once`
+### Что работает при `mvm-cli --native --once --dump-json`
 
 ```
-Камера /dev/video0
+Камера /dev/video0 (CAP_FFMPEG — обход PipeWire)
     │
     ▼
-Python bridge (mvm_bridge.py, ~8s загрузка моделей)
+Python bridge (mvm_bridge.py, ~12s загрузка моделей)
     ├─ SCRFD           → bbox лица (CPU, ONNX)
     ├─ ArcFace         → identity + confidence (512d, multi-angle gallery match)
     ├─ HSEmotion       → 8 эмоций + confidence (EfficientNet-B0, GPU PyTorch)
@@ -74,11 +74,12 @@ Python bridge (mvm_bridge.py, ~8s загрузка моделей)
          ▼ JSON line
 Rust mvm-cli
     ├─ parse_line      → Vec<Detection>
-    ├─ EmotiEffLib B0  → emotion (ПЕРЕзаписывает Python HSEmotion) ← Фаза 5.1
-    ├─ SFace           → identity (пропускает: gallery пустая)      ← Фаза 5.1
+    ├─ EmotiEffLib B0  → emotion (confidence-based fallback: Rust > Python только если conf выше)
+    ├─ SFace           → identity (gallery: Вадим + Никита, 16 эталонных фото)
     ├─ PersonTracker   → temporal fusion (IoU match, identity persistence)
     ├─ StateFile       → ~/.hermes/profiles/sight/workspace/current_state.md
-    └─ dump_table()    → таблица в терминал (при --once)
+    ├─ dump_table()    → ASCII таблица в терминал
+    └─ --dump-json     → одна JSON-строка на stdout каждый тик ← Фаза 5.2.1
 ```
 
 ### Бинарники
@@ -86,57 +87,51 @@ Rust mvm-cli
 | Файл | Размер | Команда сборки |
 |------|--------|----------------|
 | `target/release/mvm-cli` | **25 МБ** | `cargo build --release` |
-| `dist/mvm` | 24 МБ | `cargo xtask bundle` (устарел: нет dump_table) |
+| `dist/mvm` | **26 МБ** | `cargo xtask bundle` (актуален) |
 
 ### Крейты
 
 | Крейт | Статус | Содержимое | Тесты |
 |-------|--------|------------|-------|
 | **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker, Config, Module trait | 23 |
-| **mvm-detect** | ✅ production | YuNet ONNX (228 КБ), multi-stride NMS | 3 |
-| **mvm-identity** | ⚠️ не подключён | SFace ONNX (37 МБ), gallery, cosine match | 5 |
-| **mvm-emotion** | ⚠️ безусловная замена | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF | 3 |
+| **mvm-detect** | ✅ production | YuNet ONNX (228 КБ), CHW BGR preprocessing, set_score_threshold() | 5 |
+| **mvm-identity** | ✅ production | SFace ONNX (37 МБ), gallery Вадим+Никита, cosine match | 5 |
+| **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, confidence-based | 3 |
 | **mvm-posture** | 🔶 заглушка | Пустой Module trait | 0 |
 | **mvm-fusion** | 🔶 заглушка | Пустой Module trait | 0 |
 | **mvm-pipeline** | ✅ production | Camera (Python bridge subprocess), parse_line | 5 |
-| **mvm-cli** | ✅ production | main, StateFile, dump_table(), --native/--once | 7 |
+| **mvm-cli** | ✅ production | main, StateFile, dump_table(), --dump-json, --native/--once | 14 |
 | **xtask** | ✅ | `cargo xtask bundle` → dist/mvm | 1 |
 
-**Всего: 47 тестов, все зелёные.**
+**Всего: 56 тестов, все зелёные.**
 
 ### Известные проблемы
 
 | # | Проблема | Причина | Приоритет |
 |---|----------|--------|-----------|
-| 1 | **SFace gallery пустая** | YuNet score_threshold=0.5 не находит лиц на эталонных фото p_V_*.jpg | 🔴 |
-| 2 | **EmotiEffLib затирает HSEmotion** | В `--native` моде Rust безусловно перезаписывает emotion от Python (даже если confidence ниже) | 🔴 |
-| 3 | **EmotiEffLib vs HSEmotion — разные датасеты** | Оба EfficientNet-B0, но VGAF (Rust) vs AffectNet (Python). Могут давать разные предсказания на одном лице | 🟡 |
-| 4 | **dist/mvm устарел** | Старый bundle без dump_table() | 🔴 |
-| 5 | **mvm-posture, mvm-fusion — заглушки** | Поза и 3D только от Python bridge | 🟢 |
-| 6 | **Детекция только через Python** | YuNet есть, но не подключён как camera source | 🟢 |
+| 1 | **Никита не в Python bridge gallery** | p_N.jpg — низкое качество, ArcFace не находит лицо | 🟡 |
+| 2 | **EmotiEffLib vs HSEmotion — разные датасеты** | Оба EfficientNet-B0, VGAF (Rust) vs AffectNet (Python). Нужен A/B на живых данных | 🟡 |
+| 3 | **mvm-posture, mvm-fusion — заглушки** | Поза и 3D только от Python bridge | 🟢 |
+| 4 | **Детекция только через Python** | YuNet есть, но не подключён как camera source | 🟢 |
 
 ### Модели эмоций: архитектурное примечание
 
-**EmotiEffLib B0 (Rust) и HSEmotion (Python) — одна архитектура: EfficientNet-B0.** Оба — CNN на кропе лица 224×224. Разница в датасете (VGAF vs AffectNet) и рантайме (ONNX/CPU vs PyTorch/GPU). Это **не** геометрические признаки (MLP) vs CNN — оба CNN. Расстояние до камеры влияет на них одинаково.
+**EmotiEffLib B0 (Rust) и HSEmotion (Python) — одна архитектура: EfficientNet-B0.** Оба — CNN на кропе лица 224×224. Разница в датасете (VGAF vs AffectNet) и рантайме (ONNX/CPU vs PyTorch/GPU).
 
-Правильная стратегия выбора: **confidence-based fallback** — брать предсказание с более высокой confidence, а не distance-based.
+Стратегия выбора: **confidence-based fallback** (реализовано в фазе 5.1) — берём предсказание с более высокой confidence. A/B сравнение запланировано на фазу 5.2.2.
 
-### Делегирование Claude Code
+### Камера: FFMPEG backend
 
-Фаза 5.1 делегируется Claude Code для экономии токенов основного агента (Hermes).
+OpenCV `VideoCapture(0)` (V4L2) не работает когда PipeWire держит камеру эксклюзивно (Ubuntu 24+, Wayland). Решение: `VideoCapture('/dev/video0', cv2.CAP_FFMPEG)` — ffmpeg/avdevice не конфликтует с PipeWire.
 
-**Промт:** `docs/phase-5.1-claude-prompt.md` — self-contained, содержит весь необходимый контекст:
-- Архитектура проекта и пайплайна
-- 4 задачи с конкретными файлами и кодом
-- TDD-паттерны и команды проверки
-- Критерии успеха
+Зафиксировано в `tools/mvm_bridge.py`.
 
-**Правила делегирования:**
-- Все задачи выполняются в репозитории `~/repos/mvm/`
-- Claude Code читает `AGENTS.md` и `CLAUDE.md` автоматически
-- TDD обязателен: сначала тест, потом реализация
+### TDD-правила (для Claude Code)
+
+- TDD обязателен: сначала падающий тест, потом реализация
 - `cargo test --workspace` должен оставаться зелёным после каждого изменения
 - Коммиты после каждой задачи
+- `Config { models_path: PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models")), ..Default::default() }` — паттерн test_config()
 
 ---
 
@@ -199,22 +194,23 @@ mvm/
 
 ## Roadmap
 
-### 🔴 Фаза 5.1 — Стабилизация (промт готов, делегируется Claude Code)
+### ✅ Фаза 5.1 — Стабилизация (выполнено)
 
 | Задача | Статус |
 |--------|--------|
-| YuNet threshold 0.5→0.3 для gallery | 🔜 → Claude Code |
-| Confidence-based emotion fallback (Rust↔Python) | 🔜 → Claude Code |
-| Обновить dist/mvm (xtask bundle) | 🔜 → Claude Code |
-| Починить сборку галереи на эталонных фото | 🔜 → Claude Code |
+| YuNet CHW/HWC preprocessing fix + threshold API | ✅ |
+| Confidence-based emotion fallback (Rust↔Python) | ✅ |
+| Обновить dist/mvm (xtask bundle, 26 МБ) | ✅ |
+| Сборка галереи на эталонных фото (Вадим + Никита) | ✅ |
+| Camera: FFMPEG backend (fix PipeWire) | ✅ |
 
-### 🟡 Фаза 5.2 — Качество
+### 🟡 Фаза 5.2 — Качество (в процессе)
 
 | Задача | Статус |
 |--------|--------|
-| A/B сравнение EmotiEffLib vs HSEmotion на живых данных | 🔜 |
-| PersonTracker: confidence decay, трекинг при поворотах | 🔜 |
-| `--dump-json` флаг для machine-readable вывода | 🔜 |
+| `--dump-json` флаг (machine-readable JSON stdout) | ✅ |
+| A/B сравнение EmotiEffLib vs HSEmotion (`--emotion-debug`) | 🔜 |
+| PersonTracker: emotion decay при missed > N кадров | 🔜 |
 | Интеграционные тесты: bridge + Rust pipeline | 🔜 |
 
 ### 🟢 Фаза 6 — Predictive State
