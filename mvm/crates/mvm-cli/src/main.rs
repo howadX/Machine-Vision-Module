@@ -115,9 +115,6 @@ fn build_gallery(
 
     let name_map: &[(&[&str], &str)] = &[
         (&["V"], "Вадим"),
-        (&["D"], "Даня"),
-
-        (&["B"], "Белла"),
     ];
 
     // Lower threshold for gallery: reference photos can be small/low-quality.
