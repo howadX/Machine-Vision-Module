@@ -2,9 +2,20 @@
 //!
 //! Tracks people across frames, propagating identity (best confidence),
 //! emotion and posture (latest snapshot), and 3D workspace data.
+//!
+//! ## Kalman State-Gating (phase 6.1)
+//!
+//! Each tick:
+//! 1. `predict()` all tracks → predicted bboxes used for IoU matching.
+//! 2. Matched tracks: `update(observed)` → smoothed bbox.
+//! 3. Missed tracks: bbox advances by inertia (predicted position).
+//!
+//! This replaces the previous EMA smoothing. Unlike EMA, missed-frame bboxes
+//! now move rather than stagnate, so IoU with re-appearing detections stays high.
 
 use std::collections::HashMap;
-use crate::types::{Detection, PersonTrack};
+use crate::types::{BBox, Detection, PersonTrack};
+use crate::kalman::KalmanBBox;
 
 /// Multi-person tracker — the temporal fusion layer of MVM.
 pub struct PersonTracker {
@@ -29,11 +40,18 @@ impl PersonTracker {
     }
 
     /// Process one frame's detections. Matches new detections to existing
-    /// tracks via IoU, propagates metadata, expires stale tracks.
+    /// tracks via IoU on the **Kalman-predicted** bbox (State-Gating),
+    /// propagates metadata, expires stale tracks.
     pub fn tick(&mut self, detections: &[Detection]) {
+        // ── Step 1: predict all tracks (State-Gating) ──────────────────────
+        // KF is now in predicted state; predicted[id] = bbox to use for IoU.
+        let predicted: HashMap<u32, BBox> = self.tracks.iter_mut()
+            .map(|(&id, t)| (id, t.kalman.predict()))
+            .collect();
+
+        // ── Step 2: missed-frame bookkeeping + emotion decay ───────────────
         for t in self.tracks.values_mut() {
             t.missed += 1;
-            // Decay emotion confidence after grace period; clear when negligible.
             if t.missed > self.decay_start_frames {
                 if let Some(conf) = t.emotion_confidence.as_mut() {
                     *conf *= self.decay_factor;
@@ -45,73 +63,66 @@ impl PersonTracker {
             }
         }
 
+        // ── Step 3: match detections to predicted bboxes ───────────────────
         let mut matched_ids: Vec<u32> = Vec::new();
 
         for det in detections {
             let mut best_iou = 0.3_f32;
             let mut best_id = None;
 
-            for (id, track) in &self.tracks {
-                if matched_ids.contains(id) {
-                    continue;
-                }
-                let iou = det.bbox.iou(&track.bbox);
+            for (&id, _) in &self.tracks {
+                if matched_ids.contains(&id) { continue; }
+                // Tracks created earlier in this same tick have no prediction entry.
+                let Some(&pred_bbox) = predicted.get(&id) else { continue; };
+                let iou = det.bbox.iou(&pred_bbox);
                 if iou > best_iou {
                     best_iou = iou;
-                    best_id = Some(*id);
+                    best_id = Some(id);
                 }
             }
 
             if let Some(id) = best_id {
-                if let Some(t) = self.tracks.get_mut(&id) {
-                    // EMA-smooth the bbox
-                    let alpha = 0.3;
-                    t.bbox.x1 = alpha * det.bbox.x1 + (1.0 - alpha) * t.bbox.x1;
-                    t.bbox.y1 = alpha * det.bbox.y1 + (1.0 - alpha) * t.bbox.y1;
-                    t.bbox.x2 = alpha * det.bbox.x2 + (1.0 - alpha) * t.bbox.x2;
-                    t.bbox.y2 = alpha * det.bbox.y2 + (1.0 - alpha) * t.bbox.y2;
-                    t.age += 1;
-                    t.missed = 0;
+                let t = self.tracks.get_mut(&id).unwrap();
+                // Kalman update → smoothed bbox
+                t.kalman.update(det.bbox);
+                t.bbox = t.kalman.smoothed_bbox();
+                t.age += 1;
+                t.missed = 0;
 
-                    // Propagate metadata: keep best identity, latest emotion/posture
-                    if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
-                        if t.identity_confidence.map_or(true, |c| conf > c) {
-                            t.identity = Some(name.clone());
-                            t.identity_confidence = Some(conf);
-                        }
+                // Propagate metadata: keep best identity, latest emotion/posture
+                if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
+                    if t.identity_confidence.map_or(true, |c| conf > c) {
+                        t.identity = Some(name.clone());
+                        t.identity_confidence = Some(conf);
                     }
-                    if det.emotion.is_some() {
-                        t.emotion = det.emotion.clone();
-                        t.emotion_confidence = det.emotion_confidence;
-                    }
-                    if det.posture.is_some() {
-                        t.posture = det.posture.clone();
-                        t.posture_confidence = det.posture_confidence;
-                    }
-                    // Propagate 3D fields (latest snapshot)
-                    if det.distance.is_some() {
-                        t.distance = det.distance;
-                        t.position_x = det.position_x;
-                        t.position_y = det.position_y;
-                        t.position_z = det.position_z;
-                        t.ws_confidence = det.ws_confidence;
-                    }
-                    if det.recon_error.is_some() {
-                        t.recon_error = det.recon_error;
-                    }
-                    if det.plausibility.is_some() {
-                        t.plausibility = det.plausibility.clone();
-                    }
-
-                    matched_ids.push(id);
                 }
+                if det.emotion.is_some() {
+                    t.emotion = det.emotion.clone();
+                    t.emotion_confidence = det.emotion_confidence;
+                }
+                if det.posture.is_some() {
+                    t.posture = det.posture.clone();
+                    t.posture_confidence = det.posture_confidence;
+                }
+                if det.distance.is_some() {
+                    t.distance = det.distance;
+                    t.position_x = det.position_x;
+                    t.position_y = det.position_y;
+                    t.position_z = det.position_z;
+                    t.ws_confidence = det.ws_confidence;
+                }
+                if det.recon_error.is_some() { t.recon_error = det.recon_error; }
+                if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
+
+                matched_ids.push(id);
             } else {
-                // New track
+                // New track — KF initialized at first observation
                 let id = self.next_id;
                 self.next_id += 1;
                 self.tracks.insert(id, PersonTrack {
                     id,
                     bbox: det.bbox,
+                    kalman: KalmanBBox::new(det.bbox),
                     age: 1,
                     missed: 0,
                     identity: det.identity.clone(),
@@ -128,6 +139,16 @@ impl PersonTracker {
                     recon_error: det.recon_error,
                     plausibility: det.plausibility.clone(),
                 });
+            }
+        }
+
+        // ── Step 4: advance missed tracks by inertia ───────────────────────
+        // KF predict() was already called in step 1; update bbox to predicted position.
+        for (&id, t) in self.tracks.iter_mut() {
+            if !matched_ids.contains(&id) {
+                if let Some(&pred) = predicted.get(&id) {
+                    t.bbox = pred;
+                }
             }
         }
 
@@ -153,19 +174,8 @@ mod tests {
     use super::*;
     use crate::types::{BBox, Detection};
 
-    /// Helper: bare detection (no enrichment).
     fn det(x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<Detection> {
-        vec![Detection {
-            bbox: BBox { x1, y1, x2, y2 },
-            identity: None,
-            identity_confidence: None,
-            emotion: None,
-            emotion_confidence: None,
-            posture: None,
-            posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
-        }]
+        vec![Detection::bare(x1, y1, x2, y2)]
     }
 
     #[test]
@@ -202,7 +212,7 @@ mod tests {
     #[test]
     fn tracker_keeps_best_identity() {
         let mut t = PersonTracker::new();
-        t.tick(&vec![Detection {
+        t.tick(&[Detection {
             bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
             identity: Some("unknown".into()),
             identity_confidence: Some(0.30),
@@ -211,7 +221,7 @@ mod tests {
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
         }]);
-        t.tick(&vec![Detection {
+        t.tick(&[Detection {
             bbox: BBox { x1: 0.31, y1: 0.31, x2: 0.71, y2: 0.71 },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.72),
@@ -228,19 +238,17 @@ mod tests {
     #[test]
     fn tracker_updates_emotion_on_match() {
         let mut t = PersonTracker::new();
-        t.tick(&vec![Detection {
+        t.tick(&[Detection {
             bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.5 },
-            emotion: Some("Злость".into()),
-            emotion_confidence: Some(0.6),
+            emotion: Some("Злость".into()), emotion_confidence: Some(0.6),
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
         }]);
-        t.tick(&vec![Detection {
+        t.tick(&[Detection {
             bbox: BBox { x1: 0.32, y1: 0.31, x2: 0.52, y2: 0.51 },
-            emotion: Some("Радость".into()),
-            emotion_confidence: Some(0.8),
+            emotion: Some("Радость".into()), emotion_confidence: Some(0.8),
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
@@ -264,9 +272,9 @@ mod tests {
     #[test]
     fn tracker_creates_separate_tracks_for_non_overlapping() {
         let mut t = PersonTracker::new();
-        t.tick(&vec![
-            Detection { bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.5 }, identity: None, identity_confidence: None, emotion: None, emotion_confidence: None, posture: None, posture_confidence: None, distance: None, position_x: None, position_y: None, position_z: None, ws_confidence: None, recon_error: None, plausibility: None },
-            Detection { bbox: BBox { x1: 0.7, y1: 0.1, x2: 0.9, y2: 0.5 }, identity: None, identity_confidence: None, emotion: None, emotion_confidence: None, posture: None, posture_confidence: None, distance: None, position_x: None, position_y: None, position_z: None, ws_confidence: None, recon_error: None, plausibility: None },
+        t.tick(&[
+            Detection::bare(0.1, 0.1, 0.3, 0.5),
+            Detection::bare(0.7, 0.1, 0.9, 0.5),
         ]);
         assert_eq!(t.track_count(), 2);
     }
@@ -300,16 +308,17 @@ mod tests {
         assert_eq!(t.track_count(), 0);
     }
 
+    /// Kalman smooths bbox toward new observations (replaces EMA smoothing test).
     #[test]
-    fn tracker_ema_smoothing() {
+    fn tracker_bbox_smooths_toward_observation() {
         let mut t = PersonTracker::new();
         t.tick(&det(0.3, 0.3, 0.5, 0.5));
         t.tick(&det(0.35, 0.3, 0.55, 0.5));
         let active: Vec<_> = t.active().collect();
         let b = active[0].bbox;
-        assert!((b.x1 - 0.315).abs() < 0.01);
-        assert!((b.x2 - 0.515).abs() < 0.01);
-        assert!((b.y1 - 0.3).abs() < 0.01);
+        // bbox should move toward the new observation without jumping directly
+        assert!(b.x1 >= 0.3 && b.x1 <= 0.35, "x1={:.4} should be between initial and observed", b.x1);
+        assert!(b.x2 >= 0.5 && b.x2 <= 0.55, "x2={:.4} should be between initial and observed", b.x2);
     }
 
     #[test]
@@ -334,9 +343,7 @@ mod tests {
     #[test]
     fn tracker_empty_ticks() {
         let mut t = PersonTracker::new();
-        for _ in 0..100 {
-            t.tick(&[]);
-        }
+        for _ in 0..100 { t.tick(&[]); }
         assert_eq!(t.track_count(), 0);
     }
 
@@ -358,13 +365,9 @@ mod tests {
         t.decay_start_frames = 3;
         t.decay_factor = 0.8;
         t.tick(&det_with_emotion("Радость", 0.9));
-        // Grace period — no decay yet
-        for _ in 0..3 {
-            t.tick(&[]);
-        }
+        for _ in 0..3 { t.tick(&[]); }
         let tracks: Vec<_> = t.all().values().collect();
         assert!((tracks[0].emotion_confidence.unwrap() - 0.9).abs() < 0.01);
-        // One tick past grace period — decay kicks in
         t.tick(&[]);
         let tracks: Vec<_> = t.all().values().collect();
         assert!(tracks[0].emotion_confidence.unwrap() < 0.9);
@@ -376,10 +379,7 @@ mod tests {
         t.decay_start_frames = 0;
         t.decay_factor = 0.5;
         t.tick(&det_with_emotion("Грусть", 0.8));
-        // 0.8 * 0.5^N — reaches < 0.05 after ~4 decays
-        for _ in 0..10 {
-            t.tick(&[]);
-        }
+        for _ in 0..10 { t.tick(&[]); }
         let tracks: Vec<_> = t.all().values().collect();
         assert!(tracks[0].emotion.is_none());
         assert!(tracks[0].emotion_confidence.is_none());
@@ -391,13 +391,9 @@ mod tests {
         t.decay_start_frames = 0;
         t.decay_factor = 0.5;
         t.tick(&det_with_emotion("Грусть", 0.8));
-        // Decay to clear
-        for _ in 0..10 {
-            t.tick(&[]);
-        }
+        for _ in 0..10 { t.tick(&[]); }
         let tracks: Vec<_> = t.all().values().collect();
         assert!(tracks[0].emotion.is_none());
-        // Person reappears with new emotion — should restore
         t.tick(&det_with_emotion("Радость", 0.75));
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].emotion.as_deref(), Some("Радость"));

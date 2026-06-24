@@ -10,6 +10,7 @@ pub mod types;
 pub mod tracker;
 pub mod module;
 pub mod config;
+pub mod kalman;
 
 pub use types::{BBox, Detection, PersonTrack};
 pub use tracker::PersonTracker;

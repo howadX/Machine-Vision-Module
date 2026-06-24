@@ -73,6 +73,8 @@ impl Detection {
 pub struct PersonTrack {
     pub id: u32,
     pub bbox: BBox,
+    /// Kalman filter maintaining a smoothed bbox estimate with velocity model.
+    pub kalman: crate::kalman::KalmanBBox,
     pub age: u64,
     pub missed: u64,
     /// Best identity seen for this track (highest confidence).
