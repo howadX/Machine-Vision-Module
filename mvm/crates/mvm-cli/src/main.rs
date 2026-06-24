@@ -246,11 +246,11 @@ fn main() -> Result<()> {
     }
 
     // Native inference modules
+    let config = mvm_core::Config::default();
     let mut emotion_mod: Option<mvm_emotion::EmotionModule> = None;
     let mut identity_mod: Option<mvm_identity::IdentityModule> = None;
 
     if native {
-        let config = mvm_core::Config::default();
         eprintln!("  emotion: loading EmotiEffLib B0 ONNX");
         emotion_mod = Some(mvm_emotion::EmotionModule::init(&config)?);
         eprintln!("  identity: loading SFace ONNX");
@@ -259,7 +259,7 @@ fn main() -> Result<()> {
         identity_mod = Some(id);
     }
 
-    let mut tracker = mvm_core::PersonTracker::new();
+    let mut tracker = mvm_core::PersonTracker::with_config(&config);
     let state_file = state::StateFile::open()?;
     let mut last_dump = Instant::now();
     let dump_interval = Duration::from_secs(dump_secs);

@@ -11,6 +11,7 @@ pub mod tracker;
 pub mod module;
 pub mod config;
 pub mod kalman;
+pub mod space;
 
 pub use types::{BBox, Detection, PersonTrack};
 pub use tracker::PersonTracker;

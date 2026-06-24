@@ -95,6 +95,8 @@ pub struct PersonTrack {
     /// Posture quality.
     pub recon_error: Option<f32>,
     pub plausibility: Option<String>,
+    /// EMA state for native depth smoothing (phase 6.2). None until first native 3D estimate.
+    pub depth_ema: Option<crate::space::DepthEma>,
 }
 
 #[cfg(test)]

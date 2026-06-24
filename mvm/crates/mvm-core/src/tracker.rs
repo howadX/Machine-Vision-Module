@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use crate::types::{BBox, Detection, PersonTrack};
 use crate::kalman::KalmanBBox;
+use crate::space::{Pinhole, DepthEma, face_bbox_to_3d};
 
 /// Multi-person tracker — the temporal fusion layer of MVM.
 pub struct PersonTracker {
@@ -26,16 +27,40 @@ pub struct PersonTracker {
     pub decay_start_frames: u64,
     /// Per-frame multiplier applied to emotion_confidence during decay.
     pub decay_factor: f32,
+    /// When Some, native 3D position is computed each tick via pinhole geometry.
+    pub pinhole: Option<Pinhole>,
+    /// Population-average face height in metres. Fallback when identity is unknown.
+    pub face_height_m: f32,
+    /// EMA alpha for depth smoothing (applied per-track).
+    pub depth_ema_alpha: f32,
+    /// Personal face heights keyed by identity label.
+    /// When a track is identified, this overrides `face_height_m` → ±2-3% error vs ±12%.
+    pub personal_heights: HashMap<String, f32>,
 }
 
 impl PersonTracker {
+    /// Create tracker without 3D capability (tests, headless use).
     pub fn new() -> Self {
         Self {
             next_id: 0,
             tracks: HashMap::new(),
-            timeout_frames: 1800, // 30s at 60fps
+            timeout_frames: 1800,
             decay_start_frames: 5,
             decay_factor: 0.8,
+            pinhole: None,
+            face_height_m: 0.19,
+            depth_ema_alpha: 0.3,
+            personal_heights: HashMap::new(),
+        }
+    }
+
+    /// Create tracker with native 3D enabled (pinhole derived from config).
+    pub fn with_config(cfg: &crate::config::Config) -> Self {
+        Self {
+            pinhole: Some(Pinhole::from_config(cfg)),
+            face_height_m: cfg.face_height_m,
+            depth_ema_alpha: cfg.depth_ema_alpha,
+            ..Self::new()
         }
     }
 
@@ -63,6 +88,11 @@ impl PersonTracker {
             }
         }
 
+        // Pre-capture config values (Copy) to avoid borrow conflicts inside the loop.
+        let pinhole_opt = self.pinhole;
+        let face_height_m = self.face_height_m;
+        let depth_ema_alpha = self.depth_ema_alpha;
+
         // ── Step 3: match detections to predicted bboxes ───────────────────
         let mut matched_ids: Vec<u32> = Vec::new();
 
@@ -82,37 +112,76 @@ impl PersonTracker {
             }
 
             if let Some(id) = best_id {
-                let t = self.tracks.get_mut(&id).unwrap();
-                // Kalman update → smoothed bbox
-                t.kalman.update(det.bbox);
-                t.bbox = t.kalman.smoothed_bbox();
-                t.age += 1;
-                t.missed = 0;
+                // ── Part A: Kalman update + metadata ───────────────────────
+                {
+                    let t = self.tracks.get_mut(&id).unwrap();
+                    t.kalman.update(det.bbox);
+                    t.bbox = t.kalman.smoothed_bbox();
+                    t.age += 1;
+                    t.missed = 0;
 
-                // Propagate metadata: keep best identity, latest emotion/posture
-                if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
-                    if t.identity_confidence.map_or(true, |c| conf > c) {
-                        t.identity = Some(name.clone());
-                        t.identity_confidence = Some(conf);
+                    // Propagate metadata: keep best identity, latest emotion/posture
+                    if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
+                        if t.identity_confidence.map_or(true, |c| conf > c) {
+                            t.identity = Some(name.clone());
+                            t.identity_confidence = Some(conf);
+                        }
+                    }
+                    if det.emotion.is_some() {
+                        t.emotion = det.emotion.clone();
+                        t.emotion_confidence = det.emotion_confidence;
+                    }
+                    if det.posture.is_some() {
+                        t.posture = det.posture.clone();
+                        t.posture_confidence = det.posture_confidence;
+                    }
+                    // Python 3D passthrough (overridden by native below when pinhole is set)
+                    if det.distance.is_some() {
+                        t.distance = det.distance;
+                        t.position_x = det.position_x;
+                        t.position_y = det.position_y;
+                        t.position_z = det.position_z;
+                        t.ws_confidence = det.ws_confidence;
+                    }
+                    if det.recon_error.is_some() { t.recon_error = det.recon_error; }
+                    if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
+                } // t drops here, releasing mutable borrow
+
+                // ── Part B: native 3D (phase 6.2) ──────────────────────────
+                // Two-step: immutable lookup first, then mutable write.
+                if let Some(ph) = pinhole_opt {
+                    // Step 1: read identity, look up personal height (immutable borrow)
+                    let real_h = {
+                        let track = self.tracks.get(&id).unwrap();
+                        track.identity.as_ref()
+                            .and_then(|n| self.personal_heights.get(n.as_str()))
+                            .copied()
+                            .unwrap_or(face_height_m)
+                    }; // immutable borrow drops
+
+                    // Step 2: compute and write (mutable borrow)
+                    let t = self.tracks.get_mut(&id).unwrap();
+                    let b = t.bbox;
+                    let bbox_cx = (b.x1 + b.x2) * 0.5;
+                    let bbox_cy = (b.y1 + b.y2) * 0.5;
+                    if let Some((_pos, z, ws_conf)) =
+                        face_bbox_to_3d(&ph, b.y1, b.y2, bbox_cx, bbox_cy, real_h)
+                    {
+                        let smoothed_z = t.depth_ema
+                            .get_or_insert_with(|| DepthEma::new(z, depth_ema_alpha))
+                            .update(z);
+                        let pos_s = ph.pixel_to_3d(
+                            bbox_cx * ph.width,
+                            bbox_cy * ph.height,
+                            smoothed_z,
+                        );
+                        t.distance = Some(smoothed_z);
+                        t.position_x = Some(pos_s[0]);
+                        t.position_y = Some(pos_s[1]);
+                        t.position_z = Some(pos_s[2]);
+                        t.ws_confidence = Some(ws_conf);
                     }
                 }
-                if det.emotion.is_some() {
-                    t.emotion = det.emotion.clone();
-                    t.emotion_confidence = det.emotion_confidence;
-                }
-                if det.posture.is_some() {
-                    t.posture = det.posture.clone();
-                    t.posture_confidence = det.posture_confidence;
-                }
-                if det.distance.is_some() {
-                    t.distance = det.distance;
-                    t.position_x = det.position_x;
-                    t.position_y = det.position_y;
-                    t.position_z = det.position_z;
-                    t.ws_confidence = det.ws_confidence;
-                }
-                if det.recon_error.is_some() { t.recon_error = det.recon_error; }
-                if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
 
                 matched_ids.push(id);
             } else {
@@ -138,6 +207,7 @@ impl PersonTracker {
                     ws_confidence: det.ws_confidence,
                     recon_error: det.recon_error,
                     plausibility: det.plausibility.clone(),
+                    depth_ema: None,
                 });
             }
         }
