@@ -240,6 +240,282 @@ mvm/
 
 ---
 
+## Фаза 6 — Predictive State: детальный план
+
+> **Для:** brainstorm с Opus / делегирование Claude Code.
+> **Статус базы:** 70 тестов, все зелёные. Фаза 5.2 завершена.
+
+### Контекст: что есть сейчас после фазы 5.2
+
+```
+PersonTracker
+  ├─ IoU-матчинг (threshold 0.3)
+  ├─ EMA bbox-сглаживание (α = 0.3)
+  ├─ identity: best-confidence persistence
+  ├─ emotion: latest snapshot + decay (missed > 5 → ×0.8/кадр → None при conf < 0.05)
+  └─ timeout: 1800 кадров (30s @ 60fps)
+
+mvm-emotion
+  └─ classify() → (label: String, conf: f32)  // max(softmax), 8 классов VGAF
+
+mvm-fusion   🔶 заглушка
+mvm-posture  🔶 заглушка
+```
+
+**Проблема EMA:** реактивен. При occluded-кадрах bbox не движется → IoU с новыми детекциями падает → трек теряется раньше срока.
+
+**Проблема confidence:** `max(softmax) = 0.8` может означать «уверен» (7 классов ≈ 0) или «не уверен» (7 классов ≈ 0.03 каждый). Без меры uncertainty downstream-агенты не различают эти случаи.
+
+**Проблема fusion:** два источника emotion (Rust EmotiEffLib + Python HSEmotion) сейчас сравниваются по одному скалярному числу, хотя оба дают вектор из 8 вероятностей.
+
+---
+
+### Задача 6.1 — SG-KF: Kalman Filter для bbox
+
+**Цель:** заменить EMA на Linear Kalman Filter с constant-velocity motion model.
+
+#### State vector (8D)
+
+```
+x = [cx, cy, w, h, vcx, vcy, vw, vh]
+      центр      размер     скорости
+```
+
+#### Матрицы
+
+```
+Transition F (dt=1):          Observation H:
+[1 0 0 0 | 1 0 0 0]           [1 0 0 0 | 0 0 0 0]
+[0 1 0 0 | 0 1 0 0]           [0 1 0 0 | 0 0 0 0]
+[0 0 1 0 | 0 0 1 0]           [0 0 1 0 | 0 0 0 0]
+[0 0 0 1 | 0 0 0 1]           [0 0 0 1 | 0 0 0 0]
+[0 0 0 0 | 1 0 0 0]
+[0 0 0 0 | 0 1 0 0]
+[0 0 0 0 | 0 0 1 0]
+[0 0 0 0 | 0 0 0 1]
+
+Process noise Q: diag([1,1,1,1, 0.01,0.01,0.01,0.01])
+Measurement noise R: diag([1,1,10,10])  // position точнее size
+Initial P: diag([10,10,10,10, 100,100,100,100])  // высокая начальная неуверенность
+```
+
+#### Алгоритм на каждый тик
+
+```
+PREDICT (для каждого трека, до IoU matching):
+  x_pred = F * x
+  P_pred = F * P * F^T + Q
+
+IoU MATCHING (используем predicted bbox, не последний observed):
+  predicted_bbox = (cx - w/2, cy - h/2, cx + w/2, cy + h/2)
+
+UPDATE (для matched треков):
+  y = z - H * x_pred            // innovation
+  S = H * P_pred * H^T + R      // innovation covariance
+  K = P_pred * H^T * S^{-1}     // Kalman gain
+  x = x_pred + K * y
+  P = (I - K*H) * P_pred
+
+MISSED (для unmatched треков):
+  x = x_pred   // bbox продолжает двигаться по инерции
+  P = P_pred   // неуверенность растёт
+```
+
+#### Что меняется в коде
+
+```rust
+// mvm-core/src/kalman.rs  (новый файл)
+pub struct KalmanBBox {
+    pub x: [f32; 8],   // state vector
+    pub p: [[f32; 8]; 8],  // covariance
+}
+
+impl KalmanBBox {
+    pub fn new(bbox: BBox) -> Self { ... }
+    pub fn predict(&mut self) -> BBox { ... }   // возвращает predicted bbox
+    pub fn update(&mut self, observed: BBox) { ... }
+}
+
+// mvm-core/src/types.rs  (PersonTrack)
+pub struct PersonTrack {
+    // ... existing fields ...
+    pub kalman: KalmanBBox,  // заменяет EMA-логику
+}
+```
+
+**"SG" = State-Gating:** при IoU-матчинге используем `kalman.predict()` вместо `t.bbox`. Это ключевое: трек «ищет» детекцию там, где предсказывает движение.
+
+#### TDD тесты для 6.1
+
+| Тест | Что проверяет |
+|------|--------------|
+| `kalman_predict_stationary_stays_put` | Неподвижный объект → predicted ≈ observed |
+| `kalman_predict_moving_extrapolates` | Объект со скоростью → predicted смещён |
+| `kalman_update_corrects_prediction` | Update tягает state к observation |
+| `kalman_missed_frames_grow_uncertainty` | P растёт при missed-кадрах |
+| `tracker_uses_predicted_bbox_for_iou` | IoU matching использует predicted, не observed |
+
+---
+
+### Задача 6.2 — Uncertainty Estimation для emotion
+
+**Цель:** `classify()` возвращает не только `(label, prob)`, но и `entropy` / `uncertainty` — меру сомнения модели.
+
+#### Теория
+
+Текущий выход: `softmax(logits)` → вектор p[8], берём `max(p)` как confidence.
+
+Проблема: softmax всегда суммируется в 1.0, даже если все logits = 0. Нет способа отличить «уверен» от «равномерно не уверен».
+
+**Практическое решение (без переобучения ONNX):**
+
+```
+// Из выходного вектора p[8] (softmax probs):
+entropy    = -Σ p_i * log2(p_i) / log2(K)   // [0, 1], 0=уверен, 1=равномерно
+uncertainty = entropy
+calibrated_conf = max(p) * (1 - uncertainty)  // скорректированная уверенность
+```
+
+Примеры:
+```
+p = [0.8, 0.05, 0.05, 0.02, 0.02, 0.02, 0.02, 0.02]  → entropy ≈ 0.32 → cal_conf ≈ 0.54
+p = [0.3, 0.25, 0.2, 0.1, 0.05, 0.04, 0.03, 0.03]    → entropy ≈ 0.93 → cal_conf ≈ 0.02
+```
+
+**True EDL (Sensoy et al. 2018) — для дальнейшего:**
+Требует переобучения с loss: `L = MSE(p, y) + λ * KL(Dir(α) || Dir(1))`.
+Выходной слой: `softplus(logits) + 1` → Dirichlet α → `uncertainty = K / Σ α_i`.
+Это будет в ONNX-файле, не в Rust. Откладывается на фазу 7+.
+
+#### Что меняется в коде
+
+```rust
+// mvm-emotion/src/lib.rs
+pub struct EmotionResult {
+    pub label: String,
+    pub prob: f32,           // max(softmax)
+    pub distribution: [f32; 8], // полный вектор softmax
+    pub entropy: f32,        // нормализованная [0, 1]
+    pub uncertainty: f32,    // = entropy (пока)
+    pub calibrated_conf: f32, // prob * (1 - uncertainty)
+}
+
+// classify() возвращает EmotionResult вместо (String, f32)
+pub fn classify(&mut self, face: &DynamicImage) -> Result<EmotionResult> { ... }
+```
+
+**Влияние на emotion_wins():**
+
+```rust
+// mvm-cli/src/main.rs — было:
+fn emotion_wins(rust_conf: f32, current_conf: Option<f32>) -> bool {
+    rust_conf > current_conf.unwrap_or(0.0)
+}
+
+// станет:
+fn emotion_wins(rust: &EmotionResult, py_conf: Option<f32>) -> bool {
+    rust.calibrated_conf > py_conf.unwrap_or(0.0)
+}
+```
+
+#### TDD тесты для 6.2
+
+| Тест | Что проверяет |
+|------|--------------|
+| `entropy_zero_for_one_hot` | p=[1,0,0,...] → entropy=0.0 |
+| `entropy_one_for_uniform` | p=[0.125; 8] → entropy=1.0 |
+| `calibrated_conf_penalizes_uncertain` | Высокая prob + высокая entropy → cal_conf < prob |
+| `emotion_result_distribution_sums_to_one` | Σ distribution ≈ 1.0 |
+| `emotion_wins_uses_calibrated_conf` | При равной raw prob побеждает менее энтропийный |
+
+---
+
+### Задача 6.3 — PDF Fusion в mvm-fusion
+
+**Цель:** `mvm-fusion` из заглушки → Product-of-Experts fusion двух emotion-распределений.
+
+#### Product of Experts
+
+Если Rust даёт `p_rust[8]` и Python даёт `p_py[8]`:
+
+```
+p_fused[i] = (p_rust[i] ^ w_rust) * (p_py[i] ^ w_py) / Z
+
+где:
+  w_rust = (1 - rust.uncertainty)   // вес = уверенность
+  w_py   = (1 - py_uncertainty)     // аналогично
+  Z      = Σ_j (p_rust[j] ^ w_rust * p_py[j] ^ w_py)  // нормировка
+```
+
+**Семантика:** эксперт с низкой uncertainty получает больший вес. При uncertainty=1 (равномерное) — фактически исключается из fusion.
+
+**Mono-Confidence** (текущий подход): `max(p_fused)`.
+**Holo-Confidence** (новый): весь вектор `p_fused[8]` передаётся downstream.
+
+#### Деградация до текущего поведения
+
+При `w_rust=1, w_py=0`: `p_fused = p_rust` (чистый Rust).
+При `w_rust=0, w_py=1`: `p_fused = p_py` (чистый Python).
+→ Текущий `emotion_wins()` — частный случай PoE при бинарных весах.
+
+#### Что меняется в коде
+
+```rust
+// mvm-fusion/src/lib.rs
+pub struct FusedEmotion {
+    pub label: String,
+    pub prob: f32,                  // max(p_fused)
+    pub distribution: [f32; 8],    // Holo-Confidence
+    pub uncertainty: f32,           // entropy(p_fused)
+    pub rust_weight: f32,           // w_rust использованный при fusion
+    pub py_weight: f32,             // w_py
+}
+
+pub fn fuse_emotions(
+    rust: &EmotionResult,
+    py_probs: &[f32; 8],
+    py_uncertainty: f32,
+) -> FusedEmotion { ... }
+```
+
+#### TDD тесты для 6.3
+
+| Тест | Что проверяет |
+|------|--------------|
+| `fuse_identical_distributions_unchanged` | p_rust == p_py → p_fused ≈ p_rust |
+| `fuse_zero_weight_expert_ignored` | uncertainty=1.0 → expert excluded |
+| `fuse_confident_expert_dominates` | u_rust=0, u_py=1 → p_fused ≈ p_rust |
+| `fuse_distribution_sums_to_one` | Σ p_fused ≈ 1.0 (нормировка корректна) |
+| `fuse_disagreement_raises_uncertainty` | Расходящиеся эксперты → выше entropy результата |
+
+---
+
+### Зависимости и порядок реализации
+
+```
+6.1 Kalman bbox   ─────────────────────────────────────── независима
+6.2 Uncertainty   ────────────── нужна для 6.3
+6.3 PDF fusion    ─ зависит от 6.2 (нужен entropy/uncertainty)
+```
+
+**Рекомендуемый порядок:** 6.1 → 6.2 → 6.3.
+
+### Открытые архитектурные вопросы для brainstorm
+
+1. **Kalman vs MLP predictor:** roadmap говорит "MLP-предсказатель". MLP обучается на данных движения — нужен dataset. KF работает без обучения. Что выбрать для первой итерации?
+
+2. **Где живёт KalmanBBox:** в `PersonTrack` (всегда) или в `PersonTracker` как внешний map `HashMap<u32, KalmanBBox>`? Первое чище для трейтов, второе — для тестируемости без полного трека.
+
+3. **Матрица Q и R:** hardcoded или из Config? Для 30fps и статичной сцены (монитор) параметры процессного шума отличаются от динамичной.
+
+4. **Entropy vs True EDL:** стоит ли переобучить EmotiEffLib B0 с EDL loss? Нужен датасет AffectNet/VGAF, ~1 GPU-день. Или entropy-approximation достаточна для Hermes?
+
+5. **Python uncertainty:** HSEmotion не возвращает логиты, только top-1 emotion+conf. Для PoE нужен полный вектор p_py[8]. Придётся патчить `mvm_bridge.py` чтобы отдавал `emotion_probs: [f32; 8]`.
+
+6. **Holo-Confidence downstream:** что с ним делает Hermes/Alter? Если downstream читает только `emotion: String`, то Holo ничего не даёт. Нужен ли JSON-field `emotion_distribution: [f32; 8]` в `to_json_line()`?
+
+---
+
 ## Команды
 
 ```bash
