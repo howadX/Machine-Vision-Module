@@ -53,6 +53,14 @@ impl YunetDetector {
         })
     }
 
+    pub fn score_threshold(&self) -> f32 {
+        self.score_threshold
+    }
+
+    pub fn set_score_threshold(&mut self, t: f32) {
+        self.score_threshold = t;
+    }
+
     /// Detect faces with full multi-stride NMS.
     pub fn detect(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<Detection>> {
         let input = self.preprocess(image)?;
@@ -136,14 +144,16 @@ impl YunetDetector {
             self.input_size,
             image::imageops::FilterType::Nearest,
         );
+        // YuNet expects NCHW BGR float32 in [0, 255].
+        // Channels: 0=B, 1=G, 2=R. Layout: flat[c * H * W + y * W + x].
         let mut flat = vec![0.0f32; 3 * sz * sz];
         for y in 0..sz {
             for x in 0..sz {
                 let px = resized.get_pixel(x as u32, y as u32);
-                let base = (y * sz + x) * 3;
-                flat[base] = px[2] as f32 / 255.0;
-                flat[base + 1] = px[1] as f32 / 255.0;
-                flat[base + 2] = px[0] as f32 / 255.0;
+                let idx = y * sz + x;
+                flat[idx]              = px[2] as f32; // B
+                flat[sz * sz + idx]    = px[1] as f32; // G
+                flat[2 * sz * sz + idx] = px[0] as f32; // R
             }
         }
         let shape = ndarray::IxDyn(&[1, 3, sz, sz]);
@@ -231,5 +241,36 @@ mod tests {
         let img = DynamicImage::new_rgb8(640, 640);
         let result = det.process(&img).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn score_threshold_getter_reflects_setter() {
+        let mut det = YunetDetector::init(&test_config()).unwrap();
+        assert!((det.score_threshold() - 0.5).abs() < 1e-6, "default should be 0.5");
+        det.set_score_threshold(0.3);
+        assert!((det.score_threshold() - 0.3).abs() < 1e-6, "should be 0.3 after set");
+    }
+
+    #[test]
+    fn lower_threshold_finds_face_on_reference_photo() {
+        let mut det = YunetDetector::init(&test_config()).unwrap();
+        let ref_path = std::path::PathBuf::from(
+            std::env::var("HOME").unwrap_or_default(),
+        )
+        .join("repos/Machine Vision Module/mvm/models/references/p_V_01.jpg");
+
+        if !ref_path.exists() {
+            eprintln!("Skipping: {} not found", ref_path.display());
+            return;
+        }
+
+        let img = image::open(&ref_path).unwrap();
+
+        let high = det.process(&img).unwrap();
+        det.set_score_threshold(0.3);
+        let low = det.process(&img).unwrap();
+
+        eprintln!("threshold=0.5: {} faces, threshold=0.3: {} faces", high.len(), low.len());
+        assert!(!low.is_empty(), "should detect at least one face at threshold=0.3");
     }
 }

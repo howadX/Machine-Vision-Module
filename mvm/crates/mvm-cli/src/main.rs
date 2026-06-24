@@ -10,11 +10,41 @@
 mod state;
 
 use anyhow::{Context, Result};
-#[cfg(not(feature = "embed-models"))]
 use mvm_core::Module;
 use mvm_core::Detection;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+/// Returns true when Rust emotion should replace the current (Python bridge) prediction.
+/// Rust wins only if its confidence is strictly higher.
+fn emotion_wins(rust_conf: f32, current_conf: Option<f32>) -> bool {
+    rust_conf > current_conf.unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emotion_wins_when_no_python_conf() {
+        assert!(emotion_wins(0.6, None));
+    }
+
+    #[test]
+    fn emotion_wins_when_rust_higher() {
+        assert!(emotion_wins(0.8, Some(0.5)));
+    }
+
+    #[test]
+    fn emotion_loses_when_python_higher() {
+        assert!(!emotion_wins(0.5, Some(0.8)));
+    }
+
+    #[test]
+    fn emotion_loses_on_tie() {
+        assert!(!emotion_wins(0.7, Some(0.7)));
+    }
+}
 
 fn parse_args() -> (bool, u64, bool, bool, bool, Option<PathBuf>) {
     let args: Vec<String> = std::env::args().collect();
@@ -75,6 +105,8 @@ fn build_gallery(
         (&["B"], "Белла"),
     ];
 
+    // Lower threshold for gallery: reference photos can be small/low-quality.
+    detector.set_score_threshold(0.3);
     let mut total = 0usize;
     for ref_dir in &candidates {
         if !ref_dir.is_dir() {
@@ -240,11 +272,13 @@ fn main() -> Result<()> {
                     let y2 = (det.bbox.y2 * fh as f32) as u32;
                     let face = frame.crop_imm(x1, y1, x2 - x1, y2 - y1);
 
-                    // Emotion
+                    // Emotion: keep higher-confidence prediction (Rust or Python bridge)
                     if let Some(ref mut emo) = emotion_mod {
                         if let Ok((label, conf)) = emo.classify(&face) {
-                            det.emotion = Some(label);
-                            det.emotion_confidence = Some(conf);
+                            if emotion_wins(conf, det.emotion_confidence) {
+                                det.emotion = Some(label);
+                                det.emotion_confidence = Some(conf);
+                            }
                         }
                     }
 
