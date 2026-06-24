@@ -11,6 +11,10 @@ pub struct PersonTracker {
     next_id: u32,
     tracks: HashMap<u32, PersonTrack>,
     timeout_frames: u64,
+    /// Frames of no detection before emotion confidence starts decaying.
+    pub decay_start_frames: u64,
+    /// Per-frame multiplier applied to emotion_confidence during decay.
+    pub decay_factor: f32,
 }
 
 impl PersonTracker {
@@ -19,6 +23,8 @@ impl PersonTracker {
             next_id: 0,
             tracks: HashMap::new(),
             timeout_frames: 1800, // 30s at 60fps
+            decay_start_frames: 5,
+            decay_factor: 0.8,
         }
     }
 
@@ -27,6 +33,16 @@ impl PersonTracker {
     pub fn tick(&mut self, detections: &[Detection]) {
         for t in self.tracks.values_mut() {
             t.missed += 1;
+            // Decay emotion confidence after grace period; clear when negligible.
+            if t.missed > self.decay_start_frames {
+                if let Some(conf) = t.emotion_confidence.as_mut() {
+                    *conf *= self.decay_factor;
+                    if *conf < 0.05 {
+                        t.emotion = None;
+                        t.emotion_confidence = None;
+                    }
+                }
+            }
         }
 
         let mut matched_ids: Vec<u32> = Vec::new();
@@ -322,5 +338,69 @@ mod tests {
             t.tick(&[]);
         }
         assert_eq!(t.track_count(), 0);
+    }
+
+    fn det_with_emotion(emotion: &str, conf: f32) -> Vec<Detection> {
+        vec![Detection {
+            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
+            emotion: Some(emotion.into()),
+            emotion_confidence: Some(conf),
+            identity: None, identity_confidence: None,
+            posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+        }]
+    }
+
+    #[test]
+    fn emotion_confidence_decays_after_missed_frames() {
+        let mut t = PersonTracker::new();
+        t.decay_start_frames = 3;
+        t.decay_factor = 0.8;
+        t.tick(&det_with_emotion("Радость", 0.9));
+        // Grace period — no decay yet
+        for _ in 0..3 {
+            t.tick(&[]);
+        }
+        let tracks: Vec<_> = t.all().values().collect();
+        assert!((tracks[0].emotion_confidence.unwrap() - 0.9).abs() < 0.01);
+        // One tick past grace period — decay kicks in
+        t.tick(&[]);
+        let tracks: Vec<_> = t.all().values().collect();
+        assert!(tracks[0].emotion_confidence.unwrap() < 0.9);
+    }
+
+    #[test]
+    fn emotion_clears_when_confidence_drops_below_threshold() {
+        let mut t = PersonTracker::new();
+        t.decay_start_frames = 0;
+        t.decay_factor = 0.5;
+        t.tick(&det_with_emotion("Грусть", 0.8));
+        // 0.8 * 0.5^N — reaches < 0.05 after ~4 decays
+        for _ in 0..10 {
+            t.tick(&[]);
+        }
+        let tracks: Vec<_> = t.all().values().collect();
+        assert!(tracks[0].emotion.is_none());
+        assert!(tracks[0].emotion_confidence.is_none());
+    }
+
+    #[test]
+    fn emotion_restores_on_rematch_after_decay() {
+        let mut t = PersonTracker::new();
+        t.decay_start_frames = 0;
+        t.decay_factor = 0.5;
+        t.tick(&det_with_emotion("Грусть", 0.8));
+        // Decay to clear
+        for _ in 0..10 {
+            t.tick(&[]);
+        }
+        let tracks: Vec<_> = t.all().values().collect();
+        assert!(tracks[0].emotion.is_none());
+        // Person reappears with new emotion — should restore
+        t.tick(&det_with_emotion("Радость", 0.75));
+        let active: Vec<_> = t.active().collect();
+        assert_eq!(active[0].emotion.as_deref(), Some("Радость"));
+        assert!((active[0].emotion_confidence.unwrap() - 0.75).abs() < 0.01);
     }
 }
