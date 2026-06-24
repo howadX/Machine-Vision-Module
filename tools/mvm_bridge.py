@@ -155,7 +155,7 @@ if not args.no_posture:
 # Camera
 # ═══════════════════════════════════════════════════════════
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture('/dev/video0', cv2.CAP_FFMPEG)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
