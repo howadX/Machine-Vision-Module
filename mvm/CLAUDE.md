@@ -140,6 +140,43 @@ Rust mvm-cli
 
 ---
 
+---
+
+## Python bridge (родительский проект)
+
+MVM — гибридный проект. Rust-крейты (`mvm/`) используют Python bridge из родительского каталога:
+
+```
+Machine Vision Module/           ← корень проекта (cwd при запуске Claude)
+├── core/                        ← Python модули
+│   ├── face_id.py               # SCRFD + ArcFace + multi-angle gallery
+│   ├── workspace_3d.py          # 3D Workspace (pinhole calibration)
+│   ├── pose_vae.py              # PoseVAE (48.6K params)
+│   ├── emotion_hse.py           # HSEmotion (EfficientNet-B0, GPU)
+│   └── cpu_face_id.py           # YuNet + SFace CPU-native identity
+├── tools/
+│   └── mvm_bridge.py            # Камера → JSON lines (запускается как subprocess)
+├── models/
+│   ├── mediapipe/               # FaceLandmarker + PoseLandmarker .task файлы
+│   └── emotion/                 # vposer_coco33.pth, pose_classifier.pth, ...
+├── venv/                        # Python 3.11+ virtualenv
+└── mvm/                         ← Rust workspace (ЭТОТ каталог)
+    └── crates/...
+```
+
+**Важно для Claude Code:** Python-файлы доступны по путям `../core/`, `../tools/`, `../models/`. При чтении Python bridge кода используй эти относительные пути.
+
+**Запуск Python bridge (из mvm/):**
+```bash
+../venv/bin/python3 ../tools/mvm_bridge.py --json-only --max-frames 1
+```
+
+**Запуск mvm-cli (из mvm/):**
+```bash
+cargo run --release -- --native --once --dump-interval 1
+# Camera::spawn() внутри запускает ../venv/bin/python3 ../tools/mvm_bridge.py
+```
+
 ## Структура (8 крейтов)
 
 ```
