@@ -55,6 +55,8 @@ struct Args {
     bridge_path: Option<PathBuf>,
     /// --dump-json: print one JSON line per tick to stdout.
     dump_json: bool,
+    /// --emotion-debug: show A/B table (EmotiEffLib vs HSEmotion) and add emotion_debug to JSON.
+    emotion_debug: bool,
 }
 
 fn parse_args() -> Args {
@@ -67,6 +69,7 @@ fn parse_args() -> Args {
         native: false,
         bridge_path: None,
         dump_json: false,
+        emotion_debug: false,
     };
 
     let mut i = 1;
@@ -76,7 +79,8 @@ fn parse_args() -> Args {
             "--once"      => args.once = true,
             "--no-camera" => args.no_camera = true,
             "--native"    => args.native = true,
-            "--dump-json" => args.dump_json = true,
+            "--dump-json"     => args.dump_json = true,
+            "--emotion-debug" => args.emotion_debug = true,
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -276,11 +280,12 @@ fn main() -> Result<()> {
         };
 
         // Native enrichment: emotion + identity per face
+        let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         if native && !detections.is_empty() {
             // Frame is written to disk by the Python bridge (--write-frame)
             if let Ok(frame) = image::open("/tmp/mvm_frame.jpg") {
                 let (fw, fh) = (frame.width(), frame.height());
-                for det in &mut detections {
+                for (det_idx, det) in detections.iter_mut().enumerate() {
                     // Crop face
                     let x1 = (det.bbox.x1 * fw as f32) as u32;
                     let y1 = (det.bbox.y1 * fh as f32) as u32;
@@ -291,9 +296,24 @@ fn main() -> Result<()> {
                     // Emotion: keep higher-confidence prediction (Rust or Python bridge)
                     if let Some(ref mut emo) = emotion_mod {
                         if let Ok((label, conf)) = emo.classify(&face) {
-                            if emotion_wins(conf, det.emotion_confidence) {
-                                det.emotion = Some(label);
+                            let py_emotion = det.emotion.clone();
+                            let py_conf = det.emotion_confidence;
+                            let winner = if emotion_wins(conf, det.emotion_confidence) {
+                                det.emotion = Some(label.clone());
                                 det.emotion_confidence = Some(conf);
+                                "rust"
+                            } else {
+                                "python"
+                            };
+                            if args.emotion_debug {
+                                emotion_debug_entries.push(state::EmotionDebugEntry {
+                                    id: det_idx as u32,
+                                    rust_emotion: label,
+                                    rust_conf: conf,
+                                    py_emotion,
+                                    py_conf,
+                                    winner,
+                                });
                             }
                         }
                     }
@@ -328,9 +348,18 @@ fn main() -> Result<()> {
                 tracker.track_count()
             );
             state_file.write(&tracker, fps)?;
-            state_file.dump_table(&tracker, fps);
+            if args.emotion_debug {
+                state_file.dump_table_debug(&tracker, fps, &emotion_debug_entries);
+            } else {
+                state_file.dump_table(&tracker, fps);
+            }
             if args.dump_json {
-                println!("{}", state_file.to_json_line(&tracker, fps));
+                let line = if args.emotion_debug {
+                    state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
+                } else {
+                    state_file.to_json_line(&tracker, fps)
+                };
+                println!("{line}");
             }
             last_dump = Instant::now();
 

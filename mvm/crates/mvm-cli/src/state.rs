@@ -10,8 +10,61 @@ use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 
+/// Per-face emotion A/B comparison captured before confidence-based fallback.
+pub struct EmotionDebugEntry {
+    pub id: u32,
+    pub rust_emotion: String,
+    pub rust_conf: f32,
+    pub py_emotion: Option<String>,
+    pub py_conf: Option<f32>,
+    /// Which source won: "rust", "python", or "none" (rust not run).
+    pub winner: &'static str,
+}
+
 /// Path to the Sight state file.
 const STATE_PATH: &str = ".hermes/profiles/sight/workspace/current_state.md";
+
+#[derive(Serialize)]
+struct JsonEmotionDebug {
+    rust: String,
+    rust_conf: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    py: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    py_conf: Option<f32>,
+    winner: &'static str,
+}
+
+#[derive(Serialize)]
+struct JsonFaceDebug {
+    id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity_conf: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emotion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emotion_conf: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    posture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    posture_conf: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dist_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pos: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emotion_debug: Option<JsonEmotionDebug>,
+}
+
+#[derive(Serialize)]
+struct JsonFrameDebug<'a> {
+    ts: String,
+    fps: f64,
+    status: &'a str,
+    faces: Vec<JsonFaceDebug>,
+}
 
 #[derive(Serialize)]
 struct JsonFace {
@@ -238,6 +291,67 @@ impl StateFile {
 
         eprintln!("  ╚══════════════════════════════════════════════════════════════════════╝");
         eprintln!();
+    }
+
+    /// Like `dump_table`, but appends an emotion A/B section when entries are present.
+    pub fn dump_table_debug(&self, tracker: &PersonTracker, fps: f64, debug: &[EmotionDebugEntry]) {
+        self.dump_table(tracker, fps);
+        if debug.is_empty() {
+            return;
+        }
+        eprintln!("  ╔══════════════════════════════════════════════════════════════════════╗");
+        eprintln!("  ║  Emotion A/B Debug (EmotiEffLib=Rust  HSEmotion=Python)           ║");
+        eprintln!("  ╠══════════════════════════════════════════════════════════════════════╣");
+        eprintln!("  ║ {:>3} │ {:<12} │ {:>5} │ {:<12} │ {:>5} │ {:>6} ║",
+            "ID", "Rust Emo", "Conf", "Py Emo", "Conf", "Winner");
+        eprintln!("  ╟─────┼──────────────┼───────┼──────────────┼───────┼────────╢");
+        for e in debug {
+            let py_emo  = e.py_emotion.as_deref().unwrap_or("—");
+            let py_conf = e.py_conf.map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
+            eprintln!("  ║ {:>3} │ {:<12} │ {:>5.2} │ {:<12} │ {:>5} │ {:>6} ║",
+                e.id, e.rust_emotion, e.rust_conf, py_emo, py_conf, e.winner);
+        }
+        eprintln!("  ╚══════════════════════════════════════════════════════════════════════╝");
+        eprintln!();
+    }
+
+    /// Like `to_json_line`, but adds `emotion_debug` object to each face with a debug entry.
+    pub fn to_json_line_debug(&self, tracker: &PersonTracker, fps: f64, debug: &[EmotionDebugEntry]) -> String {
+        let now = Local::now().with_timezone(&self.tz);
+        let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+
+        let mut active: Vec<_> = tracker.active().collect();
+        active.sort_by_key(|t| t.id);
+        let status = if active.is_empty() { "empty" } else { "occupied" };
+
+        let faces: Vec<JsonFaceDebug> = active.iter().map(|t| {
+            let pos = match (t.position_x, t.position_y, t.position_z) {
+                (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+                _ => None,
+            };
+            let emotion_debug = debug.iter().find(|e| e.id == t.id).map(|e| JsonEmotionDebug {
+                rust: e.rust_emotion.clone(),
+                rust_conf: e.rust_conf,
+                py: e.py_emotion.clone(),
+                py_conf: e.py_conf,
+                winner: e.winner,
+            });
+            JsonFaceDebug {
+                id: t.id,
+                identity: t.identity.clone(),
+                identity_conf: t.identity_confidence,
+                emotion: t.emotion.clone(),
+                emotion_conf: t.emotion_confidence,
+                posture: t.posture.clone(),
+                posture_conf: t.posture_confidence,
+                dist_m: t.distance,
+                pos,
+                emotion_debug,
+            }
+        }).collect();
+
+        let frame = JsonFrameDebug { ts, fps, status, faces };
+        serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
     }
 }
 
@@ -498,5 +612,56 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["status"], "empty");
         assert_eq!(v["faces"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn json_debug_contains_both_emotions() {
+        let sf = StateFile::open_at(temp_state_path("test_json_debug.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.tick(&[Detection {
+            bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
+            identity: Some("Вадим".into()),
+            identity_confidence: Some(0.75),
+            emotion: Some("Радость".into()),
+            emotion_confidence: Some(0.80),
+            posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+        }]);
+        let debug = vec![EmotionDebugEntry {
+            id: 0,
+            rust_emotion: "Радость".into(),
+            rust_conf: 0.80,
+            py_emotion: Some("Нейтральная".into()),
+            py_conf: Some(0.55),
+            winner: "rust",
+        }];
+        let line = sf.to_json_line_debug(&tracker, 29.9, &debug);
+        let v: serde_json::Value = serde_json::from_str(&line).expect("must be valid JSON");
+        let face = &v["faces"][0];
+        assert_eq!(face["emotion"], "Радость");
+        let dbg = &face["emotion_debug"];
+        assert_eq!(dbg["rust"], "Радость");
+        assert!((dbg["rust_conf"].as_f64().unwrap() - 0.80).abs() < 0.01);
+        assert_eq!(dbg["py"], "Нейтральная");
+        assert!((dbg["py_conf"].as_f64().unwrap() - 0.55).abs() < 0.01);
+        assert_eq!(dbg["winner"], "rust");
+    }
+
+    #[test]
+    fn json_debug_no_entries_omits_emotion_debug_field() {
+        let sf = StateFile::open_at(temp_state_path("test_json_nodebug.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.tick(&[Detection {
+            bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
+            identity: None, identity_confidence: None,
+            emotion: Some("Грусть".into()), emotion_confidence: Some(0.6),
+            posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+        }]);
+        let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!(v["faces"][0]["emotion_debug"].is_null());
     }
 }
