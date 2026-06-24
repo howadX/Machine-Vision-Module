@@ -75,7 +75,7 @@ Python bridge (mvm_bridge.py, ~12s загрузка моделей)
 Rust mvm-cli
     ├─ parse_line      → Vec<Detection>
     ├─ EmotiEffLib B0  → emotion (confidence-based fallback: Rust > Python только если conf выше)
-    ├─ SFace           → identity (gallery: Вадим + Никита, 16 эталонных фото)
+    ├─ SFace           → identity (gallery: Вадим, 8 эталонных фото)
     ├─ PersonTracker   → temporal fusion (IoU match, identity persistence)
     ├─ StateFile       → ~/.hermes/profiles/sight/workspace/current_state.md
     ├─ dump_table()    → ASCII таблица в терминал
@@ -95,7 +95,7 @@ Rust mvm-cli
 |-------|--------|------------|-------|
 | **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker, Config, Module trait | 23 |
 | **mvm-detect** | ✅ production | YuNet ONNX (228 КБ), CHW BGR preprocessing, set_score_threshold() | 5 |
-| **mvm-identity** | ✅ production | SFace ONNX (37 МБ), gallery Вадим+Никита, cosine match | 5 |
+| **mvm-identity** | ✅ production | SFace ONNX (37 МБ), gallery Вадим, cosine match | 5 |
 | **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, confidence-based | 3 |
 | **mvm-posture** | 🔶 заглушка | Пустой Module trait | 0 |
 | **mvm-fusion** | 🔶 заглушка | Пустой Module trait | 0 |
@@ -109,8 +109,7 @@ Rust mvm-cli
 
 | # | Проблема | Причина | Приоритет |
 |---|----------|--------|-----------|
-| 1 | **Никита не в Python bridge gallery** | p_N.jpg — низкое качество, ArcFace не находит лицо | 🟡 |
-| 2 | **EmotiEffLib vs HSEmotion — разные датасеты** | Оба EfficientNet-B0, VGAF (Rust) vs AffectNet (Python). Нужен A/B на живых данных | 🟡 |
+| 1 | **EmotiEffLib vs HSEmotion — разные датасеты** | Оба EfficientNet-B0, VGAF (Rust) vs AffectNet (Python). Нужен A/B на живых данных | 🟡 |
 | 3 | **mvm-posture, mvm-fusion — заглушки** | Поза и 3D только от Python bridge | 🟢 |
 | 4 | **Детекция только через Python** | YuNet есть, но не подключён как camera source | 🟢 |
 
@@ -201,7 +200,7 @@ mvm/
 | YuNet CHW/HWC preprocessing fix + threshold API | ✅ |
 | Confidence-based emotion fallback (Rust↔Python) | ✅ |
 | Обновить dist/mvm (xtask bundle, 26 МБ) | ✅ |
-| Сборка галереи на эталонных фото (Вадим + Никита) | ✅ |
+| Сборка галереи на эталонных фото (Вадим) | ✅ |
 | Camera: FFMPEG backend (fix PipeWire) | ✅ |
 
 ### 🟡 Фаза 5.2 — Качество (в процессе)
