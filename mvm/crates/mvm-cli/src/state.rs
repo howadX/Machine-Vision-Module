@@ -6,11 +6,41 @@
 use anyhow::Result;
 use chrono::{FixedOffset, Local};
 use mvm_core::PersonTracker;
+use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
 
 /// Path to the Sight state file.
 const STATE_PATH: &str = ".hermes/profiles/sight/workspace/current_state.md";
+
+#[derive(Serialize)]
+struct JsonFace {
+    id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity_conf: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emotion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emotion_conf: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    posture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    posture_conf: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dist_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pos: Option<[f32; 3]>,
+}
+
+#[derive(Serialize)]
+struct JsonFrame<'a> {
+    ts: String,
+    fps: f64,
+    status: &'a str,
+    faces: Vec<JsonFace>,
+}
 
 pub struct StateFile {
     path: PathBuf,
@@ -130,6 +160,37 @@ impl StateFile {
             "  state written: {face_count} faces, {fps:.1} fps"
         );
         Ok(())
+    }
+
+    /// Serialise current tracker state to a single JSON line.
+    pub fn to_json_line(&self, tracker: &PersonTracker, fps: f64) -> String {
+        let now = Local::now().with_timezone(&self.tz);
+        let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+
+        let mut active: Vec<_> = tracker.active().collect();
+        active.sort_by_key(|t| t.id);
+        let status = if active.is_empty() { "empty" } else { "occupied" };
+
+        let faces: Vec<JsonFace> = active.iter().map(|t| {
+            let pos = match (t.position_x, t.position_y, t.position_z) {
+                (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+                _ => None,
+            };
+            JsonFace {
+                id: t.id,
+                identity: t.identity.clone(),
+                identity_conf: t.identity_confidence,
+                emotion: t.emotion.clone(),
+                emotion_conf: t.emotion_confidence,
+                posture: t.posture.clone(),
+                posture_conf: t.posture_confidence,
+                dist_m: t.distance,
+                pos,
+            }
+        }).collect();
+
+        let frame = JsonFrame { ts, fps, status, faces };
+        serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Print a formatted table of all tracked persons to stderr.
@@ -381,5 +442,61 @@ mod tests {
 
         let content = read_state(&path);
         assert!(content.contains("Camera: /dev/video0"));
+    }
+
+    #[test]
+    fn json_line_is_valid_json() {
+        let sf = StateFile::open_at(temp_state_path("test_json.md")).unwrap();
+        let tracker = PersonTracker::new();
+        let line = sf.to_json_line(&tracker, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).expect("must be valid JSON");
+        assert!(v["ts"].is_string());
+        assert!(v["fps"].is_number());
+        assert!(v["status"].is_string());
+        assert!(v["faces"].is_array());
+    }
+
+    #[test]
+    fn json_line_contains_face_fields() {
+        let sf = StateFile::open_at(temp_state_path("test_json_face.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.tick(&[Detection {
+            bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
+            identity: Some("Вадим".into()),
+            identity_confidence: Some(0.69),
+            emotion: Some("Радость".into()),
+            emotion_confidence: Some(1.0),
+            posture: Some("сидит_за_ПК".into()),
+            posture_confidence: Some(0.89),
+            distance: Some(2.75),
+            position_x: Some(0.75),
+            position_y: Some(0.36),
+            position_z: Some(2.75),
+            ws_confidence: Some(0.9),
+            recon_error: None,
+            plausibility: None,
+        }]);
+        let line = sf.to_json_line(&tracker, 29.9);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let face = &v["faces"][0];
+        assert_eq!(face["identity"], "Вадим");
+        assert_eq!(face["emotion"], "Радость");
+        assert_eq!(face["posture"], "сидит_за_ПК");
+        assert!((face["identity_conf"].as_f64().unwrap() - 0.69).abs() < 0.01);
+        assert!((face["emotion_conf"].as_f64().unwrap() - 1.0).abs() < 0.01);
+        assert!((face["dist_m"].as_f64().unwrap() - 2.75).abs() < 0.01);
+        let pos = &face["pos"];
+        assert!(pos.is_array());
+        assert_eq!(pos.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn json_line_empty_room() {
+        let sf = StateFile::open_at(temp_state_path("test_json_empty.md")).unwrap();
+        let tracker = PersonTracker::new();
+        let line = sf.to_json_line(&tracker, 0.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["status"], "empty");
+        assert_eq!(v["faces"].as_array().unwrap().len(), 0);
     }
 }

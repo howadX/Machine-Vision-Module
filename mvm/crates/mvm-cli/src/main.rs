@@ -46,31 +46,46 @@ mod tests {
     }
 }
 
-fn parse_args() -> (bool, u64, bool, bool, bool, Option<PathBuf>) {
-    let args: Vec<String> = std::env::args().collect();
-    let mut use_cpu = false;
-    let mut dump_interval = 180u64;
-    let mut once = false;
-    let mut no_camera = false;
-    let mut native = false;
-    let mut bridge_path: Option<PathBuf> = None;
+struct Args {
+    use_cpu: bool,
+    dump_interval: u64,
+    once: bool,
+    no_camera: bool,
+    native: bool,
+    bridge_path: Option<PathBuf>,
+    /// --dump-json: print one JSON line per tick to stdout.
+    dump_json: bool,
+}
+
+fn parse_args() -> Args {
+    let raw: Vec<String> = std::env::args().collect();
+    let mut args = Args {
+        use_cpu: false,
+        dump_interval: 180,
+        once: false,
+        no_camera: false,
+        native: false,
+        bridge_path: None,
+        dump_json: false,
+    };
 
     let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--cpu" => use_cpu = true,
-            "--once" => once = true,
-            "--no-camera" => no_camera = true,
-            "--native" => native = true,
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--cpu"       => args.use_cpu = true,
+            "--once"      => args.once = true,
+            "--no-camera" => args.no_camera = true,
+            "--native"    => args.native = true,
+            "--dump-json" => args.dump_json = true,
             "--bridge-path" => {
-                if i + 1 < args.len() {
-                    bridge_path = Some(PathBuf::from(&args[i + 1]));
+                if i + 1 < raw.len() {
+                    args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
                     i += 1;
                 }
             }
             "--dump-interval" => {
-                if i + 1 < args.len() {
-                    dump_interval = args[i + 1].parse().unwrap_or(180);
+                if i + 1 < raw.len() {
+                    args.dump_interval = raw[i + 1].parse().unwrap_or(180);
                     i += 1;
                 }
             }
@@ -79,7 +94,7 @@ fn parse_args() -> (bool, u64, bool, bool, bool, Option<PathBuf>) {
         i += 1;
     }
 
-    (use_cpu, dump_interval, once, no_camera, native, bridge_path)
+    args
 }
 
 /// Build identity gallery from reference photos.
@@ -165,11 +180,15 @@ fn build_gallery(
 }
 
 fn main() -> Result<()> {
-    let (use_cpu, dump_secs, once, no_camera, native, bridge_path) = parse_args();
+    let args = parse_args();
+    let dump_secs = args.dump_interval;
+    let once = args.once;
+    let native = args.native;
 
     let mode_label = if native { "native, " } else { "" };
+    let json_label = if args.dump_json { "json, " } else { "" };
     eprintln!(
-        "mvm v{} — starting (dump every {dump_secs}s, {mode_label}{}mode)",
+        "mvm v{} — starting (dump every {dump_secs}s, {mode_label}{json_label}{}mode)",
         env!("CARGO_PKG_VERSION"),
         if once { "once, " } else { "" }
     );
@@ -198,12 +217,12 @@ fn main() -> Result<()> {
 
     // Camera: Python bridge (unless --no-camera)
     let mut camera: Option<mvm_pipeline::Camera> = None;
-    if !no_camera {
+    if !args.no_camera {
         let mut cfg = mvm_pipeline::CameraConfig::default();
-        if let Some(ref bp) = bridge_path {
+        if let Some(ref bp) = args.bridge_path {
             cfg.mvm_repo = bp.clone();
         }
-        if use_cpu {
+        if args.use_cpu {
             cfg.cpu = true;
         }
 
@@ -313,6 +332,9 @@ fn main() -> Result<()> {
             );
             state_file.write(&tracker, fps)?;
             state_file.dump_table(&tracker, fps);
+            if args.dump_json {
+                println!("{}", state_file.to_json_line(&tracker, fps));
+            }
             last_dump = Instant::now();
 
             if once {
