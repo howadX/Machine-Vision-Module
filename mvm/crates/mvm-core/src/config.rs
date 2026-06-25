@@ -30,10 +30,17 @@ pub struct Config {
     /// Override per-identity via `personal_heights` for tighter fit.
     pub face_height_m: f32,
     /// Effective face-bbox height for **YuNet** boxes (phase 7.1/7.4 native path).
-    /// YuNet boxes have a different density than SCRFD, so the SCRFD-calibrated
-    /// `face_height_m` (0.44) is wrong for `--native-camera`. The cli swaps this
-    /// in when native capture is active. ⚠️ PLACEHOLDER 0.44 until the operator
-    /// recalibrates: `venv/bin/python3 tools/calib_3d.py --native-camera …`.
+    /// YuNet boxes are tighter than SCRFD, so the SCRFD-calibrated `face_height_m`
+    /// (0.44) is wrong for `--native-camera`. The cli swaps this in when native
+    /// capture is active.
+    ///
+    /// Calibrated 2026-06-25 (`tools/calib_3d.py --native-camera`, tape sweep
+    /// 0.5–2.5 m, `models/calib_3d_yunet.csv`). real_eff rises with distance due
+    /// to the ~45° ceiling tilt: ≈0.30 near (0.5–1.0 m) → ≈0.35 far (2.0–2.5 m).
+    /// A single balanced constant **0.32** keeps depth bias within ±~11% across
+    /// the working range (inside the documented ±15–30% envelope) and leaves the
+    /// ordinal/relative signal — the primary product — unaffected. The proper
+    /// tilt fix is the landmark-calibration upgrade path (future phase).
     pub face_height_m_yunet: f32,
     /// EMA alpha for depth smoothing. Higher = faster response; lower = smoother.
     pub depth_ema_alpha: f32,
@@ -71,7 +78,7 @@ impl Default for Config {
             identity_threshold: 0.45,
             fx_ratio: 0.64,
             face_height_m: 0.44, // empirical, 2026-06-25 (was 0.19 population frontal)
-            face_height_m_yunet: 0.44, // PLACEHOLDER — recalibrate for YuNet boxes (7.1)
+            face_height_m_yunet: 0.32, // calibrated 2026-06-25 (YuNet, tilt-balanced)
             depth_ema_alpha: 0.3,
             emotion_forget_lambda: 0.7,
             relink_window_frames: 90,
