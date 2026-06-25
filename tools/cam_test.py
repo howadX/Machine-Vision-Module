@@ -20,6 +20,7 @@ the printed verdict against the scenario's expectation (see SCENARIOS below).
 import argparse
 import json
 import os
+import time
 import statistics
 import subprocess
 import sys
@@ -43,7 +44,9 @@ SCENARIOS = {
 
 
 def capture_streaming(scenario, secs, binary):
-    """Stream stdout line-by-line so a kill doesn't drop the buffer."""
+    """Stream stdout line-by-line. The ~12 s model load is silent, so we announce
+    a loud GO the moment the first real frame lands and time `secs` FROM THERE —
+    the operator performs the scenario action only after the GO, not blindly."""
     if not os.path.exists(binary):
         sys.exit(f"binary not found: {binary}\n  build it: (cd mvm && cargo build --release)")
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -52,13 +55,39 @@ def capture_streaming(scenario, secs, binary):
     print(f"\n  ┌─ scenario: {scenario}")
     print(f"  │  do    : {todo}")
     print(f"  │  expect: {expect}")
-    print(f"  └─ capturing {secs}s → {os.path.relpath(log_path, ROOT)}\n", file=sys.stderr)
+    print(f"  └─ ⏳ loading models (~12 s, stand by)…", file=sys.stderr, flush=True)
 
-    cmd = ["timeout", str(secs), binary, "--native", "--dump-json", "--dump-interval", "1"]
+    cmd = [binary, "--native", "--dump-json", "--dump-interval", "1"]
+    proc = subprocess.Popen(cmd, cwd=MVM_DIR, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+    first = None
+    count = 0
+    load_deadline = time.monotonic() + 90  # guard if the camera never delivers
     with open(log_path, "w") as out:
-        proc = subprocess.Popen(cmd, cwd=MVM_DIR, stdout=out,
-                                stderr=subprocess.DEVNULL, text=True)
-        proc.wait()
+        for line in proc.stdout:
+            out.write(line)
+            out.flush()
+            if not line.strip().startswith("{"):
+                if time.monotonic() > load_deadline:
+                    print("  ⚠ no frames after 90 s — camera busy?", file=sys.stderr)
+                    break
+                continue
+            now = time.monotonic()
+            if first is None:
+                first = now
+                print(f"\n  ▶▶▶  GO — perform '{scenario}' NOW  ({secs}s window)  ◀◀◀\n",
+                      file=sys.stderr, flush=True)
+            count += 1
+            print(f"      ● rec  t+{now - first:4.1f}s   (frame {count})",
+                  file=sys.stderr, flush=True)
+            if now - first >= secs:
+                print(f"\n  └─ done — {count} frames over {secs}s\n", file=sys.stderr, flush=True)
+                break
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
     return log_path
 
 
