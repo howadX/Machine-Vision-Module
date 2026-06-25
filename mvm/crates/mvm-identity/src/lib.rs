@@ -133,15 +133,16 @@ impl IdentityModule {
     pub fn embed(&mut self, face: &DynamicImage) -> anyhow::Result<Vec<f32>> {
         let input = self.preprocess(face)?;
 
-        // SFace model takes 3 inputs: data (image), scalar_op1, scalar_op2
-        // The scalar inputs are ignored (normalisation is model-internal).
-        let scalar1 = ndarray::Array::from_elem(ndarray::IxDyn(&[1]), 0.0f32);
-        let scalar2 = ndarray::Array::from_elem(ndarray::IxDyn(&[1]), 0.0f32);
-
+        // The model normalises internally: `(data - scalar_op1) * scalar_op2`,
+        // with baked-in initializers scalar_op1=127.5 (mean), scalar_op2=1/128
+        // (scale) — i.e. it expects RAW [0,255] input. We must NOT feed the
+        // scalars ourselves: the old code passed 0.0 for both, so the graph
+        // computed `(data - 0) * 0 = 0`, zeroing every input → a constant
+        // embedding that matched any face at cosine ≈ 1.0 (the #5 disaster).
+        // Omitting them lets ort use the initializer defaults, exactly as it
+        // already does for the conv weights.
         let outputs = self.session.run(ort::inputs![
             Self::INPUT_NAME => input,
-            "scalar_op1" => Tensor::from_array(scalar1).context("scalar_op1")?,
-            "scalar_op2" => Tensor::from_array(scalar2).context("scalar_op2")?,
         ])?;
         let emb: &[f32] = outputs[0].try_extract_tensor::<f32>()?.1;
 
@@ -170,18 +171,26 @@ impl IdentityModule {
         let resized = image.resize_exact(
             Self::IMAGE_SIZE,
             Self::IMAGE_SIZE,
-            image::imageops::FilterType::Nearest,
+            image::imageops::FilterType::Triangle,
         );
 
-        // SFace preprocessing: [0,1] → (x - 0.5) / 0.5 = 2x - 1 → [-1, 1]
-        let mut flat = vec![0.0f32; 3 * sz * sz];
+        // SFace (OpenCV 2021dec) expects a `blobFromImage`-style tensor:
+        // **planar CHW**, **BGR** channel order, **raw [0,255]** (scale 1, no mean).
+        //
+        // The previous code wrote interleaved HWC data into a CHW-declared tensor
+        // AND used RGB + [-1,1] normalisation — three mismatches that scrambled the
+        // input so badly the network saturated to a near-constant embedding
+        // (every face matched the gallery at cosine ≈ 1.0). This is the planar
+        // layout mvm-detect already uses for YuNet.
+        let plane = sz * sz;
+        let mut flat = vec![0.0f32; 3 * plane];
         for y in 0..sz {
             for x in 0..sz {
                 let px = resized.get_pixel(x as u32, y as u32);
-                let base = (y * sz + x) * 3;
-                flat[base]     = px[0] as f32 / 127.5 - 1.0; // R
-                flat[base + 1] = px[1] as f32 / 127.5 - 1.0; // G
-                flat[base + 2] = px[2] as f32 / 127.5 - 1.0; // B
+                let idx = y * sz + x;
+                flat[idx]             = px[2] as f32; // B plane
+                flat[plane + idx]     = px[1] as f32; // G plane
+                flat[2 * plane + idx] = px[0] as f32; // R plane
             }
         }
 
@@ -329,6 +338,59 @@ mod tests {
         eprintln!("Self-match: {name} ({sim:.4})");
         assert_eq!(name, "Вадим");
         assert!(sim > 0.5, "Self-similarity too low: {sim}");
+    }
+
+    /// Regression for the preprocess scramble bug (phase 7.5 native path): a
+    /// degenerate embedding makes *every* input match at cosine ≈ 1.0, which
+    /// `gallery_add_and_identify` (self-match only) cannot catch. A real face and
+    /// a synthetic non-face must NOT collapse to the same vector.
+    #[test]
+    fn embeddings_discriminate_face_from_nonface() {
+        let mut id = IdentityModule::init(&test_config()).unwrap();
+        let ref_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("repos/Machine Vision Module/models/references/p_V.jpg");
+        if !ref_path.exists() {
+            eprintln!("Skipping: {} not found", ref_path.display());
+            return;
+        }
+        let face = image::open(&ref_path).unwrap();
+        let e_face = id.embed(&face).unwrap();
+
+        // Synthetic non-face: diagonal gradient — structurally unlike a face.
+        let mut img = image::RgbImage::new(112, 112);
+        for (x, y, p) in img.enumerate_pixels_mut() {
+            *p = image::Rgb([(x as u8).wrapping_mul(2), (y as u8).wrapping_mul(2), 64]);
+        }
+        let e_non = id.embed(&image::DynamicImage::ImageRgb8(img)).unwrap();
+
+        let cos: f32 = e_face.iter().zip(&e_non).map(|(a, b)| a * b).sum();
+        eprintln!("face vs non-face cosine = {cos:.4}");
+        assert!(
+            cos < 0.6,
+            "degenerate embedding: face and non-face match at {cos:.4} (preprocess scramble)"
+        );
+    }
+
+    /// The Rust port must agree with OpenCV's own SFace: two photos of the same
+    /// person (unaligned 112×112) land at cosine ≈ 0.5 (OpenCV reference: 0.49).
+    /// Confirms the embedding is correct, not merely non-degenerate.
+    #[test]
+    fn embeddings_match_same_person() {
+        let mut id = IdentityModule::init(&test_config()).unwrap();
+        let dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("repos/Machine Vision Module/models/references");
+        let (a, b) = (dir.join("p_V.jpg"), dir.join("p_V_01.jpg"));
+        if !a.exists() || !b.exists() {
+            eprintln!("Skipping: reference photos not found");
+            return;
+        }
+        let ea = id.embed(&image::open(&a).unwrap()).unwrap();
+        let eb = id.embed(&image::open(&b).unwrap()).unwrap();
+        let cos: f32 = ea.iter().zip(&eb).map(|(x, y)| x * y).sum();
+        eprintln!("same-person (different angle) cosine = {cos:.4}");
+        // Above OpenCV's canonical SFace threshold (0.363), below self-match.
+        assert!(cos > 0.363, "same-person cosine {cos:.4} below SFace threshold");
+        assert!(cos < 0.99, "different photos should not be near-identical");
     }
 
     #[test]

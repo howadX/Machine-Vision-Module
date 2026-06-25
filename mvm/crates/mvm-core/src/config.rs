@@ -58,8 +58,12 @@ pub struct Config {
     /// Replaces label-only re-link → two distinct people never merge into one id.
     pub relink_cos_thresh: f32,
     /// Absolute SFace cosine above which an identity label is accepted (phase 7.5,
-    /// fixes #5). Stricter than `identity_threshold`: live data shows real match
-    /// ≈1.00 vs stranger ≈0.66, so ~0.8 separates them under a single-name gallery.
+    /// fixes #5). Calibrated to the SFace cosine scale, NOT the old ArcFace one:
+    /// OpenCV's canonical SFace threshold is 0.363; our (unaligned) port gives
+    /// same-person ≈0.5–0.75 vs non-face ≈0.21. 0.45 sits above strangers and
+    /// below genuine matches. ⚠️ provisional — tune from the live Вадим/stranger
+    /// cosines (the JSON now reports real identity_confidence). Was 0.8 (ArcFace
+    /// era), which would reject even the real Вадим on this path.
     pub identity_abs_thresh: f32,
     /// Minimum top1−top2 cosine margin to accept a label when the gallery has ≥2
     /// people (phase 7.5). Guards against ambiguous near-ties.
@@ -84,8 +88,8 @@ impl Default for Config {
             relink_window_frames: 90,
             relink_min_conf: 0.5,
             relink_cos_thresh: 0.5,
-            identity_abs_thresh: 0.8,
-            identity_margin_thresh: 0.15,
+            identity_abs_thresh: 0.45, // SFace cosine scale (was 0.8 ArcFace-era)
+            identity_margin_thresh: 0.1,
         }
     }
 }
