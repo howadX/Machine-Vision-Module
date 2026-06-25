@@ -279,15 +279,17 @@ mvm/
 
 | Задача | Риск | Статус |
 |--------|------|--------|
-| 7.1 YuNet первичный детектор (A/B-harness `--detect-ab`, G4) | 🟡 | ✅ harness; источник YuNet активен в `--native-camera`; рекалибровка `face_height_m` — оператор |
+| 7.1 YuNet первичный детектор (A/B-harness `--detect-ab`, G4) | 🟡 | ✅ harness; YuNet — источник в `--native-camera`; `face_height_m_yunet=0.32` откалиброван (рулетка, наклон ±11%) |
 | 7.2 Нативный захват камеры в Rust | 🔴→🟢 риск снят (spike) | ✅ `mvm-pipeline::native`, MJPG mmap, hardware-тест прошёл |
 | 7.3 Нативная поза: ONNX-лендмарки + порт PoseVAE, мульти-persona | 🔴 самое дорогое (**нет ONNX-модели лендмарков тела**) | ⏭ вынесено в фазу 7.5 |
-| 7.4-light Python-light hot-path (`--native-camera`, Вариант A: без позы) | 🟢 | ✅ **~1.1→24.9 fps, ноль Python**; bridge сохранён как fallback (поза) |
-| 7.5 SFace-эмбеддинг в трекер: margin-identity (#5) + cosine-re-link (#6) | 🟢 | ✅ реализовано + unit-тесты; живые гейты — оператор |
+| 7.4-light Python-light hot-path (`--native-camera`, Вариант A: без позы) | 🟢 | ✅ **25 fps с лицом, ноль Python**; bridge сохранён как fallback (поза) |
+| 7.5 SFace identity в трекер: margin-identity (#5) + cosine-re-link (#6) | 🟢 | ✅ реализовано + unit; **#5 live-validated** (Вадим 0.55–0.59, чужой→unknown); **исправлен фатальный баг SFace** (scalar_op=0 обнулял вход) |
 
 > **Аудит готовности проведён 2026-06-25** — план сверен с фактическим кодом/моделями. 6 расхождений и список пробелов инструментария задокументированы ниже в детальном плане («Аудит готовности»). Риски/статусы в этой таблице уже отражают аудит.
 >
-> **Фаза 7 (Python-light) реализована 2026-06-25.** Решение по scope: поза вынесена в 7.3/7.5 (Вариант A — без позы в быстром пути). `mvm-cli --native-camera` = pure-Rust hot-path (v4l2 MJPG → YuNet → ONNX-обогащение) **~25 fps, ноль Python**; `mvm_bridge.py` сохранён как legacy-fallback с позой (НЕ удалён — по требованию владельца). Остаток за оператором: живые гейты 7.5 (`unknown_face`/`leave_return`), реальное покрытие YuNet vs SCRFD (7.1), рекалибровка `face_height_m` рулеткой под YuNet-боксы. Полный Python-zero — фаза 7.5 (нативная поза + удаление bridge).
+> **Фаза 7 (Python-light) реализована и провалидирована на камере 2026-06-25.** Scope: поза вынесена в 7.3/7.5 (Вариант A — без позы в быстром пути). `mvm-cli --native-camera` = pure-Rust hot-path (v4l2 MJPG → YuNet → ONNX-обогащение), **25 fps с лицом в кадре, ноль Python** (vs 1.1 fps bridge baseline); `mvm_bridge.py` сохранён как legacy-fallback с позой (НЕ удалён — по требованию владельца).
+>
+> **Живая валидация (`tools/cam_test.py --native-camera`):** ✅ fps 25 с лицом; ✅ #5 identity (Вадим 0.55–0.59 опознан, чужой → unknown) — *после фикса фатального бага SFace, где `scalar_op1/2=0` обнуляли вход и любое лицо матчилось 1.0*; ✅ 3D-калибровка `face_height_m_yunet=0.32` (наклон даёт ±11%, в конверте); ✅ ординал 3D (`walk_near_far`). Эмоция — near-chance/Fear (известный #1, потолочный ракурс). Осталось пере-прогнать `two_people`/`leave_return` с рабочим identity (#6 cosine-re-link, scene-graph) — прежние прогоны шли с багом identity. Полный Python-zero — фаза 7.5 (нативная поза + удаление bridge).
 
 ### 🟢 Фаза 8 — Продукт
 
