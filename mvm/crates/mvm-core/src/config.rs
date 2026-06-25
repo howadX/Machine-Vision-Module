@@ -35,6 +35,12 @@ pub struct Config {
     /// the prior faster (more reactive); higher = smoother but slower. Prevents
     /// the per-track distribution from collapsing to one-hot over many frames.
     pub emotion_forget_lambda: f32,
+    /// Identity re-link window (frames). A detection that fails IoU matching may
+    /// re-attach to a track missed within this many frames if their identity
+    /// labels match — keeps the track id stable across motion gaps / brief exits.
+    pub relink_window_frames: u64,
+    /// Minimum identity confidence required to attempt an identity re-link.
+    pub relink_min_conf: f32,
 }
 
 impl Default for Config {
@@ -51,6 +57,8 @@ impl Default for Config {
             face_height_m: 0.44, // empirical, 2026-06-25 (was 0.19 population frontal)
             depth_ema_alpha: 0.3,
             emotion_forget_lambda: 0.7,
+            relink_window_frames: 90,
+            relink_min_conf: 0.5,
         }
     }
 }

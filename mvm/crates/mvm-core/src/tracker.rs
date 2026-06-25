@@ -38,6 +38,11 @@ pub struct PersonTracker {
     pub personal_heights: HashMap<String, f32>,
     /// Forgetting factor for temporal emotion PoE fusion (phase 6.4b).
     pub emotion_forget_lambda: f32,
+    /// Identity re-link window (frames) — re-attach to a recently-missed track
+    /// with matching identity instead of spawning a new id (fixes #6 churn).
+    pub relink_window_frames: u64,
+    /// Minimum identity confidence to attempt a re-link.
+    pub relink_min_conf: f32,
 }
 
 impl PersonTracker {
@@ -54,6 +59,8 @@ impl PersonTracker {
             depth_ema_alpha: 0.3,
             personal_heights: HashMap::new(),
             emotion_forget_lambda: 0.7,
+            relink_window_frames: 90,
+            relink_min_conf: 0.5,
         }
     }
 
@@ -64,6 +71,8 @@ impl PersonTracker {
             face_height_m: cfg.face_height_m,
             depth_ema_alpha: cfg.depth_ema_alpha,
             emotion_forget_lambda: cfg.emotion_forget_lambda,
+            relink_window_frames: cfg.relink_window_frames,
+            relink_min_conf: cfg.relink_min_conf,
             ..Self::new()
         }
     }
@@ -112,6 +121,26 @@ impl PersonTracker {
                 if iou > best_iou {
                     best_iou = iou;
                     best_id = Some(id);
+                }
+            }
+
+            // Identity re-link (fixes #6): if IoU found nothing, try to re-attach
+            // to the MOST-RECENTLY-missed track whose identity matches — keeps the
+            // id stable across motion gaps and brief exits instead of spawning new.
+            if best_id.is_none() {
+                if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
+                    if conf >= self.relink_min_conf {
+                        let mut best_missed = u64::MAX;
+                        for (&id, t) in &self.tracks {
+                            if matched_ids.contains(&id) { continue; }
+                            // Only recently-missed tracks (a gap), not active ones.
+                            if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
+                            if t.identity.as_deref() == Some(name.as_str()) && t.missed < best_missed {
+                                best_missed = t.missed;
+                                best_id = Some(id);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -300,6 +329,55 @@ mod tests {
 
     fn det(x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<Detection> {
         vec![Detection::bare(x1, y1, x2, y2)]
+    }
+
+    fn det_id(x1: f32, y1: f32, x2: f32, y2: f32, name: &str, conf: f32) -> Vec<Detection> {
+        vec![Detection {
+            bbox: BBox { x1, y1, x2, y2 },
+            identity: Some(name.into()),
+            identity_confidence: Some(conf),
+            emotion: None, emotion_confidence: None,
+            posture: None, posture_confidence: None,
+            distance: None, position_x: None, position_y: None, position_z: None,
+            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+        }]
+    }
+
+    #[test]
+    fn relink_recovers_id_after_motion_gap() {
+        // Same identity reappears far away (no IoU overlap) → re-attach, not new id.
+        let mut t = PersonTracker::new();
+        t.tick(&det_id(0.1, 0.1, 0.3, 0.3, "Вадим", 0.9));
+        let id0 = t.active().next().unwrap().id;
+        t.tick(&det_id(0.7, 0.7, 0.9, 0.9, "Вадим", 0.9)); // disjoint bbox → IoU=0
+        assert_eq!(t.track_count(), 1, "should re-link, not spawn a new track");
+        assert_eq!(t.active().next().unwrap().id, id0, "id must persist via re-link");
+    }
+
+    #[test]
+    fn relink_requires_matching_identity() {
+        let mut t = PersonTracker::new();
+        t.tick(&det_id(0.1, 0.1, 0.3, 0.3, "Вадим", 0.9));
+        t.tick(&det_id(0.7, 0.7, 0.9, 0.9, "Stranger", 0.9));
+        assert_eq!(t.track_count(), 2, "different identity must NOT re-link");
+    }
+
+    #[test]
+    fn relink_respects_window() {
+        let mut t = PersonTracker::new();
+        t.relink_window_frames = 2;
+        t.tick(&det_id(0.1, 0.1, 0.3, 0.3, "Вадим", 0.9));
+        for _ in 0..3 { t.tick(&[]); }            // missed grows beyond the window
+        t.tick(&det_id(0.7, 0.7, 0.9, 0.9, "Вадим", 0.9));
+        assert_eq!(t.track_count(), 2, "stale track beyond window must NOT re-link");
+    }
+
+    #[test]
+    fn relink_skips_low_confidence() {
+        let mut t = PersonTracker::new();
+        t.tick(&det_id(0.1, 0.1, 0.3, 0.3, "Вадим", 0.9));
+        t.tick(&det_id(0.7, 0.7, 0.9, 0.9, "Вадим", 0.4)); // below relink_min_conf
+        assert_eq!(t.track_count(), 2, "low-confidence identity must NOT re-link");
     }
 
     #[test]
