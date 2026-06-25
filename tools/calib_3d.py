@@ -35,7 +35,13 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MVM_DIR = os.path.join(ROOT, "mvm")
 DEFAULT_BIN = os.path.join(MVM_DIR, "target", "release", "mvm-cli")
-CSV_PATH = os.path.join(ROOT, "models", "calib_3d.csv")
+
+
+def csv_path(native_camera):
+    """Mode-specific CSV so YuNet rows never mix with the historical SCRFD sweep
+    (which back-solved 0.44). Mixing them would corrupt the recommended mean."""
+    name = "calib_3d_yunet.csv" if native_camera else "calib_3d.csv"
+    return os.path.join(ROOT, "models", name)
 
 # Intrinsics — must match mvm-core Config defaults.
 FX_RATIO = 0.64
@@ -44,12 +50,16 @@ HEIGHT = 480
 FX = FX_RATIO * WIDTH  # 409.6 px
 
 
-def collect(distance, frames, binary, timeout):
+def collect(distance, frames, binary, timeout, native_camera):
     """Run the native pipeline and gather median bbox_h for the closest face."""
     if not os.path.exists(binary):
         sys.exit(f"binary not found: {binary}\n  build it: (cd mvm && cargo build --release)")
 
-    cmd = [binary, "--native", "--dump-json", "--dump-interval", "1"]
+    # --native-camera recalibrates for YuNet boxes (phase 7.1); --native uses the
+    # Python-bridge SCRFD boxes. The back-solve below is identical — only the box
+    # source differs, which is exactly what we are calibrating for.
+    mode = "--native-camera" if native_camera else "--native"
+    cmd = [binary, mode, "--dump-json", "--dump-interval", "1"]
     print(f"→ collecting {frames} samples at {distance} m ... (hold still)", file=sys.stderr)
     proc = subprocess.Popen(
         cmd, cwd=MVM_DIR, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
@@ -106,9 +116,10 @@ def collect(distance, frames, binary, timeout):
         "native_dist_m": round(med_native, 3) if med_native is not None else "",
     }
 
-    os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
-    new_file = not os.path.exists(CSV_PATH)
-    with open(CSV_PATH, "a", newline="") as fh:
+    out_csv = csv_path(native_camera)
+    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+    new_file = not os.path.exists(out_csv)
+    with open(out_csv, "a", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(row.keys()))
         if new_file:
             w.writeheader()
@@ -120,20 +131,21 @@ def collect(distance, frames, binary, timeout):
     if med_native is not None:
         print(f"  native dist_m  : {med_native:.3f} m  (current prior 0.19 → off by "
               f"{med_native / distance:.2f}×)")
-    print(f"  appended → {CSV_PATH}")
+    print(f"  appended → {out_csv}")
 
 
-def report():
+def report(native_camera):
     """Summarise the calibration CSV and recommend a constant."""
-    if not os.path.exists(CSV_PATH):
-        sys.exit(f"no data yet: {CSV_PATH}")
-    with open(CSV_PATH) as fh:
+    path = csv_path(native_camera)
+    if not os.path.exists(path):
+        sys.exit(f"no data yet: {path}")
+    with open(path) as fh:
         rows = list(csv.DictReader(fh))
     if not rows:
         sys.exit("CSV is empty")
 
     rows.sort(key=lambda r: float(r["distance_m"]))
-    print(f"\n  Calibration data ({len(rows)} points) — {CSV_PATH}\n")
+    print(f"\n  Calibration data ({len(rows)} points) — {path}\n")
     print(f"  {'dist_m':>7} {'bbox_px':>9} {'real_eff_m':>11} {'native_m':>9}")
     print(f"  {'-'*7} {'-'*9} {'-'*11} {'-'*9}")
     reals = []
@@ -148,7 +160,9 @@ def report():
     print(f"\n  mean real_eff  : {mean_real:.4f} m")
     print(f"  spread         : {spread * 100:.1f} % of mean")
     if spread < 0.15:
-        print(f"  → CONSISTENT: set Config.face_height_m = {mean_real:.4f}")
+        print(f"  → CONSISTENT: set the constant = {mean_real:.4f}")
+        print(f"    · YuNet path (--native-camera): Config.face_height_m_yunet")
+        print(f"    · bridge path (--native):       Config.face_height_m")
     else:
         print(f"  → DRIFTS with distance ({spread*100:.0f}%): a single constant is")
         print(f"    insufficient — tilt introduces non-linearity. Decision needed.")
@@ -161,15 +175,18 @@ def main():
     ap.add_argument("--frames", type=int, default=12, help="samples to collect (default 12)")
     ap.add_argument("--bin", default=DEFAULT_BIN, help="path to mvm-cli release binary")
     ap.add_argument("--timeout", type=float, default=5.0, help="process kill timeout (s)")
+    ap.add_argument("--native-camera", action="store_true",
+                    help="calibrate the pure-Rust YuNet path (--native-camera) — "
+                         "the constant goes into Config.face_height_m_yunet")
     ap.add_argument("--report", action="store_true", help="summarise the CSV and exit")
     args = ap.parse_args()
 
     if args.report:
-        report()
+        report(args.native_camera)
         return
     if args.distance is None:
         ap.error("--distance is required (or use --report)")
-    collect(args.distance, args.frames, args.bin, args.timeout)
+    collect(args.distance, args.frames, args.bin, args.timeout, args.native_camera)
 
 
 if __name__ == "__main__":

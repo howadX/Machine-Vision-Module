@@ -29,6 +29,12 @@ pub struct Config {
     /// 1.0–2.0 m → 181/409.6 ≈ 0.44 (fit <3% across 0.5–2.0 m). See space.rs.
     /// Override per-identity via `personal_heights` for tighter fit.
     pub face_height_m: f32,
+    /// Effective face-bbox height for **YuNet** boxes (phase 7.1/7.4 native path).
+    /// YuNet boxes have a different density than SCRFD, so the SCRFD-calibrated
+    /// `face_height_m` (0.44) is wrong for `--native-camera`. The cli swaps this
+    /// in when native capture is active. ⚠️ PLACEHOLDER 0.44 until the operator
+    /// recalibrates: `venv/bin/python3 tools/calib_3d.py --native-camera …`.
+    pub face_height_m_yunet: f32,
     /// EMA alpha for depth smoothing. Higher = faster response; lower = smoother.
     pub depth_ema_alpha: f32,
     /// Forgetting factor (λ < 1) for temporal emotion PoE fusion. Lower = forgets
@@ -65,6 +71,7 @@ impl Default for Config {
             identity_threshold: 0.45,
             fx_ratio: 0.64,
             face_height_m: 0.44, // empirical, 2026-06-25 (was 0.19 population frontal)
+            face_height_m_yunet: 0.44, // PLACEHOLDER — recalibrate for YuNet boxes (7.1)
             depth_ema_alpha: 0.3,
             emotion_forget_lambda: 0.7,
             relink_window_frames: 90,

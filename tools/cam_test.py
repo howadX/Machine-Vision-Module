@@ -43,21 +43,24 @@ SCENARIOS = {
 }
 
 
-def capture_streaming(scenario, secs, binary):
+def capture_streaming(scenario, secs, binary, native_camera=False):
     """Stream stdout line-by-line. The ~12 s model load is silent, so we announce
     a loud GO the moment the first real frame lands and time `secs` FROM THERE —
     the operator performs the scenario action only after the GO, not blindly."""
     if not os.path.exists(binary):
         sys.exit(f"binary not found: {binary}\n  build it: (cd mvm && cargo build --release)")
     os.makedirs(LOG_DIR, exist_ok=True)
-    log_path = os.path.join(LOG_DIR, f"cam_{scenario}.jsonl")
+    suffix = "_nc" if native_camera else ""
+    log_path = os.path.join(LOG_DIR, f"cam_{scenario}{suffix}.jsonl")
     todo, expect = SCENARIOS.get(scenario, ("(freeform)", "(no preset expectation)"))
-    print(f"\n  ┌─ scenario: {scenario}")
+    mode = "--native-camera" if native_camera else "--native"
+    print(f"\n  ┌─ scenario: {scenario}  [{mode}]")
     print(f"  │  do    : {todo}")
     print(f"  │  expect: {expect}")
-    print(f"  └─ ⏳ loading models (~12 s, stand by)…", file=sys.stderr, flush=True)
+    load_hint = "~3 s, no pose" if native_camera else "~12 s"
+    print(f"  └─ ⏳ loading models ({load_hint}, stand by)…", file=sys.stderr, flush=True)
 
-    cmd = [binary, "--native", "--dump-json", "--dump-interval", "1"]
+    cmd = [binary, mode, "--dump-json", "--dump-interval", "1"]
     proc = subprocess.Popen(cmd, cwd=MVM_DIR, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True, bufsize=1)
     first = None
@@ -186,6 +189,8 @@ def main():
     ap.add_argument("--bin", default=DEFAULT_BIN, help="mvm-cli release binary")
     ap.add_argument("--replay", help="skip capture, analyse an existing log")
     ap.add_argument("--list", action="store_true", help="list scenarios and exit")
+    ap.add_argument("--native-camera", action="store_true",
+                    help="test the pure-Rust Python-light path (no pose, ~25 fps)")
     args = ap.parse_args()
 
     if args.list:
@@ -198,7 +203,8 @@ def main():
         analyse(args.replay)
         return
 
-    log_path = capture_streaming(args.scenario, args.secs, args.bin)
+    log_path = capture_streaming(args.scenario, args.secs, args.bin,
+                                 native_camera=args.native_camera)
     analyse(log_path)
 
 

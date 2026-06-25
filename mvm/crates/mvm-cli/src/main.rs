@@ -304,7 +304,12 @@ fn main() -> Result<()> {
     }
 
     // Native inference modules
-    let config = mvm_core::Config::default();
+    let mut config = mvm_core::Config::default();
+    // Native (YuNet) capture uses YuNet-calibrated face height for 3D — the
+    // SCRFD-tuned 0.44 would bias depth (phase 7.1 recalibration target).
+    if args.native_camera {
+        config.face_height_m = config.face_height_m_yunet;
+    }
     let mut emotion_mod: Option<mvm_emotion::EmotionModule> = None;
     let mut identity_mod: Option<mvm_identity::IdentityModule> = None;
 
