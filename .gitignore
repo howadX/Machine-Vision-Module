@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 mvm/target/
 mvm/dist/
+
+# runtime camera-test logs
+mvm/logs/
