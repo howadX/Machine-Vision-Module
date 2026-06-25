@@ -81,6 +81,8 @@ struct JsonFace {
     /// Absent when only Python bridge prediction is available.
     #[serde(skip_serializing_if = "Option::is_none")]
     emotion_distribution: Option<[f32; 8]>,
+    /// Face bbox height (normalised 0..1) — diagnostic field for 3D calibration.
+    bbox_h: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
     posture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -291,6 +293,7 @@ impl StateFile {
                 posture_conf: t.posture_confidence,
                 dist_m: t.distance,
                 pos,
+                bbox_h: t.bbox.y2 - t.bbox.y1,
             }
         }).collect();
 

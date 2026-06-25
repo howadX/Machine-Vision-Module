@@ -186,7 +186,29 @@ impl PersonTracker {
 
                 matched_ids.push(id);
             } else {
-                // New track — KF initialized at first observation
+                // New track — KF initialized at first observation.
+                // Run native 3D immediately so pos is available from frame 1.
+                let (nat_dist, nat_x, nat_y, nat_z, nat_ws, nat_ema) =
+                    if let Some(ph) = pinhole_opt {
+                        let b = det.bbox;
+                        let bbox_cx = (b.x1 + b.x2) * 0.5;
+                        let bbox_cy = (b.y1 + b.y2) * 0.5;
+                        if let Some((pos, z, ws_conf)) =
+                            face_bbox_to_3d(&ph, b.y1, b.y2, bbox_cx, bbox_cy, face_height_m)
+                        {
+                            let pos_s = ph.pixel_to_3d(
+                                bbox_cx * ph.width, bbox_cy * ph.height, z,
+                            );
+                            let ema = DepthEma::new(z, depth_ema_alpha);
+                            (Some(z), Some(pos_s[0]), Some(pos_s[1]), Some(pos_s[2]),
+                             Some(ws_conf), Some(ema))
+                        } else {
+                            (None, None, None, None, None, None)
+                        }
+                    } else {
+                        (None, None, None, None, None, None)
+                    };
+
                 let id = self.next_id;
                 self.next_id += 1;
                 self.tracks.insert(id, PersonTrack {
@@ -201,14 +223,15 @@ impl PersonTracker {
                     emotion_confidence: det.emotion_confidence,
                     posture: det.posture.clone(),
                     posture_confidence: det.posture_confidence,
-                    distance: det.distance,
-                    position_x: det.position_x,
-                    position_y: det.position_y,
-                    position_z: det.position_z,
-                    ws_confidence: det.ws_confidence,
+                    // Native 3D takes priority; Python bridge value as fallback.
+                    distance: nat_dist.or(det.distance),
+                    position_x: nat_x.or(det.position_x),
+                    position_y: nat_y.or(det.position_y),
+                    position_z: nat_z.or(det.position_z),
+                    ws_confidence: nat_ws.or(det.ws_confidence),
                     recon_error: det.recon_error,
                     plausibility: det.plausibility.clone(),
-                    depth_ema: None,
+                    depth_ema: nat_ema,
                     emotion_distribution: det.emotion_distribution,
                 });
             }

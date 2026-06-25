@@ -30,7 +30,7 @@
 use crate::config::Config;
 
 const DEPTH_MIN_M: f32 = 0.3;
-const DEPTH_MAX_M: f32 = 6.0;
+const DEPTH_MAX_M: f32 = 25.0; // extended for ceiling-mount calibration
 
 /// Pinhole camera intrinsics derived from `Config`.
 #[derive(Debug, Clone, Copy)]
