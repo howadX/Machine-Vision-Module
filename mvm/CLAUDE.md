@@ -95,7 +95,7 @@ Rust mvm-cli
     ├─ parse_line      → Vec<Detection>
     ├─ EmotiEffLib B0  → emotion + distribution[8] + entropy + calibrated_conf ← 6.3
     ├─ SFace           → identity (gallery: Вадим, 8 эталонных фото)
-    ├─ PersonTracker   → Kalman bbox (6.1) + native 3D pinhole (6.2) + temporal emotion PoE (6.4b, λ=0.7)
+    ├─ PersonTracker   → Kalman bbox (6.1) + identity re-link + native 3D pinhole (6.2) + temporal emotion PoE (6.4b, λ=0.7)
     ├─ mvm-fusion      → build_scene() граф близости + зоны (6.4)
     ├─ StateFile       → ~/.hermes/profiles/sight/workspace/current_state.md
     ├─ dump_table()    → ASCII таблица в терминал
@@ -113,7 +113,7 @@ Rust mvm-cli
 
 | Крейт | Статус | Содержимое | Тесты |
 |-------|--------|------------|-------|
-| **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker, KalmanBBox, Pinhole, DepthEma, Entity/Scene, **EMOTION_LABELS + temporal fuse (6.4b)** | 44 |
+| **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker (Kalman + **identity re-link**), Pinhole, DepthEma, Entity/Scene, **EMOTION_LABELS + temporal fuse (6.4b)** | 48 |
 | **mvm-detect** | ✅ production | YuNet ONNX (228 КБ), CHW BGR preprocessing, set_score_threshold() | 5 |
 | **mvm-identity** | ✅ production | SFace ONNX (37 МБ), gallery Вадим, cosine match | 5 |
 | **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF (eng), EmotionResult + entropy | 7 |
@@ -123,7 +123,7 @@ Rust mvm-cli
 | **mvm-cli** | ✅ production | main, StateFile, Scene JSON, --dump-json, --native/--once, --emotion-debug | 17 |
 | **xtask** | ✅ | `cargo xtask bundle` → dist/mvm | 1 |
 
-**Всего: 102 теста, все зелёные.**
+**Всего: 106 тестов, все зелёные.**
 
 ### Известные проблемы
 
@@ -273,14 +273,17 @@ mvm/
 - Полная эмпирическая таблица точности — в docstring `space.rs`.
 - ⚠️ Константа привязана к SCRFD-bbox → **рекалибровать при нативном детекторе (фаза 7)**.
 
-### 🟢 Фаза 7 — Нативный детектор
+### 🟢 Фаза 7 — Снос Python, нативный кластер
 
-| Задача | Статус |
-|--------|--------|
-| mvm-posture: портировать PoseVAE (48.6K params) в Rust | 🔜 |
-| mvm-fusion: confidence-based слияние эмоций | 🔜 |
-| Замена Python SCRFD на нативный (орт или кастомный ONNX) | 🔜 |
-| YuNet как camera source (без Python bridge) | 🔜 |
+> **Цель:** убрать Python из боевого пути. Камера → детекция → лендмарки целиком в Rust → один бинарник, без venv. Полный план — ниже («Фаза 7 — детальный план»).
+
+| Задача | Риск | Статус |
+|--------|------|--------|
+| 7.1 YuNet как первичный детектор (+ рекалибровка `face_height_m`) | 🟢 почти готов | 🔜 |
+| 7.2 Нативный захват камеры в Rust (PipeWire-риск) | 🟡 главный риск | 🔜 |
+| 7.3 Нативная поза: ONNX-лендмарки + порт PoseVAE, мульти-persona | 🔴 самое сложное | 🔜 |
+| 7.4 Удалить `mvm_bridge.py` → один бинарник | 🟢 | 🔜 |
+| 7.5 SFace-эмбеддинг в трекер: margin-identity (#5) + cosine-re-link (#6) | 🟡 | 🔜 |
 
 ### 🟢 Фаза 8 — Продукт
 
@@ -702,6 +705,78 @@ pub struct FusedEmotion { pub label: String, pub prob: f32, pub distribution: [f
 2. **3D-позиция сущности — точка или объём?** Старт: центроид `[f32;3]` + `radius_m` (из bbox+глубины). Хватает для дистанций/зон; полноценный объём — позже. Ок?
 3. **`Scene` в JSON целиком?** Если да — `to_json_line()` отдаёт entities+relations+zones, и это новый стабильный контракт для Hermes (структурированный 3D-снимок вместо плоского списка людей). Подтвердить формат.
 4. **Где живёт KalmanBBox / Calibration:** в `PersonTrack` (чище для трейтов) или внешним map в `PersonTracker` (тестируемость без полного трека)?
+
+---
+
+## Фаза 7 — Снос Python: детальный план
+
+> **Для:** brainstorm / делегирование Claude Code. **Статус:** фаза 6 закрыта, провалидирована на камере (2026-06-25), re-link сделан. 106 тестов зелёные.
+> **Принцип фазы:** убрать Python из боевого пути. Каждый шаг снимает одну ответственность Python; деградации функционала нет; бинарник остаётся самодостаточным.
+
+### Цель и мотивация (эмпирическая)
+
+Live-кампания дала точные приоритеты — фаза 7 чинит ровно то, что вскрылось (см. «Известные проблемы» + «Live-валидация»):
+
+| Находка кампании | Что снимает фаза 7 |
+|------------------|--------------------|
+| FPS ~1–2 (узел — Python bridge + disk round-trip кадров) | нативный захват/инференс → цель 30 fps, `<50ms` |
+| track-id churn (#6, частично закрыт label-re-link) | остаток добивает FPS; полный фикс — эмбеддинг-re-link (7.5) |
+| posture только у 1 (#3 — MediaPipe `poses=1` несмотря на `num_poses=3`) | нативная мульти-persona поза (7.3) |
+| `face_height_m=0.44` привязан к **bbox-конвенции SCRFD** | рекалибровка под YuNet-боксы (7.1) |
+| identity false-positive (#5 — чужой→Вадим@0.66) | SFace-эмбеддинг + margin/threshold в трекере (7.5) |
+
+### Что УЖЕ нативно (важно для инкрементальности)
+
+- **YuNet (`mvm-detect`, 228 КБ) уже запускается** в `--native` пути (`mvm-cli/src/main.rs`, `detector.detect(&img)`) — но лишь чтобы кропнуть лицо под SFace. **Первичный bbox всё ещё из Python SCRFD** (JSON → `parse_line` → tracker).
+- **Кадр Rust уже читает с диска:** bridge пишет его через `--write-frame`, Rust грузит для SFace/EmotiEffLib. → нативная детекция = переиспользовать тот же кадр, без новой магистрали.
+- **Нативны:** emotion (EmotiEffLib), identity (SFace), 3D (pinhole, `space.rs`), трекинг (Kalman + re-link), fusion (`build_scene` + temporal PoE).
+- **Остаётся Python:** захват камеры (cv2 FFMPEG + ROTATE_180), первичная детекция (SCRFD), поза (MediaPipe + PoseVAE).
+
+### Задачи
+
+#### 7.1 — YuNet как первичный детектор 🟢 *почти готов*
+YuNet уже детектит на кадре. Повысить его выход до **источника детекций** для трекера (вместо SCRFD-bbox из JSON). Камера/поза пока Python.
+- **Тонкость — рекалибровка:** `face_height_m=0.44` откалиброван под SCRFD-боксы (≈2× анатомии). YuNet-боксы **другой плотности** → прогнать `tools/calib_3d.py` заново, обновить константу. Без этого нативная 3D собьётся.
+- **Гейт:** нативные YuNet-детекции по покрытию/стабильности ≥ SCRFD на живых данных; 3D-дистанция совпадает после рекалибровки.
+
+#### 7.2 — Нативный захват камеры в Rust 🟡 *главный риск*
+Заменить cv2-граб на Rust-крейт; убрать disk round-trip (perf-win).
+- **Ключевой риск — PipeWire/Wayland (Ubuntu 24+).** Ровно поэтому cv2 потребовал `CAP_FFMPEG` (V4L2 падал при эксклюзивном захвате PipeWire). Rust-путь должен сосуществовать с PipeWire. Кандидаты: `nokhwa`, `v4l`, `ffmpeg-next`. **Сделать spike ПЕРВЫМ** — снять риск до планирования остального.
+- **Тонкость:** ROTATE_180 (камера перевёрнута) перенести в Rust.
+- **Гейт:** Rust стабильно читает `/dev/video0` на этой машине при работающем PipeWire, fps растёт.
+
+#### 7.3 — Нативная поза 🔴 *самое сложное*
+MediaPipe в Rust нет.
+- **Подход:** ONNX-модель лендмарков (RTMPose / MoveNet / BlazePose через `ort`) → порт **PoseVAE-классификатора** (48.6K params — тривиально в Rust, замкнутая форма) на лендмарках. `mvm-posture` из заглушки в production.
+- **Мульти-persona:** инференс по кропам-на-детекцию (по одному на YuNet-bbox) → чинит #3 (`poses=1`). Метки сразу **английские** (устранить рус `class_names_ru`).
+- **Гейт:** нативная поза на 2+ людях по качеству ≥ MediaPipe single-pose.
+
+#### 7.4 — Удалить bridge 🟢
+Камера+детекция+поза нативны → снести `mvm_bridge.py`, убрать зависимость от venv. Обновить `cargo xtask bundle`.
+- **Гейт:** `mvm-cli --native` отрабатывает end-to-end без единой строки Python.
+
+#### 7.5 — SFace-эмбеддинг в трекер (полный фикс #5/#6) 🟡
+Пробросить SFace **512d-эмбеддинг** в трекер (сейчас доходит только метка+conf).
+- **margin-based identity (#5):** метка только если топ-1 заметно выше топ-2 / абсолютного порога, иначе `unknown`. Данные подтверждают разделимость: реальный Вадим=1.00 vs чужой≈0.66.
+- **cosine-re-link (#6):** заменить label-only re-link (текущий, с оговоркой о слиянии двух «Вадимов») на cosine эмбеддингов → корректно различает людей.
+
+### Порядок и зависимости
+
+```
+7.2 камера (spike-риск) ──┐
+7.1 детектор (готов)    ──┴── независимы, можно параллельно
+7.3 поза ──────────────────── после 7.1 (нужны нативные кропы-bbox)
+7.4 снос bridge ───────────── после 7.1+7.2+7.3 (всё нативно)
+7.5 эмбеддинг-identity ────── независим; усиливает re-link фазы 6
+```
+
+**Рекомендованный старт:** spike 7.2 (камера) — снять главный риск первым; параллельно 7.1 (детектор + рекалибровка).
+
+### Открытые решения (для подтверждения)
+
+1. **Scope фазы.** Полный снос Python (7.1→7.4) или прагматично — 7.1+7.2+7.5, а поза (7.3) остаётся Python ещё на фазу? MediaPipe single-pose для основного юзкейса работает.
+2. **Камера (7.2):** `nokhwa` / `v4l` / `ffmpeg-next` — какой крейт; нужен ли spike до коммита остального плана.
+3. **Модель позы (7.3):** RTMPose / MoveNet / BlazePose ONNX — или отложить.
 
 ---
 
