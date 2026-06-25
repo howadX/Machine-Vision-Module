@@ -83,6 +83,8 @@ def analyse(log_path):
     track_conf = defaultdict(list)     # id → [emotion_conf]
     track_dist = defaultdict(list)     # id → [dist_m]
     track_ident = defaultdict(list)    # id → [(identity, conf)]
+    track_seen = defaultdict(int)      # id → frames present
+    track_posture = defaultdict(int)   # id → frames with a posture
     max_zone = 0
     rel_frames = 0
     rel_kinds = set()
@@ -93,6 +95,9 @@ def analyse(log_path):
         max_faces = max(max_faces, len(faces))
         for fa in faces:
             tid = fa["id"]
+            track_seen[tid] += 1
+            if fa.get("posture") is not None:
+                track_posture[tid] += 1
             if fa.get("emotion") is not None:
                 track_emos[tid].append(fa["emotion"])
             if fa.get("emotion_conf") is not None:
@@ -132,6 +137,10 @@ def analyse(log_path):
         if dist:
             print(f"      distance : [{min(dist):.2f} .. {max(dist):.2f}] m  "
                   f"mean={statistics.mean(dist):.2f}")
+        seen = track_seen.get(tid, 0)
+        pcov = track_posture.get(tid, 0)
+        flag = "  ⚠ no posture" if pcov == 0 else ""
+        print(f"      posture  : {pcov}/{seen} frames covered{flag}")
 
     print(f"\n  scene-graph: max_zone_size={max_zone}  "
           f"frames_with_relations={rel_frames}/{n}  relation_kinds={sorted(rel_kinds) or '—'}")
