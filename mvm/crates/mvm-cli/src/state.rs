@@ -471,7 +471,7 @@ mod tests {
             ws_confidence: None,
             recon_error: None,
             plausibility: None,
-            emotion_distribution: None,
+            emotion_distribution: None, embedding: None,
         }]);
 
         sf.write(&tracker, 25.5).unwrap();
@@ -530,7 +530,7 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
-                emotion_distribution: None,
+                emotion_distribution: None, embedding: None,
             },
             Detection {
                 bbox: mvm_core::BBox {
@@ -552,7 +552,7 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
-                emotion_distribution: None,
+                emotion_distribution: None, embedding: None,
             },
         ]);
 
@@ -647,7 +647,7 @@ mod tests {
             ws_confidence: Some(0.9),
             recon_error: None,
             plausibility: None,
-            emotion_distribution: None,
+            emotion_distribution: None, embedding: None,
         }]);
         let line = sf.to_json_line(&tracker, 29.9);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -685,7 +685,7 @@ mod tests {
             emotion_confidence: Some(0.80),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None, embedding: None,
         }]);
         let debug = vec![EmotionDebugEntry {
             id: 0,
@@ -717,7 +717,7 @@ mod tests {
             emotion: Some("Sadness".into()), emotion_confidence: Some(0.6),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None, embedding: None,
         }]);
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();

@@ -43,6 +43,16 @@ pub struct PersonTracker {
     pub relink_window_frames: u64,
     /// Minimum identity confidence to attempt a re-link.
     pub relink_min_conf: f32,
+    /// Minimum cosine similarity between SFace embeddings to re-link (phase 7.5).
+    /// Embeddings are L2-normalised, so cosine == dot product.
+    pub relink_cos_thresh: f32,
+}
+
+/// Cosine similarity of two L2-normalised embeddings (== dot product).
+/// Returns 0.0 on length mismatch (defensive; embeddings are fixed-dim).
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() { return 0.0; }
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
 impl PersonTracker {
@@ -61,6 +71,7 @@ impl PersonTracker {
             emotion_forget_lambda: 0.7,
             relink_window_frames: 90,
             relink_min_conf: 0.5,
+            relink_cos_thresh: 0.5,
         }
     }
 
@@ -73,6 +84,7 @@ impl PersonTracker {
             emotion_forget_lambda: cfg.emotion_forget_lambda,
             relink_window_frames: cfg.relink_window_frames,
             relink_min_conf: cfg.relink_min_conf,
+            relink_cos_thresh: cfg.relink_cos_thresh,
             ..Self::new()
         }
     }
@@ -125,9 +137,31 @@ impl PersonTracker {
             }
 
             // Identity re-link (fixes #6): if IoU found nothing, try to re-attach
-            // to the MOST-RECENTLY-missed track whose identity matches — keeps the
-            // id stable across motion gaps and brief exits instead of spawning new.
+            // to a recently-missed track instead of spawning a new id.
+            //
+            // Preferred path — **cosine of SFace embeddings** (phase 7.5): robust
+            // against a single-name gallery, because it compares the actual face
+            // vectors, not just the assigned label. Two different "Вадим"s never
+            // merge. Falls back to label-equality only when no embedding is present
+            // (Python-only signal).
             if best_id.is_none() {
+                if let Some(det_emb) = &det.embedding {
+                    let mut best_cos = self.relink_cos_thresh;
+                    for (&id, t) in &self.tracks {
+                        if matched_ids.contains(&id) { continue; }
+                        if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
+                        if let Some(track_emb) = &t.embedding {
+                            let cos = cosine(det_emb, track_emb);
+                            if cos > best_cos {
+                                best_cos = cos;
+                                best_id = Some(id);
+                            }
+                        }
+                    }
+                }
+            }
+            // Fallback: label-based re-link (no embedding available).
+            if best_id.is_none() && det.embedding.is_none() {
                 if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
                     if conf >= self.relink_min_conf {
                         let mut best_missed = u64::MAX;
@@ -153,6 +187,11 @@ impl PersonTracker {
                     t.age += 1;
                     t.missed = 0;
 
+                    // Keep the latest embedding so cosine re-link compares against
+                    // a fresh face vector after a gap.
+                    if det.embedding.is_some() {
+                        t.embedding = det.embedding.clone();
+                    }
                     // Propagate metadata: keep best identity, latest emotion/posture
                     if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
                         if t.identity_confidence.map_or(true, |c| conf > c) {
@@ -291,6 +330,7 @@ impl PersonTracker {
                     plausibility: det.plausibility.clone(),
                     depth_ema: nat_ema,
                     emotion_distribution: det.emotion_distribution,
+                    embedding: det.embedding.clone(),
                 });
             }
         }
@@ -340,7 +380,55 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            embedding: None,
         }]
+    }
+
+    /// Detection carrying an SFace embedding (and matching identity label).
+    fn det_emb(x1: f32, y1: f32, x2: f32, y2: f32, name: &str, emb: Vec<f32>) -> Vec<Detection> {
+        let mut d = Detection::bare(x1, y1, x2, y2);
+        d.identity = Some(name.into());
+        d.identity_confidence = Some(0.9);
+        d.embedding = Some(emb);
+        vec![d]
+    }
+
+    #[test]
+    fn cosine_helper_dot_of_normalised() {
+        // Orthogonal → 0, identical → 1.
+        assert!((cosine(&[1.0, 0.0, 0.0], &[0.0, 1.0, 0.0])).abs() < 1e-6);
+        assert!((cosine(&[1.0, 0.0, 0.0], &[1.0, 0.0, 0.0]) - 1.0).abs() < 1e-6);
+        assert_eq!(cosine(&[1.0, 0.0], &[1.0]), 0.0, "length mismatch → 0");
+    }
+
+    #[test]
+    fn embedding_propagates_to_track() {
+        let mut t = PersonTracker::new();
+        t.tick(&det_emb(0.3, 0.3, 0.5, 0.5, "Вадим", vec![1.0, 0.0, 0.0]));
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.embedding.as_deref(), Some(&[1.0, 0.0, 0.0][..]));
+    }
+
+    #[test]
+    fn cosine_relink_recovers_same_person() {
+        // Same face vector reappears far away (no IoU) → re-link via cosine, not new id.
+        let mut t = PersonTracker::new();
+        t.tick(&det_emb(0.1, 0.1, 0.3, 0.3, "Вадим", vec![1.0, 0.0, 0.0]));
+        let id0 = t.active().next().unwrap().id;
+        t.tick(&det_emb(0.7, 0.7, 0.9, 0.9, "Вадим", vec![0.99, 0.14, 0.0])); // cos≈0.99
+        assert_eq!(t.track_count(), 1, "same embedding must re-link");
+        assert_eq!(t.active().next().unwrap().id, id0, "id persists via cosine re-link");
+    }
+
+    #[test]
+    fn cosine_relink_rejects_different_person() {
+        // CORE of #5/#6: two different people both labelled "Вадим" (single-name
+        // gallery false-positive). Label-only re-link would MERGE them; cosine
+        // keeps them apart because the face vectors are orthogonal.
+        let mut t = PersonTracker::new();
+        t.tick(&det_emb(0.1, 0.1, 0.3, 0.3, "Вадим", vec![1.0, 0.0, 0.0]));
+        t.tick(&det_emb(0.7, 0.7, 0.9, 0.9, "Вадим", vec![0.0, 1.0, 0.0])); // cos=0 < thresh
+        assert_eq!(t.track_count(), 2, "different face vectors must NOT merge");
     }
 
     #[test]
@@ -403,6 +491,7 @@ mod tests {
             posture_confidence: Some(0.95),
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            embedding: None,
         }];
         t.tick(&enriched);
         let active: Vec<_> = t.active().collect();
@@ -422,6 +511,7 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            embedding: None,
         }]);
         t.tick(&[Detection {
             bbox: BBox { x1: 0.31, y1: 0.31, x2: 0.71, y2: 0.71 },
@@ -431,6 +521,7 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            embedding: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].identity.as_deref(), Some("Вадим"));
@@ -447,6 +538,7 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            embedding: None,
         }]);
         t.tick(&[Detection {
             bbox: BBox { x1: 0.32, y1: 0.31, x2: 0.52, y2: 0.51 },
@@ -455,6 +547,7 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            embedding: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].emotion.as_deref(), Some("Happiness"));
@@ -558,6 +651,7 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            embedding: None,
         }]
     }
 

@@ -41,6 +41,16 @@ pub struct Config {
     pub relink_window_frames: u64,
     /// Minimum identity confidence required to attempt an identity re-link.
     pub relink_min_conf: f32,
+    /// Minimum cosine similarity between SFace embeddings to re-link (phase 7.5).
+    /// Replaces label-only re-link → two distinct people never merge into one id.
+    pub relink_cos_thresh: f32,
+    /// Absolute SFace cosine above which an identity label is accepted (phase 7.5,
+    /// fixes #5). Stricter than `identity_threshold`: live data shows real match
+    /// ≈1.00 vs stranger ≈0.66, so ~0.8 separates them under a single-name gallery.
+    pub identity_abs_thresh: f32,
+    /// Minimum top1−top2 cosine margin to accept a label when the gallery has ≥2
+    /// people (phase 7.5). Guards against ambiguous near-ties.
+    pub identity_margin_thresh: f32,
 }
 
 impl Default for Config {
@@ -59,6 +69,9 @@ impl Default for Config {
             emotion_forget_lambda: 0.7,
             relink_window_frames: 90,
             relink_min_conf: 0.5,
+            relink_cos_thresh: 0.5,
+            identity_abs_thresh: 0.8,
+            identity_margin_thresh: 0.15,
         }
     }
 }

@@ -55,6 +55,10 @@ pub struct Detection {
     /// Full softmax distribution over 8 emotion classes (from Rust ONNX model).
     /// None when coming from Python bridge (which only passes label+conf).
     pub emotion_distribution: Option<[f32; 8]>,
+    /// SFace 128-d L2-normalised face embedding (phase 7.5). Carries through to
+    /// the tracker for margin-identity (#5) and cosine re-link (#6). None when
+    /// no native embedding was computed (e.g. Python-only path).
+    pub embedding: Option<Vec<f32>>,
 }
 
 impl Detection {
@@ -68,6 +72,7 @@ impl Detection {
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
             emotion_distribution: None,
+            embedding: None,
         }
     }
 }
@@ -103,6 +108,9 @@ pub struct PersonTrack {
     pub depth_ema: Option<crate::space::DepthEma>,
     /// Latest emotion distribution from Rust model (8 classes). Used by temporal PoE (6.4b).
     pub emotion_distribution: Option<[f32; 8]>,
+    /// Latest SFace embedding (phase 7.5). Used for cosine re-link (#6) so two
+    /// distinct people are never merged into one id under a single-name gallery.
+    pub embedding: Option<Vec<f32>>,
 }
 
 // ── Scene-graph types (phase 6.4) ─────────────────────────────────────────────

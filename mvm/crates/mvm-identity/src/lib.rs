@@ -88,6 +88,47 @@ impl IdentityModule {
         }
     }
 
+    /// Identify with margin gating (phase 7.5, fixes #5).
+    ///
+    /// Returns `(name | "unknown", best_similarity, embedding)`. The embedding is
+    /// **always** returned — even for "unknown" — so the tracker can cosine
+    /// re-link any face (#6), not just gallery members. Embeds once; the label
+    /// decision is delegated to the pure [`accept_identity`].
+    pub fn identify_margin(
+        &mut self,
+        face: &DynamicImage,
+        abs_thresh: f32,
+        margin_thresh: f32,
+    ) -> anyhow::Result<(String, f32, Vec<f32>)> {
+        let emb = self.embed(face)?;
+
+        // top-1 and top-2 similarities across the gallery.
+        let mut best_name: Option<String> = None;
+        let mut best_sim = f32::MIN;
+        let mut second_sim = f32::MIN;
+        for (name, ref_emb) in &self.gallery {
+            let sim = dot_product(&emb, ref_emb);
+            if sim > best_sim {
+                second_sim = best_sim;
+                best_sim = sim;
+                best_name = Some(name.clone());
+            } else if sim > second_sim {
+                second_sim = sim;
+            }
+        }
+        let best_sim = if best_sim == f32::MIN { 0.0 } else { best_sim };
+        let second_sim = if second_sim == f32::MIN { 0.0 } else { second_sim };
+
+        let accepted = best_name.is_some()
+            && accept_identity(best_sim, second_sim, self.gallery.len(), abs_thresh, margin_thresh);
+        let name = if accepted {
+            best_name.unwrap()
+        } else {
+            "unknown".to_string()
+        };
+        Ok((name, best_sim, emb))
+    }
+
     /// Extract 128-dim L2-normalised embedding from a face crop.
     pub fn embed(&mut self, face: &DynamicImage) -> anyhow::Result<Vec<f32>> {
         let input = self.preprocess(face)?;
@@ -175,6 +216,29 @@ impl Module for IdentityModule {
     }
 }
 
+/// Decide whether to accept the top gallery match as an identity label
+/// (phase 7.5, fixes #5). Pure — unit-testable without the ONNX model.
+///
+/// Accept iff `best ≥ abs_thresh` AND (gallery has <2 people OR
+/// `best − second ≥ margin_thresh`). The absolute gate rejects strangers under
+/// a single-name gallery (live data: real ≈1.00 vs stranger ≈0.66); the margin
+/// gate rejects ambiguous near-ties once the gallery holds ≥2 people.
+pub fn accept_identity(
+    best_sim: f32,
+    second_sim: f32,
+    gallery_size: usize,
+    abs_thresh: f32,
+    margin_thresh: f32,
+) -> bool {
+    if best_sim < abs_thresh {
+        return false;
+    }
+    if gallery_size >= 2 && (best_sim - second_sim) < margin_thresh {
+        return false;
+    }
+    true
+}
+
 // ── Math helpers ──────────────────────────────────────────────
 
 fn l2_norm(v: &[f32]) -> f32 {
@@ -196,6 +260,38 @@ mod tests {
             ),
             ..Default::default()
         }
+    }
+
+    // ── Pure margin-identity decision (phase 7.5, #5) — no model needed ──
+
+    #[test]
+    fn accept_clear_winner_single_gallery() {
+        // Real Вадим ≈1.00 under a single-name gallery → accept.
+        assert!(accept_identity(1.00, 0.0, 1, 0.8, 0.15));
+    }
+
+    #[test]
+    fn reject_stranger_single_gallery() {
+        // Stranger ≈0.66 under a single-name gallery → unknown (fixes #5).
+        assert!(!accept_identity(0.66, 0.0, 1, 0.8, 0.15));
+    }
+
+    #[test]
+    fn reject_ambiguous_near_tie_two_gallery() {
+        // Two close matches (margin 0.05 < 0.15) → unknown.
+        assert!(!accept_identity(0.85, 0.80, 2, 0.8, 0.15));
+    }
+
+    #[test]
+    fn accept_clear_gap_two_gallery() {
+        // Clear winner (margin 0.30 ≥ 0.15) above abs → accept.
+        assert!(accept_identity(0.90, 0.60, 2, 0.8, 0.15));
+    }
+
+    #[test]
+    fn reject_below_abs_even_with_margin() {
+        // Big margin but below abs threshold → still unknown.
+        assert!(!accept_identity(0.70, 0.10, 2, 0.8, 0.15));
     }
 
     #[test]

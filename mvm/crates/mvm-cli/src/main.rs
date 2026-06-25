@@ -349,14 +349,21 @@ fn main() -> Result<()> {
                         }
                     }
 
-                    // Identity — skip if Python bridge already set it (ArcFace > SFace)
-                    if det.identity.is_none() {
-                        if let Some(ref mut id) = identity_mod {
-                            if let Ok((name, sim)) = id.identify(&face, 0.35) {
-                                if name != "unknown" {
-                                    det.identity = Some(name);
-                                    det.identity_confidence = Some(sim);
-                                }
+                    // Identity + embedding (phase 7.5).
+                    // Always embed the face (for cosine re-link #6, even unknown
+                    // faces). Apply the SFace label only when the Python bridge
+                    // didn't already set one (ArcFace > SFace), and only through
+                    // the margin gate (fixes #5: stranger no longer → "Вадим").
+                    if let Some(ref mut id) = identity_mod {
+                        if let Ok((name, sim, emb)) = id.identify_margin(
+                            &face,
+                            config.identity_abs_thresh,
+                            config.identity_margin_thresh,
+                        ) {
+                            det.embedding = Some(emb);
+                            if det.identity.is_none() && name != "unknown" {
+                                det.identity = Some(name);
+                                det.identity_confidence = Some(sim);
                             }
                         }
                     }

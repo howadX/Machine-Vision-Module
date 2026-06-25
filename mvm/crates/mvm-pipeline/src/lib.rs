@@ -141,6 +141,7 @@ impl Camera {
             recon_error: d.recon_error,
             plausibility: d.plausibility,
             emotion_distribution: None, // Python bridge doesn't output distributions
+            embedding: None,            // native SFace embedding attached in mvm-cli enrichment
         }).collect())
     }
 
