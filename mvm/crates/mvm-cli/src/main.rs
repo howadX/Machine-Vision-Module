@@ -86,6 +86,10 @@ struct Args {
     dump_json: bool,
     /// --emotion-debug: show A/B table (EmotiEffLib vs HSEmotion) and add emotion_debug to JSON.
     emotion_debug: bool,
+    /// --detect-ab: run native YuNet on each frame and log coverage vs Python
+    /// SCRFD (phase 7.1, G4). Measurement only — does NOT change the detection
+    /// source or 3D; that switch waits on the operator recalibration (7.1 gate).
+    detect_ab: bool,
 }
 
 fn parse_args() -> Args {
@@ -99,6 +103,7 @@ fn parse_args() -> Args {
         bridge_path: None,
         dump_json: false,
         emotion_debug: false,
+        detect_ab: false,
     };
 
     let mut i = 1;
@@ -110,6 +115,7 @@ fn parse_args() -> Args {
             "--native"    => args.native = true,
             "--dump-json"     => args.dump_json = true,
             "--emotion-debug" => args.emotion_debug = true,
+            "--detect-ab"     => args.detect_ab = true,
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -296,6 +302,16 @@ fn main() -> Result<()> {
     let mut frame_count: u64 = 0;
     let start = Instant::now();
 
+    // A/B detector coverage accumulators (phase 7.1, G4).
+    let mut ab_cov = mvm_detect::Coverage::default();
+    let mut ab_frames: u32 = 0;
+    if native && args.detect_ab {
+        // Fair comparison: use YuNet's standard live threshold, not the loose
+        // gallery-build threshold (0.3) left over from build_gallery.
+        _detector.set_score_threshold(0.5);
+        eprintln!("  detect-ab: logging native YuNet coverage vs Python SCRFD (measurement only)");
+    }
+
     loop {
         let mut detections: Vec<Detection> = match &mut camera {
             Some(cam) => match cam.read() {
@@ -307,6 +323,21 @@ fn main() -> Result<()> {
             },
             None => vec![],
         };
+
+        // A/B detector coverage (phase 7.1, G4). Runs even when SCRFD found
+        // nothing, so "YuNet finds a face SCRFD missed" is captured. Measurement
+        // only — does NOT change the detection source feeding the tracker.
+        if native && args.detect_ab {
+            if let Ok(frame) = image::open("/tmp/mvm_frame.jpg") {
+                if let Ok(yunet) = _detector.detect(&frame) {
+                    let cov = mvm_detect::compare_coverage(&yunet, &detections, 0.5);
+                    ab_cov.matched += cov.matched;
+                    ab_cov.a_only += cov.a_only;
+                    ab_cov.b_only += cov.b_only;
+                    ab_frames += 1;
+                }
+            }
+        }
 
         // Native enrichment: emotion + identity per face
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
@@ -385,6 +416,16 @@ fn main() -> Result<()> {
                 "  tick {frame_count}: {} tracks, {fps:.1} fps",
                 tracker.track_count()
             );
+            if args.detect_ab && ab_frames > 0 {
+                // YuNet ≥ SCRFD coverage gate: a_only ≥ b_only means YuNet finds
+                // at least as many faces as SCRFD. b_only = SCRFD-found YuNet-missed.
+                eprintln!(
+                    "  detect-ab[{ab_frames}f]: matched={} yunet_only={} scrfd_only={} \
+                     → YuNet {} SCRFD",
+                    ab_cov.matched, ab_cov.a_only, ab_cov.b_only,
+                    if ab_cov.b_only == 0 { "covers" } else { "MISSES some" },
+                );
+            }
             state_file.write(&tracker, fps)?;
             if args.emotion_debug {
                 state_file.dump_table_debug(&tracker, fps, &emotion_debug_entries);

@@ -170,6 +170,51 @@ struct Proposal {
     score: f32,
 }
 
+/// A/B detector-coverage comparison (phase 7.1, gap G4).
+///
+/// Quantifies how the native YuNet detector compares to the Python SCRFD boxes
+/// on the same frame, so 7.1's gate ("YuNet coverage ≥ SCRFD") is measurable
+/// rather than eyeballed. Accumulate per frame, report aggregates.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Coverage {
+    /// Boxes present in BOTH sets (IoU ≥ threshold).
+    pub matched: usize,
+    /// Boxes the reference (e.g. YuNet) has that the baseline (SCRFD) lacks.
+    pub a_only: usize,
+    /// Boxes the baseline (SCRFD) has that the reference (YuNet) lacks.
+    pub b_only: usize,
+}
+
+/// Greedy IoU matching of two detection sets — pure, unit-testable.
+///
+/// `a` is the reference set (YuNet), `b` the baseline (Python SCRFD). Each box
+/// matches at most once. `a_only` = YuNet-extra, `b_only` = SCRFD-extra.
+pub fn compare_coverage(a: &[Detection], b: &[Detection], iou_thresh: f32) -> Coverage {
+    let mut b_used = vec![false; b.len()];
+    let mut matched = 0usize;
+    for da in a {
+        let mut best = iou_thresh;
+        let mut best_j = None;
+        for (j, db) in b.iter().enumerate() {
+            if b_used[j] { continue; }
+            let iou = da.bbox.iou(&db.bbox);
+            if iou >= best {
+                best = iou;
+                best_j = Some(j);
+            }
+        }
+        if let Some(j) = best_j {
+            b_used[j] = true;
+            matched += 1;
+        }
+    }
+    Coverage {
+        matched,
+        a_only: a.len() - matched,
+        b_only: b.len() - matched,
+    }
+}
+
 impl Module for YunetDetector {
     type Input = DynamicImage;
     type Output = Vec<Detection>;
@@ -203,6 +248,45 @@ mod tests {
             ),
             ..Default::default()
         }
+    }
+
+    // ── A/B coverage (phase 7.1, G4) — pure, no model needed ──
+
+    fn d(x1: f32, y1: f32, x2: f32, y2: f32) -> Detection {
+        Detection::bare(x1, y1, x2, y2)
+    }
+
+    #[test]
+    fn coverage_identical_sets_all_matched() {
+        let a = vec![d(0.1, 0.1, 0.3, 0.3), d(0.6, 0.6, 0.8, 0.8)];
+        let cov = compare_coverage(&a, &a, 0.5);
+        assert_eq!(cov, Coverage { matched: 2, a_only: 0, b_only: 0 });
+    }
+
+    #[test]
+    fn coverage_yunet_finds_extra_face() {
+        // YuNet (a) finds 2, SCRFD (b) only 1 → a_only=1 (YuNet better coverage).
+        let a = vec![d(0.1, 0.1, 0.3, 0.3), d(0.6, 0.6, 0.8, 0.8)];
+        let b = vec![d(0.1, 0.1, 0.3, 0.3)];
+        let cov = compare_coverage(&a, &b, 0.5);
+        assert_eq!(cov, Coverage { matched: 1, a_only: 1, b_only: 0 });
+    }
+
+    #[test]
+    fn coverage_yunet_misses_face() {
+        // SCRFD (b) finds 2, YuNet (a) only 1 → b_only=1 (YuNet worse coverage).
+        let a = vec![d(0.1, 0.1, 0.3, 0.3)];
+        let b = vec![d(0.1, 0.1, 0.3, 0.3), d(0.6, 0.6, 0.8, 0.8)];
+        let cov = compare_coverage(&a, &b, 0.5);
+        assert_eq!(cov, Coverage { matched: 1, a_only: 0, b_only: 1 });
+    }
+
+    #[test]
+    fn coverage_disjoint_boxes_no_match() {
+        let a = vec![d(0.0, 0.0, 0.2, 0.2)];
+        let b = vec![d(0.7, 0.7, 0.9, 0.9)];
+        let cov = compare_coverage(&a, &b, 0.5);
+        assert_eq!(cov, Coverage { matched: 0, a_only: 1, b_only: 1 });
     }
 
     #[test]
