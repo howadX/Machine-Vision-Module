@@ -90,6 +90,12 @@ struct Args {
     /// SCRFD (phase 7.1, G4). Measurement only — does NOT change the detection
     /// source or 3D; that switch waits on the operator recalibration (7.1 gate).
     detect_ab: bool,
+    /// --native-camera: full Python-light hot-path (phase 7.4, Variant A).
+    /// Pure-Rust v4l2 capture + YuNet detection + native enrichment; ZERO Python,
+    /// no pose (until 7.3). Implies --native. Frame stays in memory (no disk
+    /// round-trip). NOTE: 3D uses face_height_m calibrated for SCRFD boxes —
+    /// provisional until recalibrated for YuNet boxes (operator, 7.1 gate).
+    native_camera: bool,
 }
 
 fn parse_args() -> Args {
@@ -104,6 +110,7 @@ fn parse_args() -> Args {
         dump_json: false,
         emotion_debug: false,
         detect_ab: false,
+        native_camera: false,
     };
 
     let mut i = 1;
@@ -116,6 +123,7 @@ fn parse_args() -> Args {
             "--dump-json"     => args.dump_json = true,
             "--emotion-debug" => args.emotion_debug = true,
             "--detect-ab"     => args.detect_ab = true,
+            "--native-camera" => { args.native_camera = true; args.native = true; }
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -251,9 +259,26 @@ fn main() -> Result<()> {
         mvm_detect::YunetDetector::init(&config)?
     };
 
-    // Camera: Python bridge (unless --no-camera)
+    // Camera. Two mutually-exclusive sources:
+    //   --native-camera → pure-Rust v4l2 (phase 7.4-light, Variant A), ZERO Python.
+    //   default         → Python bridge (full pipeline incl. pose).
     let mut camera: Option<mvm_pipeline::Camera> = None;
-    if !args.no_camera {
+    let mut native_camera: Option<mvm_pipeline::native::NativeCamera> = None;
+    if args.no_camera {
+        eprintln!("  camera: disabled (--no-camera)");
+    } else if args.native_camera {
+        match mvm_pipeline::native::NativeCamera::open("/dev/video0", 1280, 720, true) {
+            Ok(cam) => {
+                let (w, h) = cam.dimensions();
+                eprintln!("  camera: native v4l2 MJPG {w}x{h} (Python-light, no pose)");
+                native_camera = Some(cam);
+            }
+            Err(e) => {
+                eprintln!("  camera: native open failed: {e}");
+                eprintln!("  camera: falling back to stub mode");
+            }
+        }
+    } else {
         let mut cfg = mvm_pipeline::CameraConfig::default();
         if let Some(ref bp) = args.bridge_path {
             cfg.mvm_repo = bp.clone();
@@ -276,8 +301,6 @@ fn main() -> Result<()> {
                 eprintln!("  camera: falling back to stub mode (--no-camera)");
             }
         }
-    } else {
-        eprintln!("  camera: disabled (--no-camera)");
     }
 
     // Native inference modules
@@ -305,31 +328,57 @@ fn main() -> Result<()> {
     // A/B detector coverage accumulators (phase 7.1, G4).
     let mut ab_cov = mvm_detect::Coverage::default();
     let mut ab_frames: u32 = 0;
-    if native && args.detect_ab {
-        // Fair comparison: use YuNet's standard live threshold, not the loose
-        // gallery-build threshold (0.3) left over from build_gallery.
+    if native && (args.detect_ab || args.native_camera) {
+        // Use YuNet's standard live threshold, not the loose gallery-build
+        // threshold (0.3) left over from build_gallery.
         _detector.set_score_threshold(0.5);
+    }
+    if native && args.detect_ab {
         eprintln!("  detect-ab: logging native YuNet coverage vs Python SCRFD (measurement only)");
     }
 
     loop {
-        let mut detections: Vec<Detection> = match &mut camera {
-            Some(cam) => match cam.read() {
-                Ok(dets) => dets,
+        // ── Frame + detections acquisition ──────────────────────────────────
+        // `tick_frame` is the working image for this tick (enrichment + A/B).
+        // Native-camera path (Variant A): capture in memory + YuNet detection,
+        // no Python, no pose. Bridge path: detections from JSON, frame on disk.
+        let mut tick_frame: Option<image::DynamicImage> = None;
+        let mut detections: Vec<Detection> = if let Some(ncam) = &mut native_camera {
+            match ncam.read() {
+                Ok(frame) => {
+                    let dets = _detector.detect(&frame).unwrap_or_default();
+                    tick_frame = Some(frame);
+                    dets
+                }
                 Err(e) => {
-                    eprintln!("  camera error: {e}");
+                    eprintln!("  native camera error: {e}");
                     break;
                 }
-            },
-            None => vec![],
+            }
+        } else {
+            match &mut camera {
+                Some(cam) => match cam.read() {
+                    Ok(dets) => dets,
+                    Err(e) => {
+                        eprintln!("  camera error: {e}");
+                        break;
+                    }
+                },
+                None => vec![],
+            }
         };
 
-        // A/B detector coverage (phase 7.1, G4). Runs even when SCRFD found
-        // nothing, so "YuNet finds a face SCRFD missed" is captured. Measurement
-        // only — does NOT change the detection source feeding the tracker.
-        if native && args.detect_ab {
-            if let Ok(frame) = image::open("/tmp/mvm_frame.jpg") {
-                if let Ok(yunet) = _detector.detect(&frame) {
+        // Bridge path: the frame lives on disk (Python --write-frame). Load it
+        // once for A/B + enrichment. Native path already holds it in memory.
+        if tick_frame.is_none() && native && (args.detect_ab || !detections.is_empty()) {
+            tick_frame = image::open("/tmp/mvm_frame.jpg").ok();
+        }
+
+        // A/B detector coverage (phase 7.1, G4) — bridge path only (the native
+        // path already IS YuNet, so there's nothing to compare against).
+        if native && args.detect_ab && native_camera.is_none() {
+            if let Some(frame) = &tick_frame {
+                if let Ok(yunet) = _detector.detect(frame) {
                     let cov = mvm_detect::compare_coverage(&yunet, &detections, 0.5);
                     ab_cov.matched += cov.matched;
                     ab_cov.a_only += cov.a_only;
@@ -342,8 +391,7 @@ fn main() -> Result<()> {
         // Native enrichment: emotion + identity per face
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         if native && !detections.is_empty() {
-            // Frame is written to disk by the Python bridge (--write-frame)
-            if let Ok(frame) = image::open("/tmp/mvm_frame.jpg") {
+            if let Some(frame) = &tick_frame {
                 let (fw, fh) = (frame.width(), frame.height());
                 for (det_idx, det) in detections.iter_mut().enumerate() {
                     // Crop face

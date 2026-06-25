@@ -47,3 +47,20 @@ Raw runs:
 Any native stage must move end-to-end fps **up from 1.1**. The `<50 ms`
 (20 fps) invariant is the north star; intermediate gates just require monotonic
 improvement vs this baseline.
+
+## Result after Stage 4 (Python-light, `--native-camera`) — 2026-06-25
+
+| Path | fps | vs baseline |
+|------|-----|-------------|
+| Baseline end-to-end (`--native`, Python bridge) | 1.1 | — |
+| **`--native-camera` (pure Rust, no pose, 0 faces)** | **~24.9** | **~22×** |
+
+- Measured on `/dev/video0`, native v4l2 MJPG 1280×720, **zero Python** in the
+  hot-path (0 bridge/python references in the run log). North-star 20 fps
+  **cleared** at the capture+detect level.
+- Caveat: 0 faces in frame → the per-face ONNX enrichment (emotion+identity)
+  did not run; fps **with faces present** will be lower and needs an operator
+  to measure. Even so, the capture ceiling (was the Python bridge, ~0.64 s/frame
+  + disk round-trip) is removed — the empty-frame bridge path managed only ~7 fps.
+- 3D is **provisional** in this mode: `face_height_m=0.44` is calibrated for
+  SCRFD boxes; recalibration for YuNet boxes is the operator-gated 7.1 step.

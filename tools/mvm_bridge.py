@@ -8,6 +8,24 @@ Usage:
     venv/bin/python3 tools/mvm_bridge.py              # Full pipeline (GPU)
     venv/bin/python3 tools/mvm_bridge.py --cpu        # CPU-only (no emotion GPU)
     venv/bin/python3 tools/mvm_bridge.py --no-posture # Face + emotion only
+
+────────────────────────────────────────────────────────────────────────────
+LEGACY / FALLBACK as of phase 7.4 (2026-06-25) — DO NOT EXTEND.
+
+The MVM hot-path is now pure-Rust (Python-light): `mvm-cli --native-camera`
+captures via native v4l2 (mmap MJPG), detects with YuNet, and enriches with
+native ONNX (emotion/identity/3D) at ~25 fps with ZERO Python — vs ~1.1 fps
+through this bridge. Camera capture, SCRFD detection, ArcFace, HSEmotion and
+Workspace3D are all superseded by Rust crates.
+
+This bridge is retained ONLY as a fallback that still provides **posture**
+(MediaPipe + PoseVAE), which is not yet native — it goes native in phase 7.3,
+after which this file is removed entirely (phase 7.5, Python-zero).
+
+Nothing here was deleted (user-authorised modification, 2026-06-25): the bridge
+remains fully functional for `mvm-cli --native` (default) when pose is needed.
+New native work must NOT deepen any dependency on this file.
+────────────────────────────────────────────────────────────────────────────
 """
 
 import argparse, io, json, os, sys, time
