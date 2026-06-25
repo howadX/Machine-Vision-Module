@@ -73,11 +73,9 @@ if gallery_dir.exists():
 # ═══════════════════════════════════════════════════════════
 
 hse = None
-HSE_EMOTION_MAP = {
-    "Anger": "Злость", "Disgust": "Отвращение", "Fear": "Страх",
-    "Happiness": "Радость", "Neutral": "Нейтральная", "Sadness": "Грусть",
-    "Surprise": "Удивление",
-}
+# HSEmotion already emits English VGAF class names (Anger, Contempt, ...),
+# which match mvm-core EMOTION_LABELS 1:1 — pass them through unchanged.
+HSE_EMOTION_MAP = {}
 
 if not args.cpu and _torch.cuda.is_available():
     try:

@@ -36,6 +36,8 @@ pub struct PersonTracker {
     /// Personal face heights keyed by identity label.
     /// When a track is identified, this overrides `face_height_m` → ±2-3% error vs ±12%.
     pub personal_heights: HashMap<String, f32>,
+    /// Forgetting factor for temporal emotion PoE fusion (phase 6.4b).
+    pub emotion_forget_lambda: f32,
 }
 
 impl PersonTracker {
@@ -51,6 +53,7 @@ impl PersonTracker {
             face_height_m: 0.44, // empirical effective bbox-face height (see config.rs)
             depth_ema_alpha: 0.3,
             personal_heights: HashMap::new(),
+            emotion_forget_lambda: 0.7,
         }
     }
 
@@ -60,6 +63,7 @@ impl PersonTracker {
             pinhole: Some(Pinhole::from_config(cfg)),
             face_height_m: cfg.face_height_m,
             depth_ema_alpha: cfg.depth_ema_alpha,
+            emotion_forget_lambda: cfg.emotion_forget_lambda,
             ..Self::new()
         }
     }
@@ -127,7 +131,24 @@ impl PersonTracker {
                             t.identity_confidence = Some(conf);
                         }
                     }
-                    if det.emotion.is_some() {
+                    // Emotion: temporal Product-of-Experts fusion (phase 6.4b).
+                    // When the detection carries a full distribution, fold it into
+                    // the track's accumulated prior with forgetting, then re-derive
+                    // the label from the SMOOTHED distribution (kills per-frame
+                    // argmax jitter). Without a distribution (Python-only signal),
+                    // fall back to latest-snapshot.
+                    if let Some(obs) = det.emotion_distribution {
+                        let fused = match t.emotion_distribution {
+                            Some(prior) => crate::emotion::fuse_emotion_temporal(
+                                &prior, &obs, self.emotion_forget_lambda,
+                            ),
+                            None => obs, // first observation seeds the prior
+                        };
+                        let (label, conf) = crate::emotion::emotion_label(&fused);
+                        t.emotion_distribution = Some(fused);
+                        t.emotion = Some(label.to_string());
+                        t.emotion_confidence = Some(conf);
+                    } else if det.emotion.is_some() {
                         t.emotion = det.emotion.clone();
                         t.emotion_confidence = det.emotion_confidence;
                     }
@@ -145,7 +166,6 @@ impl PersonTracker {
                     }
                     if det.recon_error.is_some() { t.recon_error = det.recon_error; }
                     if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
-                    if det.emotion_distribution.is_some() { t.emotion_distribution = det.emotion_distribution; }
                 } // t drops here, releasing mutable borrow
 
                 // ── Part B: native 3D (phase 6.2) ──────────────────────────
@@ -211,6 +231,15 @@ impl PersonTracker {
 
                 let id = self.next_id;
                 self.next_id += 1;
+                // Seed emotion from the distribution when present, so the label is
+                // consistent with the vector the temporal fusion will accumulate.
+                let (seed_emotion, seed_emotion_conf) = match det.emotion_distribution {
+                    Some(dist) => {
+                        let (label, conf) = crate::emotion::emotion_label(&dist);
+                        (Some(label.to_string()), Some(conf))
+                    }
+                    None => (det.emotion.clone(), det.emotion_confidence),
+                };
                 self.tracks.insert(id, PersonTrack {
                     id,
                     bbox: det.bbox,
@@ -219,8 +248,8 @@ impl PersonTracker {
                     missed: 0,
                     identity: det.identity.clone(),
                     identity_confidence: det.identity_confidence,
-                    emotion: det.emotion.clone(),
-                    emotion_confidence: det.emotion_confidence,
+                    emotion: seed_emotion,
+                    emotion_confidence: seed_emotion_conf,
                     posture: det.posture.clone(),
                     posture_confidence: det.posture_confidence,
                     // Native 3D takes priority; Python bridge value as fallback.
@@ -290,7 +319,7 @@ mod tests {
             bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.72),
-            emotion: Some("Нейтральная".into()),
+            emotion: Some("Neutral".into()),
             emotion_confidence: Some(0.65),
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
@@ -300,7 +329,7 @@ mod tests {
         t.tick(&enriched);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].identity.as_deref(), Some("Вадим"));
-        assert_eq!(active[0].emotion.as_deref(), Some("Нейтральная"));
+        assert_eq!(active[0].emotion.as_deref(), Some("Neutral"));
         assert_eq!(active[0].posture.as_deref(), Some("сидит"));
     }
 
@@ -335,7 +364,7 @@ mod tests {
         let mut t = PersonTracker::new();
         t.tick(&[Detection {
             bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.5 },
-            emotion: Some("Злость".into()), emotion_confidence: Some(0.6),
+            emotion: Some("Anger".into()), emotion_confidence: Some(0.6),
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
@@ -343,14 +372,14 @@ mod tests {
         }]);
         t.tick(&[Detection {
             bbox: BBox { x1: 0.32, y1: 0.31, x2: 0.52, y2: 0.51 },
-            emotion: Some("Радость".into()), emotion_confidence: Some(0.8),
+            emotion: Some("Happiness".into()), emotion_confidence: Some(0.8),
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
         }]);
         let active: Vec<_> = t.active().collect();
-        assert_eq!(active[0].emotion.as_deref(), Some("Радость"));
+        assert_eq!(active[0].emotion.as_deref(), Some("Happiness"));
     }
 
     #[test]
@@ -459,7 +488,7 @@ mod tests {
         let mut t = PersonTracker::new();
         t.decay_start_frames = 3;
         t.decay_factor = 0.8;
-        t.tick(&det_with_emotion("Радость", 0.9));
+        t.tick(&det_with_emotion("Happiness", 0.9));
         for _ in 0..3 { t.tick(&[]); }
         let tracks: Vec<_> = t.all().values().collect();
         assert!((tracks[0].emotion_confidence.unwrap() - 0.9).abs() < 0.01);
@@ -473,7 +502,7 @@ mod tests {
         let mut t = PersonTracker::new();
         t.decay_start_frames = 0;
         t.decay_factor = 0.5;
-        t.tick(&det_with_emotion("Грусть", 0.8));
+        t.tick(&det_with_emotion("Sadness", 0.8));
         for _ in 0..10 { t.tick(&[]); }
         let tracks: Vec<_> = t.all().values().collect();
         assert!(tracks[0].emotion.is_none());
@@ -485,13 +514,13 @@ mod tests {
         let mut t = PersonTracker::new();
         t.decay_start_frames = 0;
         t.decay_factor = 0.5;
-        t.tick(&det_with_emotion("Грусть", 0.8));
+        t.tick(&det_with_emotion("Sadness", 0.8));
         for _ in 0..10 { t.tick(&[]); }
         let tracks: Vec<_> = t.all().values().collect();
         assert!(tracks[0].emotion.is_none());
-        t.tick(&det_with_emotion("Радость", 0.75));
+        t.tick(&det_with_emotion("Happiness", 0.75));
         let active: Vec<_> = t.active().collect();
-        assert_eq!(active[0].emotion.as_deref(), Some("Радость"));
+        assert_eq!(active[0].emotion.as_deref(), Some("Happiness"));
         assert!((active[0].emotion_confidence.unwrap() - 0.75).abs() < 0.01);
     }
 }

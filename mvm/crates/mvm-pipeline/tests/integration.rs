@@ -50,8 +50,8 @@ fn single_person_three_frames_yields_one_track_age_three() {
 fn identity_best_confidence_propagated_across_frames() {
     let mut tracker = PersonTracker::new();
 
-    let f1 = frame(1, &det_enriched(0.3, 0.3, 0.7, 0.7, "unknown", 0.25, "Нейтральная", 0.6));
-    let f2 = frame(2, &det_enriched(0.32, 0.31, 0.72, 0.71, "Вадим", 0.78, "Нейтральная", 0.7));
+    let f1 = frame(1, &det_enriched(0.3, 0.3, 0.7, 0.7, "unknown", 0.25, "Neutral", 0.6));
+    let f2 = frame(2, &det_enriched(0.32, 0.31, 0.72, 0.71, "Вадим", 0.78, "Neutral", 0.7));
 
     for line in [&f1, &f2] {
         let dets = Camera::parse_line(line).unwrap();
@@ -88,7 +88,7 @@ fn person_disappears_emotion_decays_then_track_expires() {
     tracker.timeout_frames = 10;
 
     // Appear with emotion
-    let appear = frame(1, &det_enriched(0.3, 0.3, 0.7, 0.7, "Вадим", 0.75, "Радость", 0.9));
+    let appear = frame(1, &det_enriched(0.3, 0.3, 0.7, 0.7, "Вадим", 0.75, "Happiness", 0.9));
     tracker.tick(&Camera::parse_line(&appear).unwrap());
 
     // 5 empty frames → emotion decays  (0.9 * 0.5^5 = 0.028 < 0.05 → cleared)

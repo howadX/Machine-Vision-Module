@@ -10,22 +10,11 @@ use anyhow::Context;
 use image::DynamicImage;
 use image::GenericImageView;
 use mvm_core::{Config, Detection, Module, ModuleMetadata};
+use mvm_core::EMOTION_LABELS; // canonical English VGAF taxonomy (mvm-core)
 use ort::{session::Session, value::Tensor};
 
 const K: usize = 8; // number of emotion classes
 const LOG2_K: f32 = 3.0; // log2(8)
-
-/// Russian labels for EmotiEffLib 8-class output (VGAF).
-const EMOTION_LABELS: &[&str] = &[
-    "Злость",       // 0: Anger
-    "Презрение",    // 1: Contempt
-    "Отвращение",   // 2: Disgust
-    "Страх",        // 3: Fear
-    "Радость",      // 4: Happiness
-    "Нейтральная",  // 5: Neutral
-    "Грусть",       // 6: Sadness
-    "Удивление",    // 7: Surprise
-];
 
 /// Full emotion classification result.
 ///

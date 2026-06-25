@@ -191,7 +191,7 @@ mod tests {
         let json = r#"{"frame":42,"elapsed":1.5,"detections":[{
             "x1":0.2,"y1":0.3,"x2":0.5,"y2":0.7,
             "identity":"Вадим","identity_confidence":0.72,
-            "emotion":"Нейтральная","emotion_confidence":0.65,
+            "emotion":"Neutral","emotion_confidence":0.65,
             "posture":"сидит","posture_confidence":0.95
         }]}"#;
         let dets = Camera::parse_line(json).unwrap();
@@ -199,7 +199,7 @@ mod tests {
         let d = &dets[0];
         assert_eq!(d.identity.as_deref(), Some("Вадим"));
         assert!((d.identity_confidence.unwrap() - 0.72).abs() < 0.001);
-        assert_eq!(d.emotion.as_deref(), Some("Нейтральная"));
+        assert_eq!(d.emotion.as_deref(), Some("Neutral"));
         assert_eq!(d.posture.as_deref(), Some("сидит"));
     }
 

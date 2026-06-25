@@ -31,6 +31,10 @@ pub struct Config {
     pub face_height_m: f32,
     /// EMA alpha for depth smoothing. Higher = faster response; lower = smoother.
     pub depth_ema_alpha: f32,
+    /// Forgetting factor (λ < 1) for temporal emotion PoE fusion. Lower = forgets
+    /// the prior faster (more reactive); higher = smoother but slower. Prevents
+    /// the per-track distribution from collapsing to one-hot over many frames.
+    pub emotion_forget_lambda: f32,
 }
 
 impl Default for Config {
@@ -46,6 +50,7 @@ impl Default for Config {
             fx_ratio: 0.64,
             face_height_m: 0.44, // empirical, 2026-06-25 (was 0.19 population frontal)
             depth_ema_alpha: 0.3,
+            emotion_forget_lambda: 0.7,
         }
     }
 }

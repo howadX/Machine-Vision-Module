@@ -460,7 +460,7 @@ mod tests {
             },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.72),
-            emotion: Some("Нейтральная".into()),
+            emotion: Some("Neutral".into()),
             emotion_confidence: Some(0.65),
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
@@ -478,11 +478,11 @@ mod tests {
 
         let content = read_state(&path);
         assert!(content.contains("- Status: occupied"));
-        assert!(content.contains("- Dominant emotion: Нейтральная"));
+        assert!(content.contains("- Dominant emotion: Neutral"));
         assert!(content.contains("- Persons visible: Вадим"));
         assert!(content.contains("  - identity: Вадим (0.72)"));
         assert!(content.contains("  - bbox: 0.20,0.30,0.50,0.70"));
-        assert!(content.contains("  - emotion: Нейтральная (0.65)"));
+        assert!(content.contains("  - emotion: Neutral (0.65)"));
         assert!(content.contains("  - posture: сидит (0.95)"));
     }
 
@@ -519,7 +519,7 @@ mod tests {
                 },
                 identity: Some("Вадим".into()),
                 identity_confidence: Some(0.8),
-                emotion: Some("Нейтральная".into()),
+                emotion: Some("Neutral".into()),
                 emotion_confidence: Some(0.6),
                 posture: Some("сидит".into()),
                 posture_confidence: Some(0.9),
@@ -541,7 +541,7 @@ mod tests {
                 },
                 identity: Some("Даня".into()),
                 identity_confidence: Some(0.75),
-                emotion: Some("Радость".into()),
+                emotion: Some("Happiness".into()),
                 emotion_confidence: Some(0.7),
                 posture: Some("стоит".into()),
                 posture_confidence: Some(0.85),
@@ -563,7 +563,7 @@ mod tests {
         assert!(content.contains("- Persons visible: Вадим, Даня"));
         assert!(content.contains("  - identity: Вадим (0.80)"));
         assert!(content.contains("  - identity: Даня (0.75)"));
-        assert!(content.contains("  - emotion: Радость (0.70)"));
+        assert!(content.contains("  - emotion: Happiness (0.70)"));
         assert!(content.contains("  - posture: стоит (0.85)"));
     }
 
@@ -636,7 +636,7 @@ mod tests {
             bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.69),
-            emotion: Some("Радость".into()),
+            emotion: Some("Happiness".into()),
             emotion_confidence: Some(1.0),
             posture: Some("сидит_за_ПК".into()),
             posture_confidence: Some(0.89),
@@ -653,7 +653,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let face = &v["faces"][0];
         assert_eq!(face["identity"], "Вадим");
-        assert_eq!(face["emotion"], "Радость");
+        assert_eq!(face["emotion"], "Happiness");
         assert_eq!(face["posture"], "сидит_за_ПК");
         assert!((face["identity_conf"].as_f64().unwrap() - 0.69).abs() < 0.01);
         assert!((face["emotion_conf"].as_f64().unwrap() - 1.0).abs() < 0.01);
@@ -681,7 +681,7 @@ mod tests {
             bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.75),
-            emotion: Some("Радость".into()),
+            emotion: Some("Happiness".into()),
             emotion_confidence: Some(0.80),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
@@ -689,20 +689,20 @@ mod tests {
         }]);
         let debug = vec![EmotionDebugEntry {
             id: 0,
-            rust_emotion: "Радость".into(),
+            rust_emotion: "Happiness".into(),
             rust_conf: 0.80,
-            py_emotion: Some("Нейтральная".into()),
+            py_emotion: Some("Neutral".into()),
             py_conf: Some(0.55),
             winner: "rust",
         }];
         let line = sf.to_json_line_debug(&tracker, 29.9, &debug);
         let v: serde_json::Value = serde_json::from_str(&line).expect("must be valid JSON");
         let face = &v["faces"][0];
-        assert_eq!(face["emotion"], "Радость");
+        assert_eq!(face["emotion"], "Happiness");
         let dbg = &face["emotion_debug"];
-        assert_eq!(dbg["rust"], "Радость");
+        assert_eq!(dbg["rust"], "Happiness");
         assert!((dbg["rust_conf"].as_f64().unwrap() - 0.80).abs() < 0.01);
-        assert_eq!(dbg["py"], "Нейтральная");
+        assert_eq!(dbg["py"], "Neutral");
         assert!((dbg["py_conf"].as_f64().unwrap() - 0.55).abs() < 0.01);
         assert_eq!(dbg["winner"], "rust");
     }
@@ -714,7 +714,7 @@ mod tests {
         tracker.tick(&[Detection {
             bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
             identity: None, identity_confidence: None,
-            emotion: Some("Грусть".into()), emotion_confidence: Some(0.6),
+            emotion: Some("Sadness".into()), emotion_confidence: Some(0.6),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
