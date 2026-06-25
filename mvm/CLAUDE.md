@@ -74,13 +74,13 @@ MVM покрывает 80% практических сценариев (прис
 
 ---
 
-## Текущий статус (24 июня 2026, фаза 5 закрыта → старт фазы 6)
+## Текущий статус (25 июня 2026, фаза 6 закрыта → калибровка 3D)
 
 ### Что работает при `mvm-cli --native --once --dump-json`
 
 ```
 Камера /dev/video0 (CAP_FFMPEG — обход PipeWire)
-    │
+    │  [смонтирована под потолком, ~45° вниз, перевёрнута → cv2.ROTATE_180 в bridge]
     ▼
 Python bridge (mvm_bridge.py, ~12s загрузка моделей)
     ├─ SCRFD           → bbox лица (CPU, ONNX)
@@ -93,36 +93,37 @@ Python bridge (mvm_bridge.py, ~12s загрузка моделей)
          ▼ JSON line
 Rust mvm-cli
     ├─ parse_line      → Vec<Detection>
-    ├─ EmotiEffLib B0  → emotion (confidence-based fallback: Rust > Python только если conf выше)
+    ├─ EmotiEffLib B0  → emotion + distribution[8] + entropy + calibrated_conf ← 6.3
     ├─ SFace           → identity (gallery: Вадим, 8 эталонных фото)
-    ├─ PersonTracker   → temporal fusion (IoU match, identity persistence)
+    ├─ PersonTracker   → Kalman bbox (6.1) + native 3D pinhole (6.2) + temporal metadata
+    ├─ mvm-fusion      → build_scene() граф близости + зоны (6.4)
     ├─ StateFile       → ~/.hermes/profiles/sight/workspace/current_state.md
     ├─ dump_table()    → ASCII таблица в терминал
-    └─ --dump-json     → одна JSON-строка на stdout каждый тик ← Фаза 5.2.1
+    └─ --dump-json     → Scene JSON: faces+emotion_distribution+pos+zones+relations ← 6.4
 ```
 
 ### Бинарники
 
 | Файл | Размер | Команда сборки |
 |------|--------|----------------|
-| `target/release/mvm-cli` | **25 МБ** | `cargo build --release` |
-| `dist/mvm` | **26 МБ** | `cargo xtask bundle` (актуален) |
+| `target/release/mvm-cli` | **~26 МБ** | `cargo build --release` |
+| `dist/mvm` | **~26 МБ** | `cargo xtask bundle` |
 
 ### Крейты
 
 | Крейт | Статус | Содержимое | Тесты |
 |-------|--------|------------|-------|
-| **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker, Config, Module trait | 23 |
+| **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker, KalmanBBox, Pinhole, DepthEma, Entity/Scene | 38 |
 | **mvm-detect** | ✅ production | YuNet ONNX (228 КБ), CHW BGR preprocessing, set_score_threshold() | 5 |
 | **mvm-identity** | ✅ production | SFace ONNX (37 МБ), gallery Вадим, cosine match | 5 |
-| **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, confidence-based | 3 |
+| **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, EmotionResult + entropy | 7 |
 | **mvm-posture** | 🔶 заглушка | Пустой Module trait | 0 |
-| **mvm-fusion** | 🔶 заглушка | Пустой Module trait | 0 |
+| **mvm-fusion** | ✅ production | fuse() PoE, build_scene() union-find граф, Entity/Relation/Scene | 9 |
 | **mvm-pipeline** | ✅ production | Camera (Python bridge subprocess), parse_line | 5 |
-| **mvm-cli** | ✅ production | main, StateFile, dump_table(), --dump-json, --native/--once | 14 |
+| **mvm-cli** | ✅ production | main, StateFile, Scene JSON, --dump-json, --native/--once, --emotion-debug | 17 |
 | **xtask** | ✅ | `cargo xtask bundle` → dist/mvm | 1 |
 
-**Всего: 56 тестов, все зелёные.**
+**Всего: 96 тестов, все зелёные.**
 
 ### Известные проблемы
 
@@ -233,14 +234,24 @@ mvm/
 
 **Фаза 5 закрыта. Активная фаза — 6 (Metric 3D Scene-Graph), точка входа 6.2.0.**
 
-### 🟢 Фаза 6 — Metric 3D Scene-Graph (чистая арифметика, ноль новых deps)
+### ✅ Фаза 6 — Metric 3D Scene-Graph (закрыта, 25 июня 2026)
 
 | Задача | Статус |
 |--------|--------|
-| 6.1 SG-KF: Kalman bbox (4× скаляр + State-Gating) | 🔜 |
-| 6.2 Метрический 3D (порт pinhole-геометрии в Rust) | 🔜 |
-| 6.3 Uncertainty: entropy-based confidence для emotion | 🔜 |
-| 6.4 Fusion: реляционный scene-graph (осн.) + атрибутивный PoE (доп.) | 🔜 |
+| 6.1 SG-KF: Kalman bbox (4× скаляр + State-Gating) | ✅ |
+| 6.2 Метрический 3D (pinhole + DepthEma, native Rust) | ✅ |
+| 6.2.0 Эмпирическая калибровка face_height_m (рулетка) | 🔄 в процессе |
+| 6.3 Uncertainty: EmotionResult + entropy + calibrated_conf | ✅ |
+| 6.4 Fusion: build_scene() граф + fuse() PoE + Scene JSON | ✅ |
+
+**Что выяснено при калибровке (checkpoint 3D&Calibration):**
+- Камера под потолком (~45° вниз), перевёрнута → `cv2.ROTATE_180` в bridge
+- Масштабный коэффициент ~7.5× (face seen from above → projected bbox_h ≈ 2-3cm vs prior 19cm)
+- Рабочий диапазон физически: 0–2.8м от объектива
+- `DEPTH_MAX_M` расширен до 25м для калибровочных замеров
+- Native 3D теперь запускается с первого кадра (не только на matched треках)
+- `bbox_h` добавлен в JSON для диагностики
+- **Следующий шаг:** получить замеры на 0.3 / 0.5 / 1.0 / 1.5 / 2.0 / 2.8м → вычислить `face_height_m` → обновить Config + DEPTH_MAX_M
 
 ### 🟢 Фаза 7 — Нативный детектор
 
