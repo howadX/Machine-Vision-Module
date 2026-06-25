@@ -95,7 +95,7 @@ Rust mvm-cli
     ├─ parse_line      → Vec<Detection>
     ├─ EmotiEffLib B0  → emotion + distribution[8] + entropy + calibrated_conf ← 6.3
     ├─ SFace           → identity (gallery: Вадим, 8 эталонных фото)
-    ├─ PersonTracker   → Kalman bbox (6.1) + native 3D pinhole (6.2) + temporal metadata
+    ├─ PersonTracker   → Kalman bbox (6.1) + native 3D pinhole (6.2) + temporal emotion PoE (6.4b, λ=0.7)
     ├─ mvm-fusion      → build_scene() граф близости + зоны (6.4)
     ├─ StateFile       → ~/.hermes/profiles/sight/workspace/current_state.md
     ├─ dump_table()    → ASCII таблица в терминал
@@ -113,24 +113,25 @@ Rust mvm-cli
 
 | Крейт | Статус | Содержимое | Тесты |
 |-------|--------|------------|-------|
-| **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker, KalmanBBox, Pinhole, DepthEma, Entity/Scene | 38 |
+| **mvm-core** | ✅ production | BBox, Detection, PersonTrack, PersonTracker, KalmanBBox, Pinhole, DepthEma, Entity/Scene, **EMOTION_LABELS + temporal fuse (6.4b)** | 44 |
 | **mvm-detect** | ✅ production | YuNet ONNX (228 КБ), CHW BGR preprocessing, set_score_threshold() | 5 |
 | **mvm-identity** | ✅ production | SFace ONNX (37 МБ), gallery Вадим, cosine match | 5 |
-| **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, EmotionResult + entropy | 7 |
+| **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF (eng), EmotionResult + entropy | 7 |
 | **mvm-posture** | 🔶 заглушка | Пустой Module trait | 0 |
 | **mvm-fusion** | ✅ production | fuse() PoE, build_scene() union-find граф, Entity/Relation/Scene | 9 |
 | **mvm-pipeline** | ✅ production | Camera (Python bridge subprocess), parse_line | 5 |
 | **mvm-cli** | ✅ production | main, StateFile, Scene JSON, --dump-json, --native/--once, --emotion-debug | 17 |
 | **xtask** | ✅ | `cargo xtask bundle` → dist/mvm | 1 |
 
-**Всего: 96 тестов, все зелёные.**
+**Всего: 102 теста, все зелёные.**
 
 ### Известные проблемы
 
 | # | Проблема | Причина | Приоритет |
 |---|----------|--------|-----------|
-| 1 | **EmotiEffLib vs HSEmotion — разные датасеты** | Оба EfficientNet-B0, VGAF (Rust) vs AffectNet (Python). Нужен A/B на живых данных | 🟡 |
-| 3 | **mvm-posture, mvm-fusion — заглушки** | Поза и 3D только от Python bridge | 🟢 |
+| 1 | **EmotiEffLib near-chance на потолочном ракурсе** | На живых данных (2026-06-25) распределение почти равномерное (peak ≈0.16 vs uniform 0.125) — лицо сверху ≠ фронтальные кропы VGAF. Temporal-fusion (6.4b) джиттер убрал, метка стабильна, но `conf` честно низкая. Нужен A/B vs HSEmotion + переоценка угла/датасета | 🟡 |
+| 2 | **emotion near-uniform → метка слабоинформативна** | Следствие #1: argmax (`Fear`) — слабая склонность модели, а не уверенность. Downstream обязан читать `emotion_conf`/entropy, не голую метку | 🟡 |
+| 3 | **mvm-posture — заглушка** | Поза только от Python bridge (PoseVAE) | 🟢 |
 | 4 | **Детекция только через Python** | YuNet есть, но не подключён как camera source | 🟢 |
 
 ### Модели эмоций: архитектурное примечание
