@@ -3,10 +3,13 @@ name = "mvm-pipeline"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "MVM pipeline — camera capture via Python bridge, module orchestration"
+description = "MVM pipeline — camera capture (Python bridge + native v4l2), module orchestration"
 
 [dependencies]
 mvm-core = { path = "../mvm-core" }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Phase 7.2 native camera (pure-Rust v4l2 mmap, validated by spikes/cam-spike).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+v4l = "0.14"
