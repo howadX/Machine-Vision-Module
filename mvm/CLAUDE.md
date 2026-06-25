@@ -289,7 +289,23 @@ mvm/
 >
 > **Фаза 7 (Python-light) реализована и провалидирована на камере 2026-06-25.** Scope: поза вынесена в 7.3/7.5 (Вариант A — без позы в быстром пути). `mvm-cli --native-camera` = pure-Rust hot-path (v4l2 MJPG → YuNet → ONNX-обогащение), **25 fps с лицом в кадре, ноль Python** (vs 1.1 fps bridge baseline); `mvm_bridge.py` сохранён как legacy-fallback с позой (НЕ удалён — по требованию владельца).
 >
-> **Живая валидация (`tools/cam_test.py --native-camera`):** ✅ fps 25 с лицом; ✅ #5 identity (Вадим 0.55–0.59 опознан, чужой → unknown) — *после фикса фатального бага SFace, где `scalar_op1/2=0` обнуляли вход и любое лицо матчилось 1.0*; ✅ 3D-калибровка `face_height_m_yunet=0.32` (наклон даёт ±11%, в конверте); ✅ ординал 3D (`walk_near_far`). Эмоция — near-chance/Fear (известный #1, потолочный ракурс). Осталось пере-прогнать `two_people`/`leave_return` с рабочим identity (#6 cosine-re-link, scene-graph) — прежние прогоны шли с багом identity. Полный Python-zero — фаза 7.5 (нативная поза + удаление bridge).
+> **Живая валидация (`tools/cam_test.py --native-camera`):** ✅ fps 25 с лицом; ✅ #5 identity (Вадим 0.55–0.59 опознан, чужой → unknown) — *после фикса фатального бага SFace, где `scalar_op1/2=0` обнуляли вход и любое лицо матчилось 1.0*; ✅ 3D-калибровка `face_height_m_yunet=0.32` (наклон даёт ±11%, в конверте); ✅ ординал 3D (`walk_near_far`). Эмоция — near-chance/Fear (известный #1, потолочный ракурс).
+>
+> **Фаза 7 ЗАКРЫТА 2026-06-25 (Вариант A).** Дефолт = bridge-путь (`--native`, с позой); `--native-camera` = быстрый opt-in (это текущее состояние кода, менять нечего). Остаточный гейт #6 (cosine-re-link no-merge) закрыт unit-тестом `cosine_relink_rejects_different_person`. Следующая фаза — 7.5.
+
+### 🟢 Фаза 7.5 — Python-zero: нативная поза + удаление bridge
+
+> **Цель:** последняя ответственность Python — поза — становится нативной, затем `mvm_bridge.py` + venv удаляются. Один самодостаточный бинарник, мульти-persona поза (чинит #3). **Детальный план: `mvm/docs/phase-7.5-plan.md`.**
+
+| Задача | Статус |
+|--------|--------|
+| 7.5.0 Spike: загрузка BlazePose ONNX + совпадение топологии 33-лендмарков (главный риск) | 🔜 |
+| 7.5.1 Достать+забандлить модели OpenCV Zoo (person_detection + pose_estimation mediapipe) | 🔜 G1 ✅ найдены |
+| 7.5.2 `mvm-posture` production: ROI → 33 лендмарка (нативно) | 🔜 |
+| 7.5.3 Порт PoseVAE + PoseClassifier (hand-rolled, чистая арифметика; EN-метки готовы) | 🔜 G2/G7 ✅ |
+| 7.5.4 Мульти-persona + врезка в `--native-camera` (чинит #3) | 🔜 |
+| 7.5.5 G6 оракул точности позы (native vs MediaPipe) | 🔜 |
+| 7.6 Python-zero: удалить bridge + venv ⚠️ **только с явного согласия владельца** | 🔜 |
 
 ### 🟢 Фаза 8 — Продукт
 
