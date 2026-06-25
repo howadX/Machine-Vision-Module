@@ -5,32 +5,44 @@
 //! and `real_size` is the known real-world face height (population prior or
 //! identity-linked personal value).
 //!
-//! ## Accuracy envelope (this camera, fx_ratio=0.64, 640×480)
+//! ## Accuracy envelope (EMPIRICAL — calibrated 2026-06-25, ceiling mount)
 //!
-//! | Distance | bbox height | pixel jitter ±2px | population prior ±12% |
-//! |----------|-------------|-------------------|-----------------------|
-//! | 0.5 m    | ~156 px     | ±0.6 cm           | ±6 cm                 |
-//! | 1.0 m    | ~78 px      | ±2.6 cm           | ±12 cm                |
-//! | 2.0 m    | ~39 px      | ±10 cm            | ±24 cm                |
-//! | 3.0 m    | ~26 px      | ±23 cm            | ±36 cm                |
+//! Tape-measured sweep (subject = Вадим, native pipeline, `tools/calib_3d.py`).
+//! The pinhole invariant `pixel_h · z` is constant when the model holds:
 //!
-//! The dominant error source is the population prior (±12%), not pixel noise.
-//! When identity is known, a personal face_height prior collapses error to ±2-3%.
+//! | tape z | bbox_h px | `pixel_h·z` | est. z @ 0.44 | note                  |
+//! |--------|-----------|-------------|---------------|-----------------------|
+//! | 0.30 m | 472.6     | 141.8       | 0.38 m        | bbox clipped by frame |
+//! | 0.50 m | 350.0     | 175.0       | 0.51 m        | slight clip           |
+//! | 1.00 m | 181.7     | 181.7       | 0.99 m        | ✅ fit                |
+//! | 1.50 m | 120.2     | 180.3       | 1.50 m        | ✅ fit                |
+//! | 2.00 m |  90.8     | 181.6       | 1.99 m        | ✅ fit                |
+//! | 2.50 m |  64.1     | 160.2       | 2.81 m        | subject moved (noisy) |
 //!
-//! Valid range: 0.3–6.0 m. Outside → `ws_confidence = 0.0` (uncalibrated).
+//! Over the stable band **1.0–2.0 m the invariant is 181 px·m within <1%**, so a
+//! single constant `face_height_m = 181/fx ≈ 0.44` fits to **<3%** (0.5–2.0 m) —
+//! far better than the theoretical ±15-30%, because this is effectively an
+//! identity-locked calibration on a fixed mount.
+//!
+//! Limits: **near floor ~0.4 m** (face bbox saturates against the frame → depth
+//! over-estimates), and capture noise grows past ~2.2 m. `face_height_m` here is
+//! the *effective bbox* height (≈2× anatomical), tied to the current SCRFD bbox
+//! convention — **recalibrate when detection goes native (phase 7)**.
+//!
+//! Valid range: 0.3–3.0 m. Outside → `ws_confidence = 0.0` (uncalibrated).
 //!
 //! ## Tuning
 //!
 //! | Config field         | Default | Tune when |
 //! |----------------------|---------|-----------|
 //! | `fx_ratio`           | 0.64    | Different camera / lens |
-//! | `face_height_m`      | 0.19    | Known population for your deployment |
+//! | `face_height_m`      | 0.44    | Different detector bbox convention / deployment |
 //! | `depth_ema_alpha`    | 0.3     | More/less temporal smoothing on z |
 
 use crate::config::Config;
 
 const DEPTH_MIN_M: f32 = 0.3;
-const DEPTH_MAX_M: f32 = 25.0; // extended for ceiling-mount calibration
+const DEPTH_MAX_M: f32 = 3.0; // physical room range; calibrated 2026-06-25 (was 25.0 for sweep)
 
 /// Pinhole camera intrinsics derived from `Config`.
 #[derive(Debug, Clone, Copy)]

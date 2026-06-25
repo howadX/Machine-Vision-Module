@@ -48,7 +48,7 @@ impl PersonTracker {
             decay_start_frames: 5,
             decay_factor: 0.8,
             pinhole: None,
-            face_height_m: 0.19,
+            face_height_m: 0.44, // empirical effective bbox-face height (see config.rs)
             depth_ema_alpha: 0.3,
             personal_heights: HashMap::new(),
         }

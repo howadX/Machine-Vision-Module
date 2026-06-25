@@ -22,8 +22,12 @@ pub struct Config {
     /// Focal length ratio for pinhole calibration (fx / image_width).
     /// Calibrated per-camera. Default: 0.64 (user's USB camera, June 2026).
     pub fx_ratio: f32,
-    /// Population-average face height in metres (depth-from-known-size prior).
-    /// ±12% population variability → ±12% depth error. Override per-identity for ±2-3%.
+    /// Effective face-bbox height in metres (depth-from-known-size prior).
+    /// NOT anatomical face height: absorbs the detector's bbox/anatomy ratio
+    /// (SCRFD boxes ≈ 2× the chin-crown span). Empirically calibrated 2026-06-25
+    /// on this ceiling mount: pinhole invariant `pixel_h·z` = 181 px·m over
+    /// 1.0–2.0 m → 181/409.6 ≈ 0.44 (fit <3% across 0.5–2.0 m). See space.rs.
+    /// Override per-identity via `personal_heights` for tighter fit.
     pub face_height_m: f32,
     /// EMA alpha for depth smoothing. Higher = faster response; lower = smoother.
     pub depth_ema_alpha: f32,
@@ -40,7 +44,7 @@ impl Default for Config {
             tracker_timeout_frames: 1800,
             identity_threshold: 0.45,
             fx_ratio: 0.64,
-            face_height_m: 0.19,
+            face_height_m: 0.44, // empirical, 2026-06-25 (was 0.19 population frontal)
             depth_ema_alpha: 0.3,
         }
     }
