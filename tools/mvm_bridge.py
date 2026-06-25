@@ -223,6 +223,9 @@ try:
             time.sleep(0.1)
             continue
 
+        # Camera mounted upside-down → rotate 180°
+        frame = cv2.rotate(frame, cv2.ROTATE_180)
+
         frame_n += 1
         h, w = frame.shape[:2]
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
