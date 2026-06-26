@@ -83,7 +83,34 @@ genuine full-body subject** — a partial/no-body frame trivially reads as perso
 | G7 EN labels | ✅ from `class_names` |
 | Topology / preproc match | ✅ recon + xy_diff prove it |
 | **ROI for ceiling angle** | ✅ validated on live full-body frames (persons 0.61–0.91; pose xy_diff 1–2.6%) → use `person_detection_mediapipe` |
-| G6 pose accuracy oracle | ❌ still to build (7.5.5) |
+| G6 pose accuracy oracle | ✅ built (7.5.5) — see below |
+
+## 7.5.5 — pose accuracy oracle (G6)
+
+Reproducible quantitative check of the native Rust pose vs the Python reference, on the
+7 committed `mvm/models/references/p_V_*.jpg`:
+- `spike_pose/golden_refs.py` → `golden_refs.json` (Python pipeline labels).
+- `examples/pose_labels.rs` → native NativePose labels.
+- Baked into the regression test `pose_class_oracle_vs_python` (gate: all 7
+  detected+classified, class agreement ≥ 5/7).
+
+**Result: class agreement native↔Python = 5/7 (71%).** Both disagreements are
+`standing` (Python) → `sitting_at_desk` (Rust). `standing` is the weak class at the
+ceiling angle: the legs are foreshortened from above and a residual landmark-z gap
+nudges borderline standing poses to the sitting side. Sitting variants and
+arms_crossed agree well; live runs classify clear poses correctly.
+
+**Quality polish (this pass):** the pose ROI sampler now K×K-supersamples each output
+pixel's footprint (≈ cv2 INTER_AREA, which the reference uses for the ~4.5× downscale)
+instead of a single bilinear tap. Measured on p_V_03: landmark-z mean abs diff vs
+Python **0.099 → 0.067 (−33%)**, max 0.30 → 0.22 (x,y already ~1.3%). Supersampling the
+*detector* preprocess too was tried and reverted — no net class-agreement gain and it
+destabilised a borderline standing case, at 16× the detector sampling cost.
+
+**Remaining gap (future):** closing the last standing-class disagreements needs matching
+cv2's exact letterbox/INTER_AREA in the detector (→ tighter ROI scale) or accepting the
+ceiling-angle ambiguity. The Rust person-detector is also ~6× less sensitive than Python
+on borderline frames.
 
 ## Artifacts
 - `spike_pose/` — `probe_persondet.py`, `spike_topology_gate.py`, reference demos.

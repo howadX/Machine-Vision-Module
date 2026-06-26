@@ -210,6 +210,38 @@ mod tests {
     }
 
     #[test]
+    fn pose_class_oracle_vs_python() {
+        // 7.5.5 oracle: native NativePose vs the Python reference pipeline
+        // (spike_pose/golden_refs.py) on the committed references. Records class
+        // agreement and guards regressions. `standing` is the weak class at the
+        // ceiling angle (residual landmark-z gap → reads as sitting), so the gate
+        // is ≥5/7 exact agreement with all 7 detected+classified.
+        let golden: [(&str, &str); 7] = [
+            ("p_V_01.jpg", "sitting_at_desk"),
+            ("p_V_02.jpg", "standing"),
+            ("p_V_03.jpg", "standing"),
+            ("p_V_04.jpg", "sitting_at_desk"),
+            ("p_V_05.jpg", "standing"),
+            ("p_V_06.jpg", "sitting_at_desk"),
+            ("p_V_07.jpg", "sitting_at_desk"),
+        ];
+        let mut np = NativePose::init(&test_config()).unwrap();
+        let refdir = test_config().models_path.join("references");
+        let (mut detected, mut agree) = (0, 0);
+        for (file, py) in golden {
+            let img = image::open(refdir.join(file)).unwrap();
+            if let Some(r) = np.poses(&img).unwrap().first() {
+                detected += 1;
+                if r.label == py {
+                    agree += 1;
+                }
+            }
+        }
+        assert_eq!(detected, 7, "native pose should detect+classify all 7 references, got {detected}");
+        assert!(agree >= 5, "class agreement {agree}/7 below the ≥5/7 oracle gate");
+    }
+
+    #[test]
     fn native_pose_end_to_end() {
         // Full native chain on p_V_03; Python reference classified this frame as "standing".
         let mut np = NativePose::init(&test_config()).unwrap();

@@ -100,27 +100,38 @@ impl PoseEstimator {
         let roi0 = [roi_cx - side / 2.0, roi_cy - side / 2.0]; // ROI top-left in original coords
         let cd = side / 2.0; // ROI center in ROI/padded coords
 
-        // sample 256x256 = resize(warpAffine(padded_roi, R)); combined single pass.
+        // sample 256x256 = resize(warpAffine(padded_roi, R)).
         // dst(256) -> rotated coords -> (de-rotate, invM = R^-1 = rot(-angle)) padded
-        //          -> original (+roi0).
+        //          -> original (+roi0). For downscale (s>1) we K×K-supersample each
+        // output pixel's s×s footprint and average — approximating cv2 INTER_AREA,
+        // which the reference uses (plain bilinear aliases and biases landmark depth).
         let inv = rot_mat(cd, cd, -angle); // inverse of getRotationMatrix2D(center, angle)
         let s = side / IN as f32; // resize scale (rotated_person_bbox / 256)
+        let k = (s.round() as i32).clamp(1, 4); // supersampling factor
+        let kf = k as f32;
         let mut data = vec![0f32; IN * IN * 3]; // NHWC
         for dy in 0..IN {
-            let ry = (dy as f32 + 0.5) * s - 0.5; // resize map (dst->rotated)
             for dx in 0..IN {
-                let rx = (dx as f32 + 0.5) * s - 0.5;
-                // de-rotate into padded coords
-                let px = inv[0][0] * rx + inv[0][1] * ry + inv[0][2];
-                let py = inv[1][0] * rx + inv[1][1] * ry + inv[1][2];
-                // padded -> original
-                let ox = px + roi0[0];
-                let oy = py + roi0[1];
-                let rgb = sample_bilinear(img, ox, oy);
+                let mut acc = [0f32; 3];
+                for sy in 0..k {
+                    // sub-sample centers spanning the pixel's s×s footprint in rotated space
+                    let ry = (dy as f32 + (sy as f32 + 0.5) / kf) * s - 0.5;
+                    for sx in 0..k {
+                        let rx = (dx as f32 + (sx as f32 + 0.5) / kf) * s - 0.5;
+                        // de-rotate into padded coords, then padded -> original
+                        let px = inv[0][0] * rx + inv[0][1] * ry + inv[0][2];
+                        let py = inv[1][0] * rx + inv[1][1] * ry + inv[1][2];
+                        let rgb = sample_bilinear(img, px + roi0[0], py + roi0[1]);
+                        acc[0] += rgb[0];
+                        acc[1] += rgb[1];
+                        acc[2] += rgb[2];
+                    }
+                }
+                let n = (k * k) as f32 * 255.0;
                 let o = (dy * IN + dx) * 3;
-                data[o] = rgb[0] / 255.0;
-                data[o + 1] = rgb[1] / 255.0;
-                data[o + 2] = rgb[2] / 255.0;
+                data[o] = acc[0] / n;
+                data[o + 1] = acc[1] / n;
+                data[o + 2] = acc[2] / n;
             }
         }
 

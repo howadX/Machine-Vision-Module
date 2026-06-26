@@ -61,11 +61,12 @@ impl PersonDetector {
         let left = (INPUT - rw) / 2;
         let top = (INPUT - rh) / 2;
 
-        // CHW, init 0.0 (Python pads the normalized image with 0.0)
+        // CHW, init 0.0 (Python pads the normalized image with 0.0). Single bilinear
+        // with cv2 INTER_LINEAR half-pixel mapping (supersampling here added cost
+        // without net class-agreement gain — the pose stage is where it matters).
         let mut data = vec![0f32; 3 * INPUT * INPUT];
         let (sw, sh) = (rgb.width() as f32 / rw as f32, rgb.height() as f32 / rh as f32);
         for dy in 0..rh {
-            // cv2 INTER_LINEAR half-pixel mapping
             let sy = ((dy as f32 + 0.5) * sh - 0.5).clamp(0.0, h - 1.0);
             let y0 = sy.floor() as u32;
             let y1 = (y0 + 1).min(rgb.height() - 1);
