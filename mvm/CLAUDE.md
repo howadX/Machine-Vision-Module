@@ -300,7 +300,7 @@ mvm/
 | Задача | Статус |
 |--------|--------|
 | 7.5.0 Spike: загрузка BlazePose ONNX + совпадение топологии 33-лендмарков (главный риск) | ✅ **гейт пройден** (2026-06-26): обе ONNX грузятся+работают в Rust `ort`; recon+xy_diff подтвердили топологию на студийных И боевом потолочном ракурсе; ROI-источник `person_detection_mediapipe` провалидирован на камере (Open decision #1 закрыт) |
-| 7.5.1 Достать+забандлить модели OpenCV Zoo (person_detection + pose_estimation mediapipe) | 🔜 G1 ✅ **скачаны в `models/`** (person 12МБ, pose 5.5МБ); остаётся врезать в `cargo xtask bundle` |
+| 7.5.1 Достать+забандлить модели OpenCV Zoo (person_detection + pose_estimation mediapipe) | ✅ модели в `mvm/models/` (+gitignore с URL, конвенция download-separately); гейты пройдены: грузятся в release-сборке из канонического каталога + `cargo xtask bundle` собирает `dist/mvm` (26.6МБ). `include_bytes!`-embed вводится в 7.5.2 вместе с загрузчиком (иначе мёртвые байты) |
 | 7.5.2 `mvm-posture` production: ROI → 33 лендмарка (нативно) | 🔜 |
 | 7.5.3 Порт PoseVAE + PoseClassifier (hand-rolled, чистая арифметика; EN-метки готовы) | 🔜 G2/G7 ✅ |
 | 7.5.4 Мульти-persona + врезка в `--native-camera` (чинит #3) | 🔜 |

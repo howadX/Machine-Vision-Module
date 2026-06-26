@@ -8,7 +8,8 @@ use ort::{session::Session, value::Tensor};
 use std::path::PathBuf;
 
 fn models_dir() -> PathBuf {
-    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../models"))
+    // canonical Rust model dir (same as mvm-cli include_bytes! and test_config)
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models"))
 }
 
 fn load(name: &str) -> anyhow::Result<Session> {
