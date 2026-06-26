@@ -540,6 +540,7 @@ dependencies = [
  "anyhow",
  "image",
  "mvm-core",
+ "mvm-pipeline",
  "ndarray",
  "ort",
 ]
