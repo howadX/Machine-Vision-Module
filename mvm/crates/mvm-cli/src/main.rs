@@ -322,6 +322,22 @@ fn main() -> Result<()> {
         identity_mod = Some(id);
     }
 
+    // Native posture (phase 7.5.4) — only the pure-Rust --native-camera path. The
+    // bridge path already gets pose from Python (Variant A). person_detection ROI
+    // (the validated source) → BlazePose → VAE/classifier, multi-persona (fixes #3).
+    let mut native_pose: Option<mvm_posture::NativePose> = None;
+    if args.native_camera {
+        eprintln!("  posture: loading native BlazePose (person det + pose + VAE)");
+        #[cfg(feature = "embed-models")]
+        {
+            native_pose = Some(mvm_posture::NativePose::from_embedded()?);
+        }
+        #[cfg(not(feature = "embed-models"))]
+        {
+            native_pose = Some(mvm_posture::NativePose::init(&config)?);
+        }
+    }
+
     let mut tracker = mvm_core::PersonTracker::with_config(&config);
     let state_file = state::StateFile::open()?;
     let mut last_dump = Instant::now();
@@ -449,6 +465,33 @@ fn main() -> Result<()> {
                                 det.identity = Some(name);
                                 det.identity_confidence = Some(sim);
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Native posture (phase 7.5.4): run person detector → BlazePose → VAE per
+        // person, match each pose to a face detection by bbox containment, fill the
+        // posture fields. Multi-persona (fixes #3); pose flows through the tracker.
+        if let (Some(np), Some(frame)) = (&mut native_pose, &tick_frame) {
+            if !detections.is_empty() {
+                if let Ok(located) = np.poses_located(frame) {
+                    let area = |b: &mvm_core::BBox| (b.x2 - b.x1) * (b.y2 - b.y1);
+                    for det in detections.iter_mut() {
+                        let fcx = (det.bbox.x1 + det.bbox.x2) / 2.0;
+                        let fcy = (det.bbox.y1 + det.bbox.y2) / 2.0;
+                        // smallest person bbox containing the face center
+                        let best = located
+                            .iter()
+                            .filter(|(b, _)| fcx >= b.x1 && fcx <= b.x2 && fcy >= b.y1 && fcy <= b.y2)
+                            .min_by(|(a, _), (b, _)| area(a).partial_cmp(&area(b)).unwrap());
+                        if let Some((_, p)) = best {
+                            det.posture = Some(p.label.to_string());
+                            det.posture_confidence = Some(p.confidence);
+                            det.recon_error = Some(p.recon_error);
+                            det.plausibility =
+                                Some(if p.plausibility < 14.3 { "normal" } else { "unusual" }.to_string());
                         }
                     }
                 }

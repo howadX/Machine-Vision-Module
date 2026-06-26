@@ -7,13 +7,14 @@ description = "MVM CLI — binary entry point and state file writer"
 
 [features]
 default = []
-embed-models = ["mvm-detect/embed-model"]
+embed-models = ["mvm-detect/embed-model", "mvm-posture/embed-model"]
 
 [dependencies]
 mvm-core = { path = "../mvm-core" }
 mvm-detect = { path = "../mvm-detect" }
 mvm-emotion = { path = "../mvm-emotion" }
 mvm-identity = { path = "../mvm-identity" }
+mvm-posture = { path = "../mvm-posture" }
 mvm-pipeline = { path = "../mvm-pipeline" }
 mvm-fusion = { path = "../mvm-fusion" }
 anyhow = "1"

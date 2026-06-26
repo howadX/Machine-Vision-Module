@@ -63,9 +63,9 @@ impl PoseEstimator {
         Ok(Self { session, conf_threshold: 0.5 })
     }
 
-    /// Run BlazePose for one person ROI. Returns 33 landmarks [x,y,z,visibility]:
-    /// x,y,z in original-image pixel coords (z relative to hip), visibility = sigmoid
-    /// of the model's visibility logit. None if low conf.
+    /// Run BlazePose using the person-detector ROI (mid-hip + full-body keypoints
+    /// define a square ROI rotated so the torso is vertical). Returns 33 landmarks
+    /// [x,y,z,visibility] in original-image pixel coords, or None if low conf.
     pub fn infer(&mut self, img: &RgbImage, person: &Person) -> anyhow::Result<Option<[[f32; 4]; 33]>> {
         let mid = person.keypoints[0]; // mid-hip
         let full = person.keypoints[1]; // full-body point
@@ -73,17 +73,32 @@ impl PoseEstimator {
         if full_dist < 1.0 {
             return Ok(None);
         }
-        // square ROI top-left in original coords (= pad_bias); ROI side = 2*full_dist
-        let roi0 = [mid[0] - full_dist, mid[1] - full_dist];
-        let side = 2.0 * full_dist;
-        let cd = full_dist; // mid-hip in ROI/padded coords = (full_dist, full_dist)
-
         // rotation so hip->body becomes vertical
         let mut radians = std::f32::consts::FRAC_PI_2
             - (-(full[1] - mid[1])).atan2(full[0] - mid[0]);
         let two_pi = std::f32::consts::TAU;
         radians -= two_pi * ((radians + std::f32::consts::PI) / two_pi).floor();
         let angle = radians.to_degrees();
+        self.infer_roi(img, mid[0], mid[1], 2.0 * full_dist, angle)
+    }
+
+    /// Run BlazePose on an explicit square ROI: centered at (roi_cx, roi_cy) in
+    /// original-image pixels, `side` wide, rotated `angle` degrees about its center.
+    /// This is the generic entry — used both by the person-detector path and the
+    /// YuNet-face-bbox path (which has no hip/body keypoints, so angle=0).
+    pub fn infer_roi(
+        &mut self,
+        img: &RgbImage,
+        roi_cx: f32,
+        roi_cy: f32,
+        side: f32,
+        angle: f32,
+    ) -> anyhow::Result<Option<[[f32; 4]; 33]>> {
+        if side < 2.0 {
+            return Ok(None);
+        }
+        let roi0 = [roi_cx - side / 2.0, roi_cy - side / 2.0]; // ROI top-left in original coords
+        let cd = side / 2.0; // ROI center in ROI/padded coords
 
         // sample 256x256 = resize(warpAffine(padded_roi, R)); combined single pass.
         // dst(256) -> rotated coords -> (de-rotate, invM = R^-1 = rot(-angle)) padded

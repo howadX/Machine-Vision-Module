@@ -18,6 +18,11 @@ use pose::PoseEstimator;
 /// 33 BlazePose landmarks [x,y,z,visibility] (x,y in original-image pixels, z rel. hip).
 pub type Landmarks33 = [[f32; 4]; 33];
 
+/// Face-bbox → body-ROI heuristic (tuned live for the desk/ceiling view).
+/// ROI side = SCALE × face_height; ROI center = face_center + DOWN × face_height (down).
+pub const FACE_ROI_SCALE: f32 = 4.5;
+pub const FACE_ROI_DOWN: f32 = 1.6;
+
 #[cfg(feature = "embed-model")]
 static PERSON_DET_BYTES: &[u8] = include_bytes!("../../../models/person_detection_mediapipe_2023mar.onnx");
 #[cfg(feature = "embed-model")]
@@ -68,6 +73,74 @@ impl NativePose {
         for p in &persons {
             if let Some(lm) = self.pose.infer(&rgb, p)? {
                 out.push(lm);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Posture from YuNet **face** bboxes (normalized [x1,y1,x2,y2]) instead of the
+    /// person detector. The desk/ceiling deployment cuts off the body → the person
+    /// detector fails, but the face is always visible; we derive a body ROI below the
+    /// face (no hip/body keypoints → angle 0, person ~upright in the rotated frame).
+    /// One `Option<PoseResult>` per face (None = pose below confidence). Fixes #3
+    /// (one pose per face = multi-persona).
+    pub fn poses_from_faces(
+        &mut self,
+        image: &DynamicImage,
+        faces: &[[f32; 4]],
+    ) -> anyhow::Result<Vec<Option<PoseResult>>> {
+        let rgb = image.to_rgb8();
+        let (w, h) = (image.width() as f32, image.height() as f32);
+        let mut out = Vec::with_capacity(faces.len());
+        for f in faces {
+            // face bbox (normalized) → pixels
+            let (x1, y1, x2, y2) = (f[0] * w, f[1] * h, f[2] * w, f[3] * h);
+            let fcx = (x1 + x2) / 2.0;
+            let fcy = (y1 + y2) / 2.0;
+            let fh = (y2 - y1).max(1.0);
+            // body ROI: square below the face. In the ROTATE_180 frame the body is
+            // *below* the head (head_y < hip_y in all live data).
+            let side = FACE_ROI_SCALE * fh;
+            let cy = fcy + FACE_ROI_DOWN * fh;
+            let res = match self.pose.infer_roi(&rgb, fcx, cy, side, 0.0)? {
+                Some(lm) => {
+                    let mut norm = [[0f32; 4]; 33];
+                    for k in 0..33 {
+                        norm[k] = [lm[k][0] / w, lm[k][1] / h, lm[k][2] / w, lm[k][3]];
+                    }
+                    Some(self.head.classify(&norm))
+                }
+                None => None,
+            };
+            out.push(res);
+        }
+        Ok(out)
+    }
+
+    /// Like `poses`, but also returns each person's bbox (normalized [0,1]) so the
+    /// caller can match a posture to a face/track by spatial overlap. This is the
+    /// CLI integration entry (person_detection ROI — the validated source).
+    pub fn poses_located(
+        &mut self,
+        image: &DynamicImage,
+    ) -> anyhow::Result<Vec<(mvm_core::BBox, PoseResult)>> {
+        let rgb = image.to_rgb8();
+        let (w, h) = (image.width() as f32, image.height() as f32);
+        let persons = self.detector.detect(image)?;
+        let mut out = Vec::with_capacity(persons.len());
+        for p in &persons {
+            if let Some(lm) = self.pose.infer(&rgb, p)? {
+                let mut norm = [[0f32; 4]; 33];
+                for k in 0..33 {
+                    norm[k] = [lm[k][0] / w, lm[k][1] / h, lm[k][2] / w, lm[k][3]];
+                }
+                let bbox = mvm_core::BBox {
+                    x1: p.bbox[0] / w,
+                    y1: p.bbox[1] / h,
+                    x2: p.bbox[2] / w,
+                    y2: p.bbox[3] / h,
+                };
+                out.push((bbox, self.head.classify(&norm)));
             }
         }
         Ok(out)

@@ -18,3 +18,4 @@ anyhow = "1"
 
 [dev-dependencies]
 mvm-pipeline = { path = "../mvm-pipeline" }
+mvm-detect = { path = "../mvm-detect" }

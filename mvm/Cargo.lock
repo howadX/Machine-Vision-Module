@@ -466,6 +466,7 @@ dependencies = [
  "mvm-fusion",
  "mvm-identity",
  "mvm-pipeline",
+ "mvm-posture",
  "serde",
  "serde_json",
 ]
@@ -540,6 +541,7 @@ dependencies = [
  "anyhow",
  "image",
  "mvm-core",
+ "mvm-detect",
  "mvm-pipeline",
  "ndarray",
  "ort",
