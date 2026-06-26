@@ -302,8 +302,8 @@ mvm/
 | 7.5.0 Spike: загрузка BlazePose ONNX + совпадение топологии 33-лендмарков (главный риск) | ✅ **гейт пройден** (2026-06-26): обе ONNX грузятся+работают в Rust `ort`; recon+xy_diff подтвердили топологию на студийных И боевом потолочном ракурсе; ROI-источник `person_detection_mediapipe` провалидирован на камере (Open decision #1 закрыт) |
 | 7.5.1 Достать+забандлить модели OpenCV Zoo (person_detection + pose_estimation mediapipe) | ✅ модели в `mvm/models/` (+gitignore с URL, конвенция download-separately); гейты пройдены: грузятся в release-сборке из канонического каталога + `cargo xtask bundle` собирает `dist/mvm` (26.6МБ). `include_bytes!`-embed вводится в 7.5.2 вместе с загрузчиком (иначе мёртвые байты) |
 | 7.5.2 `mvm-posture` production: ROI → 33 лендмарка (нативно) | ✅ two-stage нативный инференс (`detector.rs` + `pose.rs` + `NativePose` мульти-persona); оракул-валидирован vs Python (боксы <20px, 33 лендмарка <6%, топология); 6 тестов; embed-model wiring (`include_bytes!` обеих ONNX + якоря `anchors_person.bin`) |
-| 7.5.3 Порт PoseVAE + PoseClassifier (hand-rolled, чистая арифметика; EN-метки готовы) | 🔜 G2/G7 ✅ |
-| 7.5.4 Мульти-persona + врезка в `--native-camera` (чинит #3) | 🔜 |
+| 7.5.3 Порт PoseVAE + PoseClassifier (hand-rolled, чистая арифметика; EN-метки готовы) | ✅ `classifier.rs`: `normalize_landmarks` + VAE-энкодер/декодер + классификатор, чистая арифметика, ноль новых зависимостей; веса `pose_weights.bin` (53205 float). **Bit-close к Python** (probs <1e-3, recon <1e-4, logpz <1e-2). `NativePose::poses()` = end-to-end на человека |
+| 7.5.4 Мульти-persona + врезка в `--native-camera` (чинит #3) | 🔜 (мульти-persona готова в `mvm-posture`; остаётся врезка в `mvm-cli`) |
 | 7.5.5 G6 оракул точности позы (native vs MediaPipe) | 🔜 |
 | 7.6 Python-zero: удалить bridge + venv ⚠️ **только с явного согласия владельца** | 🔜 |
 

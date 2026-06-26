@@ -6,15 +6,17 @@
 
 use mvm_core::{Config, Detection, Module, ModuleMetadata};
 
+pub mod classifier;
 pub mod detector;
 pub mod pose;
 
+use classifier::{PoseHead, PoseResult};
 use detector::PersonDetector;
 use image::DynamicImage;
 use pose::PoseEstimator;
 
-/// 33 BlazePose landmarks (x,y in original-image pixels, z relative to hip) for one person.
-pub type Landmarks33 = [[f32; 3]; 33];
+/// 33 BlazePose landmarks [x,y,z,visibility] (x,y in original-image pixels, z rel. hip).
+pub type Landmarks33 = [[f32; 4]; 33];
 
 #[cfg(feature = "embed-model")]
 static PERSON_DET_BYTES: &[u8] = include_bytes!("../../../models/person_detection_mediapipe_2023mar.onnx");
@@ -27,6 +29,7 @@ static POSE_EST_BYTES: &[u8] = include_bytes!("../../../models/pose_estimation_m
 pub struct NativePose {
     detector: PersonDetector,
     pose: PoseEstimator,
+    head: PoseHead,
 }
 
 impl NativePose {
@@ -34,6 +37,7 @@ impl NativePose {
         Ok(Self {
             detector: PersonDetector::from_path(person_det)?,
             pose: PoseEstimator::from_path(pose_est)?,
+            head: PoseHead::load(),
         })
     }
 
@@ -51,6 +55,7 @@ impl NativePose {
         Ok(Self {
             detector: PersonDetector::from_bytes(PERSON_DET_BYTES)?,
             pose: PoseEstimator::from_bytes(POSE_EST_BYTES)?,
+            head: PoseHead::load(),
         })
     }
 
@@ -66,6 +71,24 @@ impl NativePose {
             }
         }
         Ok(out)
+    }
+
+    /// Full native posture per person: detect → landmarks → normalize → classify.
+    /// Multi-persona (fixes #3). Returns one `PoseResult` per confidently-posed person.
+    pub fn poses(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<PoseResult>> {
+        let (w, h) = (image.width() as f32, image.height() as f32);
+        let people = self.landmarks_per_person(image)?;
+        Ok(people
+            .iter()
+            .map(|lm| {
+                // MediaPipe-normalized for the VAE: x/w, y/h, z/w, visibility
+                let mut norm = [[0f32; 4]; 33];
+                for k in 0..33 {
+                    norm[k] = [lm[k][0] / w, lm[k][1] / h, lm[k][2] / w, lm[k][3]];
+                }
+                self.head.classify(&norm)
+            })
+            .collect())
     }
 }
 
@@ -111,5 +134,21 @@ mod tests {
         let sh_y = (lm[11][1] + lm[12][1]) / 2.0;
         let hip_y = (lm[23][1] + lm[24][1]) / 2.0;
         assert!(hip_y > sh_y, "hips should be below shoulders in image coords");
+    }
+
+    #[test]
+    fn native_pose_end_to_end() {
+        // Full native chain on p_V_03; Python reference classified this frame as "standing".
+        let mut np = NativePose::init(&test_config()).unwrap();
+        let img = image::open(test_config().models_path.join("references/p_V_03.jpg")).unwrap();
+        let poses = np.poses(&img).unwrap();
+        assert!(!poses.is_empty(), "expected ≥1 classified pose");
+        let p = &poses[0];
+        assert!(classifier::POSE_LABELS.contains(&p.label), "label {} not in taxonomy", p.label);
+        assert!(p.confidence > 0.0 && p.confidence <= 1.0);
+        assert!(p.recon_error >= 0.0 && p.recon_error < 0.2, "recon {} implausible", p.recon_error);
+        // native landmarks differ sub-pixel from Python; an upright subject should land
+        // on an upright class, not lying.
+        assert!(!p.label.starts_with("lying"), "upright subject misclassified as {}", p.label);
     }
 }

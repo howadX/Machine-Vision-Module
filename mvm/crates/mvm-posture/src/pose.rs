@@ -63,9 +63,10 @@ impl PoseEstimator {
         Ok(Self { session, conf_threshold: 0.5 })
     }
 
-    /// Run BlazePose for one person ROI. Returns 33 landmarks [x,y,z] in
-    /// original-image pixel coords (z relative to hip), or None if low conf.
-    pub fn infer(&mut self, img: &RgbImage, person: &Person) -> anyhow::Result<Option<[[f32; 3]; 33]>> {
+    /// Run BlazePose for one person ROI. Returns 33 landmarks [x,y,z,visibility]:
+    /// x,y,z in original-image pixel coords (z relative to hip), visibility = sigmoid
+    /// of the model's visibility logit. None if low conf.
+    pub fn infer(&mut self, img: &RgbImage, person: &Person) -> anyhow::Result<Option<[[f32; 4]; 33]>> {
         let mid = person.keypoints[0]; // mid-hip
         let full = person.keypoints[1]; // full-body point
         let full_dist = ((mid[0] - full[0]).powi(2) + (mid[1] - full[1]).powi(2)).sqrt();
@@ -134,7 +135,7 @@ impl PoseEstimator {
         // coords_rotation_matrix = getRotationMatrix2D((0,0), angle): rotate landmarks by angle
         let cr = rot_mat(0.0, 0.0, angle);
 
-        let mut out = [[0f32; 3]; 33];
+        let mut out = [[0f32; 4]; 33];
         for k in 0..33 {
             let b = k * 5;
             // (lm - 128) * scale_factor
@@ -147,6 +148,7 @@ impl PoseEstimator {
             out[k][0] = rxx + original_center[0] + roi0[0];
             out[k][1] = ryy + original_center[1] + roi0[1];
             out[k][2] = lz;
+            out[k][3] = 1.0 / (1.0 + (-lm[b + 3]).exp()); // visibility = sigmoid(logit)
         }
         let _ = N_LM;
         Ok(Some(out))
