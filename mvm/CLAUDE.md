@@ -252,11 +252,11 @@ cargo run --release -- --native --once --dump-interval 1
 # Camera::spawn() внутри запускает ../venv/bin/python3 ../tools/mvm_bridge.py
 ```
 
-## Структура (10 крейтов)
+## Структура (11 крейтов)
 
 ```
 mvm/
-├── Cargo.toml              # [workspace] 10 members, edition 2024
+├── Cargo.toml              # [workspace] 11 members, edition 2024
 ├── .cargo/config.toml      # alias: cargo xtask = run --package xtask --
 ├── crates/
 │   ├── mvm-core/           # ✅ типы, трейты, Config, PersonTracker
@@ -267,6 +267,7 @@ mvm/
 │   ├── mvm-fusion/         # ✅ build_scene (union-find граф+зоны) + PoE (НЕ заглушка)
 │   ├── mvm-scene/          # ✅ YOLO26n ONNX (80 классов COCO, end-to-end/raw, object-узлы + трекер) [8.E]
 │   ├── mvm-depth/          # ✅ Depth-Anything-V2-Small ONNX (относит. карта → метрич. объекты) [8.E.2]
+│   ├── mvm-hands/          # ✅ MediaPipe handpose ONNX (21 landmark/рука, ROI из запястий) [8.E.4]
 │   ├── mvm-pipeline/       # ✅ Camera (Python bridge) + NativeCamera (v4l2 MJPG)
 │   └── mvm-cli/            # ✅ main, StateFile, dump_table(), --native/--native-camera/--once
 ├── xtask/                  # ✅ cargo xtask bundle → dist/mvm
@@ -354,14 +355,14 @@ mvm/
 
 ### 🟢 Фаза 8 — Body-primary + scene-graph наружу (в работе, 2026-06-28)
 
-> **CHECKPOINT 2026-06-29 (8.E + 8.E.2 приземлены + live-validated).** Ветка `rust-core`. **191 тест зелёный**, release чист.
+> **CHECKPOINT 2026-06-29 (8.E + 8.E.2 + 8.E.4 приземлены + live-validated; G₁ Human полна).** Ветка `rust-core`. **197 тестов зелёных**, release чист.
 > Коммиты поверх `117b8df1`: `52907ca4` (спайк 8.0.1), `dfdca72c` (body-primary+id 8.0.2), `b50d7288`
 > (A1+A3 8.0.3), `4380c1e9` (R+A2-lite 8.0.4), `ebd9e5a9` (docs), `0cae2f17` (mvm-scene + object-узлы +
 > cadence 8.E), `5eebed53` (YOLO26n end-to-end decode + person + модель), `ddae6139` (docs),
 > `1978a869` (fix: Near-рёбра только при pos_conf>0), `413436cd` (фильтры A/C/D + стабильный
 > ObjectTracker B), `faa6b990` (--scene-debug визуализатор), `tune→0.30`+`13f09803` (камера default,
-> rotate_180=false), `21363ab3` (крейт mvm-depth 8.E.2), `b832f7bf` (depth-anchoring → метрич. объекты).
-> Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
+> rotate_180=false), `21363ab3` (крейт mvm-depth 8.E.2), `b832f7bf` (depth-anchoring → метрич. объекты),
+> `a48f517c` (крейт mvm-hands 8.E.4 → G₁ Human полна). Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
 > План фазы: `wiki/machine-vision/IMPLEMENTATION_PLAN.md`; оценка Agent Mesh: `wiki/machine-vision/08-fusion-architecture/agent-mesh-eval-8.0.1.md`.
 
 | Задача | Статус |
@@ -372,7 +373,8 @@ mvm/
 | 8.0.4 R (visibility-gate фантомов) + A2-lite (center-relink анонимов) | ✅ (ре-валидация на 3 людях ожидается) |
 | **8.E cadence + YOLO26n object-узлы** (крейт `mvm-scene`, 9-й крейт) | ✅ **live-validated 2026-06-29**. Модель = **YOLO26n** (ultralytics 8.4.81, end-to-end NMS-free `[1,300,6]`, 9.5МБ, gitignored). Object-узлы → `build_scene` (overlap-рёбра человек↔объект; Near только при pos_conf>0). Cadence `object_cadence=3`. **Фильтры:** A score≥0.45, B стабильный `ObjectTracker` (IoU+free-list, id≥10000, `age`), C allow-list релевантных классов (person исключён → G₁), D min bbox area 0.004. Вживую: couch#10000 трекается во времени, фликер ушёл |
 | **8.E.2 depth (Depth-Anything-V2-Small)** — крейт `mvm-depth` (10-й) | ✅ **live-validated 2026-06-29**. Квант ONNX 27МБ (gitignored), вход 518², выход относит. inverse-depth (~230мс CPU → cadence 30). **Depth-anchoring:** относит. карта привязывается к метрич. торс-Z человека (Z·d≈k, медиана по людям) → объекты получают метрич. 3D в той же системе → реальные 3D-`near` рёбра. Вживую: cup 0.68м/keyboard 0.87м/mouse 0.94м + человек = одна зона рабочего места, кровать (2.0м) — отдельная. FPS 20→15 (depth-стойлы = HOL-блокинг → мотивирует mesh) |
-| 8.E audio (YAMNet) / hands | 🔜 |
+| **8.E.4 hands (MediaPipe handpose)** — крейт `mvm-hands` (11-й) → **G₁ Human полна → HumanAgent готов** | ✅ **live 2026-06-29**. OpenCV Zoo handpose ONNX 4МБ (gitignored). **Body-primary:** ROI кисти из запястий BlazePose (15/16)+пальцев → `hand_rois_from_pose` (без palm-детектора/анкоров), 21 landmark/рука + presence-gate. Врезано в `build_body_primary`; `--scene-debug` рисует зелёные боксы+точки. Caveat: ROI из запястья требует тюнинга на чётком жесте; FPS 15→13 (hands per-frame — cadence = очевидная оптимизация) |
+| 8.E audio (YAMNet) | 🔜 |
 | 8.F cross-group fusion = object/audio-узлы → существующий `build_scene` (НЕ MBT) | 🟡 object-часть готова (8.E); audio/depth-узлы — с их крейтами |
 | Agent Mesh (async threads) — отложен до появления тяжёлого детектора (depth ~100мс) | 🔜 |
 
