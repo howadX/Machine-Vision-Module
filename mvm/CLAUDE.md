@@ -4,54 +4,40 @@
 
 ---
 
-## 🔭 FRONTIER — главный открытый вопрос: логическая цепочка детекторов и fusion-иерархия
+## ✅ FRONTIER ЗАКРЫТ (2026-06-28): тело-первичная цепочка + id-модель + стабилизация
 
-> **Это вопрос №1 на повестке (2026-06-26).** Цепочка детекторов определяет несущую
-> сущность системы, а значит — **от чего зависит и как работает вся fusion-логика**
-> (граф, зоны, 3D, атрибуты). Решаем ДО дальнейшей полировки. Полный разбор и текущая
-> картина — `wiki/mvm` (см. `subsystems/detector-hierarchy.md`).
+> **Бывший вопрос №1** (несущая сущность цепочки детекторов) — **решён и live-validated**
+> в фазе 8.0.x. `--native-camera` теперь **тело-первичен**: человек без фронтального лица
+> трекается (presence + поза + торс-3D), identity/emotion дотягиваются, когда лицо появляется.
+> Полный разбор — `wiki/mvm/subsystems/detector-hierarchy.md` + `wiki/machine-vision/IMPLEMENTATION_PLAN.md`.
 
-**Решение владельца (направление):** **главный детектор — ТЕЛО** (видно со всех сторон),
-**лицо — вторично** (только спереди → identity + emotion). Сейчас `--native-camera`
-сделан наоборот (лицо-первично через YuNet) → при отвёрнутом/опущенном лице YuNet=0 →
-**0 треков, вся цепочка молчит**, хотя тело видно. Это главный реальный отказ.
-
-### Текущая цепочка (лицо-первичная — `--native-camera`)
+### Живая цепочка (`--native-camera`, тело-первичная)
 ```
-frame → YuNet (ЛИЦО, первичный) → Detection.bbox = лицо
-          ├─ EmotiEffLib (кроп лица) → emotion
-          ├─ SFace (кроп лица)       → identity + embedding
-          └─ NativePose (person-det→BlazePose→VAE) → поза, МАТЧ к лицу по bbox
-        tracker по bbox ЛИЦА → 3D pinhole от высоты ЛИЦА → build_scene → StateFile/JSON
+frame → person_detection (ТЕЛО, первичный) → сущность/трек = ТЕЛО (NativePose::bodies)
+          ├─ BlazePose → 33 lm → PoseVAE → posture                 (всегда)
+          ├─ торс-3D (плечи 11/12 → бёдра 23/24, torso_to_3d)       (всегда; gated на visibility ≥0.5)
+          └─ YuNet (ЛИЦО) по кадру, матч к телу по НОСУ (lm[0] в face-bbox)
+                есть лицо → SFace id + EmotiEffLib emotion;  нет → identity/emotion = None
+        tracker по bbox ТЕЛА (Kalman + IoU + cosine/label/center re-link) → build_scene → StateFile/JSON
 ```
-Сущность = лицо; 3D от face-bbox; поза приклеена к лицу. Тело без лица теряется.
+Bridge-путь (`--native`) не тронут (Python тело→поза→3D как был).
 
-### Целевая цепочка (тело-первичная)
-```
-frame → person_detection (ТЕЛО, первичный) → сущность/трек = ТЕЛО
-          ├─ BlazePose → 33 lm → PoseVAE → posture          (всегда)
-          ├─ 3D от ТОРСА (33 lm, плечи→бёдра ≈0.5м)          (всегда, робастнее face)
-          └─ YuNet (ЛИЦО) в ROI тела → есть? → SFace id + EmotiEffLib emotion
-                                       нет?  → identity=unknown, emotion=none
-        tracker по bbox ТЕЛА → build_scene → StateFile/JSON
-```
-Сущность = тело; человек без фронтального лица всё равно трекается (presence+поза+3D),
-identity дотягивается, когда лицо появляется. **Fusion-граф строится на узлах-телах.**
+### Как разрешились открытые решения
+1. **3D-источник:** ✅ ТОРС (`space::torso_to_3d`, `Config.torso_length_m=0.5`). torso_length не откалиброван рулеткой → абсолют приблизителен, ординал ок.
+2. **Модель данных:** ✅ минимальный — `Detection.bbox` = тело; `face_bbox: Option<BBox>` **отложен** (не нужен для закрытия отказа).
+3. **Тело без лица:** ✅ трекается, identity/emotion = None.
+4. **Лицо без тела:** ✅ фолбэк на лицо-сущность (с A1-подавлением, чтобы не мигать body↔face).
+5. **Поиск лица:** ✅ YuNet по кадру + матч **по носу тела** (keypoint-in-bbox, `best_face_for_nose`) — чинит swap при перекрытии person-bbox.
+6. **bridge-путь:** ✅ не тронут.
 
-### Открытые решения (зафиксировать до реализации)
-1. **3D-источник:** торс (33 lm, порт `workspace_3d.py`) vs pinhole от body-bbox. *Реком.: торс.*
-2. **Модель данных:** `Detection.bbox`=тело + `face_bbox: Option<BBox>` vs новая `Person{...}`. *Реком.: минимальный (bbox=тело + face_bbox).*
-3. **Тело без лица:** трекать как сущность identity=unknown. *Реком.: да.*
-4. **Лицо без тела:** фолбэк на лицо-сущность (не терять Вадима, если person-det моргнул). *Реком.: да.*
-5. **Поиск лица:** YuNet по кадру + `match_face_to_body` (как Python) vs YuNet по ROI тела. *Реком.: по кадру + матч.*
-6. **bridge-путь (`--native`):** не трогаем (Python уже тело→поза→3D). *Реком.: да.*
+### Identity-модель (решение владельца, 8.0.2)
+id **0–9** — резерв за пользователями галереи (Вадим=0, липко на присутствие); тела-анонимы — **эфемерные id ≥10**, освобождаются/переиспользуются при выходе. **Эксклюзивно** (один user-id — одному телу): при #5 (галерея из 1) чужой остаётся анонимным, а не вторым «Вадимом». Наружу идёт `PersonTrack.display_id` + `shown_identity()`.
 
-**Влияние на fusion:** несущая сущность графа меняется с «лицо» на «тело» → `Entity.kind=Person`
-с body-bbox, рёбра/зоны считаются между телами; лицо/identity/эмоция — атрибуты узла.
-Object-agnostic движок (6.4) не меняется, меняется источник узлов.
+### Стабилизация (8.0.3–8.0.4, опция A)
+- **A1 анти-flip:** подавление face-fallback, когда лицо объяснено телом/активным треком → churn 44–55 → **6–7 треков**, нет мигания body↔face.
+- **A3:** торс-3D EMA. **R:** visibility-gate торс-3D (нет фантомных позиций). **A2-lite:** center-relink анонимов под движением (стабильный эфемерный id).
 
-**Замечание владельца:** выбросы классификатора позы (`standing`↔`sitting`, #7.5.5)
-в этой работе **не учитываем** — это про точность модели, а не про архитектуру цепочки.
+**Вне scope (известное):** выбросы классификатора позы (`standing`↔`sitting`, #7.5.5 — точность модели); остаточный #5 (нужен 2-й человек в галерее); калибровка `torso_length_m`; `--emotion-debug` линковка деградировала.
 
 ---
 
@@ -129,6 +115,10 @@ MVM покрывает 80% практических сценариев (прис
 
 ## Текущий статус (25 июня 2026, фаза 6 закрыта ✅ + 3D откалибровано)
 
+> ⚠️ **Снимок фазы 6 (исторический).** Актуальное состояние на 2026-06-28 — выше в
+> «✅ FRONTIER ЗАКРЫТ» + «Фаза 8» (body-primary, id-модель, стабилизация; **151 тест**,
+> mvm-posture/mvm-fusion давно production). Таблица ниже отражает состояние на 25 июня.
+
 ### Что работает при `mvm-cli --native --once --dump-json`
 
 ```
@@ -170,7 +160,7 @@ Rust mvm-cli
 | **mvm-detect** | ✅ production | YuNet ONNX (228 КБ), CHW BGR preprocessing, set_score_threshold() | 5 |
 | **mvm-identity** | ✅ production | SFace ONNX (37 МБ), gallery Вадим, cosine match | 5 |
 | **mvm-emotion** | ✅ production | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF (eng), EmotionResult + entropy | 7 |
-| **mvm-posture** | 🔶 заглушка | Пустой Module trait | 0 |
+| **mvm-posture** | ✅ production (с 7.5) | NativePose: person-det + BlazePose + PoseVAE/classifier (порт), `bodies()` | ~12 |
 | **mvm-fusion** | ✅ production | fuse() PoE, build_scene() union-find граф, Entity/Relation/Scene | 9 |
 | **mvm-pipeline** | ✅ production | Camera (Python bridge subprocess), parse_line | 5 |
 | **mvm-cli** | ✅ production | main, StateFile, Scene JSON, --dump-json, --native/--once, --emotion-debug | 17 |
@@ -360,7 +350,27 @@ mvm/
 | 7.5.5 G6 оракул точности позы (native vs MediaPipe) | ✅ воспроизводимый оракул (`spike_pose/golden_refs.py` + regression-тест `pose_class_oracle_vs_python`) на 7 закоммиченных эталонах. **Согласие классов native↔Python = 5/7 (71%)**, гейт ≥5/7. Расхождения — `standing`→`sitting_at_desk` (слабый класс на потолочном ракурсе, остаточный z-зазор). **Quality:** pose-суперсэмплинг (≈INTER_AREA) снизил z-расхождение vs Python на 33% (0.099→0.067) |
 | 7.6 Python-zero: удалить bridge + venv ⚠️ **только с явного согласия владельца** | 🔜 |
 
-### 🟢 Фаза 8 — Продукт
+### 🟢 Фаза 8 — Body-primary + scene-graph наружу (в работе, 2026-06-28)
+
+> **CHECKPOINT 2026-06-28.** Ветка `rust-core`. **151 тест зелёный**, release чист. Коммиты поверх
+> `117b8df1`: `52907ca4` (спайк 8.0.1), `dfdca72c` (body-primary+id 8.0.2), `b50d7288` (A1+A3 8.0.3),
+> `4380c1e9` (R+A2-lite 8.0.4). Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
+> План фазы: `wiki/machine-vision/IMPLEMENTATION_PLAN.md`; оценка Agent Mesh: `wiki/machine-vision/08-fusion-architecture/agent-mesh-eval-8.0.1.md`.
+
+| Задача | Статус |
+|--------|--------|
+| 8.0.1 Спайк Agent Mesh (ort contention + latest-frame) → **threads, не tokio; cadence — рычаг** | ✅ |
+| 8.0.2 Body-primary иерархия (FRONTIER) + reserved-id identity-модель | ✅ live-validated |
+| 8.0.3 Стабилизация A1 (анти-flip) + A3 (торс-3D EMA) → churn 44→6 | ✅ live-validated |
+| 8.0.4 R (visibility-gate фантомов) + A2-lite (center-relink анонимов) | ✅ (ре-валидация на 3 людях ожидается) |
+| **8.E cadence-scheduling + YOLO26n object-узлы** (новый крейт `mvm-scene`) | 🔜 **СЛЕДУЮЩЕЕ** — нужна развязка по модели (YOLO26n export vs YOLOv8n ONNX; download-separately) |
+| 8.E depth (Depth-Anything-V2-Small, low-cadence) / audio (YAMNet) / hands | 🔜 |
+| 8.F cross-group fusion = object/audio-узлы → существующий `build_scene` (НЕ MBT) | 🔜 |
+| Agent Mesh (async threads) — отложен до появления тяжёлого детектора | 🔜 |
+
+> **Решения 8.0.1 (зафиксированы спайками):** mesh на `std::thread` (НЕ tokio; contention опровергнут — текущие эксперты ~12мс/~80fps); cross-group fusion = object-узлы в `build_scene` (НЕ MBT; verified-research); cadence врезается вместе с тяжёлым детектором (YOLO/depth). A2 (полный torso-center matching) — не нужен, A1+A2-lite хватило.
+
+### 🟢 Фаза 9 — Продукт
 
 | Задача | Статус |
 |--------|--------|
