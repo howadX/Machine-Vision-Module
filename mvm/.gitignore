@@ -14,3 +14,7 @@ models/pose_estimation_mediapipe_2023mar.onnx
 # Python MVM (if symlinked)
 __pycache__/
 *.pyc
+
+# YOLO26n object detector (phase 8.E, ultralytics export, AGPL-3.0)
+# venv/bin/yolo export model=yolo26n.pt format=onnx imgsz=640 → rename to yolo_object_detect.onnx
+models/yolo_object_detect.onnx

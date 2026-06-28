@@ -4,10 +4,13 @@
 //! nodes so the existing object-agnostic `build_scene` (mvm-fusion) wires
 //! person↔object relations — the "context outward from the human" signal.
 //!
-//! Model-agnostic by design: any ultralytics anchor-free export (YOLOv8 / v11 /
-//! **v26**) shares the same output tensor layout `[1, 4+num_classes, num_anchors]`
-//! (channel-major, 4 box coords + per-class scores, NO separate objectness). The
-//! bootstrap weights are YOLOv8n; swapping in YOLO26n is a file replacement.
+//! Model-agnostic by design — two ultralytics output layouts are handled, chosen
+//! at runtime from the tensor shape:
+//!   - **end-to-end / NMS-free** `[1, N, 6]` rows `[x1,y1,x2,y2,score,class]`
+//!     (YOLOv10, **YOLO26** — the shipped model); already deduplicated, no NMS.
+//!   - **raw anchor grid** `[1, 4+num_classes, num_anchors]` (YOLOv8/v11); needs
+//!     argmax-decode + class-aware NMS.
+//! So YOLO26n ↔ YOLOv8n is a pure file swap.
 //!
 //! The decode / letterbox / NMS math is split into pure functions so the chain is
 //! fully unit-tested on synthetic tensors with no model file present.
@@ -137,6 +140,33 @@ fn decode_yolo(raw: &[f32], num_classes: usize, score_thresh: f32) -> Vec<RawBox
     out
 }
 
+/// Decode the **end-to-end (NMS-free)** ultralytics output `[1, N, 6]`: each row
+/// is `[x1, y1, x2, y2, score, class_id]` in canvas pixels, already top-k filtered
+/// and deduplicated — so NO NMS is applied. YOLOv10 and **YOLO26** export this form
+/// (the slots below `score_thresh` are padding and are dropped here).
+fn decode_end2end(raw: &[f32], score_thresh: f32, num_classes: usize) -> Vec<RawBox> {
+    let mut out = Vec::new();
+    for row in raw.chunks_exact(6) {
+        let score = row[4];
+        if score < score_thresh {
+            continue;
+        }
+        let class_id = row[5].round() as usize;
+        if class_id >= num_classes {
+            continue;
+        }
+        out.push(RawBox {
+            x1: row[0],
+            y1: row[1],
+            x2: row[2],
+            y2: row[3],
+            score,
+            class_id,
+        });
+    }
+    out
+}
+
 /// Class-aware greedy NMS: sort by score desc, suppress same-class overlaps.
 fn nms(mut boxes: Vec<RawBox>, iou_thresh: f32) -> Vec<RawBox> {
     boxes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
@@ -216,9 +246,17 @@ impl YoloDetector {
         let input = self.preprocess(image, &lb)?;
         let outputs = self.session.run(ort::inputs![Self::INPUT_NAME => input])?;
 
-        let raw: &[f32] = outputs[0].try_extract_tensor::<f32>()?.1;
-        let proposals = decode_yolo(raw, COCO_CLASSES.len(), self.score_threshold);
-        let kept = nms(proposals, self.nms_threshold);
+        let (shape, raw) = outputs[0].try_extract_tensor::<f32>()?;
+        // Branch on the output layout (model-agnostic): end-to-end NMS-free
+        // `[1, N, 6]` (YOLOv10 / YOLO26) vs raw anchor grid `[1, 4+C, A]` (YOLOv8).
+        let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+        let is_end2end = dims.len() == 3 && *dims.last().unwrap_or(&0) == 6;
+        let kept = if is_end2end {
+            decode_end2end(raw, self.score_threshold, COCO_CLASSES.len())
+        } else {
+            let proposals = decode_yolo(raw, COCO_CLASSES.len(), self.score_threshold);
+            nms(proposals, self.nms_threshold)
+        };
 
         Ok(kept
             .into_iter()
@@ -361,6 +399,34 @@ mod tests {
         assert_eq!(COCO_CLASSES[boxes[0].class_id], "chair");
     }
 
+    // ── end-to-end decode (pure, synthetic — YOLO26/v10 format) ────────────
+
+    #[test]
+    fn decode_end2end_filters_by_score_and_maps_class() {
+        // Two rows: one strong "cup" (41), one weak below threshold.
+        let raw = vec![
+            80.0, 80.0, 120.0, 120.0, 0.92, 41.0, // keep
+            10.0, 10.0, 20.0, 20.0, 0.05, 7.0, // drop (padding)
+        ];
+        let boxes = decode_end2end(&raw, 0.35, 80);
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(COCO_CLASSES[boxes[0].class_id], "cup");
+        assert!((boxes[0].x1 - 80.0).abs() < 1e-4 && (boxes[0].x2 - 120.0).abs() < 1e-4);
+        assert!((boxes[0].score - 0.92).abs() < 1e-6);
+    }
+
+    #[test]
+    fn decode_end2end_drops_all_padding() {
+        let raw = vec![0.0; 300 * 6]; // black-image style: all-zero, score 0
+        assert!(decode_end2end(&raw, 0.35, 80).is_empty());
+    }
+
+    #[test]
+    fn decode_end2end_rejects_out_of_range_class() {
+        let raw = vec![0.0, 0.0, 10.0, 10.0, 0.9, 999.0];
+        assert!(decode_end2end(&raw, 0.35, 80).is_empty());
+    }
+
     // ── NMS (pure) ─────────────────────────────────────────────────────────
 
     fn rb(x1: f32, y1: f32, x2: f32, y2: f32, score: f32, class_id: usize) -> RawBox {
@@ -424,5 +490,36 @@ mod tests {
         let result = det.detect(&img).unwrap();
         eprintln!("black image → {} objects", result.len());
         // Black image: typically zero detections, but the chain must not panic.
+    }
+
+    #[test]
+    fn detects_person_on_reference_photo() {
+        let model_path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../models/yolo_object_detect.onnx"
+        ));
+        let ref_path = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../models/references/p_V_01.jpg"
+        ));
+        if !model_path.exists() || !ref_path.exists() {
+            eprintln!("Skipping: model or reference photo not present");
+            return;
+        }
+        let mut det = YoloDetector::from_path(&model_path).unwrap();
+        let img = image::open(&ref_path).unwrap();
+        let result = det.detect(&img).unwrap();
+        for o in &result {
+            eprintln!(
+                "  {} ({:.2}) @ [{:.2},{:.2},{:.2},{:.2}]",
+                o.class_name, o.score, o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2
+            );
+        }
+        // A portrait photo must yield at least one "person" — validates that the
+        // letterbox + RGB + /255 preprocessing matches the model's expectations.
+        assert!(
+            result.iter().any(|o| o.class_name == "person"),
+            "expected a 'person' detection on the reference portrait, got {result:?}"
+        );
     }
 }

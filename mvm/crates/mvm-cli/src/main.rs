@@ -738,7 +738,15 @@ fn main() -> Result<()> {
             if config.object_cadence <= 1 || frame_count % config.object_cadence as u64 == 0 {
                 if let Some(frame) = &tick_frame {
                     match det.detect(frame) {
-                        Ok(objs) => latest_objects = objs,
+                        Ok(objs) => {
+                            // Drop the "person" class: humans are owned by the
+                            // body-primary tracker (group G₁). Feeding YOLO people
+                            // as Object("person") would double-count person nodes
+                            // and create spurious self-overlap edges. G₂ Scene =
+                            // non-person objects only.
+                            latest_objects =
+                                objs.into_iter().filter(|o| o.class_name != "person").collect();
+                        }
                         Err(e) => eprintln!("  scene: detect error: {e}"),
                     }
                 }
