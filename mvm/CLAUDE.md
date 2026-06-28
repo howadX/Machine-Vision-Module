@@ -353,11 +353,12 @@ mvm/
 
 ### 🟢 Фаза 8 — Body-primary + scene-graph наружу (в работе, 2026-06-28)
 
-> **CHECKPOINT 2026-06-28 (обновлён, 8.E приземлён).** Ветка `rust-core`. **171 тест зелёный**, release чист.
+> **CHECKPOINT 2026-06-29 (8.E приземлён + live-validated).** Ветка `rust-core`. **180 тестов зелёных**, release чист.
 > Коммиты поверх `117b8df1`: `52907ca4` (спайк 8.0.1), `dfdca72c` (body-primary+id 8.0.2), `b50d7288`
-> (A1+A3 8.0.3), `4380c1e9` (R+A2-lite 8.0.4), `ebd9e5a9` (docs checkpoint), `0cae2f17` (mvm-scene +
-> object-узлы + cadence 8.E), `5eebed53` (YOLO26n end-to-end decode + person-фильтр + модель).
-> Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
+> (A1+A3 8.0.3), `4380c1e9` (R+A2-lite 8.0.4), `ebd9e5a9` (docs), `0cae2f17` (mvm-scene + object-узлы +
+> cadence 8.E), `5eebed53` (YOLO26n end-to-end decode + person + модель), `ddae6139` (docs),
+> `1978a869` (fix: Near-рёбра только при pos_conf>0), `413436cd` (фильтры A/C/D + стабильный
+> ObjectTracker B). Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
 > План фазы: `wiki/machine-vision/IMPLEMENTATION_PLAN.md`; оценка Agent Mesh: `wiki/machine-vision/08-fusion-architecture/agent-mesh-eval-8.0.1.md`.
 
 | Задача | Статус |
@@ -366,7 +367,7 @@ mvm/
 | 8.0.2 Body-primary иерархия (FRONTIER) + reserved-id identity-модель | ✅ live-validated |
 | 8.0.3 Стабилизация A1 (анти-flip) + A3 (торс-3D EMA) → churn 44→6 | ✅ live-validated |
 | 8.0.4 R (visibility-gate фантомов) + A2-lite (center-relink анонимов) | ✅ (ре-валидация на 3 людях ожидается) |
-| **8.E cadence + YOLO26n object-узлы** (крейт `mvm-scene`, 9-й крейт) | ✅ — модель = **YOLO26n** (ultralytics 8.4.81 export, end-to-end NMS-free `[1,300,6]`, 9.5МБ, gitignored). Object-узлы → `build_scene` (overlap-рёбра человек↔объект), cadence `object_cadence=3` в синхронном цикле, person-класс отфильтрован (G₁ владеет людьми). Валидировано: person 0.93 на референсе, live 21.7fps. **Live-валидация сцены с реальными объектами — за владельцем** |
+| **8.E cadence + YOLO26n object-узлы** (крейт `mvm-scene`, 9-й крейт) | ✅ **live-validated 2026-06-29**. Модель = **YOLO26n** (ultralytics 8.4.81, end-to-end NMS-free `[1,300,6]`, 9.5МБ, gitignored). Object-узлы → `build_scene` (overlap-рёбра человек↔объект; Near только при pos_conf>0). Cadence `object_cadence=3`. **Фильтры:** A score≥0.45, B стабильный `ObjectTracker` (IoU+free-list, id≥10000, `age`), C allow-list релевантных классов (person исключён → G₁), D min bbox area 0.004. Вживую: couch#10000 трекается во времени, фликер ушёл |
 | 8.E depth (Depth-Anything-V2-Small, low-cadence) / audio (YAMNet) / hands | 🔜 СЛЕДУЮЩЕЕ |
 | 8.F cross-group fusion = object/audio-узлы → существующий `build_scene` (НЕ MBT) | 🟡 object-часть готова (8.E); audio/depth-узлы — с их крейтами |
 | Agent Mesh (async threads) — отложен до появления тяжёлого детектора (depth ~100мс) | 🔜 |
