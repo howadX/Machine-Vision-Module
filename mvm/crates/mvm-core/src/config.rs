@@ -127,7 +127,7 @@ impl Default for Config {
             identity_abs_thresh: 0.45, // SFace cosine scale (was 0.8 ArcFace-era)
             identity_margin_thresh: 0.1,
             object_cadence: 3, // phase 8.E: YOLO every 3rd frame (sync-loop cadence)
-            object_score_thresh: 0.35, // phase 8.E filter A: low floor; furniture gated per-class
+            object_score_thresh: 0.30, // phase 8.E filter A: low floor for small desk items; furniture gated per-class
             object_min_area: 0.0015, // phase 8.E filter D: ceiling-cam → small subtended angle
             object_track_timeout: 15, // phase 8.E filter B: persist ~2s across brief occlusion
         }
