@@ -20,6 +20,8 @@ use image::DynamicImage;
 use image::GenericImageView;
 use mvm_core::BBox;
 use ort::{session::Session, value::Tensor};
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 /// COCO 80-class names, in the canonical ultralytics order.
 pub const COCO_CLASSES: [&str; 80] = [
@@ -45,6 +47,179 @@ pub struct ObjectDetection {
     pub class_name: &'static str,
     pub bbox: BBox,
     pub score: f32,
+}
+
+/// Scene-graph id base for object nodes (phase 8.E). Person ids are 0–9 (reserved
+/// users) and ≥10 (ephemeral bodies); objects sit far above to avoid collision in
+/// zones/relations. The `ObjectTracker` allocates stable ids from here upward.
+pub const OBJECT_ID_BASE: u32 = 10_000;
+
+/// Indoor / interaction-relevant COCO classes (phase 8.E filter C). Excludes
+/// `person` (owned by the body-primary tracker, group G₁), plus outdoor / vehicle
+/// / animal / sports / perishable-food classes that are noise for a desk-mounted
+/// camera. Edit this list to tune what reaches the scene-graph.
+pub const RELEVANT_CLASSES: &[&str] = &[
+    "backpack", "umbrella", "handbag", "tie", "suitcase",
+    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl",
+    "chair", "couch", "potted plant", "bed", "dining table", "tv", "laptop",
+    "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster",
+    "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+    "hair drier", "toothbrush",
+];
+
+/// Whether a COCO class is an interaction-relevant object worth a scene node.
+pub fn is_relevant(class_name: &str) -> bool {
+    RELEVANT_CLASSES.contains(&class_name)
+}
+
+/// A temporally-tracked object: the same physical object keeps `id` across frames.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackedObject {
+    /// Stable scene-graph id (≥ OBJECT_ID_BASE), reused via a free-list.
+    pub id: u32,
+    pub class_name: &'static str,
+    pub bbox: BBox,
+    pub score: f32,
+    /// Consecutive frames this track has been seen.
+    pub age: u32,
+    /// Consecutive frames missed (0 when currently visible).
+    pub missed: u32,
+}
+
+/// Lightweight greedy-IoU object tracker (phase 8.E filter B).
+///
+/// Gives objects **stable ids across cadence frames** so `id 10000` is the same
+/// physical object over time (unlike the old per-frame positional id). Matching is
+/// class-aware; ids are reused from a free-list on expiry. Far simpler than the
+/// person Kalman tracker — objects are largely static, so per-frame IoU + a short
+/// miss-timeout is enough, and it absorbs the one-frame flicker YOLO produces.
+pub struct ObjectTracker {
+    tracks: Vec<TrackedObject>,
+    next_id: u32,
+    free_ids: BinaryHeap<Reverse<u32>>,
+    iou_thresh: f32,
+    timeout: u32,
+    ema_alpha: f32,
+}
+
+impl Default for ObjectTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ObjectTracker {
+    /// Defaults: IoU 0.3, expire after 5 missed detection-frames, bbox EMA 0.5.
+    pub fn new() -> Self {
+        Self::with_params(0.3, 5, 0.5)
+    }
+
+    pub fn with_params(iou_thresh: f32, timeout: u32, ema_alpha: f32) -> Self {
+        Self {
+            tracks: Vec::new(),
+            next_id: OBJECT_ID_BASE,
+            free_ids: BinaryHeap::new(),
+            iou_thresh,
+            timeout,
+            ema_alpha,
+        }
+    }
+
+    fn alloc_id(&mut self) -> u32 {
+        if let Some(Reverse(id)) = self.free_ids.pop() {
+            id
+        } else {
+            let id = self.next_id;
+            self.next_id += 1;
+            id
+        }
+    }
+
+    /// Update with this frame's detections; return the currently-visible tracks
+    /// (those matched or created this frame). Call once per detection (cadence) frame.
+    pub fn update(&mut self, dets: &[ObjectDetection]) -> Vec<TrackedObject> {
+        let mut track_used = vec![false; self.tracks.len()];
+        let mut det_used = vec![false; dets.len()];
+
+        // Process detections high-score first for stable greedy matching.
+        let mut order: Vec<usize> = (0..dets.len()).collect();
+        order.sort_by(|&a, &b| dets[b].score.partial_cmp(&dets[a].score).unwrap());
+
+        for &di in &order {
+            let d = &dets[di];
+            let mut best = self.iou_thresh;
+            let mut best_t = None;
+            for (ti, t) in self.tracks.iter().enumerate() {
+                if track_used[ti] || t.class_name != d.class_name {
+                    continue;
+                }
+                let iou = t.bbox.iou(&d.bbox);
+                if iou >= best {
+                    best = iou;
+                    best_t = Some(ti);
+                }
+            }
+            if let Some(ti) = best_t {
+                track_used[ti] = true;
+                det_used[di] = true;
+                let a = self.ema_alpha;
+                let t = &mut self.tracks[ti];
+                t.bbox = ema_bbox(&t.bbox, &d.bbox, a);
+                t.score = d.score;
+                t.age += 1;
+                t.missed = 0;
+            }
+        }
+
+        // Unmatched detections → new tracks.
+        for (di, d) in dets.iter().enumerate() {
+            if det_used[di] {
+                continue;
+            }
+            let id = self.alloc_id();
+            self.tracks.push(TrackedObject {
+                id,
+                class_name: d.class_name,
+                bbox: d.bbox,
+                score: d.score,
+                age: 1,
+                missed: 0,
+            });
+        }
+
+        // Unmatched tracks age out; expired ids return to the free-list.
+        for (ti, used) in track_used.iter().enumerate() {
+            if !used {
+                self.tracks[ti].missed += 1;
+            }
+        }
+        let timeout = self.timeout;
+        let mut freed = Vec::new();
+        self.tracks.retain(|t| {
+            if t.missed > timeout {
+                freed.push(t.id);
+                false
+            } else {
+                true
+            }
+        });
+        for id in freed {
+            self.free_ids.push(Reverse(id));
+        }
+
+        self.tracks.iter().filter(|t| t.missed == 0).cloned().collect()
+    }
+}
+
+/// EMA-smooth a bbox toward a new observation (reduces per-frame jitter).
+fn ema_bbox(prev: &BBox, new: &BBox, alpha: f32) -> BBox {
+    let f = |p: f32, n: f32| p * (1.0 - alpha) + n * alpha;
+    BBox {
+        x1: f(prev.x1, new.x1),
+        y1: f(prev.y1, new.y1),
+        x2: f(prev.x2, new.x2),
+        y2: f(prev.y2, new.y2),
+    }
 }
 
 /// Letterbox transform: how the original WxH maps onto a square `target`xtarget
@@ -462,6 +637,87 @@ mod tests {
         ];
         let kept = nms(boxes, 0.45);
         assert_eq!(kept.len(), 2);
+    }
+
+    // ── allow-list (filter C) ──────────────────────────────────────────────
+
+    #[test]
+    fn is_relevant_keeps_interaction_objects_drops_noise() {
+        assert!(is_relevant("cup") && is_relevant("laptop") && is_relevant("chair"));
+        assert!(!is_relevant("person"), "person owned by body-primary tracker");
+        assert!(!is_relevant("car") && !is_relevant("dog") && !is_relevant("banana"));
+    }
+
+    // ── object tracker (filter B) ──────────────────────────────────────────
+
+    fn od(class_name: &'static str, x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> ObjectDetection {
+        ObjectDetection {
+            class_id: 0,
+            class_name,
+            bbox: BBox { x1, y1, x2, y2 },
+            score,
+        }
+    }
+
+    #[test]
+    fn tracker_first_detection_gets_id_at_base() {
+        let mut t = ObjectTracker::new();
+        let out = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].id, OBJECT_ID_BASE);
+        assert_eq!(out[0].age, 1);
+    }
+
+    #[test]
+    fn tracker_same_object_keeps_id_across_frames() {
+        let mut t = ObjectTracker::new();
+        let id1 = t.update(&[od("cup", 0.40, 0.40, 0.50, 0.55, 0.8)])[0].id;
+        // Slightly moved next frame → high IoU, same class → same id.
+        let f2 = t.update(&[od("cup", 0.41, 0.41, 0.51, 0.56, 0.8)]);
+        assert_eq!(f2[0].id, id1);
+        assert_eq!(f2[0].age, 2);
+    }
+
+    #[test]
+    fn tracker_same_box_different_class_gets_new_id() {
+        let mut t = ObjectTracker::new();
+        let cup = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
+        let kbd = t.update(&[od("keyboard", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
+        assert_ne!(cup, kbd, "class-aware matching must not merge cup↔keyboard");
+    }
+
+    #[test]
+    fn tracker_two_objects_distinct_ids() {
+        let mut t = ObjectTracker::new();
+        let out = t.update(&[
+            od("cup", 0.1, 0.1, 0.2, 0.2, 0.8),
+            od("laptop", 0.6, 0.6, 0.9, 0.9, 0.8),
+        ]);
+        assert_eq!(out.len(), 2);
+        assert_ne!(out[0].id, out[1].id);
+    }
+
+    #[test]
+    fn tracker_disappeared_object_expires_and_frees_id() {
+        let mut t = ObjectTracker::with_params(0.3, 2, 0.5); // timeout 2
+        let id1 = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
+        // Absent for > timeout frames → track expires.
+        for _ in 0..4 {
+            let visible = t.update(&[]);
+            assert!(visible.is_empty(), "no object visible while absent");
+        }
+        // New object reuses the freed id.
+        let id2 = t.update(&[od("bottle", 0.1, 0.1, 0.2, 0.3, 0.7)])[0].id;
+        assert_eq!(id2, id1, "freed id should be reused");
+    }
+
+    #[test]
+    fn tracker_brief_flicker_keeps_id() {
+        let mut t = ObjectTracker::with_params(0.3, 5, 0.5);
+        let id1 = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
+        let _ = t.update(&[]); // missed one frame (within timeout)
+        let back = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
+        assert_eq!(back[0].id, id1, "object reappearing within timeout keeps its id");
     }
 
     // ── coco table sanity ──────────────────────────────────────────────────

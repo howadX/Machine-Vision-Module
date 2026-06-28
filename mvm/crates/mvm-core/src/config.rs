@@ -87,6 +87,13 @@ pub struct Config {
     /// while still refreshing scene context. 1 = every frame. Decision 8.0.1:
     /// cadence lives in the synchronous loop (the main throughput lever), no mesh.
     pub object_cadence: u32,
+    /// Minimum YOLO score to accept an object (phase 8.E filter A). Raised from
+    /// the 0.35 detector default — live runs showed furniture (couch/bed/chair)
+    /// flickering near 0.35; 0.45 keeps confident objects, drops the noise.
+    pub object_score_thresh: f32,
+    /// Minimum normalized bbox area (fraction of frame) for an object node
+    /// (phase 8.E filter D). Cuts tiny spurious boxes. 0.004 ≈ 0.4% of the frame.
+    pub object_min_area: f32,
 }
 
 impl Default for Config {
@@ -112,6 +119,8 @@ impl Default for Config {
             identity_abs_thresh: 0.45, // SFace cosine scale (was 0.8 ArcFace-era)
             identity_margin_thresh: 0.1,
             object_cadence: 3, // phase 8.E: YOLO every 3rd frame (sync-loop cadence)
+            object_score_thresh: 0.45, // phase 8.E filter A: above the flicker band
+            object_min_area: 0.004, // phase 8.E filter D: drop tiny boxes (~0.4% frame)
         }
     }
 }

@@ -611,16 +611,20 @@ fn main() -> Result<()> {
     // bootstrap weights aren't downloaded yet, object nodes are simply disabled
     // (chain still runs, like a missing optional detector).
     let mut scene_detector: Option<mvm_scene::YoloDetector> = None;
-    let mut latest_objects: Vec<mvm_scene::ObjectDetection> = Vec::new();
+    let mut object_tracker = mvm_scene::ObjectTracker::new();
+    let mut latest_objects: Vec<mvm_scene::TrackedObject> = Vec::new();
     if args.native_camera {
         let model_path = config.models_path.join("yolo_object_detect.onnx");
         if model_path.exists() {
             match mvm_scene::YoloDetector::from_path(&model_path) {
-                Ok(d) => {
+                Ok(mut d) => {
+                    // Filter A: accept only confident objects (above the flicker band).
+                    d.set_score_threshold(config.object_score_thresh);
                     eprintln!(
-                        "  scene: loading YOLO object detector ({}), cadence every {} frames",
+                        "  scene: loading YOLO object detector ({}), cadence every {} frames, score≥{}",
                         model_path.display(),
-                        config.object_cadence
+                        config.object_cadence,
+                        config.object_score_thresh
                     );
                     scene_detector = Some(d);
                 }
@@ -739,13 +743,20 @@ fn main() -> Result<()> {
                 if let Some(frame) = &tick_frame {
                     match det.detect(frame) {
                         Ok(objs) => {
-                            // Drop the "person" class: humans are owned by the
-                            // body-primary tracker (group G₁). Feeding YOLO people
-                            // as Object("person") would double-count person nodes
-                            // and create spurious self-overlap edges. G₂ Scene =
-                            // non-person objects only.
-                            latest_objects =
-                                objs.into_iter().filter(|o| o.class_name != "person").collect();
+                            // Filters C + D: keep only interaction-relevant classes
+                            // (the allow-list excludes "person" — humans are owned by
+                            // the body-primary tracker G₁ — plus outdoor/vehicle/animal
+                            // noise) and drop tiny boxes. Then tracker B assigns stable
+                            // ids so a node id means the same object across frames.
+                            let filtered: Vec<_> = objs
+                                .into_iter()
+                                .filter(|o| mvm_scene::is_relevant(o.class_name))
+                                .filter(|o| {
+                                    let area = (o.bbox.x2 - o.bbox.x1) * (o.bbox.y2 - o.bbox.y1);
+                                    area >= config.object_min_area
+                                })
+                                .collect();
+                            latest_objects = object_tracker.update(&filtered);
                         }
                         Err(e) => eprintln!("  scene: detect error: {e}"),
                     }

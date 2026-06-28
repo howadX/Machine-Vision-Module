@@ -6,15 +6,10 @@
 use anyhow::Result;
 use chrono::{FixedOffset, Local};
 use mvm_core::PersonTracker;
-use mvm_scene::ObjectDetection;
+use mvm_scene::TrackedObject;
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
-
-/// Scene-graph id base for object nodes (phase 8.E). Person `display_id`s are
-/// 0–9 (reserved users) and ≥10 (ephemeral bodies); objects sit far above to
-/// guarantee no collision in zones/relations.
-const OBJECT_ID_BASE: u32 = 10_000;
 
 /// Per-face emotion A/B comparison captured before confidence-based fallback.
 pub struct EmotionDebugEntry {
@@ -111,10 +106,13 @@ struct JsonRelation {
 /// One object node in the scene-graph JSON (phase 8.E, G₂ Scene group).
 #[derive(Serialize)]
 struct JsonObject {
-    /// Scene-graph id (OBJECT_ID_BASE + index) — matches ids in zones/relations.
+    /// Stable tracked id (≥ OBJECT_ID_BASE) — matches ids in zones/relations and
+    /// is the same physical object across frames (phase 8.E filter B).
     id: u32,
     class: &'static str,
     score: f32,
+    /// Frames this object has been tracked (temporal persistence).
+    age: u32,
     /// Normalised [x1,y1,x2,y2] in the original frame.
     bbox: [f32; 4],
 }
@@ -133,20 +131,19 @@ struct JsonFrame<'a> {
     relations: Vec<JsonRelation>,
 }
 
-/// Build scene-graph entities for detected objects (phase 8.E).
+/// Build scene-graph entities for tracked objects (phase 8.E).
 ///
 /// Objects carry no monocular depth prior here, so they get `pos_3d = [0,0,0]`
-/// with `pos_conf = 0` — identical to the person-without-3D fallback. They thus
-/// participate in **2D bbox-overlap** relations (the "person ↔ held/nearby
-/// object" signal) without fabricating a metric distance. Depth-from-class-size
-/// or depth-inheritance from an overlapping person is a future refinement.
-fn object_entities(objects: &[ObjectDetection]) -> Vec<mvm_core::types::Entity> {
+/// with `pos_conf = 0`. `build_scene` only forms metric `Near` edges between nodes
+/// that both have depth, so objects participate via **2D bbox-overlap** relations
+/// (the "person ↔ held/nearby object" signal) without fabricating a distance.
+/// Depth-from-class-size or depth-inheritance is a future refinement.
+fn object_entities(objects: &[TrackedObject]) -> Vec<mvm_core::types::Entity> {
     use mvm_core::types::{Entity, EntityKind};
     objects
         .iter()
-        .enumerate()
-        .map(|(i, o)| Entity {
-            id: OBJECT_ID_BASE + i as u32,
+        .map(|o| Entity {
+            id: o.id,
             kind: EntityKind::Object(o.class_name.to_string()),
             bbox: o.bbox,
             pos_3d: [0.0, 0.0, 0.0],
@@ -182,7 +179,7 @@ impl StateFile {
     }
 
     /// Write current state to file.
-    pub fn write(&self, tracker: &PersonTracker, fps: f64, objects: &[ObjectDetection]) -> Result<()> {
+    pub fn write(&self, tracker: &PersonTracker, fps: f64, objects: &[TrackedObject]) -> Result<()> {
         let now = Local::now().with_timezone(&self.tz);
         let timestamp = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
@@ -280,9 +277,10 @@ impl StateFile {
             lines.push(format!("- Objects visible: {}", summary.join(", ")));
             for (i, o) in objects.iter().enumerate() {
                 lines.push(format!("- Object_{}:", i + 1));
-                lines.push(format!("  - id: {}", OBJECT_ID_BASE + i as u32));
+                lines.push(format!("  - id: {}", o.id));
                 lines.push(format!("  - class: {}", o.class_name));
                 lines.push(format!("  - score: {:.2}", o.score));
+                lines.push(format!("  - age: {} frames", o.age));
                 lines.push(format!(
                     "  - bbox: {:.2},{:.2},{:.2},{:.2}",
                     o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2
@@ -303,7 +301,7 @@ impl StateFile {
 
     /// Serialise current tracker state to a single JSON line.
     /// Includes relational scene-graph (zones + edges) from mvm-fusion (phase 6.4).
-    pub fn to_json_line(&self, tracker: &PersonTracker, fps: f64, objects: &[ObjectDetection]) -> String {
+    pub fn to_json_line(&self, tracker: &PersonTracker, fps: f64, objects: &[TrackedObject]) -> String {
         use mvm_core::types::{Entity, EntityKind};
 
         let now = Local::now().with_timezone(&self.tz);
@@ -337,10 +335,11 @@ impl StateFile {
         // person↔object overlap relations ("context outward from the human") emerge.
         entities.extend(object_entities(objects));
 
-        let json_objects: Vec<JsonObject> = objects.iter().enumerate().map(|(i, o)| JsonObject {
-            id: OBJECT_ID_BASE + i as u32,
+        let json_objects: Vec<JsonObject> = objects.iter().map(|o| JsonObject {
+            id: o.id,
             class: o.class_name,
             score: o.score,
+            age: o.age,
             bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
         }).collect();
 
@@ -758,12 +757,14 @@ mod tests {
 
     // ── Object scene-nodes (phase 8.E) ──────────────────────────────────────
 
-    fn obj(class_id: usize, class_name: &'static str, x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> ObjectDetection {
-        ObjectDetection {
-            class_id,
+    fn obj(id_offset: u32, class_name: &'static str, x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> TrackedObject {
+        TrackedObject {
+            id: mvm_scene::OBJECT_ID_BASE + id_offset,
             class_name,
             bbox: mvm_core::BBox { x1, y1, x2, y2 },
             score,
+            age: 1,
+            missed: 0,
         }
     }
 
@@ -771,13 +772,13 @@ mod tests {
     fn json_line_lists_object_nodes() {
         let sf = StateFile::open_at(temp_state_path("test_json_obj.md")).unwrap();
         let tracker = PersonTracker::new();
-        let objects = vec![obj(41, "cup", 0.4, 0.4, 0.5, 0.55, 0.81)];
+        let objects = vec![obj(0, "cup", 0.4, 0.4, 0.5, 0.55, 0.81)];
         let line = sf.to_json_line(&tracker, 30.0, &objects);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let objs = v["objects"].as_array().expect("objects array present");
         assert_eq!(objs.len(), 1);
         assert_eq!(objs[0]["class"], "cup");
-        assert_eq!(objs[0]["id"].as_u64().unwrap(), OBJECT_ID_BASE as u64);
+        assert_eq!(objs[0]["id"].as_u64().unwrap(), mvm_scene::OBJECT_ID_BASE as u64);
         assert!((objs[0]["score"].as_f64().unwrap() - 0.81).abs() < 0.01);
     }
 
@@ -799,14 +800,15 @@ mod tests {
         tracker.tick(&[det(0.3, 0.3, 0.6, 0.8)]);
         let pid = tracker.active().next().unwrap().display_id;
         // A cup whose bbox overlaps the body bbox → "overlapping" edge (no 3D needed).
-        let objects = vec![obj(41, "cup", 0.4, 0.4, 0.55, 0.6, 0.8)];
+        let oid = mvm_scene::OBJECT_ID_BASE;
+        let objects = vec![obj(0, "cup", 0.4, 0.4, 0.55, 0.6, 0.8)];
         let line = sf.to_json_line(&tracker, 30.0, &objects);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let rels = v["relations"].as_array().unwrap();
         let edge = rels.iter().find(|r| {
             let a = r["a"].as_u64().unwrap() as u32;
             let b = r["b"].as_u64().unwrap() as u32;
-            (a == pid && b == OBJECT_ID_BASE) || (a == OBJECT_ID_BASE && b == pid)
+            (a == pid && b == oid) || (a == oid && b == pid)
         });
         assert!(edge.is_some(), "expected person↔object overlap edge, got {rels:?}");
         assert_eq!(edge.unwrap()["kind"], "overlapping");
@@ -816,7 +818,7 @@ mod tests {
     fn markdown_lists_objects() {
         let sf = StateFile::open_at(temp_state_path("test_md_obj.md")).unwrap();
         let tracker = PersonTracker::new();
-        let objects = vec![obj(56, "chair", 0.1, 0.1, 0.4, 0.9, 0.77)];
+        let objects = vec![obj(0, "chair", 0.1, 0.1, 0.4, 0.9, 0.77)];
         sf.write(&tracker, 30.0, &objects).unwrap();
         let content = read_state(&sf.path);
         assert!(content.contains("Objects visible: chair"), "got:\n{content}");
