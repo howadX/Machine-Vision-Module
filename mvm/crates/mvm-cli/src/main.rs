@@ -8,6 +8,7 @@
 //!   mvm --native               use Rust-native emotion + identity (FFmpeg capture)
 
 mod state;
+mod scene_debug;
 
 use anyhow::{Context, Result};
 use mvm_core::Module;
@@ -155,6 +156,10 @@ struct Args {
     /// round-trip). NOTE: 3D uses face_height_m calibrated for SCRFD boxes —
     /// provisional until recalibrated for YuNet boxes (operator, 7.1 gate).
     native_camera: bool,
+    /// --scene-debug: write an annotated JPG (object + person boxes, stable-id
+    /// numbers) to /tmp/mvm_scene.jpg each dump and print a class/colour legend.
+    /// Lets you SEE which objects the scene detector finds on real frames.
+    scene_debug: bool,
 }
 
 fn parse_args() -> Args {
@@ -170,6 +175,7 @@ fn parse_args() -> Args {
         emotion_debug: false,
         detect_ab: false,
         native_camera: false,
+        scene_debug: false,
     };
 
     let mut i = 1;
@@ -183,6 +189,7 @@ fn parse_args() -> Args {
             "--emotion-debug" => args.emotion_debug = true,
             "--detect-ab"     => args.detect_ab = true,
             "--native-camera" => { args.native_camera = true; args.native = true; }
+            "--scene-debug"   => args.scene_debug = true,
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -887,6 +894,34 @@ fn main() -> Result<()> {
                     state_file.to_json_line(&tracker, fps, &latest_objects)
                 };
                 println!("{line}");
+            }
+
+            // Scene visual debug (phase 8.E): annotated JPG + printed legend so the
+            // operator can SEE which objects are detected on real frames.
+            if args.scene_debug {
+                if let Some(frame) = &tick_frame {
+                    let person_bboxes: Vec<mvm_core::BBox> =
+                        tracker.active().map(|t| t.bbox).collect();
+                    match scene_debug::write_annotated(
+                        "/tmp/mvm_scene.jpg",
+                        frame,
+                        &person_bboxes,
+                        &latest_objects,
+                    ) {
+                        Ok(legend) => {
+                            eprintln!(
+                                "  scene-debug → /tmp/mvm_scene.jpg ({} objects, persons in white)",
+                                latest_objects.len()
+                            );
+                            for line in &legend {
+                                eprintln!("    {line}");
+                            }
+                        }
+                        Err(e) => eprintln!("  scene-debug: write failed: {e}"),
+                    }
+                } else {
+                    eprintln!("  scene-debug: no frame this tick (skipped)");
+                }
             }
             last_dump = Instant::now();
 
