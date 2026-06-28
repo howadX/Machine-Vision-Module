@@ -123,9 +123,17 @@ pub fn build_scene(entities: Vec<Entity>) -> Scene {
             let dist = euclidean_3d(entities[i].pos_3d, entities[j].pos_3d);
             let overlap = iou_2d(&entities[i].bbox, &entities[j].bbox);
 
+            // A metric `Near` edge is only trustworthy when BOTH nodes have a real
+            // 3D position. Nodes without depth (pos_conf == 0) sit at the camera
+            // origin [0,0,0] — objects (phase 8.E carry no monocular depth) and
+            // phantom bodies (R visibility-gate) — so a 3D distance to them is
+            // meaningless and would spuriously make every origin-node "near" anyone
+            // ~NEAR_THRESH from the camera. Such nodes still relate via 2D overlap.
+            let both_have_depth = entities[i].pos_conf > 0.0 && entities[j].pos_conf > 0.0;
+
             let kind = if overlap > 0.0 {
                 RelationKind::Overlapping
-            } else if dist < NEAR_THRESH_M {
+            } else if both_have_depth && dist < NEAR_THRESH_M {
                 RelationKind::Near
             } else {
                 continue; // no edge
@@ -298,6 +306,34 @@ mod tests {
         let scene = build_scene(vec![e1, e2]);
         assert_eq!(scene.relations.len(), 0, "no edge expected");
         assert_eq!(scene.zones.len(), 2, "should be separate zones");
+    }
+
+    #[test]
+    fn no_near_edge_to_depthless_node() {
+        // An object with no depth (pos_conf = 0, sitting at origin) must NOT form a
+        // metric Near edge with a person, even though the person is within
+        // NEAR_THRESH_M of the origin (phase 8.E: objects relate by overlap only).
+        let person = entity(1, [0.3, 0.0, 1.0], small_bbox(0.1, 0.1));
+        let mut object = entity(2, [0.0, 0.0, 0.0], small_bbox(0.8, 0.8));
+        object.kind = EntityKind::Object("cup".into());
+        object.pos_conf = 0.0;
+        let scene = build_scene(vec![person, object]);
+        assert_eq!(scene.relations.len(), 0, "depthless node must not get a Near edge");
+        assert_eq!(scene.zones.len(), 2, "should be separate zones");
+    }
+
+    #[test]
+    fn overlap_edge_survives_without_depth() {
+        // Even with pos_conf = 0 on both, a 2D bbox overlap still yields an edge —
+        // the meaningful "person ↔ held/nearby object" signal.
+        let mut person = entity(1, [0.0, 0.0, 1.0], BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        person.pos_conf = 0.9;
+        let mut object = entity(2, [0.0, 0.0, 0.0], BBox { x1: 0.4, y1: 0.4, x2: 0.55, y2: 0.6 });
+        object.kind = EntityKind::Object("cup".into());
+        object.pos_conf = 0.0;
+        let scene = build_scene(vec![person, object]);
+        assert_eq!(scene.relations.len(), 1, "overlap edge expected");
+        assert_eq!(scene.relations[0].kind, RelationKind::Overlapping);
     }
 
     #[test]
