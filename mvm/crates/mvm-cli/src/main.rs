@@ -542,7 +542,9 @@ fn main() -> Result<()> {
     if args.no_camera {
         eprintln!("  camera: disabled (--no-camera)");
     } else if args.native_camera {
-        match mvm_pipeline::native::NativeCamera::open("/dev/video0", 1280, 720, true) {
+        // rotate_180 = false: camera is now mounted upright at eye level (was
+        // ceiling-mounted upside-down, which needed the cv2.ROTATE_180 mirror).
+        match mvm_pipeline::native::NativeCamera::open("/dev/video0", 1280, 720, false) {
             Ok(cam) => {
                 let (w, h) = cam.dimensions();
                 eprintln!("  camera: native v4l2 MJPG {w}x{h} (Python-light, no pose)");
