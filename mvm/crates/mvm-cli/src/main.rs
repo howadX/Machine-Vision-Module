@@ -78,6 +78,16 @@ mod tests {
         assert_eq!(best_face_for_nose(&faces, &used, (0.20, 0.20)), Some(1));
     }
 
+    #[test]
+    fn face_center_in_any_suppresses_fallback() {
+        let body = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 0.5, y2: 1.0 };
+        let inside = face(0.20, 0.10, 0.30, 0.20); // centre (0.25,0.15) ∈ body
+        let outside = face(0.70, 0.10, 0.80, 0.20); // centre (0.75,0.15) ∉ body
+        assert!(face_center_in_any(&inside.bbox, &[body]));
+        assert!(!face_center_in_any(&outside.bbox, &[body]));
+        assert!(!face_center_in_any(&inside.bbox, &[]), "no regions → not suppressed");
+    }
+
     /// The swap-bug regression: two people whose person bboxes OVERLAP. A
     /// body-bbox-center match would assign person B's face to person A; the
     /// nose-based match keeps each face with its own head.
@@ -265,6 +275,18 @@ fn enrich_face_crop(
 /// bboxes — a coarse body-bbox-center match swaps identities when two people are
 /// close (their person boxes overlap); the nose is physically inside its own
 /// face, so it never crosses over.
+/// True if the face's centre falls inside any of `regions` (body bboxes this
+/// frame, or active-track bboxes from last frame). Used to suppress the
+/// face-entity fallback so a person isn't represented twice / doesn't flip
+/// between a body-entity and a face-entity (A1 anti-flip, phase 8).
+fn face_center_in_any(face: &mvm_core::BBox, regions: &[mvm_core::BBox]) -> bool {
+    let cx = (face.x1 + face.x2) * 0.5;
+    let cy = (face.y1 + face.y2) * 0.5;
+    regions
+        .iter()
+        .any(|r| cx >= r.x1 && cx <= r.x2 && cy >= r.y1 && cy <= r.y2)
+}
+
 fn best_face_for_nose(faces: &[Detection], used: &[bool], nose: (f32, f32)) -> Option<usize> {
     let area = |b: &mvm_core::BBox| (b.x2 - b.x1) * (b.y2 - b.y1);
     faces
@@ -294,12 +316,14 @@ fn build_body_primary(
     config: &mvm_core::Config,
     emotion_debug: bool,
     debug_out: &mut Vec<state::EmotionDebugEntry>,
+    prev_tracks: &[mvm_core::BBox],
 ) -> Vec<Detection> {
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
     let bodies = native_pose
         .map(|np| np.bodies(frame).unwrap_or_default())
         .unwrap_or_default();
+    let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();
     let faces = detector.detect(frame).unwrap_or_default();
     let mut face_used = vec![false; faces.len()];
     let mut dets: Vec<Detection> = Vec::with_capacity(bodies.len() + faces.len());
@@ -345,8 +369,17 @@ fn build_body_primary(
 
     // Fallback: unmatched faces → face-entity (don't lose a person whose body
     // detection blinked). 3D from face height (YuNet-calibrated `face_height_m`).
+    //
+    // A1 anti-flip (phase 8): suppress the fallback when the face is already
+    // explained by a body THIS frame (nose-match just missed a tight YuNet box)
+    // or by an active track from LAST frame (the person-detector blinked — let
+    // the body track bridge the gap via Kalman inertia instead of swapping in a
+    // posture-less, face-3D entity that makes id 0 jump body↔face every blink).
     for (fi, f) in faces.iter().enumerate() {
         if face_used[fi] {
+            continue;
+        }
+        if face_center_in_any(&f.bbox, &body_bboxes) || face_center_in_any(&f.bbox, prev_tracks) {
             continue;
         }
         let fb = f.bbox;
@@ -642,6 +675,10 @@ fn main() -> Result<()> {
         // emotion attach only when a frontal face is present.
         if native_camera.is_some() {
             if let Some(frame) = &tick_frame {
+                // Last frame's active track bboxes — let A1 suppress a face-entity
+                // fallback when an existing track already covers that face.
+                let prev_tracks: Vec<mvm_core::BBox> =
+                    tracker.active().map(|t| t.bbox).collect();
                 detections = build_body_primary(
                     frame,
                     native_pose.as_mut(),
@@ -651,6 +688,7 @@ fn main() -> Result<()> {
                     &config,
                     args.emotion_debug,
                     &mut emotion_debug_entries,
+                    &prev_tracks,
                 );
             }
         }

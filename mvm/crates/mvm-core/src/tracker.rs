@@ -256,12 +256,22 @@ impl PersonTracker {
                         t.posture = det.posture.clone();
                         t.posture_confidence = det.posture_confidence;
                     }
-                    // Python 3D passthrough (overridden by native below when pinhole is set)
+                    // Detection-provided 3D passthrough. Bridge path: overridden by
+                    // the native pinhole block below (pinhole = Some). Body-primary
+                    // (pinhole = None): this IS the final 3D, so EMA-smooth the torso
+                    // estimate against the track's previous position to damp per-frame
+                    // landmark jitter (A3, phase 8).
                     if det.distance.is_some() {
-                        t.distance = det.distance;
-                        t.position_x = det.position_x;
-                        t.position_y = det.position_y;
-                        t.position_z = det.position_z;
+                        let a = depth_ema_alpha;
+                        let ema = |prev: Option<f32>, new: Option<f32>| match (prev, new) {
+                            (Some(p), Some(n)) => Some(a * n + (1.0 - a) * p),
+                            (None, n) => n,
+                            (p, None) => p,
+                        };
+                        t.distance = ema(t.distance, det.distance);
+                        t.position_x = ema(t.position_x, det.position_x);
+                        t.position_y = ema(t.position_y, det.position_y);
+                        t.position_z = ema(t.position_z, det.position_z);
                         t.ws_confidence = det.ws_confidence;
                     }
                     if det.recon_error.is_some() { t.recon_error = det.recon_error; }
@@ -750,6 +760,25 @@ mod tests {
         let other = active.iter().find(|x| x.display_id != 0).unwrap();
         assert!(other.display_id >= FIRST_EPHEMERAL_ID);
         assert!(other.shown_identity().is_none(), "loser reads anonymous");
+    }
+
+    #[test]
+    fn body_3d_is_ema_smoothed_when_pinhole_disabled() {
+        // Body-primary: tracker has no pinhole, so detection-provided torso 3D is
+        // EMA-smoothed across frames (A3). alpha defaults to 0.3.
+        let mut t = PersonTracker::new(); // pinhole = None
+        let mut d1 = det(0.3, 0.3, 0.7, 0.7);
+        d1[0].distance = Some(1.0);
+        d1[0].position_z = Some(1.0);
+        t.tick(&d1);
+        assert_eq!(t.active().next().unwrap().distance, Some(1.0), "first frame seeds raw");
+        let mut d2 = det(0.3, 0.3, 0.7, 0.7); // same bbox → IoU match
+        d2[0].distance = Some(2.0);
+        d2[0].position_z = Some(2.0);
+        t.tick(&d2);
+        let sm = t.active().next().unwrap().distance.unwrap();
+        // EMA: 0.3*2.0 + 0.7*1.0 = 1.3
+        assert!((sm - 1.3).abs() < 0.01, "expected EMA-smoothed 1.3, got {sm}");
     }
 
     #[test]
