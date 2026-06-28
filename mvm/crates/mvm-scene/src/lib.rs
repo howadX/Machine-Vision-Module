@@ -104,6 +104,13 @@ pub struct TrackedObject {
     pub age: u32,
     /// Consecutive frames missed (0 when currently visible).
     pub missed: u32,
+    /// Metric 3D position [x,y,z], set by the CLI from depth-anchoring (phase
+    /// 8.E.2) — `None` when no depth map / no metric anchor is available. The
+    /// tracker itself never sets this (it has no depth); it is filled in after
+    /// tracking.
+    pub pos_3d: Option<[f32; 3]>,
+    /// Confidence of `pos_3d` (0 = none → overlap-only in the scene-graph).
+    pub pos_conf: f32,
 }
 
 /// Lightweight greedy-IoU object tracker (phase 8.E filter B).
@@ -204,6 +211,8 @@ impl ObjectTracker {
                 score: d.score,
                 age: 1,
                 missed: 0,
+                pos_3d: None,
+                pos_conf: 0.0,
             });
         }
 

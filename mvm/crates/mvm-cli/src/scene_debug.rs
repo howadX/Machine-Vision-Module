@@ -157,7 +157,7 @@ mod tests {
     use super::*;
 
     fn obj(id: u32, class: &'static str, b: BBox) -> TrackedObject {
-        TrackedObject { id, class_name: class, bbox: b, score: 0.9, age: 3, missed: 0 }
+        TrackedObject { id, class_name: class, bbox: b, score: 0.9, age: 3, missed: 0, pos_3d: None, pos_conf: 0.0 }
     }
 
     #[test]

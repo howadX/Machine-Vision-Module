@@ -461,6 +461,7 @@ dependencies = [
  "chrono",
  "image",
  "mvm-core",
+ "mvm-depth",
  "mvm-detect",
  "mvm-emotion",
  "mvm-fusion",

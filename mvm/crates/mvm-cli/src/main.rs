@@ -210,6 +210,65 @@ fn parse_args() -> Args {
     args
 }
 
+/// Depth-anchor tracked objects to metric 3D (phase 8.E.2).
+///
+/// Depth-Anything outputs an affine-relative **inverse** depth (larger = nearer),
+/// so for a metric Z and depth value d, `Z·d ≈ k` is roughly constant. People
+/// supply the anchor: each has a metric torso-Z (body-primary) and a depth sample,
+/// giving `k_i = Z_i·d_i`; we take the median `k`. Each object's metric depth is
+/// then `Z = k / d_obj`, back-projected to 3D through the same pinhole people use,
+/// so objects land in the **same metric frame** → real person↔object `Near` edges.
+///
+/// With no person anchor this frame, objects are left depthless (overlap-only) —
+/// no fabricated distance.
+fn anchor_objects_depth(
+    objects: &mut [mvm_scene::TrackedObject],
+    depth: &mvm_depth::DepthMap,
+    tracker: &mvm_core::PersonTracker,
+    config: &mvm_core::Config,
+    frame: &image::DynamicImage,
+) {
+    const OBJ_DEPTH_CONF: f32 = 0.4; // below a person's ws_confidence (anchored, approx)
+    const Z_MIN: f32 = 0.3;
+    const Z_MAX: f32 = 8.0;
+
+    let mut ks: Vec<f32> = Vec::new();
+    for t in tracker.active() {
+        if let (Some(z), Some(d)) = (t.position_z, depth.median_in_bbox(&t.bbox)) {
+            if d > 1e-3 && z > 0.0 {
+                ks.push(z * d);
+            }
+        }
+    }
+    if ks.is_empty() {
+        for o in objects.iter_mut() {
+            o.pos_3d = None;
+            o.pos_conf = 0.0;
+        }
+        return;
+    }
+    ks.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let k = ks[ks.len() / 2];
+
+    let pinhole = mvm_core::space::Pinhole::from_config(config);
+    let (fw, fh) = (frame.width() as f32, frame.height() as f32);
+    for o in objects.iter_mut() {
+        match depth.median_in_bbox(&o.bbox) {
+            Some(d) if d > 1e-3 => {
+                let z = (k / d).clamp(Z_MIN, Z_MAX);
+                let cx = (o.bbox.x1 + o.bbox.x2) * 0.5 * fw;
+                let cy = (o.bbox.y1 + o.bbox.y2) * 0.5 * fh;
+                o.pos_3d = Some(pinhole.pixel_to_3d(cx, cy, z));
+                o.pos_conf = OBJ_DEPTH_CONF;
+            }
+            _ => {
+                o.pos_3d = None;
+                o.pos_conf = 0.0;
+            }
+        }
+    }
+}
+
 /// Build identity gallery from reference photos.
 /// Supports multi-angle: p_V_01.jpg, p_V_02.jpg, … all map to "Вадим".
 /// Uses YuNet to detect and crop faces before SFace embedding.
@@ -647,6 +706,30 @@ fn main() -> Result<()> {
         }
     }
 
+    // Monocular depth (phase 8.E.2, G₄ Environment) — heavy (~230ms), low cadence.
+    // Gives objects metric 3D by anchoring the relative depth map to a person's
+    // torso-Z. Gated on the model file like the scene detector.
+    let mut depth_estimator: Option<mvm_depth::DepthEstimator> = None;
+    let mut latest_depth: Option<mvm_depth::DepthMap> = None;
+    if args.native_camera {
+        let model_path = config.models_path.join("depth_anything_v2_small.onnx");
+        if model_path.exists() {
+            match mvm_depth::DepthEstimator::from_path(&model_path) {
+                Ok(d) => {
+                    eprintln!(
+                        "  depth: loading Depth-Anything-V2-Small ({}), cadence every {} frames",
+                        model_path.display(),
+                        config.depth_cadence
+                    );
+                    depth_estimator = Some(d);
+                }
+                Err(e) => eprintln!("  depth: load failed: {e} (depth disabled)"),
+            }
+        } else {
+            eprintln!("  depth: no model at {} — objects stay overlap-only", model_path.display());
+        }
+    }
+
     let mut tracker = mvm_core::PersonTracker::with_config(&config);
     // Body-primary (phase 8): 3D comes from the torso in `build_body_primary`
     // (set on each Detection), so disable the tracker's face-bbox pinhole — it
@@ -782,6 +865,18 @@ fn main() -> Result<()> {
             }
         }
 
+        // ── Monocular depth (phase 8.E.2) on a sparse cadence ───────────────
+        if let Some(est) = &mut depth_estimator {
+            if config.depth_cadence <= 1 || frame_count % config.depth_cadence as u64 == 0 {
+                if let Some(frame) = &tick_frame {
+                    match est.estimate(frame) {
+                        Ok(dm) => latest_depth = Some(dm),
+                        Err(e) => eprintln!("  depth: estimate error: {e}"),
+                    }
+                }
+            }
+        }
+
         // Bridge path: the frame lives on disk (Python --write-frame). Load it
         // once for A/B + enrichment. Native path already holds it in memory.
         if tick_frame.is_none() && native && (args.detect_ab || !detections.is_empty()) {
@@ -870,6 +965,13 @@ fn main() -> Result<()> {
 
         frame_count += 1;
         tracker.tick(&detections);
+
+        // ── Depth-anchoring (phase 8.E.2): give objects metric 3D ───────────
+        // Anchor the relative depth map to people's metric torso-Z, then place
+        // each object in the same metric frame so person↔object 3D Near edges form.
+        if let (Some(depth), Some(frame)) = (&latest_depth, &tick_frame) {
+            anchor_objects_depth(&mut latest_objects, depth, &tracker, &config, frame);
+        }
 
         if last_dump.elapsed() >= dump_interval {
             let elapsed = start.elapsed().as_secs_f64();

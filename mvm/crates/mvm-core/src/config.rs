@@ -102,6 +102,10 @@ pub struct Config {
     /// id is freed — higher = more persistent (a briefly-occluded couch keeps its
     /// id instead of respawning with age 1).
     pub object_track_timeout: u32,
+    /// Cadence for the monocular depth estimator (phase 8.E.2, G₄). Depth-Anything
+    /// is heavy (~230ms CPU) and the scene depth changes slowly, so run it every
+    /// Nth frame and reuse the last map. Much sparser than `object_cadence`.
+    pub depth_cadence: u32,
 }
 
 impl Default for Config {
@@ -130,6 +134,7 @@ impl Default for Config {
             object_score_thresh: 0.30, // phase 8.E filter A: low floor for small desk items; furniture gated per-class
             object_min_area: 0.0015, // phase 8.E filter D: ceiling-cam → small subtended angle
             object_track_timeout: 15, // phase 8.E filter B: persist ~2s across brief occlusion
+            depth_cadence: 30, // phase 8.E.2: heavy depth, run sparsely (~every 1.5s)
         }
     }
 }

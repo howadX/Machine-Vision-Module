@@ -16,6 +16,7 @@ mvm-emotion = { path = "../mvm-emotion" }
 mvm-identity = { path = "../mvm-identity" }
 mvm-posture = { path = "../mvm-posture" }
 mvm-scene = { path = "../mvm-scene" }
+mvm-depth = { path = "../mvm-depth" }
 mvm-pipeline = { path = "../mvm-pipeline" }
 mvm-fusion = { path = "../mvm-fusion" }
 anyhow = "1"

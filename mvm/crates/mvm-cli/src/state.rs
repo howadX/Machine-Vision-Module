@@ -113,6 +113,9 @@ struct JsonObject {
     score: f32,
     /// Frames this object has been tracked (temporal persistence).
     age: u32,
+    /// Metric 3D position from depth-anchoring (phase 8.E.2); absent without depth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pos: Option<[f32; 3]>,
     /// Normalised [x1,y1,x2,y2] in the original frame.
     bbox: [f32; 4],
 }
@@ -131,27 +134,33 @@ struct JsonFrame<'a> {
     relations: Vec<JsonRelation>,
 }
 
-/// Build scene-graph entities for tracked objects (phase 8.E).
+/// Build scene-graph entities for tracked objects (phase 8.E / 8.E.2).
 ///
-/// Objects carry no monocular depth prior here, so they get `pos_3d = [0,0,0]`
-/// with `pos_conf = 0`. `build_scene` only forms metric `Near` edges between nodes
-/// that both have depth, so objects participate via **2D bbox-overlap** relations
-/// (the "person ↔ held/nearby object" signal) without fabricating a distance.
-/// Depth-from-class-size or depth-inheritance is a future refinement.
+/// When depth-anchoring (phase 8.E.2) has set `pos_3d`, the object carries a metric
+/// position and `pos_conf > 0`, so `build_scene` forms real 3D `Near` edges with
+/// people and other objects. Without depth it falls back to `[0,0,0]`/`conf 0` —
+/// `build_scene` then only relates it by 2D bbox-overlap (the "person ↔ held
+/// object" signal), never fabricating a metric distance.
 fn object_entities(objects: &[TrackedObject]) -> Vec<mvm_core::types::Entity> {
     use mvm_core::types::{Entity, EntityKind};
     objects
         .iter()
-        .map(|o| Entity {
-            id: o.id,
-            kind: EntityKind::Object(o.class_name.to_string()),
-            bbox: o.bbox,
-            pos_3d: [0.0, 0.0, 0.0],
-            radius_m: 0.1,
-            pos_conf: 0.0,
-            identity: None,
-            emotion: None,
-            emotion_distribution: None,
+        .map(|o| {
+            let (pos_3d, pos_conf) = match o.pos_3d {
+                Some(p) => (p, o.pos_conf),
+                None => ([0.0, 0.0, 0.0], 0.0),
+            };
+            Entity {
+                id: o.id,
+                kind: EntityKind::Object(o.class_name.to_string()),
+                bbox: o.bbox,
+                pos_3d,
+                radius_m: 0.1,
+                pos_conf,
+                identity: None,
+                emotion: None,
+                emotion_distribution: None,
+            }
         })
         .collect()
 }
@@ -340,6 +349,7 @@ impl StateFile {
             class: o.class_name,
             score: o.score,
             age: o.age,
+            pos: o.pos_3d,
             bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
         }).collect();
 
@@ -765,6 +775,8 @@ mod tests {
             score,
             age: 1,
             missed: 0,
+            pos_3d: None,
+            pos_conf: 0.0,
         }
     }
 
