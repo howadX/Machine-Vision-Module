@@ -338,17 +338,26 @@ fn build_body_primary(
         det.plausibility =
             Some(if body.posture.plausibility < 14.3 { "normal" } else { "unusual" }.to_string());
         // Torso-3D (anatomically stable; robust to head turn): shoulders 11/12, hips 23/24.
+        // R (phantom filter, phase 8): only trust torso-3D when those landmarks are
+        // actually visible. BlazePose visibility = sigmoid(logit) ∈ [0,1]; visible
+        // joints sit ~0.9+. Hallucinated landmarks (occlusion / lying poses) score
+        // low and otherwise produce garbage 3D (negative-y / far phantoms) — gate
+        // them out (the body is still tracked, just without a position this frame).
         let lm = &body.landmarks_px;
-        let shoulder = ((lm[11][0] + lm[12][0]) * 0.5, (lm[11][1] + lm[12][1]) * 0.5);
-        let hip = ((lm[23][0] + lm[24][0]) * 0.5, (lm[23][1] + lm[24][1]) * 0.5);
-        if let Some((pos, z, ws)) =
-            mvm_core::space::torso_to_3d(&pinhole, shoulder, hip, config.torso_length_m)
-        {
-            det.distance = Some(z);
-            det.position_x = Some(pos[0]);
-            det.position_y = Some(pos[1]);
-            det.position_z = Some(pos[2]);
-            det.ws_confidence = Some(ws);
+        const TORSO_VIS_MIN: f32 = 0.5;
+        let torso_vis = lm[11][3].min(lm[12][3]).min(lm[23][3]).min(lm[24][3]);
+        if torso_vis >= TORSO_VIS_MIN {
+            let shoulder = ((lm[11][0] + lm[12][0]) * 0.5, (lm[11][1] + lm[12][1]) * 0.5);
+            let hip = ((lm[23][0] + lm[24][0]) * 0.5, (lm[23][1] + lm[24][1]) * 0.5);
+            if let Some((pos, z, ws)) =
+                mvm_core::space::torso_to_3d(&pinhole, shoulder, hip, config.torso_length_m)
+            {
+                det.distance = Some(z);
+                det.position_x = Some(pos[0]);
+                det.position_y = Some(pos[1]);
+                det.position_z = Some(pos[2]);
+                det.ws_confidence = Some(ws);
+            }
         }
         // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
         // emotion (optional). Keypoint-in-bbox ties the face to the body whose

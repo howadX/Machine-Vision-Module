@@ -52,6 +52,9 @@ pub struct PersonTracker {
     /// Minimum cosine similarity between SFace embeddings to re-link (phase 7.5).
     /// Embeddings are L2-normalised, so cosine == dot product.
     pub relink_cos_thresh: f32,
+    /// Max normalized bbox-center distance for the geometric re-link fallback
+    /// (A2-lite, phase 8) — keeps a moving anonymous body's ephemeral id stable.
+    pub relink_center_dist: f32,
 }
 
 /// Cosine similarity of two L2-normalised embeddings (== dot product).
@@ -80,6 +83,7 @@ impl PersonTracker {
             relink_window_frames: 90,
             relink_min_conf: 0.5,
             relink_cos_thresh: 0.5,
+            relink_center_dist: 0.15,
         }
     }
 
@@ -93,6 +97,7 @@ impl PersonTracker {
             relink_window_frames: cfg.relink_window_frames,
             relink_min_conf: cfg.relink_min_conf,
             relink_cos_thresh: cfg.relink_cos_thresh,
+            relink_center_dist: cfg.relink_center_dist,
             ..Self::new()
         }
     }
@@ -206,6 +211,30 @@ impl PersonTracker {
                                 best_id = Some(id);
                             }
                         }
+                    }
+                }
+            }
+
+            // Center-distance re-link (A2-lite, phase 8): last-resort geometric
+            // fallback for ANONYMOUS bodies (no embedding, no identity) whose IoU
+            // dropped under fast motion. Re-attach to the NEAREST recently-missed
+            // track within `relink_center_dist` so a moving anonymous person keeps
+            // its ephemeral id instead of churning a new one each gap.
+            if best_id.is_none() && det.embedding.is_none() && det.identity.is_none() {
+                let dcx = (det.bbox.x1 + det.bbox.x2) * 0.5;
+                let dcy = (det.bbox.y1 + det.bbox.y2) * 0.5;
+                let mut best_dist = self.relink_center_dist;
+                for (&id, t) in &self.tracks {
+                    if matched_ids.contains(&id) { continue; }
+                    if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
+                    // Only re-link to anonymous tracks (don't steal a user's track).
+                    if t.identity.is_some() { continue; }
+                    let tcx = (t.bbox.x1 + t.bbox.x2) * 0.5;
+                    let tcy = (t.bbox.y1 + t.bbox.y2) * 0.5;
+                    let d = ((dcx - tcx).powi(2) + (dcy - tcy).powi(2)).sqrt();
+                    if d < best_dist {
+                        best_dist = d;
+                        best_id = Some(id);
                     }
                 }
             }
@@ -760,6 +789,27 @@ mod tests {
         let other = active.iter().find(|x| x.display_id != 0).unwrap();
         assert!(other.display_id >= FIRST_EPHEMERAL_ID);
         assert!(other.shown_identity().is_none(), "loser reads anonymous");
+    }
+
+    #[test]
+    fn anonymous_body_relinks_by_center_under_fast_motion() {
+        // Anonymous body (no identity/embedding) jumps to a disjoint bbox (IoU=0)
+        // but its center moved < relink_center_dist → re-link, not a new id (A2-lite).
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.30, 0.30, 0.38, 0.50)); // center (0.34,0.40), id 10
+        let id0 = t.active().next().unwrap().id;
+        t.tick(&det(0.42, 0.30, 0.50, 0.50)); // disjoint x (IoU 0), center (0.46,0.40) → 0.12 away
+        assert_eq!(t.track_count(), 1, "center re-link should reuse the track");
+        assert_eq!(t.active().next().unwrap().id, id0, "ephemeral id stays stable");
+    }
+
+    #[test]
+    fn center_relink_skips_when_too_far() {
+        // Disjoint AND far (> relink_center_dist) → genuinely a new person/track.
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.10, 0.10, 0.18, 0.30)); // center (0.14,0.20)
+        t.tick(&det(0.70, 0.70, 0.78, 0.90)); // center (0.74,0.80) → ~0.85 away
+        assert_eq!(t.track_count(), 2, "far jump must spawn a new track, not re-link");
     }
 
     #[test]

@@ -65,6 +65,12 @@ pub struct Config {
     /// Minimum cosine similarity between SFace embeddings to re-link (phase 7.5).
     /// Replaces label-only re-link → two distinct people never merge into one id.
     pub relink_cos_thresh: f32,
+    /// Max normalized bbox-center distance for the geometric re-link fallback
+    /// (A2-lite, phase 8): an ANONYMOUS body (no embedding/identity) whose IoU
+    /// dropped under fast motion re-attaches to the nearest recently-missed track
+    /// within this distance, keeping its ephemeral id stable instead of spawning
+    /// a new one. Centers are normalized [0..1]; 0.15 ≈ 15% of frame.
+    pub relink_center_dist: f32,
     /// Absolute SFace cosine above which an identity label is accepted (phase 7.5,
     /// fixes #5). Calibrated to the SFace cosine scale, NOT the old ArcFace one
     /// (OpenCV's canonical SFace threshold is 0.363). **Live-validated 2026-06-25
@@ -96,6 +102,7 @@ impl Default for Config {
             relink_window_frames: 90,
             relink_min_conf: 0.5,
             relink_cos_thresh: 0.5,
+            relink_center_dist: 0.15, // A2-lite: anonymous re-link by torso/bbox center
             identity_abs_thresh: 0.45, // SFace cosine scale (was 0.8 ArcFace-era)
             identity_margin_thresh: 0.1,
         }
