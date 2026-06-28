@@ -5,6 +5,7 @@ members = [
     "crates/mvm-identity",
     "crates/mvm-emotion",
     "crates/mvm-posture",
+    "crates/mvm-scene",
     "crates/mvm-fusion",
     "crates/mvm-pipeline",
     "crates/mvm-cli",

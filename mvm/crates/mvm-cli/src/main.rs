@@ -606,6 +606,34 @@ fn main() -> Result<()> {
         }
     }
 
+    // Scene objects (phase 8.E, G₂ Scene group) — heavy YOLO detector on the
+    // pure-Rust --native-camera path only. Gated on the model file: if the
+    // bootstrap weights aren't downloaded yet, object nodes are simply disabled
+    // (chain still runs, like a missing optional detector).
+    let mut scene_detector: Option<mvm_scene::YoloDetector> = None;
+    let mut latest_objects: Vec<mvm_scene::ObjectDetection> = Vec::new();
+    if args.native_camera {
+        let model_path = config.models_path.join("yolo_object_detect.onnx");
+        if model_path.exists() {
+            match mvm_scene::YoloDetector::from_path(&model_path) {
+                Ok(d) => {
+                    eprintln!(
+                        "  scene: loading YOLO object detector ({}), cadence every {} frames",
+                        model_path.display(),
+                        config.object_cadence
+                    );
+                    scene_detector = Some(d);
+                }
+                Err(e) => eprintln!("  scene: YOLO load failed: {e} (object nodes disabled)"),
+            }
+        } else {
+            eprintln!(
+                "  scene: no YOLO model at {} — object nodes disabled (download bootstrap weights)",
+                model_path.display()
+            );
+        }
+    }
+
     let mut tracker = mvm_core::PersonTracker::with_config(&config);
     // Body-primary (phase 8): 3D comes from the torso in `build_body_primary`
     // (set on each Detection), so disable the tracker's face-bbox pinhole — it
@@ -699,6 +727,21 @@ fn main() -> Result<()> {
                     &mut emotion_debug_entries,
                     &prev_tracks,
                 );
+            }
+        }
+
+        // ── Scene objects (phase 8.E) on a cadence ──────────────────────────
+        // YOLO is the heaviest detector (~39ms); run it every Nth frame and
+        // reuse `latest_objects` in between (decision 8.0.1: cadence in the
+        // synchronous loop). On non-cadence frames the previous objects persist.
+        if let Some(det) = &mut scene_detector {
+            if config.object_cadence <= 1 || frame_count % config.object_cadence as u64 == 0 {
+                if let Some(frame) = &tick_frame {
+                    match det.detect(frame) {
+                        Ok(objs) => latest_objects = objs,
+                        Err(e) => eprintln!("  scene: detect error: {e}"),
+                    }
+                }
             }
         }
 
@@ -812,7 +855,7 @@ fn main() -> Result<()> {
                     if ab_cov.b_only == 0 { "covers" } else { "MISSES some" },
                 );
             }
-            state_file.write(&tracker, fps)?;
+            state_file.write(&tracker, fps, &latest_objects)?;
             if args.emotion_debug {
                 state_file.dump_table_debug(&tracker, fps, &emotion_debug_entries);
             } else {
@@ -822,7 +865,7 @@ fn main() -> Result<()> {
                 let line = if args.emotion_debug {
                     state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
                 } else {
-                    state_file.to_json_line(&tracker, fps)
+                    state_file.to_json_line(&tracker, fps, &latest_objects)
                 };
                 println!("{line}");
             }

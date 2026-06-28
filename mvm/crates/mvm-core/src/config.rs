@@ -81,6 +81,12 @@ pub struct Config {
     /// Minimum top1−top2 cosine margin to accept a label when the gallery has ≥2
     /// people (phase 7.5). Guards against ambiguous near-ties.
     pub identity_margin_thresh: f32,
+    /// Cadence for the heavy object detector (phase 8.E, G₂ Scene group): run
+    /// YOLO every Nth frame, reusing the last result in between. YOLO (~39ms) is
+    /// heavier than the ~12ms human chain, so a cadence keeps the hot loop fast
+    /// while still refreshing scene context. 1 = every frame. Decision 8.0.1:
+    /// cadence lives in the synchronous loop (the main throughput lever), no mesh.
+    pub object_cadence: u32,
 }
 
 impl Default for Config {
@@ -105,6 +111,7 @@ impl Default for Config {
             relink_center_dist: 0.15, // A2-lite: anonymous re-link by torso/bbox center
             identity_abs_thresh: 0.45, // SFace cosine scale (was 0.8 ArcFace-era)
             identity_margin_thresh: 0.1,
+            object_cadence: 3, // phase 8.E: YOLO every 3rd frame (sync-loop cadence)
         }
     }
 }

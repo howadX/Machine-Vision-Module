@@ -1,0 +1,20 @@
+[package]
+name = "mvm-scene"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MVM scene objects — YOLO (ultralytics) ONNX 80-class detector → object scene-graph nodes"
+
+[features]
+default = []
+embed-model = []
+
+[dependencies]
+mvm-core = { path = "../mvm-core" }
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-22"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ndarray = "0.17"
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -467,6 +467,7 @@ dependencies = [
  "mvm-identity",
  "mvm-pipeline",
  "mvm-posture",
+ "mvm-scene",
  "serde",
  "serde_json",
 ]
@@ -545,6 +546,18 @@ dependencies = [
  "mvm-pipeline",
  "ndarray",
  "ort",
+]
+
+[[package]]
+name = "mvm-scene"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "mvm-core",
+ "ndarray",
+ "ort",
+ "tempfile",
 ]
 
 [[package]]

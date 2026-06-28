@@ -6,9 +6,15 @@
 use anyhow::Result;
 use chrono::{FixedOffset, Local};
 use mvm_core::PersonTracker;
+use mvm_scene::ObjectDetection;
 use serde::Serialize;
 use std::fs;
 use std::path::PathBuf;
+
+/// Scene-graph id base for object nodes (phase 8.E). Person `display_id`s are
+/// 0–9 (reserved users) and ≥10 (ephemeral bodies); objects sit far above to
+/// guarantee no collision in zones/relations.
+const OBJECT_ID_BASE: u32 = 10_000;
 
 /// Per-face emotion A/B comparison captured before confidence-based fallback.
 pub struct EmotionDebugEntry {
@@ -102,15 +108,55 @@ struct JsonRelation {
     kind: &'static str,
 }
 
+/// One object node in the scene-graph JSON (phase 8.E, G₂ Scene group).
+#[derive(Serialize)]
+struct JsonObject {
+    /// Scene-graph id (OBJECT_ID_BASE + index) — matches ids in zones/relations.
+    id: u32,
+    class: &'static str,
+    score: f32,
+    /// Normalised [x1,y1,x2,y2] in the original frame.
+    bbox: [f32; 4],
+}
+
 #[derive(Serialize)]
 struct JsonFrame<'a> {
     ts: String,
     fps: f64,
     status: &'a str,
     faces: Vec<JsonFace>,
+    /// Object detections (YOLO 80-class) participating in the scene-graph (8.E).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    objects: Vec<JsonObject>,
     /// Relational scene-graph: zones (connected components) and edges (phase 6.4).
     zones: Vec<Vec<u32>>,
     relations: Vec<JsonRelation>,
+}
+
+/// Build scene-graph entities for detected objects (phase 8.E).
+///
+/// Objects carry no monocular depth prior here, so they get `pos_3d = [0,0,0]`
+/// with `pos_conf = 0` — identical to the person-without-3D fallback. They thus
+/// participate in **2D bbox-overlap** relations (the "person ↔ held/nearby
+/// object" signal) without fabricating a metric distance. Depth-from-class-size
+/// or depth-inheritance from an overlapping person is a future refinement.
+fn object_entities(objects: &[ObjectDetection]) -> Vec<mvm_core::types::Entity> {
+    use mvm_core::types::{Entity, EntityKind};
+    objects
+        .iter()
+        .enumerate()
+        .map(|(i, o)| Entity {
+            id: OBJECT_ID_BASE + i as u32,
+            kind: EntityKind::Object(o.class_name.to_string()),
+            bbox: o.bbox,
+            pos_3d: [0.0, 0.0, 0.0],
+            radius_m: 0.1,
+            pos_conf: 0.0,
+            identity: None,
+            emotion: None,
+            emotion_distribution: None,
+        })
+        .collect()
 }
 
 pub struct StateFile {
@@ -136,7 +182,7 @@ impl StateFile {
     }
 
     /// Write current state to file.
-    pub fn write(&self, tracker: &PersonTracker, fps: f64) -> Result<()> {
+    pub fn write(&self, tracker: &PersonTracker, fps: f64, objects: &[ObjectDetection]) -> Result<()> {
         let now = Local::now().with_timezone(&self.tz);
         let timestamp = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
@@ -223,6 +269,27 @@ impl StateFile {
             lines.push("- Persons visible: none".to_string());
         }
 
+        // Objects (phase 8.E, G₂ Scene group): scene context beyond the person.
+        if objects.is_empty() {
+            lines.push("- Objects visible: none".to_string());
+        } else {
+            let summary: Vec<String> = objects
+                .iter()
+                .map(|o| format!("{} ({:.2})", o.class_name, o.score))
+                .collect();
+            lines.push(format!("- Objects visible: {}", summary.join(", ")));
+            for (i, o) in objects.iter().enumerate() {
+                lines.push(format!("- Object_{}:", i + 1));
+                lines.push(format!("  - id: {}", OBJECT_ID_BASE + i as u32));
+                lines.push(format!("  - class: {}", o.class_name));
+                lines.push(format!("  - score: {:.2}", o.score));
+                lines.push(format!(
+                    "  - bbox: {:.2},{:.2},{:.2},{:.2}",
+                    o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2
+                ));
+            }
+        }
+
         lines.push(format!("- Status: {status}"));
         lines.push(String::new());
 
@@ -236,7 +303,7 @@ impl StateFile {
 
     /// Serialise current tracker state to a single JSON line.
     /// Includes relational scene-graph (zones + edges) from mvm-fusion (phase 6.4).
-    pub fn to_json_line(&self, tracker: &PersonTracker, fps: f64) -> String {
+    pub fn to_json_line(&self, tracker: &PersonTracker, fps: f64, objects: &[ObjectDetection]) -> String {
         use mvm_core::types::{Entity, EntityKind};
 
         let now = Local::now().with_timezone(&self.tz);
@@ -248,7 +315,7 @@ impl StateFile {
 
         // Build entities for the scene-graph. Entities without a 3D position use (0,0,0)
         // with pos_conf=0 so they still participate in 2D overlap relations.
-        let entities: Vec<Entity> = active.iter().map(|t| {
+        let mut entities: Vec<Entity> = active.iter().map(|t| {
             let pos_3d = match (t.position_x, t.position_y, t.position_z) {
                 (Some(x), Some(y), Some(z)) => [x, y, z],
                 _ => [0.0, 0.0, 0.0],
@@ -264,6 +331,17 @@ impl StateFile {
                 emotion: t.emotion.clone(),
                 emotion_distribution: t.emotion_distribution,
             }
+        }).collect();
+
+        // Object nodes (phase 8.E): fed into the same object-agnostic graph so
+        // person↔object overlap relations ("context outward from the human") emerge.
+        entities.extend(object_entities(objects));
+
+        let json_objects: Vec<JsonObject> = objects.iter().enumerate().map(|(i, o)| JsonObject {
+            id: OBJECT_ID_BASE + i as u32,
+            class: o.class_name,
+            score: o.score,
+            bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
         }).collect();
 
         let scene = mvm_fusion::build_scene(entities);
@@ -298,7 +376,7 @@ impl StateFile {
             }
         }).collect();
 
-        let frame = JsonFrame { ts, fps, status, faces, zones: scene.zones, relations };
+        let frame = JsonFrame { ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
     }
 
@@ -436,7 +514,7 @@ mod tests {
         let path = temp_state_path("test_empty.md");
         let sf = StateFile::open_at(path.clone()).unwrap();
         let tracker = PersonTracker::new();
-        sf.write(&tracker, 30.0).unwrap();
+        sf.write(&tracker, 30.0, &[]).unwrap();
 
         let content = read_state(&path);
         assert!(content.contains("- Status: empty"));
@@ -476,7 +554,7 @@ mod tests {
             emotion_distribution: None, embedding: None,
         }]);
 
-        sf.write(&tracker, 25.5).unwrap();
+        sf.write(&tracker, 25.5, &[]).unwrap();
 
         let content = read_state(&path);
         assert!(content.contains("- Status: occupied"));
@@ -496,7 +574,7 @@ mod tests {
         let mut tracker = PersonTracker::new();
         tracker.tick(&[det(0.2, 0.3, 0.5, 0.7)]);
 
-        sf.write(&tracker, 30.0).unwrap();
+        sf.write(&tracker, 30.0, &[]).unwrap();
 
         let content = read_state(&path);
         assert!(content.contains("- Persons visible: unknown"));
@@ -560,7 +638,7 @@ mod tests {
             },
         ]);
 
-        sf.write(&tracker, 29.9).unwrap();
+        sf.write(&tracker, 29.9, &[]).unwrap();
 
         let content = read_state(&path);
         assert!(content.contains("- Face count: 2"));
@@ -576,7 +654,7 @@ mod tests {
         let path = temp_state_path("test_ts.md");
         let sf = StateFile::open_at(path.clone()).unwrap();
         let tracker = PersonTracker::new();
-        sf.write(&tracker, 0.0).unwrap();
+        sf.write(&tracker, 0.0, &[]).unwrap();
 
         let content = read_state(&path);
         let ts_line = content
@@ -597,7 +675,7 @@ mod tests {
             .join("test_nested.md");
         let sf = StateFile::open_at(path.clone()).unwrap();
         let tracker = PersonTracker::new();
-        sf.write(&tracker, 0.0).unwrap();
+        sf.write(&tracker, 0.0, &[]).unwrap();
         assert!(path.exists());
         let _ = std::fs::remove_dir_all(
             path.parent()
@@ -614,7 +692,7 @@ mod tests {
         let path = temp_state_path("test_header.md");
         let sf = StateFile::open_at(path.clone()).unwrap();
         let tracker = PersonTracker::new();
-        sf.write(&tracker, 15.0).unwrap();
+        sf.write(&tracker, 15.0, &[]).unwrap();
 
         let content = read_state(&path);
         assert!(content.contains("Camera: /dev/video0"));
@@ -624,7 +702,7 @@ mod tests {
     fn json_line_is_valid_json() {
         let sf = StateFile::open_at(temp_state_path("test_json.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 30.0);
+        let line = sf.to_json_line(&tracker, 30.0, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).expect("must be valid JSON");
         assert!(v["ts"].is_string());
         assert!(v["fps"].is_number());
@@ -654,7 +732,7 @@ mod tests {
             plausibility: None,
             emotion_distribution: None, embedding: None,
         }]);
-        let line = sf.to_json_line(&tracker, 29.9);
+        let line = sf.to_json_line(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let face = &v["faces"][0];
         assert_eq!(face["identity"], "Вадим");
@@ -672,10 +750,77 @@ mod tests {
     fn json_line_empty_room() {
         let sf = StateFile::open_at(temp_state_path("test_json_empty.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 0.0);
+        let line = sf.to_json_line(&tracker, 0.0, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["status"], "empty");
         assert_eq!(v["faces"].as_array().unwrap().len(), 0);
+    }
+
+    // ── Object scene-nodes (phase 8.E) ──────────────────────────────────────
+
+    fn obj(class_id: usize, class_name: &'static str, x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> ObjectDetection {
+        ObjectDetection {
+            class_id,
+            class_name,
+            bbox: mvm_core::BBox { x1, y1, x2, y2 },
+            score,
+        }
+    }
+
+    #[test]
+    fn json_line_lists_object_nodes() {
+        let sf = StateFile::open_at(temp_state_path("test_json_obj.md")).unwrap();
+        let tracker = PersonTracker::new();
+        let objects = vec![obj(41, "cup", 0.4, 0.4, 0.5, 0.55, 0.81)];
+        let line = sf.to_json_line(&tracker, 30.0, &objects);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let objs = v["objects"].as_array().expect("objects array present");
+        assert_eq!(objs.len(), 1);
+        assert_eq!(objs[0]["class"], "cup");
+        assert_eq!(objs[0]["id"].as_u64().unwrap(), OBJECT_ID_BASE as u64);
+        assert!((objs[0]["score"].as_f64().unwrap() - 0.81).abs() < 0.01);
+    }
+
+    #[test]
+    fn json_line_omits_objects_when_none() {
+        let sf = StateFile::open_at(temp_state_path("test_json_noobj.md")).unwrap();
+        let tracker = PersonTracker::new();
+        let line = sf.to_json_line(&tracker, 30.0, &[]);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        // skip_serializing_if = empty → field omitted entirely.
+        assert!(v["objects"].is_null());
+    }
+
+    #[test]
+    fn person_overlapping_object_gets_relation() {
+        let sf = StateFile::open_at(temp_state_path("test_json_rel.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        // Anonymous body → ephemeral id 10 (FIRST_EPHEMERAL_ID).
+        tracker.tick(&[det(0.3, 0.3, 0.6, 0.8)]);
+        let pid = tracker.active().next().unwrap().display_id;
+        // A cup whose bbox overlaps the body bbox → "overlapping" edge (no 3D needed).
+        let objects = vec![obj(41, "cup", 0.4, 0.4, 0.55, 0.6, 0.8)];
+        let line = sf.to_json_line(&tracker, 30.0, &objects);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let rels = v["relations"].as_array().unwrap();
+        let edge = rels.iter().find(|r| {
+            let a = r["a"].as_u64().unwrap() as u32;
+            let b = r["b"].as_u64().unwrap() as u32;
+            (a == pid && b == OBJECT_ID_BASE) || (a == OBJECT_ID_BASE && b == pid)
+        });
+        assert!(edge.is_some(), "expected person↔object overlap edge, got {rels:?}");
+        assert_eq!(edge.unwrap()["kind"], "overlapping");
+    }
+
+    #[test]
+    fn markdown_lists_objects() {
+        let sf = StateFile::open_at(temp_state_path("test_md_obj.md")).unwrap();
+        let tracker = PersonTracker::new();
+        let objects = vec![obj(56, "chair", 0.1, 0.1, 0.4, 0.9, 0.77)];
+        sf.write(&tracker, 30.0, &objects).unwrap();
+        let content = read_state(&sf.path);
+        assert!(content.contains("Objects visible: chair"), "got:\n{content}");
+        assert!(content.contains("class: chair"));
     }
 
     #[test]
