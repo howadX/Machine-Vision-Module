@@ -618,7 +618,7 @@ fn main() -> Result<()> {
     // bootstrap weights aren't downloaded yet, object nodes are simply disabled
     // (chain still runs, like a missing optional detector).
     let mut scene_detector: Option<mvm_scene::YoloDetector> = None;
-    let mut object_tracker = mvm_scene::ObjectTracker::new();
+    let mut object_tracker = mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5);
     let mut latest_objects: Vec<mvm_scene::TrackedObject> = Vec::new();
     if args.native_camera {
         let model_path = config.models_path.join("yolo_object_detect.onnx");
@@ -758,6 +758,15 @@ fn main() -> Result<()> {
                             let filtered: Vec<_> = objs
                                 .into_iter()
                                 .filter(|o| mvm_scene::is_relevant(o.class_name))
+                                .filter(|o| {
+                                    // Filter A (per-class): small objects keep the
+                                    // low floor; flicker-prone furniture needs more.
+                                    o.score
+                                        >= mvm_scene::class_score_threshold(
+                                            o.class_name,
+                                            config.object_score_thresh,
+                                        )
+                                })
                                 .filter(|o| {
                                     let area = (o.bbox.x2 - o.bbox.x1) * (o.bbox.y2 - o.bbox.y1);
                                     area >= config.object_min_area

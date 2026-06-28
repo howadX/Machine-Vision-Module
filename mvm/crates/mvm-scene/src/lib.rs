@@ -72,6 +72,26 @@ pub fn is_relevant(class_name: &str) -> bool {
     RELEVANT_CLASSES.contains(&class_name)
 }
 
+/// Large, visually-similar furniture prone to low-confidence flicker
+/// (couch ↔ bed ↔ chair confusion). These need a higher score bar than small
+/// interaction objects, which a single global threshold can't express.
+const HIGH_BAR_CLASSES: &[&str] = &[
+    "couch", "bed", "chair", "dining table", "potted plant", "tv",
+    "refrigerator", "oven", "microwave", "sink", "toaster",
+];
+
+/// Per-class minimum score (phase 8.E filter A, per-class). Small interaction
+/// objects (cup, keyboard, mouse, phone…) keep the low `base` floor so they
+/// survive a ceiling-angle / partial view; flicker-prone large furniture is held
+/// to a higher bar. `base` is `Config.object_score_thresh`.
+pub fn class_score_threshold(class_name: &str, base: f32) -> f32 {
+    if HIGH_BAR_CLASSES.contains(&class_name) {
+        base.max(0.50)
+    } else {
+        base
+    }
+}
+
 /// A temporally-tracked object: the same physical object keeps `id` across frames.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackedObject {
@@ -646,6 +666,18 @@ mod tests {
         assert!(is_relevant("cup") && is_relevant("laptop") && is_relevant("chair"));
         assert!(!is_relevant("person"), "person owned by body-primary tracker");
         assert!(!is_relevant("car") && !is_relevant("dog") && !is_relevant("banana"));
+    }
+
+    #[test]
+    fn class_score_threshold_raises_bar_for_flicker_furniture() {
+        // Small interaction objects keep the low base floor.
+        assert!((class_score_threshold("cup", 0.35) - 0.35).abs() < 1e-6);
+        assert!((class_score_threshold("keyboard", 0.35) - 0.35).abs() < 1e-6);
+        // Flicker-prone furniture is held to ≥0.50.
+        assert!((class_score_threshold("couch", 0.35) - 0.50).abs() < 1e-6);
+        assert!((class_score_threshold("bed", 0.35) - 0.50).abs() < 1e-6);
+        // A base above the furniture bar wins (never lowers it).
+        assert!((class_score_threshold("couch", 0.60) - 0.60).abs() < 1e-6);
     }
 
     // ── object tracker (filter B) ──────────────────────────────────────────
