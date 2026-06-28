@@ -42,6 +42,14 @@ pub struct Config {
     /// ordinal/relative signal — the primary product — unaffected. The proper
     /// tilt fix is the landmark-calibration upgrade path (future phase).
     pub face_height_m_yunet: f32,
+    /// Effective torso length in metres (shoulder-midpoint → hip-midpoint), the
+    /// depth-from-known-size prior for **body-primary** 3D (phase 8, FRONTIER).
+    /// Anatomically ≈0.5 m; like `face_height_m_yunet` this is an *effective*
+    /// value that absorbs the ~45° ceiling tilt + BlazePose landmark convention
+    /// → recalibrate by tape on this mount. Torso is anatomically stabler than
+    /// the face bbox (doesn't jump when the head turns), so it is the preferred
+    /// 3D source once the entity is the body. Interim anatomical default 0.5.
+    pub torso_length_m: f32,
     /// EMA alpha for depth smoothing. Higher = faster response; lower = smoother.
     pub depth_ema_alpha: f32,
     /// Forgetting factor (λ < 1) for temporal emotion PoE fusion. Lower = forgets
@@ -82,6 +90,7 @@ impl Default for Config {
             fx_ratio: 0.64,
             face_height_m: 0.44, // empirical, 2026-06-25 (was 0.19 population frontal)
             face_height_m_yunet: 0.32, // calibrated 2026-06-25 (YuNet, tilt-balanced)
+            torso_length_m: 0.5, // anatomical prior (phase 8 body-primary); recalibrate by tape
             depth_ema_alpha: 0.3,
             emotion_forget_lambda: 0.7,
             relink_window_frames: 90,

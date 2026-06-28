@@ -130,6 +130,41 @@ pub fn face_bbox_to_3d(
     Some((pos, z, ws_confidence))
 }
 
+/// Compute native 3D position for a **body** track from torso landmarks
+/// (phase 8 body-primary, FRONTIER). Depth-from-known-size on the torso length
+/// (shoulder-midpoint → hip-midpoint), which is anatomically stabler than the
+/// face bbox — it does not jump when the head turns away.
+///
+/// Returns `(pos_3d, distance, ws_confidence)` or `None` if depth is implausible.
+///
+/// - `shoulder_mid` / `hip_mid` — pixel coordinates (x, y) of the shoulder and
+///   hip midpoints (BlazePose lm 11/12 and 23/24), in original-image pixels.
+/// - `real_torso_m` — effective torso length prior (`Config::torso_length_m`).
+///
+/// Pixel torso length is the full euclidean distance (robust to torso lean), and
+/// the back-projected centre is the midpoint of the two — so a person leaning or
+/// turned still gets a stable depth as long as the torso is visible.
+pub fn torso_to_3d(
+    pinhole: &Pinhole,
+    shoulder_mid: (f32, f32),
+    hip_mid: (f32, f32),
+    real_torso_m: f32,
+) -> Option<([f32; 3], f32, f32)> {
+    let dx = hip_mid.0 - shoulder_mid.0;
+    let dy = hip_mid.1 - shoulder_mid.1;
+    let pixel_len = (dx * dx + dy * dy).sqrt();
+
+    let center_x = (shoulder_mid.0 + hip_mid.0) * 0.5;
+    let center_y = (shoulder_mid.1 + hip_mid.1) * 0.5;
+
+    let z = pinhole.distance_from_size(pixel_len, real_torso_m)?;
+    let pos = pinhole.pixel_to_3d(center_x, center_y, z);
+
+    let ws_confidence = (1.0 - (z - DEPTH_MIN_M) / (DEPTH_MAX_M - DEPTH_MIN_M)).clamp(0.0, 1.0);
+
+    Some((pos, z, ws_confidence))
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -138,6 +173,42 @@ mod tests {
 
     fn test_pinhole() -> Pinhole {
         Pinhole { fx: 410.0, fy: 410.0, cx_px: 320.0, cy_px: 240.0, width: 640.0, height: 480.0 }
+    }
+
+    /// Torso depth: vertical torso of the right pixel length → expected z.
+    #[test]
+    fn torso_to_3d_vertical_gives_expected_depth() {
+        let ph = test_pinhole();
+        // real torso 0.5 m, want z=1.0 → pixel_len = fx·real/z = 410·0.5/1.0 = 205px
+        let shoulder = (320.0, 140.0);
+        let hip = (320.0, 345.0); // 205px below → vertical torso length 205
+        let (pos, z, conf) = super::torso_to_3d(&ph, shoulder, hip, 0.5)
+            .expect("torso depth should be in range");
+        assert!((z - 1.0).abs() < 0.02, "z={z:.4} expected ~1.0m");
+        assert!(pos[0].abs() < 1e-3, "centred torso → x≈0: {}", pos[0]);
+        assert!(conf > 0.0, "ws_confidence should be positive at 1m");
+    }
+
+    /// Torso length is full euclidean (lean-robust): a tilted torso of the same
+    /// span gives the same depth as a vertical one.
+    #[test]
+    fn torso_to_3d_lean_uses_euclidean_length() {
+        let ph = test_pinhole();
+        // diagonal torso, same 205px length: dx=123, dy=164 → sqrt = 205
+        let shoulder = (320.0, 140.0);
+        let hip = (443.0, 304.0);
+        let (_, z, _) = super::torso_to_3d(&ph, shoulder, hip, 0.5)
+            .expect("torso depth should be in range");
+        assert!((z - 1.0).abs() < 0.02, "leaning torso z={z:.4} expected ~1.0m");
+    }
+
+    /// Implausibly small torso (person too far / bad landmarks) → None.
+    #[test]
+    fn torso_to_3d_rejects_implausible() {
+        let ph = test_pinhole();
+        // 10px torso → z = 410·0.5/10 = 20.5m, far outside DEPTH_MAX_M → None
+        let r = super::torso_to_3d(&ph, (320.0, 235.0), (320.0, 245.0), 0.5);
+        assert!(r.is_none(), "20m depth must be rejected as uncalibrated");
     }
 
     /// Basic pinhole formula: z = fx · real / pixel.

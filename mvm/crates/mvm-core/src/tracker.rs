@@ -13,14 +13,20 @@
 //! This replaces the previous EMA smoothing. Unlike EMA, missed-frame bboxes
 //! now move rather than stagnate, so IoU with re-appearing detections stays high.
 
-use std::collections::HashMap;
-use crate::types::{BBox, Detection, PersonTrack};
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+use crate::types::{BBox, Detection, PersonTrack, FIRST_EPHEMERAL_ID};
 use crate::kalman::KalmanBBox;
 use crate::space::{Pinhole, DepthEma, face_bbox_to_3d};
 
 /// Multi-person tracker — the temporal fusion layer of MVM.
 pub struct PersonTracker {
     next_id: u32,
+    /// Freed ephemeral ids available for reuse (smallest first) — bodies release
+    /// their id on exit so anonymous ids stay compact (phase 8 identity model).
+    free_ids: BinaryHeap<Reverse<u32>>,
+    /// Reserved id per recognised gallery user (name → id < FIRST_EPHEMERAL_ID).
+    user_ids: HashMap<String, u32>,
     tracks: HashMap<u32, PersonTrack>,
     pub timeout_frames: u64,
     /// Frames of no detection before emotion confidence starts decaying.
@@ -59,7 +65,9 @@ impl PersonTracker {
     /// Create tracker without 3D capability (tests, headless use).
     pub fn new() -> Self {
         Self {
-            next_id: 0,
+            next_id: FIRST_EPHEMERAL_ID,
+            free_ids: BinaryHeap::new(),
+            user_ids: HashMap::new(),
             tracks: HashMap::new(),
             timeout_frames: 1800,
             decay_start_frames: 5,
@@ -86,6 +94,30 @@ impl PersonTracker {
             relink_min_conf: cfg.relink_min_conf,
             relink_cos_thresh: cfg.relink_cos_thresh,
             ..Self::new()
+        }
+    }
+
+    /// Register a gallery user, assigning the next reserved id (0, 1, 2 …). A
+    /// recognised body adopts this id while it holds the user (phase 8). Idempotent.
+    pub fn register_user(&mut self, name: &str) -> u32 {
+        if let Some(&id) = self.user_ids.get(name) {
+            return id;
+        }
+        let id = self.user_ids.len() as u32;
+        debug_assert!(id < FIRST_EPHEMERAL_ID, "more than {FIRST_EPHEMERAL_ID} gallery users");
+        self.user_ids.insert(name.to_string(), id);
+        id
+    }
+
+    /// Allocate an ephemeral track id: reuse the smallest freed id, else bump.
+    fn alloc_id(&mut self) -> u32 {
+        match self.free_ids.pop() {
+            Some(Reverse(id)) => id,
+            None => {
+                let id = self.next_id;
+                self.next_id += 1;
+                id
+            }
         }
     }
 
@@ -281,7 +313,7 @@ impl PersonTracker {
                         let b = det.bbox;
                         let bbox_cx = (b.x1 + b.x2) * 0.5;
                         let bbox_cy = (b.y1 + b.y2) * 0.5;
-                        if let Some((pos, z, ws_conf)) =
+                        if let Some((_pos, z, ws_conf)) =
                             face_bbox_to_3d(&ph, b.y1, b.y2, bbox_cx, bbox_cy, face_height_m)
                         {
                             let pos_s = ph.pixel_to_3d(
@@ -297,8 +329,7 @@ impl PersonTracker {
                         (None, None, None, None, None, None)
                     };
 
-                let id = self.next_id;
-                self.next_id += 1;
+                let id = self.alloc_id();
                 // Seed emotion from the distribution when present, so the label is
                 // consistent with the vector the temporal fusion will accumulate.
                 let (seed_emotion, seed_emotion_conf) = match det.emotion_distribution {
@@ -310,6 +341,7 @@ impl PersonTracker {
                 };
                 self.tracks.insert(id, PersonTrack {
                     id,
+                    display_id: id, // resolved at end of tick
                     bbox: det.bbox,
                     kalman: KalmanBBox::new(det.bbox),
                     age: 1,
@@ -345,7 +377,51 @@ impl PersonTracker {
             }
         }
 
-        self.tracks.retain(|_, t| t.missed < self.timeout_frames);
+        // Expire stale tracks; return their ephemeral ids to the reuse pool.
+        let timeout = self.timeout_frames;
+        let expired: Vec<u32> = self
+            .tracks
+            .iter()
+            .filter(|(_, t)| t.missed >= timeout)
+            .map(|(&id, _)| id)
+            .collect();
+        for id in expired {
+            self.tracks.remove(&id);
+            self.free_ids.push(Reverse(id));
+        }
+
+        self.resolve_display_ids();
+    }
+
+    /// Resolve each track's `display_id` (phase 8 identity model). Every track
+    /// defaults to its ephemeral id; then each reserved user id is granted to the
+    /// single highest-confidence ACTIVE track carrying that identity (exclusive
+    /// binding — one body per user at a time, so the #5 single-gallery stranger
+    /// keeps its ephemeral id instead of cloning "Вадим").
+    fn resolve_display_ids(&mut self) {
+        for t in self.tracks.values_mut() {
+            t.display_id = t.id;
+        }
+        let users: Vec<(String, u32)> =
+            self.user_ids.iter().map(|(k, &v)| (k.clone(), v)).collect();
+        for (name, uid) in users {
+            let best = self
+                .tracks
+                .values()
+                .filter(|t| t.missed == 0 && t.identity.as_deref() == Some(name.as_str()))
+                .max_by(|a, b| {
+                    a.identity_confidence
+                        .unwrap_or(0.0)
+                        .partial_cmp(&b.identity_confidence.unwrap_or(0.0))
+                        .unwrap()
+                })
+                .map(|t| t.id);
+            if let Some(bid) = best {
+                if let Some(t) = self.tracks.get_mut(&bid) {
+                    t.display_id = uid;
+                }
+            }
+        }
     }
 
     pub fn active(&self) -> impl Iterator<Item = &PersonTrack> {
@@ -474,7 +550,7 @@ mod tests {
         t.tick(&det(0.3, 0.3, 0.7, 0.7));
         assert_eq!(t.track_count(), 1);
         let active: Vec<_> = t.active().collect();
-        assert_eq!(active[0].id, 0);
+        assert_eq!(active[0].id, FIRST_EPHEMERAL_ID);
         assert_eq!(active[0].age, 1);
     }
 
@@ -560,7 +636,7 @@ mod tests {
         t.tick(&det(0.32, 0.31, 0.72, 0.71));
         assert_eq!(t.track_count(), 1);
         let active: Vec<_> = t.active().collect();
-        assert_eq!(active[0].id, 0);
+        assert_eq!(active[0].id, FIRST_EPHEMERAL_ID);
         assert_eq!(active[0].age, 2);
     }
 
@@ -623,7 +699,70 @@ mod tests {
         t.tick(&det(0.7, 0.7, 0.9, 0.9));
         let active: Vec<_> = t.active().collect();
         assert_eq!(active.len(), 1);
-        assert_eq!(active[0].id, 1);
+        assert_eq!(active[0].id, FIRST_EPHEMERAL_ID + 1);
+    }
+
+    // ── phase 8 identity model: reserved user ids + ephemeral bodies ──
+
+    #[test]
+    fn register_user_assigns_sequential_reserved_ids() {
+        let mut t = PersonTracker::new();
+        assert_eq!(t.register_user("Вадим"), 0);
+        assert_eq!(t.register_user("Анна"), 1);
+        assert_eq!(t.register_user("Вадим"), 0); // idempotent
+    }
+
+    #[test]
+    fn recognised_user_gets_reserved_display_id() {
+        let mut t = PersonTracker::new();
+        t.register_user("Вадим");
+        t.tick(&det_id(0.3, 0.3, 0.7, 0.7, "Вадим", 0.9));
+        let a = t.active().next().unwrap();
+        assert_eq!(a.display_id, 0, "recognised user adopts reserved id");
+        assert!(a.id >= FIRST_EPHEMERAL_ID, "internal id stays ephemeral");
+        assert_eq!(a.shown_identity().map(|s| s.as_str()), Some("Вадим"));
+    }
+
+    #[test]
+    fn unregistered_identity_keeps_ephemeral_and_hides_name() {
+        let mut t = PersonTracker::new();
+        // "Stranger" not registered → no reserved id, name not shown downstream
+        t.tick(&det_id(0.3, 0.3, 0.7, 0.7, "Stranger", 0.9));
+        let a = t.active().next().unwrap();
+        assert!(a.display_id >= FIRST_EPHEMERAL_ID);
+        assert!(a.shown_identity().is_none());
+    }
+
+    #[test]
+    fn exclusive_user_binding_one_body_per_user() {
+        // Two bodies both labelled "Вадим" (the #5 single-gallery case): only the
+        // higher-confidence one holds id 0; the other stays anonymous.
+        let mut t = PersonTracker::new();
+        t.register_user("Вадим");
+        let mut dets = det_id(0.1, 0.1, 0.3, 0.3, "Вадим", 0.9);
+        dets.extend(det_id(0.6, 0.6, 0.8, 0.8, "Вадим", 0.6));
+        t.tick(&dets);
+        let active: Vec<_> = t.active().collect();
+        assert_eq!(active.len(), 2);
+        let winner = active.iter().find(|x| x.display_id == 0).expect("one body holds id 0");
+        assert_eq!(winner.identity_confidence, Some(0.9));
+        assert!(winner.shown_identity().is_some());
+        let other = active.iter().find(|x| x.display_id != 0).unwrap();
+        assert!(other.display_id >= FIRST_EPHEMERAL_ID);
+        assert!(other.shown_identity().is_none(), "loser reads anonymous");
+    }
+
+    #[test]
+    fn ephemeral_id_freed_on_exit_is_reused() {
+        let mut t = PersonTracker::new();
+        t.timeout_frames = 1; // remove after one missed frame
+        t.tick(&det(0.3, 0.3, 0.7, 0.7));
+        let first = t.active().next().unwrap().id;
+        assert_eq!(first, FIRST_EPHEMERAL_ID);
+        t.tick(&[]); // no detections → track misses, expires, id freed
+        assert_eq!(t.track_count(), 0);
+        t.tick(&det(0.1, 0.1, 0.2, 0.2)); // new body reuses the freed id
+        assert_eq!(t.active().next().unwrap().id, FIRST_EPHEMERAL_ID);
     }
 
     #[test]

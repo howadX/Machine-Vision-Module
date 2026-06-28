@@ -111,9 +111,10 @@ fn person_disappears_emotion_decays_then_track_expires() {
     assert_eq!(tracker.track_count(), 0, "stale track should have expired");
 }
 
-/// Person leaves and comes back beyond timeout → new track ID (not the same track).
+/// Person leaves beyond timeout and comes back → a FRESH track (not a continuation),
+/// and the freed ephemeral id is reused from the pool (phase 8 identity model).
 #[test]
-fn person_reappears_after_timeout_gets_new_track_id() {
+fn person_reappears_after_timeout_reuses_freed_id() {
     let mut tracker = PersonTracker::new();
     tracker.timeout_frames = 3;
 
@@ -127,11 +128,12 @@ fn person_reappears_after_timeout_gets_new_track_id() {
     }
     assert_eq!(tracker.track_count(), 0, "track should have expired");
 
-    // Person reappears
+    // Person reappears → fresh track (age 1), freed id reused.
     tracker.tick(&Camera::parse_line(&frame(6, &det(0.3, 0.3, 0.7, 0.7))).unwrap());
     let active: Vec<_> = tracker.active().collect();
     assert_eq!(active.len(), 1);
-    assert_ne!(active[0].id, first_id, "reappeared person should get a new track id");
+    assert_eq!(active[0].age, 1, "reappearance is a fresh track, not a continuation");
+    assert_eq!(active[0].id, first_id, "freed ephemeral id is reused");
 }
 
 /// Empty frames only → tracker stays empty throughout.

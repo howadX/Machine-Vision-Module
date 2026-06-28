@@ -28,6 +28,19 @@ static PERSON_DET_BYTES: &[u8] = include_bytes!("../../../models/person_detectio
 #[cfg(feature = "embed-model")]
 static POSE_EST_BYTES: &[u8] = include_bytes!("../../../models/pose_estimation_mediapipe_2023mar.onnx");
 
+/// One detected **body** (phase 8 body-primary, FRONTIER): normalized body bbox
+/// + pixel landmarks (for torso-3D) + posture, all together. Produced by
+/// [`NativePose::bodies`] — the carrying-entity source for `--native-camera`.
+#[derive(Debug, Clone)]
+pub struct BodyPose {
+    /// Body bbox, normalized [0..1] — the carrying entity in body-primary.
+    pub bbox: mvm_core::BBox,
+    /// 33 landmarks in original-image **pixels** (feed `mvm_core::space::torso_to_3d`).
+    pub landmarks_px: Landmarks33,
+    /// Posture classification (label, confidence, recon_error, plausibility).
+    pub posture: PoseResult,
+}
+
 /// Native two-stage pose: person detection → per-person ROI → BlazePose landmarks.
 /// Multi-persona by construction (one pose inference per detected person) — this is
 /// what fixes #3 (the MediaPipe `.task` only ever returned a single pose).
@@ -73,6 +86,33 @@ impl NativePose {
         for p in &persons {
             if let Some(lm) = self.pose.infer(&rgb, p)? {
                 out.push(lm);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Body-primary primitive (phase 8, FRONTIER): one [`BodyPose`] per detected
+    /// person — body bbox + pixel landmarks + posture together. The body is
+    /// visible from all angles, so a person without a frontal face still yields a
+    /// track here (face/identity/emotion attach later as optional attributes).
+    pub fn bodies(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<BodyPose>> {
+        let rgb = image.to_rgb8();
+        let (w, h) = (image.width() as f32, image.height() as f32);
+        let persons = self.detector.detect(image)?;
+        let mut out = Vec::with_capacity(persons.len());
+        for p in &persons {
+            if let Some(lm) = self.pose.infer(&rgb, p)? {
+                let mut norm = [[0f32; 4]; 33];
+                for k in 0..33 {
+                    norm[k] = [lm[k][0] / w, lm[k][1] / h, lm[k][2] / w, lm[k][3]];
+                }
+                let bbox = mvm_core::BBox {
+                    x1: p.bbox[0] / w,
+                    y1: p.bbox[1] / h,
+                    x2: p.bbox[2] / w,
+                    y2: p.bbox[3] / h,
+                };
+                out.push(BodyPose { bbox, landmarks_px: lm, posture: self.head.classify(&norm) });
             }
         }
         Ok(out)

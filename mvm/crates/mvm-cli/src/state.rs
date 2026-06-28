@@ -141,7 +141,7 @@ impl StateFile {
         let timestamp = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
         let mut active_tracks: Vec<_> = tracker.active().collect();
-        active_tracks.sort_by_key(|t| t.id);
+        active_tracks.sort_by_key(|t| t.display_id);
         let face_count = active_tracks.len();
 
         let status = if face_count > 0 {
@@ -169,14 +169,15 @@ impl StateFile {
         if face_count > 0 {
             let names: Vec<String> = active_tracks
                 .iter()
-                .map(|t| t.identity.as_deref().unwrap_or("unknown").to_string())
+                .map(|t| t.shown_identity().map(|s| s.as_str()).unwrap_or("unknown").to_string())
                 .collect();
             lines.push(format!("- Persons visible: {}", names.join(", ")));
 
             for (i, t) in active_tracks.iter().enumerate() {
-                let identity = t.identity.as_deref().unwrap_or("unknown");
+                let identity = t.shown_identity().map(|s| s.as_str()).unwrap_or("unknown");
                 let id_conf = t
-                    .identity_confidence
+                    .shown_identity()
+                    .and(t.identity_confidence)
                     .map(|c| format!(" ({c:.2})"))
                     .unwrap_or_default();
                 let emotion = t.emotion.as_deref().unwrap_or("none");
@@ -191,7 +192,7 @@ impl StateFile {
                     .unwrap_or_default();
 
                 lines.push(format!("- Person_{}:", i + 1));
-                lines.push(format!("  - id: {}", t.id));
+                lines.push(format!("  - id: {}", t.display_id));
                 lines.push(format!("  - identity: {identity}{id_conf}"));
                 lines.push(format!(
                     "  - bbox: {:.2},{:.2},{:.2},{:.2}",
@@ -242,7 +243,7 @@ impl StateFile {
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
         let mut active: Vec<_> = tracker.active().collect();
-        active.sort_by_key(|t| t.id);
+        active.sort_by_key(|t| t.display_id);
         let status = if active.is_empty() { "empty" } else { "occupied" };
 
         // Build entities for the scene-graph. Entities without a 3D position use (0,0,0)
@@ -253,13 +254,13 @@ impl StateFile {
                 _ => [0.0, 0.0, 0.0],
             };
             Entity {
-                id: t.id,
+                id: t.display_id,
                 kind: EntityKind::Person,
                 bbox: t.bbox,
                 pos_3d,
                 radius_m: 0.15, // rough head radius
                 pos_conf: t.ws_confidence.unwrap_or(0.0),
-                identity: t.identity.clone(),
+                identity: t.shown_identity().cloned(),
                 emotion: t.emotion.clone(),
                 emotion_distribution: t.emotion_distribution,
             }
@@ -283,9 +284,9 @@ impl StateFile {
                 _ => None,
             };
             JsonFace {
-                id: t.id,
-                identity: t.identity.clone(),
-                identity_conf: t.identity_confidence,
+                id: t.display_id,
+                identity: t.shown_identity().cloned(),
+                identity_conf: t.shown_identity().and(t.identity_confidence),
                 emotion: t.emotion.clone(),
                 emotion_conf: t.emotion_confidence,
                 emotion_distribution: t.emotion_distribution,
@@ -324,9 +325,9 @@ impl StateFile {
             eprintln!("  ╟─────┼──────────────┼───────┼──────────────┼───────┼───────────────┼───────┼────────┼────────────────────╢");
 
             for t in &active {
-                let id = t.id;
-                let identity = t.identity.as_deref().unwrap_or("—");
-                let id_conf = t.identity_confidence.map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
+                let id = t.display_id;
+                let identity = t.shown_identity().map(|s| s.as_str()).unwrap_or("—");
+                let id_conf = t.shown_identity().and(t.identity_confidence).map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
                 let emotion = t.emotion.as_deref().unwrap_or("—");
                 let emo_conf = t.emotion_confidence.map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
                 let posture = t.posture.as_deref().unwrap_or("—");
@@ -376,7 +377,7 @@ impl StateFile {
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
         let mut active: Vec<_> = tracker.active().collect();
-        active.sort_by_key(|t| t.id);
+        active.sort_by_key(|t| t.display_id);
         let status = if active.is_empty() { "empty" } else { "occupied" };
 
         let faces: Vec<JsonFaceDebug> = active.iter().map(|t| {
@@ -384,7 +385,7 @@ impl StateFile {
                 (Some(x), Some(y), Some(z)) => Some([x, y, z]),
                 _ => None,
             };
-            let emotion_debug = debug.iter().find(|e| e.id == t.id).map(|e| JsonEmotionDebug {
+            let emotion_debug = debug.iter().find(|e| e.id == t.display_id).map(|e| JsonEmotionDebug {
                 rust: e.rust_emotion.clone(),
                 rust_conf: e.rust_conf,
                 py: e.py_emotion.clone(),
@@ -392,9 +393,9 @@ impl StateFile {
                 winner: e.winner,
             });
             JsonFaceDebug {
-                id: t.id,
-                identity: t.identity.clone(),
-                identity_conf: t.identity_confidence,
+                id: t.display_id,
+                identity: t.shown_identity().cloned(),
+                identity_conf: t.shown_identity().and(t.identity_confidence),
                 emotion: t.emotion.clone(),
                 emotion_conf: t.emotion_confidence,
                 posture: t.posture.clone(),
@@ -451,6 +452,7 @@ mod tests {
         let sf = StateFile::open_at(path.clone()).unwrap();
 
         let mut tracker = PersonTracker::new();
+        tracker.register_user("Вадим");
         tracker.tick(&[Detection {
             bbox: mvm_core::BBox {
                 x1: 0.2,
@@ -509,6 +511,8 @@ mod tests {
         let sf = StateFile::open_at(path.clone()).unwrap();
 
         let mut tracker = PersonTracker::new();
+        tracker.register_user("Вадим");
+        tracker.register_user("Даня");
         tracker.tick(&[
             Detection {
                 bbox: mvm_core::BBox {
@@ -632,6 +636,7 @@ mod tests {
     fn json_line_contains_face_fields() {
         let sf = StateFile::open_at(temp_state_path("test_json_face.md")).unwrap();
         let mut tracker = PersonTracker::new();
+        tracker.register_user("Вадим");
         tracker.tick(&[Detection {
             bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
             identity: Some("Вадим".into()),
@@ -677,6 +682,7 @@ mod tests {
     fn json_debug_contains_both_emotions() {
         let sf = StateFile::open_at(temp_state_path("test_json_debug.md")).unwrap();
         let mut tracker = PersonTracker::new();
+        tracker.register_user("Вадим");
         tracker.tick(&[Detection {
             bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
             identity: Some("Вадим".into()),

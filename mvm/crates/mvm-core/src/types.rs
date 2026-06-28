@@ -77,10 +77,20 @@ impl Detection {
     }
 }
 
+/// Track ids below this are reserved for **recognised gallery users** (stable id
+/// per person, e.g. Вадим = 0). Anonymous bodies get ephemeral ids ≥ this value,
+/// allocated on appearance and freed on exit (phase 8 identity model).
+pub const FIRST_EPHEMERAL_ID: u32 = 10;
+
 /// A tracked person — persistent across frames.
 #[derive(Debug, Clone)]
 pub struct PersonTrack {
+    /// Internal stable key for this track's lifetime (always ephemeral, ≥ `FIRST_EPHEMERAL_ID`).
     pub id: u32,
+    /// Resolved id shown downstream (phase 8): the user's reserved id (< `FIRST_EPHEMERAL_ID`)
+    /// when this track currently holds a recognised user, else the ephemeral `id`.
+    /// Recomputed each tick by `PersonTracker::tick`.
+    pub display_id: u32,
     pub bbox: BBox,
     /// Kalman filter maintaining a smoothed bbox estimate with velocity model.
     pub kalman: crate::kalman::KalmanBBox,
@@ -111,6 +121,21 @@ pub struct PersonTrack {
     /// Latest SFace embedding (phase 7.5). Used for cosine re-link (#6) so two
     /// distinct people are never merged into one id under a single-name gallery.
     pub embedding: Option<Vec<f32>>,
+}
+
+impl PersonTrack {
+    /// Identity to SHOW (phase 8 identity model): the name only when this track
+    /// currently holds a reserved user slot (`display_id < FIRST_EPHEMERAL_ID`).
+    /// A track that matched a user label but lost the exclusive binding (e.g. the
+    /// #5 single-gallery stranger) reads as anonymous — exactly one body can be a
+    /// given user at a time.
+    pub fn shown_identity(&self) -> Option<&String> {
+        if self.display_id < FIRST_EPHEMERAL_ID {
+            self.identity.as_ref()
+        } else {
+            None
+        }
+    }
 }
 
 // ── Scene-graph types (phase 6.4) ─────────────────────────────────────────────
