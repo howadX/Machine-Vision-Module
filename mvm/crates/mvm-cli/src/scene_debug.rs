@@ -1,54 +1,97 @@
-//! Scene visual debug (phase 8.E): draw object + person boxes on a frame so you
-//! can SEE what the scene detector finds. Zero new deps — manual rectangle fill
-//! and a tiny built-in 3×5 bitmap font for the id numbers (respects the
-//! "no new deps for tooling" invariant; only an ONNX expert grows the footprint).
+//! Scene visual debug (phase 8.E): draw EVERYTHING the detectors produce on a
+//! frame, each detector ("agent") in its own colour. Zero new deps — manual
+//! rectangle/line/dot fill + a tiny built-in 3×5 bitmap font for ids.
+//!
+//! This is the groundwork for the Agent Mesh (phase 8.C): one colour per agent,
+//! so a glance at /tmp/mvm_scene.jpg shows which detector saw what.
 
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use mvm_core::BBox;
 use mvm_hands::Hand;
 use mvm_scene::{TrackedObject, OBJECT_ID_BASE};
 
-/// Distinct box colours + their human names (for the printed legend).
-const PALETTE: [([u8; 3], &str); 8] = [
-    ([255, 80, 80], "red"),
-    ([90, 220, 90], "green"),
-    ([80, 160, 255], "blue"),
-    ([255, 215, 60], "yellow"),
-    ([255, 90, 255], "magenta"),
-    ([70, 230, 230], "cyan"),
-    ([255, 150, 40], "orange"),
-    ([185, 130, 255], "purple"),
-];
+/// Per-agent colours (one detector = one colour). The Agent Mesh will key off this.
+pub mod agent {
+    /// Fused person track (the merged entity, not a raw detector).
+    pub const PERSON: [u8; 3] = [255, 255, 255]; // white
+    /// Face detector — YuNet.
+    pub const FACE: [u8; 3] = [70, 230, 230]; // cyan
+    /// Pose — BlazePose (mvm-posture) skeleton + landmarks.
+    pub const POSE: [u8; 3] = [255, 215, 60]; // yellow
+    /// Hands — MediaPipe handpose (mvm-hands).
+    pub const HANDS: [u8; 3] = [40, 255, 120]; // green
+    /// Objects — YOLO26n (mvm-scene).
+    pub const OBJECT: [u8; 3] = [255, 150, 40]; // orange
 
-/// Deterministic colour for a class name (FNV-1a hash → palette). The same class
-/// always gets the same colour across frames, so the legend is learnable.
-pub fn class_palette(name: &str) -> ([u8; 3], &'static str) {
-    let mut h: u32 = 2166136261;
-    for b in name.bytes() {
-        h = (h ^ b as u32).wrapping_mul(16777619);
-    }
-    PALETTE[(h as usize) % PALETTE.len()]
+    /// Legend rows: (label, colour).
+    pub const LEGEND: [(&str, [u8; 3]); 5] = [
+        ("person(fused)", PERSON),
+        ("face/YuNet", FACE),
+        ("pose/BlazePose", POSE),
+        ("hands/handpose", HANDS),
+        ("object/YOLO", OBJECT),
+    ];
 }
+
+/// Everything the per-frame detectors produced, for one annotated frame. Filled by
+/// the CLI (`build_body_primary`) so the visualiser draws every agent's output.
+#[derive(Default)]
+pub struct DetectorOverlay {
+    /// YuNet face bboxes (normalized) — all detected, matched or not.
+    pub faces: Vec<BBox>,
+    /// BlazePose landmarks per body ([x,y]=px, [3]=visibility).
+    pub poses: Vec<[[f32; 4]; 33]>,
+    /// Hand landmarks (handpose).
+    pub hands: Vec<Hand>,
+}
+
+/// BlazePose-33 skeleton edges (the main body; faces/feet trimmed for clarity).
+const POSE_EDGES: &[(usize, usize)] = &[
+    (11, 12),
+    (11, 13),
+    (13, 15),
+    (12, 14),
+    (14, 16),
+    (11, 23),
+    (12, 24),
+    (23, 24),
+    (23, 25),
+    (25, 27),
+    (24, 26),
+    (26, 28),
+    (15, 17),
+    (15, 19),
+    (15, 21),
+    (16, 18),
+    (16, 20),
+    (16, 22),
+];
 
 /// 3×5 bitmap digits 0–9, row-major; bit 2 (0b100) is the leftmost column.
 const DIGITS: [[u8; 5]; 10] = [
-    [0b111, 0b101, 0b101, 0b101, 0b111], // 0
-    [0b010, 0b110, 0b010, 0b010, 0b111], // 1
-    [0b111, 0b001, 0b111, 0b100, 0b111], // 2
-    [0b111, 0b001, 0b111, 0b001, 0b111], // 3
-    [0b101, 0b101, 0b111, 0b001, 0b001], // 4
-    [0b111, 0b100, 0b111, 0b001, 0b111], // 5
-    [0b111, 0b100, 0b111, 0b101, 0b111], // 6
-    [0b111, 0b001, 0b001, 0b001, 0b001], // 7
-    [0b111, 0b101, 0b111, 0b101, 0b111], // 8
-    [0b111, 0b101, 0b111, 0b001, 0b111], // 9
+    [0b111, 0b101, 0b101, 0b101, 0b111],
+    [0b010, 0b110, 0b010, 0b010, 0b111],
+    [0b111, 0b001, 0b111, 0b100, 0b111],
+    [0b111, 0b001, 0b111, 0b001, 0b111],
+    [0b101, 0b101, 0b111, 0b001, 0b001],
+    [0b111, 0b100, 0b111, 0b001, 0b111],
+    [0b111, 0b100, 0b111, 0b101, 0b111],
+    [0b111, 0b001, 0b001, 0b001, 0b001],
+    [0b111, 0b101, 0b111, 0b101, 0b111],
+    [0b111, 0b101, 0b111, 0b001, 0b111],
 ];
 
 fn px_clamp(v: f32, max: u32) -> u32 {
     (v.max(0.0) as u32).min(max.saturating_sub(1))
 }
 
-/// Draw a hollow rectangle (normalized bbox) of the given thickness.
+fn put(img: &mut RgbImage, x: i32, y: i32, c: [u8; 3]) {
+    if x >= 0 && y >= 0 && (x as u32) < img.width() && (y as u32) < img.height() {
+        img.put_pixel(x as u32, y as u32, Rgb(c));
+    }
+}
+
+/// Hollow rectangle (normalized bbox), given thickness.
 fn draw_rect(img: &mut RgbImage, b: &BBox, color: [u8; 3], thick: u32) {
     let (w, h) = (img.width(), img.height());
     let x1 = px_clamp(b.x1 * w as f32, w);
@@ -76,10 +119,29 @@ fn draw_rect(img: &mut RgbImage, b: &BBox, color: [u8; 3], thick: u32) {
     }
 }
 
-/// Draw an integer at (x,y) top-left, `scale` px per font cell, with a 1px dark
-/// backing for contrast.
+/// Filled square dot centred at (x,y) px.
+fn draw_dot(img: &mut RgbImage, x: f32, y: f32, color: [u8; 3], r: i32) {
+    let (cx, cy) = (x as i32, y as i32);
+    for dy in -r..=r {
+        for dx in -r..=r {
+            put(img, cx + dx, cy + dy, color);
+        }
+    }
+}
+
+/// Line from (x0,y0) to (x1,y1) in px (DDA).
+fn draw_line(img: &mut RgbImage, x0: f32, y0: f32, x1: f32, y1: f32, color: [u8; 3]) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let steps = dx.abs().max(dy.abs()).max(1.0) as i32;
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        put(img, (x0 + dx * t) as i32, (y0 + dy * t) as i32, color);
+    }
+}
+
+/// Draw an integer at (x,y) top-left, `scale` px per font cell.
 fn draw_number(img: &mut RgbImage, x: u32, y: u32, n: u32, color: [u8; 3], scale: u32) {
-    let (w, h) = (img.width(), img.height());
     let mut cx = x;
     for ch in n.to_string().bytes() {
         let d = (ch - b'0') as usize;
@@ -88,97 +150,104 @@ fn draw_number(img: &mut RgbImage, x: u32, y: u32, n: u32, color: [u8; 3], scale
                 if bits & (1 << (2 - col)) != 0 {
                     for dy in 0..scale {
                         for dx in 0..scale {
-                            let px = cx + col * scale + dx;
-                            let py = y + row as u32 * scale + dy;
-                            if px < w && py < h {
-                                img.put_pixel(px, py, Rgb(color));
-                            }
+                            put(img, (cx + col * scale + dx) as i32, (y + row as u32 * scale + dy) as i32, color);
                         }
                     }
                 }
             }
         }
-        cx += 4 * scale; // 3 cols + 1 space
+        cx += 4 * scale;
     }
 }
 
-/// Draw a small filled square dot centred at (x,y) px.
-fn draw_dot(img: &mut RgbImage, x: f32, y: f32, color: [u8; 3], r: i32) {
-    let (w, h) = (img.width() as i32, img.height() as i32);
-    let (cx, cy) = (x as i32, y as i32);
-    for dy in -r..=r {
-        for dx in -r..=r {
-            let (px, py) = (cx + dx, cy + dy);
-            if px >= 0 && py >= 0 && px < w && py < h {
-                img.put_pixel(px as u32, py as u32, Rgb(color));
+const VIS_MIN: f32 = 0.5;
+
+/// Render an annotated frame with every agent's detections in its own colour.
+pub fn render(
+    frame: &DynamicImage,
+    tracks: &[BBox],
+    objects: &[TrackedObject],
+    overlay: &DetectorOverlay,
+) -> RgbImage {
+    let mut img = frame.to_rgb8();
+    let (fw, fh) = frame.dimensions();
+    let scale = (fh / 120).max(2);
+    let dot_r = (fh / 240).max(1) as i32;
+
+    // Objects (orange) with short id.
+    for o in objects {
+        draw_rect(&mut img, &o.bbox, agent::OBJECT, 2);
+        let lx = px_clamp(o.bbox.x1 * fw as f32, fw);
+        let ly = px_clamp(o.bbox.y1 * fh as f32, fh);
+        draw_number(&mut img, lx + 2, ly + 2, o.id - OBJECT_ID_BASE, agent::OBJECT, scale);
+    }
+    // Pose skeletons (yellow): bones + visible landmark dots.
+    for lm in &overlay.poses {
+        for &(a, b) in POSE_EDGES {
+            if lm[a][3] >= VIS_MIN && lm[b][3] >= VIS_MIN {
+                draw_line(&mut img, lm[a][0], lm[a][1], lm[b][0], lm[b][1], agent::POSE);
+            }
+        }
+        for p in lm.iter() {
+            if p[3] >= VIS_MIN {
+                draw_dot(&mut img, p[0], p[1], agent::POSE, dot_r);
             }
         }
     }
-}
-
-/// Render an annotated frame: white person boxes, class-coloured object boxes with
-/// their short id stamped, and green hand boxes + 21 landmark dots.
-pub fn render(
-    frame: &DynamicImage,
-    person_bboxes: &[BBox],
-    objects: &[TrackedObject],
-    hands: &[Hand],
-) -> RgbImage {
-    let mut img = frame.to_rgb8();
-    let (fw, h) = frame.dimensions();
-    let scale = (h / 120).max(2); // digit size scales with frame height
-
-    for b in person_bboxes {
-        draw_rect(&mut img, b, [255, 255, 255], 2);
+    // Faces (cyan).
+    for fb in &overlay.faces {
+        draw_rect(&mut img, fb, agent::FACE, 2);
     }
-    for o in objects {
-        let (color, _) = class_palette(o.class_name);
-        draw_rect(&mut img, &o.bbox, color, 2);
-        let lx = px_clamp(o.bbox.x1 * img.width() as f32, img.width());
-        let ly = px_clamp(o.bbox.y1 * h as f32, h);
-        draw_number(&mut img, lx + 2, ly + 2, o.id - OBJECT_ID_BASE, color, scale);
-    }
-    // Hands: green box over the landmarks + a dot per landmark.
-    const HAND_COLOR: [u8; 3] = [40, 255, 120];
-    let dot_r = (h / 240).max(1) as i32;
-    for hand in hands {
-        draw_rect(&mut img, &hand.bbox_norm(fw as f32, h as f32), HAND_COLOR, 2);
+    // Hands (green): box + 21 dots.
+    for hand in &overlay.hands {
+        draw_rect(&mut img, &hand.bbox_norm(fw as f32, fh as f32), agent::HANDS, 2);
         for p in &hand.landmarks_px {
-            draw_dot(&mut img, p[0], p[1], HAND_COLOR, dot_r);
+            draw_dot(&mut img, p[0], p[1], agent::HANDS, dot_r);
         }
+    }
+    // Fused person tracks (white) on top.
+    for b in tracks {
+        draw_rect(&mut img, b, agent::PERSON, 2);
     }
     img
 }
 
-/// Render + save the annotated frame, and return a printable legend (one line per
-/// object: short-id, class, colour, score, age, bbox).
+/// Render + save the annotated frame; return a printable legend (agent colour key
+/// + counts + one line per object).
 pub fn write_annotated(
     path: &str,
     frame: &DynamicImage,
-    person_bboxes: &[BBox],
+    tracks: &[BBox],
     objects: &[TrackedObject],
-    hands: &[Hand],
+    overlay: &DetectorOverlay,
 ) -> anyhow::Result<Vec<String>> {
-    let img = render(frame, person_bboxes, objects, hands);
+    let img = render(frame, tracks, objects, overlay);
     img.save(path)?;
-    let legend = objects
-        .iter()
-        .map(|o| {
-            let (_, cname) = class_palette(o.class_name);
-            format!(
-                "#{:<2} {:<12} [{:<7}] score {:.2} age {:<4} bbox {:.2},{:.2},{:.2},{:.2}",
-                o.id - OBJECT_ID_BASE,
-                o.class_name,
-                cname,
-                o.score,
-                o.age,
-                o.bbox.x1,
-                o.bbox.y1,
-                o.bbox.x2,
-                o.bbox.y2,
-            )
-        })
-        .collect();
+
+    let mut legend: Vec<String> = Vec::new();
+    let key: Vec<String> = agent::LEGEND.iter().map(|(name, _)| name.to_string()).collect();
+    legend.push(format!("agents: {}", key.join(" | ")));
+    legend.push(format!(
+        "counts: persons {} | faces {} | poses {} | hands {} | objects {}",
+        tracks.len(),
+        overlay.faces.len(),
+        overlay.poses.len(),
+        overlay.hands.len(),
+        objects.len()
+    ));
+    for o in objects {
+        legend.push(format!(
+            "#{:<2} {:<12} score {:.2} age {:<4} bbox {:.2},{:.2},{:.2},{:.2}",
+            o.id - OBJECT_ID_BASE,
+            o.class_name,
+            o.score,
+            o.age,
+            o.bbox.x1,
+            o.bbox.y1,
+            o.bbox.x2,
+            o.bbox.y2,
+        ));
+    }
     Ok(legend)
 }
 
@@ -191,41 +260,45 @@ mod tests {
     }
 
     #[test]
-    fn class_palette_is_deterministic_and_distinct() {
-        assert_eq!(class_palette("cup").1, class_palette("cup").1);
-        // Different classes usually differ; at minimum the call is stable.
-        let _ = class_palette("laptop");
+    fn agent_legend_has_all_detectors() {
+        let names: Vec<&str> = agent::LEGEND.iter().map(|(n, _)| *n).collect();
+        assert!(names.iter().any(|n| n.contains("face")));
+        assert!(names.iter().any(|n| n.contains("pose")));
+        assert!(names.iter().any(|n| n.contains("hands")));
+        assert!(names.iter().any(|n| n.contains("object")));
     }
 
     #[test]
-    fn render_draws_without_panicking_and_marks_pixels() {
+    fn render_draws_all_layers_without_panicking() {
         let frame = DynamicImage::new_rgb8(320, 240);
-        let persons = vec![BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.6 }];
+        let tracks = vec![BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.6 }];
         let objects = vec![obj(OBJECT_ID_BASE + 2, "cup", BBox { x1: 0.4, y1: 0.4, x2: 0.55, y2: 0.6 })];
-        let img = render(&frame, &persons, &objects, &[]);
-        // Some pixel must be non-black (a box/number was drawn).
-        let any = img.pixels().any(|p| p.0 != [0, 0, 0]);
-        assert!(any, "annotated frame should have drawn pixels");
+        let mut overlay = DetectorOverlay::default();
+        overlay.faces.push(BBox { x1: 0.15, y1: 0.12, x2: 0.28, y2: 0.3 });
+        let mut lm = [[0.0f32, 0.0, 0.0, 0.9]; 33];
+        lm[11] = [100.0, 100.0, 0.0, 0.9];
+        lm[12] = [140.0, 100.0, 0.0, 0.9];
+        overlay.poses.push(lm);
+        let img = render(&frame, &tracks, &objects, &overlay);
+        assert!(img.pixels().any(|p| p.0 != [0, 0, 0]), "should have drawn pixels");
     }
 
     #[test]
     fn draw_number_handles_multi_digit_and_edges() {
         let mut img = RgbImage::new(40, 20);
-        // Near the right edge — must clip, not panic.
         draw_number(&mut img, 35, 2, 123, [255, 255, 255], 3);
     }
 
     #[test]
-    fn write_annotated_legend_has_one_line_per_object() {
+    fn write_annotated_legend_reports_counts() {
         let frame = DynamicImage::new_rgb8(64, 64);
-        let objects = vec![
-            obj(OBJECT_ID_BASE, "cup", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }),
-            obj(OBJECT_ID_BASE + 1, "chair", BBox { x1: 0.5, y1: 0.5, x2: 0.9, y2: 0.9 }),
-        ];
+        let objects = vec![obj(OBJECT_ID_BASE, "cup", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 })];
+        let overlay = DetectorOverlay::default();
         let dir = std::env::temp_dir().join(format!("mvm_scene_test_{}.jpg", std::process::id()));
-        let legend = write_annotated(dir.to_str().unwrap(), &frame, &[], &objects, &[]).unwrap();
-        assert_eq!(legend.len(), 2);
-        assert!(legend[0].contains("cup"));
+        let legend = write_annotated(dir.to_str().unwrap(), &frame, &[], &objects, &overlay).unwrap();
+        assert!(legend[0].contains("agents:"));
+        assert!(legend.iter().any(|l| l.contains("objects 1")));
+        assert!(legend.iter().any(|l| l.contains("cup")));
         assert!(dir.exists());
     }
 }

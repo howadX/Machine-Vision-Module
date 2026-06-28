@@ -381,7 +381,7 @@ fn build_body_primary(
     mut emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
     mut identity_mod: Option<&mut mvm_identity::IdentityModule>,
     mut hand_landmarker: Option<&mut mvm_hands::HandLandmarker>,
-    hands_out: &mut Vec<mvm_hands::Hand>,
+    overlay: &mut scene_debug::DetectorOverlay,
     config: &mvm_core::Config,
     emotion_debug: bool,
     debug_out: &mut Vec<state::EmotionDebugEntry>,
@@ -396,6 +396,9 @@ fn build_body_primary(
     let hand_rgb = hand_landmarker.as_ref().map(|_| frame.to_rgb8());
     let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();
     let faces = detector.detect(frame).unwrap_or_default();
+    // Overlay (scene-debug): every detector's output, drawn per-agent. Faces =
+    // all YuNet boxes; poses + hands collected per body below.
+    overlay.faces.extend(faces.iter().map(|f| f.bbox));
     let mut face_used = vec![false; faces.len()];
     let mut dets: Vec<Detection> = Vec::with_capacity(bodies.len() + faces.len());
 
@@ -415,6 +418,7 @@ fn build_body_primary(
         // low and otherwise produce garbage 3D (negative-y / far phantoms) — gate
         // them out (the body is still tracked, just without a position this frame).
         let lm = &body.landmarks_px;
+        overlay.poses.push(*lm); // scene-debug: BlazePose skeleton (pose agent)
         const TORSO_VIS_MIN: f32 = 0.5;
         let torso_vis = lm[11][3].min(lm[12][3]).min(lm[23][3]).min(lm[24][3]);
         if torso_vis >= TORSO_VIS_MIN {
@@ -434,7 +438,7 @@ fn build_body_primary(
         // gated). Body-primary — hands belong to the body whose wrist drove them.
         if let (Some(hl), Some(rgb)) = (hand_landmarker.as_deref_mut(), hand_rgb.as_ref()) {
             let rois = mvm_hands::hand_rois_from_pose(lm, 0.5);
-            hands_out.extend(hl.infer_rois(rgb, &rois));
+            overlay.hands.extend(hl.infer_rois(rgb, &rois));
         }
         // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
         // emotion (optional). Keypoint-in-bbox ties the face to the body whose
@@ -804,7 +808,7 @@ fn main() -> Result<()> {
         // Native-camera path (Variant A): capture in memory + YuNet detection,
         // no Python, no pose. Bridge path: detections from JSON, frame on disk.
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
-        let mut latest_hands: Vec<mvm_hands::Hand> = Vec::new();
+        let mut overlay = scene_debug::DetectorOverlay::default();
         let mut tick_frame: Option<image::DynamicImage> = None;
         let mut detections: Vec<Detection> = if let Some(ncam) = &mut native_camera {
             // Body-primary (phase 8): grab the frame here; detections are built
@@ -849,7 +853,7 @@ fn main() -> Result<()> {
                     emotion_mod.as_mut(),
                     identity_mod.as_mut(),
                     hand_landmarker.as_mut(),
-                    &mut latest_hands,
+                    &mut overlay,
                     &config,
                     args.emotion_debug,
                     &mut emotion_debug_entries,
@@ -1052,14 +1056,10 @@ fn main() -> Result<()> {
                         frame,
                         &person_bboxes,
                         &latest_objects,
-                        &latest_hands,
+                        &overlay,
                     ) {
                         Ok(legend) => {
-                            eprintln!(
-                                "  scene-debug → /tmp/mvm_scene.jpg ({} objects, {} hands, persons in white)",
-                                latest_objects.len(),
-                                latest_hands.len()
-                            );
+                            eprintln!("  scene-debug → /tmp/mvm_scene.jpg");
                             for line in &legend {
                                 eprintln!("    {line}");
                             }
