@@ -480,6 +480,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mvm-depth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "mvm-core",
+ "ndarray",
+ "ort",
+ "tempfile",
+]
+
+[[package]]
 name = "mvm-detect"
 version = "0.1.0"
 dependencies = [
