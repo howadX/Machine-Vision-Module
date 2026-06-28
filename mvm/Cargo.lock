@@ -465,6 +465,7 @@ dependencies = [
  "mvm-detect",
  "mvm-emotion",
  "mvm-fusion",
+ "mvm-hands",
  "mvm-identity",
  "mvm-pipeline",
  "mvm-posture",
@@ -522,6 +523,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mvm-core",
+]
+
+[[package]]
+name = "mvm-hands"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "mvm-core",
+ "ort",
+ "tempfile",
 ]
 
 [[package]]

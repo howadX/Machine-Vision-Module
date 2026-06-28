@@ -373,12 +373,15 @@ fn best_face_for_nose(faces: &[Detection], used: &[bool], nose: (f32, f32)) -> O
 /// FRONTIER fix. An unmatched face falls back to a face-entity so a blinked
 /// body-detection never drops a known person (decision #4).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn build_body_primary(
     frame: &image::DynamicImage,
     native_pose: Option<&mut mvm_posture::NativePose>,
     detector: &mut mvm_detect::YunetDetector,
     mut emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
     mut identity_mod: Option<&mut mvm_identity::IdentityModule>,
+    mut hand_landmarker: Option<&mut mvm_hands::HandLandmarker>,
+    hands_out: &mut Vec<mvm_hands::Hand>,
     config: &mvm_core::Config,
     emotion_debug: bool,
     debug_out: &mut Vec<state::EmotionDebugEntry>,
@@ -389,6 +392,8 @@ fn build_body_primary(
     let bodies = native_pose
         .map(|np| np.bodies(frame).unwrap_or_default())
         .unwrap_or_default();
+    // RGB frame for hand ROIs (only materialised when the hand model is loaded).
+    let hand_rgb = hand_landmarker.as_ref().map(|_| frame.to_rgb8());
     let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();
     let faces = detector.detect(frame).unwrap_or_default();
     let mut face_used = vec![false; faces.len()];
@@ -424,6 +429,12 @@ fn build_body_primary(
                 det.position_z = Some(pos[2]);
                 det.ws_confidence = Some(ws);
             }
+        }
+        // Hands (phase 8.E.4): ROIs from this body's wrists → handpose (presence-
+        // gated). Body-primary — hands belong to the body whose wrist drove them.
+        if let (Some(hl), Some(rgb)) = (hand_landmarker.as_deref_mut(), hand_rgb.as_ref()) {
+            let rois = mvm_hands::hand_rois_from_pose(lm, 0.5);
+            hands_out.extend(hl.infer_rois(rgb, &rois));
         }
         // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
         // emotion (optional). Keypoint-in-bbox ties the face to the body whose
@@ -730,6 +741,24 @@ fn main() -> Result<()> {
         }
     }
 
+    // Hand landmarks (phase 8.E.4, completes G₁ Human) — body-primary wrist ROIs.
+    // Gated on the model file like the other detectors.
+    let mut hand_landmarker: Option<mvm_hands::HandLandmarker> = None;
+    if args.native_camera {
+        let model_path = config.models_path.join("handpose_estimation_mediapipe_2023feb.onnx");
+        if model_path.exists() {
+            match mvm_hands::HandLandmarker::from_path(&model_path) {
+                Ok(h) => {
+                    eprintln!("  hands: loading MediaPipe handpose ({})", model_path.display());
+                    hand_landmarker = Some(h);
+                }
+                Err(e) => eprintln!("  hands: load failed: {e} (hands disabled)"),
+            }
+        } else {
+            eprintln!("  hands: no model at {} — hands disabled", model_path.display());
+        }
+    }
+
     let mut tracker = mvm_core::PersonTracker::with_config(&config);
     // Body-primary (phase 8): 3D comes from the torso in `build_body_primary`
     // (set on each Detection), so disable the tracker's face-bbox pinhole — it
@@ -775,6 +804,7 @@ fn main() -> Result<()> {
         // Native-camera path (Variant A): capture in memory + YuNet detection,
         // no Python, no pose. Bridge path: detections from JSON, frame on disk.
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
+        let mut latest_hands: Vec<mvm_hands::Hand> = Vec::new();
         let mut tick_frame: Option<image::DynamicImage> = None;
         let mut detections: Vec<Detection> = if let Some(ncam) = &mut native_camera {
             // Body-primary (phase 8): grab the frame here; detections are built
@@ -818,6 +848,8 @@ fn main() -> Result<()> {
                     &mut _detector,
                     emotion_mod.as_mut(),
                     identity_mod.as_mut(),
+                    hand_landmarker.as_mut(),
+                    &mut latest_hands,
                     &config,
                     args.emotion_debug,
                     &mut emotion_debug_entries,
@@ -1020,11 +1052,13 @@ fn main() -> Result<()> {
                         frame,
                         &person_bboxes,
                         &latest_objects,
+                        &latest_hands,
                     ) {
                         Ok(legend) => {
                             eprintln!(
-                                "  scene-debug → /tmp/mvm_scene.jpg ({} objects, persons in white)",
-                                latest_objects.len()
+                                "  scene-debug → /tmp/mvm_scene.jpg ({} objects, {} hands, persons in white)",
+                                latest_objects.len(),
+                                latest_hands.len()
                             );
                             for line in &legend {
                                 eprintln!("    {line}");

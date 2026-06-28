@@ -22,3 +22,7 @@ models/yolo_object_detect.onnx
 # Depth-Anything-V2-Small (phase 8.E.2, onnx-community quantized, Apache-2.0)
 # https://huggingface.co/onnx-community/depth-anything-v2-small (onnx/model_quantized.onnx)
 models/depth_anything_v2_small.onnx
+
+# MediaPipe handpose (phase 8.E.4, OpenCV Zoo, Apache-2.0)
+# https://github.com/opencv/opencv_zoo/raw/main/models/handpose_estimation_mediapipe/handpose_estimation_mediapipe_2023feb.onnx
+models/handpose_estimation_mediapipe_2023feb.onnx

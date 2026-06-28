@@ -5,6 +5,7 @@
 
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use mvm_core::BBox;
+use mvm_hands::Hand;
 use mvm_scene::{TrackedObject, OBJECT_ID_BASE};
 
 /// Distinct box colours + their human names (for the printed legend).
@@ -101,11 +102,30 @@ fn draw_number(img: &mut RgbImage, x: u32, y: u32, n: u32, color: [u8; 3], scale
     }
 }
 
+/// Draw a small filled square dot centred at (x,y) px.
+fn draw_dot(img: &mut RgbImage, x: f32, y: f32, color: [u8; 3], r: i32) {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let (cx, cy) = (x as i32, y as i32);
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let (px, py) = (cx + dx, cy + dy);
+            if px >= 0 && py >= 0 && px < w && py < h {
+                img.put_pixel(px as u32, py as u32, Rgb(color));
+            }
+        }
+    }
+}
+
 /// Render an annotated frame: white person boxes, class-coloured object boxes with
-/// their short id (`id - OBJECT_ID_BASE`) stamped at the corner.
-pub fn render(frame: &DynamicImage, person_bboxes: &[BBox], objects: &[TrackedObject]) -> RgbImage {
+/// their short id stamped, and green hand boxes + 21 landmark dots.
+pub fn render(
+    frame: &DynamicImage,
+    person_bboxes: &[BBox],
+    objects: &[TrackedObject],
+    hands: &[Hand],
+) -> RgbImage {
     let mut img = frame.to_rgb8();
-    let (_, h) = frame.dimensions();
+    let (fw, h) = frame.dimensions();
     let scale = (h / 120).max(2); // digit size scales with frame height
 
     for b in person_bboxes {
@@ -118,6 +138,15 @@ pub fn render(frame: &DynamicImage, person_bboxes: &[BBox], objects: &[TrackedOb
         let ly = px_clamp(o.bbox.y1 * h as f32, h);
         draw_number(&mut img, lx + 2, ly + 2, o.id - OBJECT_ID_BASE, color, scale);
     }
+    // Hands: green box over the landmarks + a dot per landmark.
+    const HAND_COLOR: [u8; 3] = [40, 255, 120];
+    let dot_r = (h / 240).max(1) as i32;
+    for hand in hands {
+        draw_rect(&mut img, &hand.bbox_norm(fw as f32, h as f32), HAND_COLOR, 2);
+        for p in &hand.landmarks_px {
+            draw_dot(&mut img, p[0], p[1], HAND_COLOR, dot_r);
+        }
+    }
     img
 }
 
@@ -128,8 +157,9 @@ pub fn write_annotated(
     frame: &DynamicImage,
     person_bboxes: &[BBox],
     objects: &[TrackedObject],
+    hands: &[Hand],
 ) -> anyhow::Result<Vec<String>> {
-    let img = render(frame, person_bboxes, objects);
+    let img = render(frame, person_bboxes, objects, hands);
     img.save(path)?;
     let legend = objects
         .iter()
@@ -172,7 +202,7 @@ mod tests {
         let frame = DynamicImage::new_rgb8(320, 240);
         let persons = vec![BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.6 }];
         let objects = vec![obj(OBJECT_ID_BASE + 2, "cup", BBox { x1: 0.4, y1: 0.4, x2: 0.55, y2: 0.6 })];
-        let img = render(&frame, &persons, &objects);
+        let img = render(&frame, &persons, &objects, &[]);
         // Some pixel must be non-black (a box/number was drawn).
         let any = img.pixels().any(|p| p.0 != [0, 0, 0]);
         assert!(any, "annotated frame should have drawn pixels");
@@ -193,7 +223,7 @@ mod tests {
             obj(OBJECT_ID_BASE + 1, "chair", BBox { x1: 0.5, y1: 0.5, x2: 0.9, y2: 0.9 }),
         ];
         let dir = std::env::temp_dir().join(format!("mvm_scene_test_{}.jpg", std::process::id()));
-        let legend = write_annotated(dir.to_str().unwrap(), &frame, &[], &objects).unwrap();
+        let legend = write_annotated(dir.to_str().unwrap(), &frame, &[], &objects, &[]).unwrap();
         assert_eq!(legend.len(), 2);
         assert!(legend[0].contains("cup"));
         assert!(dir.exists());
