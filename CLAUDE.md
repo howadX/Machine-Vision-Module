@@ -12,28 +12,35 @@ Machine Vision Module/
 ├── models/         # Веса: PyTorch (.pth), ONNX, MediaPipe (.task), references/
 ├── venv/           # Python 3.11+ virtualenv
 ├── src/            # sightd (legacy Rust daemon, заменён на mvm/)
-└── mvm/            # 🆕 Rust workspace (8 крейтов, 56 тестов, фаза 5.2)
-    ├── crates/     # mvm-core, detect, identity, emotion, posture, fusion, pipeline, cli
-    ├── docs/       # phase-5.1-claude-prompt.md
-    └── CLAUDE.md   # ← детальный контекст Rust-части
+└── mvm/            # Rust workspace (11 крейтов, 197 тестов, фаза 8 — Agent-Mesh-ready)
+    ├── crates/     # core, detect, identity, emotion, posture, scene, depth, hands, fusion, pipeline, cli
+    ├── docs/       # phase-* prompts/runbooks
+    └── CLAUDE.md   # ← детальный контекст Rust-части (source of truth)
 ```
 
 ## Как работает
 
-Гибридный пайплайн: Python bridge (`tools/mvm_bridge.py`) захватывает камеру и выдаёт JSON lines, Rust `mvm-cli` парсит их и обогащает нативными ONNX-моделями.
+Два пути захвата:
+
+- **`--native-camera`** (основной, фаза 7+): чистый Rust v4l2 MJPG → body-primary цепочка
+  (BlazePose-тело + YuNet-лицо + SFace + EmotiEffLib + YOLO26n-объекты + Depth-Anything + handpose)
+  → метрический 3D scene-graph. **Ноль Python.**
+- **`--native`** (bridge, для тестов/дебага): Python `tools/mvm_bridge.py` захватывает камеру и выдаёт
+  JSON lines, Rust обогащает нативными ONNX-моделями. venv остаётся для этого пути.
 
 ```bash
-# Python bridge (камера → JSON)
-venv/bin/python3 tools/mvm_bridge.py --json-only --max-frames 1
+# Основной путь — чистый Rust, всё нативно
+cd mvm && target/release/mvm-cli --native-camera --dump-interval 3 --dump-json
 
-# Rust mvm-cli (запускает bridge как subprocess)
-cd mvm && cargo run --release -- --native --once --dump-interval 1
+# Визуальный дебаг: все детекторы цветом своего агента → /tmp/mvm_scene.jpg
+cd mvm && target/release/mvm-cli --native-camera --dump-interval 3 --scene-debug
 
-# С machine-readable JSON выводом
-cd mvm && target/release/mvm-cli --native --once --dump-interval 1 --dump-json
+# Bridge-путь (Python мост, для дебага)
+cd mvm && target/release/mvm-cli --native --once --dump-json
 ```
 
-**Камера:** `tools/mvm_bridge.py` использует `cv2.CAP_FFMPEG` (не V4L2) — обход PipeWire на Ubuntu 24+.
+**Камера:** `--native-camera` использует прямой v4l2 MJPG mmap; bridge использует `cv2.CAP_FFMPEG`
+(не V4L2) — обход PipeWire на Ubuntu 24+.
 
 ## Актуальная ветка
 

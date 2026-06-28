@@ -9,13 +9,18 @@ MVM превращает видеопоток в **метрический 3D sce
 ```bash
 cd mvm
 cargo build --release
-./target/release/mvm-cli --native --once --dump-json   # один кадр → Scene JSON
+./target/release/mvm-cli --native-camera --dump-json --dump-interval 3   # чистый Rust → Scene JSON
 ```
 
-> **Статус:** фаза 6 (Metric 3D Scene-Graph) закрыта и провалидирована на живой
-> камере (июнь 2026). 106 тестов зелёные. Боевой инференс (emotion, identity, 3D,
-> трекинг, fusion) — нативный Rust. Захват камеры, первичная детекция и поза пока
-> приходят из Python-моста — их снос в нативный Rust это **фаза 7** (см. roadmap).
+> **Статус (июнь 2026): фаза 8 — Agent-Mesh-ready. 197 тестов зелёные, 11 крейтов.**
+> Основной путь `--native-camera` — **чистый Rust, ноль Python**: v4l2-захват →
+> **body-primary** цепочка (тело — несущая сущность) → метрический 3D scene-graph.
+> Нативны все детекторы: лицо (YuNet), identity (SFace), эмоция (EmotiEffLib),
+> поза (BlazePose+PoseVAE), объекты (YOLO26n), глубина (Depth-Anything-V2), кисти
+> (MediaPipe handpose). Группа детекторов **G₁ Human полна**; объекты получают
+> метрическую 3D через depth-anchoring к позе человека. Следующее — **Agent Mesh**
+> (вынос тяжёлых детекторов в потоки). Python-bridge (`--native`) остаётся для
+> тестов/дебага. См. roadmap.
 
 ---
 
@@ -60,8 +65,8 @@ real-time (кто / в каком состоянии / где) — MVM. Гибр
    **Ноль новых зависимостей** на каждую новую интеллектуальную фичу. Footprint
    растёт только когда добавляется новый ONNX-эксперт.
 2. **CPU-first, $0.** Ни рантайм, ни модели не требуют GPU и внешних API.
-3. **Полный нативный Rust-путь.** Python-модели — прототипы-леса; боевой кластер
-   целиком на Rust. Python планомерно сносится (фаза 7).
+3. **Полный нативный Rust-путь.** Боевой hot-path (`--native-camera`) — целиком Rust,
+   ноль Python (снято в фазе 7). Python-bridge остаётся отдельным путём для тестов/дебага.
 
 Тяжёлый стек (оправдан): `ort` (ONNX inference, CPU) + `ndarray` + `image`.
 Всё остальное (`anyhow`, `serde`, `chrono`) тривиально. Фундаментальные фичи
@@ -70,31 +75,34 @@ real-time (кто / в каком состоянии / где) — MVM. Гибр
 
 ---
 
-## Архитектура (текущий пайплайн)
+## Архитектура (`--native-camera`, body-primary, чистый Rust)
 
 ```
-Камера /dev/video0  (cv2 CAP_FFMPEG — обход PipeWire на Ubuntu 24+; ROTATE_180)
+Камера /dev/video0  (нативный v4l2 MJPG mmap — ноль Python)
+      │  RGB-кадр в памяти
+      ▼  Rust mvm-cli  (--native-camera)            ← ВЕСЬ кластер нативный
+ G₁ Human (несущая сущность = ТЕЛО, body-primary):
+      ├─ BlazePose+PoseVAE → 33 landmarks → поза (6 кл) + torso-3D   (mvm-posture)
+      ├─ YuNet         → лицо по nose-landmark тела → identity/emotion (mvm-detect)
+      ├─ SFace         → identity 512d + cosine match + margin (галерея) (mvm-identity)
+      ├─ EmotiEffLib B0 → emotion[8] + entropy + calibrated_conf       (mvm-emotion)
+      └─ handpose      → 21 landmark/рука (ROI из запястий)            (mvm-hands)
+ G₂ Scene (cadence /3):
+      └─ YOLO26n       → объекты (80 кл COCO) + стабильный трекер       (mvm-scene)
+ G₄ Environment (cadence /30):
+      └─ Depth-Anything-V2 → относит. карта → depth-anchoring к позе    (mvm-depth)
       │
-      ▼  Python bridge (mvm_bridge.py)        ← прототип-леса, сносится в фазе 7
-      ├─ SCRFD          → bbox лица            (первичная детекция)
-      ├─ MediaPipe Pose → 33 лендмарка → PoseVAE → поза (6 кл)
-      └─ кадр на диск (--write-frame)
-      │  JSON line + кадр
-      ▼  Rust mvm-cli  (--native)             ← БОЕВОЙ нативный кластер
-      ├─ YuNet          → детекция/кроп лица   (mvm-detect, ONNX)
-      ├─ SFace          → identity 512d + cosine match (галерея)
-      ├─ EmotiEffLib B0 → emotion[8] + entropy + calibrated_conf
-      ├─ Pinhole 3D     → (x,y,z)м из bbox + known-size приор  (space.rs)
-      ├─ PersonTracker  → Kalman bbox (6.1) + identity re-link + temporal emotion PoE (6.4b)
-      ├─ build_scene()  → граф близости + зоны + рёбра (6.4a)
+      ▼  Fusion (mvm-fusion, object-agnostic):
+      ├─ PersonTracker  → Kalman bbox + identity re-link + reserved-id модель + temporal PoE
+      ├─ build_scene()  → метрический 3D граф: узлы (люди+объекты) + рёбра + зоны (union-find)
       └─ выход:
            ├─ Scene JSON  (--dump-json)        ← машинный контракт для Hermes
-           ├─ ASCII-таблица (stderr)
+           ├─ --scene-debug → /tmp/mvm_scene.jpg (все детекторы цветом своего агента)
            └─ StateFile  ~/.hermes/profiles/sight/workspace/current_state.md
 ```
 
-**Что уже нативно:** emotion, identity, 3D, трекинг (Kalman + re-link), fusion.
-**Что ещё Python (фаза 7):** захват камеры, первичный bbox (SCRFD), поза.
+**Всё нативно** в `--native-camera`. Bridge-путь (`--native`, Python мост) остаётся
+для тестов/дебага (решение владельца — venv не сносится).
 
 ---
 
@@ -115,50 +123,65 @@ real-time (кто / в каком состоянии / где) — MVM. Гибр
       "emotion": "Surprise", "emotion_conf": 0.50,
       "emotion_distribution": [0.05,0.13,0.10,0.26,0.07,0.13,0.09,0.18],
       "posture": "сидит_за_ПК", "posture_conf": 0.44,
-      "dist_m": 2.34, "pos": [-0.08, 0.39, 2.34],
-      "bbox_h": 0.12
+      "dist_m": 1.10, "pos": [0.93, 0.43, 1.10],
+      "bbox_h": 0.35
     }
   ],
-  "zones": [[0]],
-  "relations": []
+  "objects": [
+    { "id": 10000, "class": "keyboard", "score": 0.61, "age": 40, "pos": [0.23, 0.56, 0.87], "bbox": [0.15,0.60,0.26,0.75] },
+    { "id": 10001, "class": "cup",      "score": 0.82, "age": 58, "pos": [0.18, 0.65, 0.68], "bbox": [0.44,0.75,0.50,0.89] }
+  ],
+  "zones": [[0, 10000, 10001]],
+  "relations": [
+    { "a": 0, "b": 10000, "dist_m": 0.74, "overlap": 0.0, "kind": "near" }
+  ]
 }
 ```
 
-- **`emotion_distribution[8]`** — полный вектор (Holo-Confidence). Классы (порядок):
-  `Anger, Contempt, Disgust, Fear, Happiness, Neutral, Sadness, Surprise`.
-  Downstream обязан читать `emotion_conf` / энтропию, а не голую метку (на низком
-  conf модель не уверена).
-- **`pos`** — `[x, y, z]` в метрах, origin = камера, pinhole-геометрия.
-- **`zones`** — связные компоненты графа близости (контекстные зоны).
+- **`faces`** — люди (несущая сущность = тело; `id` 0–9 = пользователи галереи,
+  ≥10 = анонимные тела). `emotion_distribution[8]` — полный вектор (Holo-Confidence):
+  `Anger, Contempt, Disgust, Fear, Happiness, Neutral, Sadness, Surprise`. Downstream
+  читает `emotion_conf`/энтропию, а не голую метку.
+- **`objects`** — YOLO26n узлы (`id` ≥10000, стабильный трекер). `pos` ставится
+  depth-anchoring'ом к позе человека; без depth — overlap-only.
+- **`pos`** — `[x, y, z]` в метрах, origin = камера.
+- **`zones`** — связные компоненты графа (контекстные зоны: «человек + объекты на столе»).
 - **`relations`** — рёбра `{a, b, dist_m, overlap, kind}`, kind ∈ `near | overlapping | part_of`.
+  Метрическое `near` строится только между узлами с реальной 3D (`pos_conf>0`).
 
 ---
 
 ## Крейты
 
-| Крейт | Статус | Содержимое | Тесты |
-|-------|--------|------------|-------|
-| **mvm-core** | ✅ | типы, Config, PersonTracker (Kalman + identity re-link), Pinhole/DepthEma, EMOTION_LABELS + temporal PoE, Entity/Scene | 48 |
-| **mvm-detect** | ✅ | YuNet ONNX (228 КБ), CHW BGR preprocessing, multi-stride NMS | 5 |
-| **mvm-identity** | ✅ | SFace ONNX (37 МБ), L2-эмбеддинги, gallery cosine match | 5 |
-| **mvm-emotion** | ✅ | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, EmotionResult + entropy | 7 |
-| **mvm-posture** | 🔶 заглушка | пустой Module trait (поза от Python, нативная — фаза 7) | 0 |
-| **mvm-fusion** | ✅ | `build_scene()` union-find граф, `fuse()` PoE, Entity/Relation/Scene | 9 |
-| **mvm-pipeline** | ✅ | Camera (Python bridge subprocess), `parse_line` (+ интеграционные) | 5 (+9) |
-| **mvm-cli** | ✅ | main, StateFile, Scene JSON, `--native`/`--once`/`--dump-json`/`--emotion-debug` | 17 |
-| **xtask** | ✅ | `cargo xtask bundle` → `dist/mvm` (модели embedded) | 1 |
+| Крейт | Статус | Содержимое |
+|-------|--------|------------|
+| **mvm-core** | ✅ | типы, Config, PersonTracker (Kalman + identity re-link + reserved-id), Pinhole/DepthEma, EMOTION_LABELS + temporal PoE, Entity/Scene |
+| **mvm-detect** | ✅ | YuNet ONNX (228 КБ), CHW BGR preprocessing, multi-stride NMS |
+| **mvm-identity** | ✅ | SFace ONNX (37 МБ), L2-эмбеддинги, gallery cosine match + margin |
+| **mvm-emotion** | ✅ | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, EmotionResult + entropy |
+| **mvm-posture** | ✅ | нативный two-stage: person-det + BlazePose ONNX + hand-rolled PoseVAE/Classifier, мульти-persona |
+| **mvm-scene** | ✅ | YOLO26n ONNX (80 кл COCO, end-to-end/raw decode) + class-aware NMS + стабильный ObjectTracker |
+| **mvm-depth** | ✅ | Depth-Anything-V2-Small ONNX (относит. карта) + median-sample → depth-anchoring |
+| **mvm-hands** | ✅ | MediaPipe handpose ONNX (21 landmark/рука) + ROI из запястий BlazePose |
+| **mvm-fusion** | ✅ | `build_scene()` union-find граф (depth-gated near), `fuse()` PoE, Entity/Relation/Scene |
+| **mvm-pipeline** | ✅ | NativeCamera (v4l2 MJPG mmap) + Camera (Python bridge subprocess) |
+| **mvm-cli** | ✅ | main, body-primary chain, StateFile, Scene JSON, `--native-camera`/`--native`/`--dump-json`/`--scene-debug` |
+| **xtask** | ✅ | `cargo xtask bundle` → `dist/mvm` (модели embedded) |
 
-**Всего: 106 тестов, все зелёные.** Бинарник `target/release/mvm-cli` ≈ 26 МБ.
+**Всего: 197 тестов, все зелёные.** Бинарник `target/release/mvm-cli`.
 
-### Микро-агенты
+### Микро-агенты (группы детекторов)
 
-| Агент | Модель | Сигнал | Лицензия |
-|-------|--------|--------|----------|
-| **Detect** | YuNet ONNX 228 КБ | bbox лица | MIT |
-| **Identity** | SFace ONNX 37 МБ | identity + confidence | Apache 2.0 |
-| **Emotion** | EmotiEffLib B0 16 МБ | 8 эмоций + distribution + entropy | Apache 2.0 |
-| **Posture** | PoseVAE (Python) | 6 поз + confidence + plausibility | собственная |
-| **3D** | Pinhole (нативный) | (x,y,z)м + ws_confidence | — (чистая геометрия) |
+| Группа | Агент | Модель | Сигнал | Лицензия |
+|--------|-------|--------|--------|----------|
+| **G₁ Human** | Pose | BlazePose+PoseVAE (нативный) | 33 landmarks → 6 поз + torso-3D | Apache 2.0 |
+| | Face | YuNet ONNX 228 КБ | bbox лица (по nose-landmark тела) | MIT |
+| | Identity | SFace ONNX 37 МБ | identity + confidence + margin | Apache 2.0 |
+| | Emotion | EmotiEffLib B0 16 МБ | 8 эмоций + distribution + entropy | Apache 2.0 |
+| | Hands | MediaPipe handpose 4 МБ | 21 landmark/рука | Apache 2.0 |
+| **G₂ Scene** | Object | YOLO26n ONNX | 80 классов COCO + стабильный id | AGPL-3.0 |
+| **G₄ Env** | Depth | Depth-Anything-V2-Small 27 МБ | относит. карта → метрич. объекты | Apache 2.0 |
+| **3D** | Pinhole | нативный | (x,y,z)м + ws_confidence | — (чистая геометрия) |
 
 ---
 
@@ -168,27 +191,26 @@ real-time (кто / в каком состоянии / где) — MVM. Гибр
 # Сборка
 cargo build --release
 
-# Полный пайплайн через Python bridge (детекция + identity + emotion + поза + 3D)
-./target/release/mvm-cli --once
+# ОСНОВНОЙ путь — чистый Rust (body-primary, объекты, глубина, кисти), ноль Python
+./target/release/mvm-cli --native-camera --dump-json --dump-interval 3
 
-# Нативный Rust-инференс (emotion/identity/3D в Rust; камера/детекция/поза — bridge)
-./target/release/mvm-cli --native --once
+# Визуальный дебаг — все детекторы цветом своего агента → /tmp/mvm_scene.jpg
+./target/release/mvm-cli --native-camera --scene-debug --dump-interval 3
 
-# Machine-readable Scene JSON, по кадру
-./target/release/mvm-cli --native --dump-json --dump-interval 1
-
-# A/B эмоций: EmotiEffLib (Rust) vs HSEmotion (Python)
-./target/release/mvm-cli --native --once --emotion-debug
+# Bridge-путь (Python мост) — для тестов/дебага
+./target/release/mvm-cli --native --once --dump-json
 
 # Все тесты
 cargo test --workspace
 
 # Один бинарник со встроенными моделями
-cargo xtask bundle && ./dist/mvm --once
+cargo xtask bundle && ./dist/mvm --native-camera --once
 ```
 
-Гибридный запуск требует Python-venv родительского проекта
-(`../venv`, `../tools/mvm_bridge.py`) — `Camera::spawn()` поднимает его как subprocess.
+`--native-camera` не требует Python. Bridge-путь (`--native`) поднимает
+`../tools/mvm_bridge.py` из venv родительского проекта как subprocess (тесты/дебаг).
+Большие ONNX-модели качаются отдельно (см. комментарии в `.gitignore`); только
+мелкий YuNet (228 КБ) в репозитории.
 
 ---
 
@@ -232,25 +254,34 @@ venv/bin/python3 ../tools/cam_test.py --replay logs/cam_two_people.jsonl
 ## Roadmap
 
 - **Фаза 5** ✅ — стабилизация, A/B эмоций, dump-json, интеграционные тесты.
-- **Фаза 6** ✅ — Metric 3D Scene-Graph: Kalman bbox (6.1), нативная pinhole-3D
-  (6.2) + калибровка, entropy/uncertainty эмоций (6.3), реляционный граф +
-  temporal PoE (6.4). Провалидирована на камере. + identity re-link.
-- **Фаза 7** 🔜 — **снос Python**: YuNet как первичный детектор (+ рекалибровка),
-  нативный захват камеры (риск — PipeWire), нативная мульти-persona поза (ONNX +
-  порт PoseVAE), удаление bridge → один бинарник, SFace-эмбеддинг в трекер
-  (margin-identity + cosine-re-link). Детальный план — в `CLAUDE.md`.
-- **Фаза 8** 🔜 — продукт: авто-калибровка fx, drag-and-drop галерея,
-  one-click install, systemd service.
+- **Фаза 6** ✅ — Metric 3D Scene-Graph: Kalman bbox, нативная pinhole-3D + калибровка,
+  entropy/uncertainty эмоций, реляционный граф + temporal PoE. + identity re-link.
+- **Фаза 7 / 7.5** ✅ — снос Python с hot-path: `--native-camera` (v4l2 MJPG, ноль
+  Python, ~25 fps), YuNet-детекция, SFace в трекер (margin + cosine re-link), нативная
+  мульти-persona поза (BlazePose ONNX + hand-rolled PoseVAE).
+- **Фаза 8** 🟡 (в работе) — **Agent-Mesh + новые группы детекторов + cross-group fusion**:
+  - **8.0.1–8.0.4** ✅ — спайки mesh (threads-not-tokio), **body-primary** иерархия
+    (тело — несущая сущность, FRONTIER закрыт), reserved-id identity-модель, стабилизация трека.
+  - **8.E** ✅ — `mvm-scene`: YOLO26n объект-узлы → `build_scene`, cadence, фильтры + стабильный трекер.
+  - **8.E.2** ✅ — `mvm-depth`: Depth-Anything-V2 → depth-anchoring объектов к позе → 3D-зоны.
+  - **8.E.4** ✅ — `mvm-hands`: handpose из запястий → **G₁ Human полна (HumanAgent ready)**.
+  - **Agent Mesh (8.A–8.D)** 🔜 — WorldState-типы, `mvm-mesh` (std::thread), HumanAgent,
+    подкоманда `mesh`. Тяжёлые детекторы (depth ~230мс, hands) доказали head-of-line blocking.
+  - **8.E.3 audio (YAMNet)** 🔜 — группа G₄.
+- **Фаза 9** 🔜 — продукт: авто-калибровка fx, drag-and-drop галерея, one-click install, systemd.
 
 ### Известные ограничения (честно)
 
-- **FPS ~1–2** в гибридном режиме — узел Python bridge (фаза 7 снимает).
-- **Эмоция near-chance на потолочном ракурсе** — распределение почти равномерное;
-  temporal-fusion убрал джиттер, метка стабильна, но `conf` честно низкая.
-- **Поза только у 1 человека** — MediaPipe возвращает один pose; мульти-persona =
-  фаза 7.
-- **identity false-positive при галерее из 1 человека** — чужой матчится как
-  ближайший; нужен margin/threshold (фаза 7).
+- **FPS 20→13 в `--native-camera`** при включённых depth+hands (синхронный цикл, тяжёлые
+  детекторы блокируют) — это и есть head-of-line blocking, который снимет Agent Mesh (8.C).
+- **Эмоция near-chance на потолочном ракурсе** — распределение почти равномерное; метка
+  стабильна (temporal PoE), но `conf` честно низкая. Лучше при виде с уровня глаз.
+- **Hand-ROI из запястья** неидеален (BlazePose hand-точки грубые) — кисти ловятся надёжно
+  на чётком фронтальном жесте; rotation-from-pose ROI — будущий апгрейд.
+- **Объекты под нестандартным ракурсом** (потолок/вверх ногами) — COCO out-of-distribution;
+  лучший рычаг — угол камеры (вид с уровня глаз), не настройки детектора.
+- **`torso_length_m` не откалиброван рулеткой** — ординальная 3D-глубина корректна, абсолютная
+  приблизительна.
 
 ---
 
