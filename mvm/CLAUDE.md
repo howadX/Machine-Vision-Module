@@ -252,21 +252,22 @@ cargo run --release -- --native --once --dump-interval 1
 # Camera::spawn() внутри запускает ../venv/bin/python3 ../tools/mvm_bridge.py
 ```
 
-## Структура (8 крейтов)
+## Структура (9 крейтов)
 
 ```
 mvm/
-├── Cargo.toml              # [workspace] 8 members, edition 2024
+├── Cargo.toml              # [workspace] 9 members, edition 2024
 ├── .cargo/config.toml      # alias: cargo xtask = run --package xtask --
 ├── crates/
 │   ├── mvm-core/           # ✅ типы, трейты, Config, PersonTracker
 │   ├── mvm-detect/         # ✅ YuNet ONNX (228KB, embed-model, multi-stride NMS)
-│   ├── mvm-identity/       # ⚠️ SFace ONNX (37MB, L2-embeddings, gallery)
-│   ├── mvm-emotion/        # ⚠️ EmotiEffLib B0 ONNX (16MB, 8-class VGAF)
-│   ├── mvm-posture/        # 🔶 заглушка Module
-│   ├── mvm-fusion/         # 🔶 заглушка Module
-│   ├── mvm-pipeline/       # ✅ Camera (Python bridge), parse_line
-│   └── mvm-cli/            # ✅ main, StateFile, dump_table(), --native/--once
+│   ├── mvm-identity/       # ✅ SFace ONNX (37MB, L2-embeddings, gallery)
+│   ├── mvm-emotion/        # ✅ EmotiEffLib B0 ONNX (16MB, 8-class VGAF)
+│   ├── mvm-posture/        # ✅ нативная BlazePose + PoseVAE/classifier (НЕ заглушка)
+│   ├── mvm-fusion/         # ✅ build_scene (union-find граф+зоны) + PoE (НЕ заглушка)
+│   ├── mvm-scene/          # ✅ YOLO26n ONNX (80 классов COCO, end-to-end/raw, object-узлы) [8.E]
+│   ├── mvm-pipeline/       # ✅ Camera (Python bridge) + NativeCamera (v4l2 MJPG)
+│   └── mvm-cli/            # ✅ main, StateFile, dump_table(), --native/--native-camera/--once
 ├── xtask/                  # ✅ cargo xtask bundle → dist/mvm
 ├── dist/                   # bundled binary output
 └── models/                 # ONNX: YuNet (228KB), SFace (37MB), EmotiEffLib (16MB)
@@ -352,9 +353,11 @@ mvm/
 
 ### 🟢 Фаза 8 — Body-primary + scene-graph наружу (в работе, 2026-06-28)
 
-> **CHECKPOINT 2026-06-28.** Ветка `rust-core`. **151 тест зелёный**, release чист. Коммиты поверх
-> `117b8df1`: `52907ca4` (спайк 8.0.1), `dfdca72c` (body-primary+id 8.0.2), `b50d7288` (A1+A3 8.0.3),
-> `4380c1e9` (R+A2-lite 8.0.4). Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
+> **CHECKPOINT 2026-06-28 (обновлён, 8.E приземлён).** Ветка `rust-core`. **171 тест зелёный**, release чист.
+> Коммиты поверх `117b8df1`: `52907ca4` (спайк 8.0.1), `dfdca72c` (body-primary+id 8.0.2), `b50d7288`
+> (A1+A3 8.0.3), `4380c1e9` (R+A2-lite 8.0.4), `ebd9e5a9` (docs checkpoint), `0cae2f17` (mvm-scene +
+> object-узлы + cadence 8.E), `5eebed53` (YOLO26n end-to-end decode + person-фильтр + модель).
+> Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
 > План фазы: `wiki/machine-vision/IMPLEMENTATION_PLAN.md`; оценка Agent Mesh: `wiki/machine-vision/08-fusion-architecture/agent-mesh-eval-8.0.1.md`.
 
 | Задача | Статус |
@@ -363,10 +366,10 @@ mvm/
 | 8.0.2 Body-primary иерархия (FRONTIER) + reserved-id identity-модель | ✅ live-validated |
 | 8.0.3 Стабилизация A1 (анти-flip) + A3 (торс-3D EMA) → churn 44→6 | ✅ live-validated |
 | 8.0.4 R (visibility-gate фантомов) + A2-lite (center-relink анонимов) | ✅ (ре-валидация на 3 людях ожидается) |
-| **8.E cadence-scheduling + YOLO26n object-узлы** (новый крейт `mvm-scene`) | 🔜 **СЛЕДУЮЩЕЕ** — нужна развязка по модели (YOLO26n export vs YOLOv8n ONNX; download-separately) |
-| 8.E depth (Depth-Anything-V2-Small, low-cadence) / audio (YAMNet) / hands | 🔜 |
-| 8.F cross-group fusion = object/audio-узлы → существующий `build_scene` (НЕ MBT) | 🔜 |
-| Agent Mesh (async threads) — отложен до появления тяжёлого детектора | 🔜 |
+| **8.E cadence + YOLO26n object-узлы** (крейт `mvm-scene`, 9-й крейт) | ✅ — модель = **YOLO26n** (ultralytics 8.4.81 export, end-to-end NMS-free `[1,300,6]`, 9.5МБ, gitignored). Object-узлы → `build_scene` (overlap-рёбра человек↔объект), cadence `object_cadence=3` в синхронном цикле, person-класс отфильтрован (G₁ владеет людьми). Валидировано: person 0.93 на референсе, live 21.7fps. **Live-валидация сцены с реальными объектами — за владельцем** |
+| 8.E depth (Depth-Anything-V2-Small, low-cadence) / audio (YAMNet) / hands | 🔜 СЛЕДУЮЩЕЕ |
+| 8.F cross-group fusion = object/audio-узлы → существующий `build_scene` (НЕ MBT) | 🟡 object-часть готова (8.E); audio/depth-узлы — с их крейтами |
+| Agent Mesh (async threads) — отложен до появления тяжёлого детектора (depth ~100мс) | 🔜 |
 
 > **Решения 8.0.1 (зафиксированы спайками):** mesh на `std::thread` (НЕ tokio; contention опровергнут — текущие эксперты ~12мс/~80fps); cross-group fusion = object-узлы в `build_scene` (НЕ MBT; verified-research); cadence врезается вместе с тяжёлым детектором (YOLO/depth). A2 (полный torso-center matching) — не нужен, A1+A2-lite хватило.
 
