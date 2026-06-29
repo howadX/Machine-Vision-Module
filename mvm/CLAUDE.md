@@ -115,9 +115,9 @@ MVM покрывает 80% практических сценариев (прис
 
 ## Текущий статус (25 июня 2026, фаза 6 закрыта ✅ + 3D откалибровано)
 
-> ⚠️ **Снимок фазы 6 (исторический).** Актуальное состояние на 2026-06-29 — выше в
-> «✅ FRONTIER ЗАКРЫТ» + «Фаза 8» (body-primary, id-модель, 11 крейтов, **197 тестов**;
-> G₁ Human полна: +scene/depth/hands; mvm-posture/mvm-fusion давно production).
+> ⚠️ **Снимок фазы 6 (исторический).** Актуальное состояние на 2026-06-30 — выше в
+> «✅ FRONTIER ЗАКРЫТ» + «Фаза 8 ЯДРО ЗАКРЫТО» (body-primary, id-модель, **12 крейтов, 248 тестов**,
+> тред-меш `mvm-cli mesh`, landmark-взаимодействие; G₁ Human полна: +scene/depth/hands).
 > Таблица ниже отражает состояние на 25 июня и сохранена как исторический срез.
 
 ### Что работает при `mvm-cli --native --once --dump-json`
@@ -249,8 +249,15 @@ Machine Vision Module/           ← корень проекта (cwd при з�
 
 **Запуск mvm-cli (из mvm/):**
 ```bash
-cargo run --release -- --native --once --dump-interval 1
-# Camera::spawn() внутри запускает ../venv/bin/python3 ../tools/mvm_bridge.py
+# Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на потоках
+cargo run --release -- mesh --dump-json --interval-ms 1000          # живой (камера + все модели)
+cargo run --release -- mesh --stub --max-frames 100                 # model-free CI-smoke
+cargo run --release -- mesh --max-frames 500 --dump-json            # ограниченный прогон
+
+# Синхронные пути (живы, не тронуты)
+cargo run --release -- --native-camera --once --dump-interval 1     # pure-Rust hot-path (без mesh)
+cargo run --release -- --native --once --dump-interval 1            # Python bridge (поза)
+# Camera::spawn() внутри bridge-пути запускает ../venv/bin/python3 ../tools/mvm_bridge.py
 ```
 
 ## Структура (12 крейтов)
@@ -260,7 +267,7 @@ mvm/
 ├── Cargo.toml              # [workspace] 11 members, edition 2024
 ├── .cargo/config.toml      # alias: cargo xtask = run --package xtask --
 ├── crates/
-│   ├── mvm-core/           # ✅ типы, трейты, Config, PersonTracker
+│   ├── mvm-core/           # ✅ типы, трейты, Config, PersonTracker, WorldState (блэкборд, 8.A/8.B)
 │   ├── mvm-detect/         # ✅ YuNet ONNX (228KB, embed-model, multi-stride NMS)
 │   ├── mvm-identity/       # ✅ SFace ONNX (37MB, L2-embeddings, gallery)
 │   ├── mvm-emotion/        # ✅ EmotiEffLib B0 ONNX (16MB, 8-class VGAF)
@@ -269,9 +276,10 @@ mvm/
 │   ├── mvm-scene/          # ✅ YOLO26n ONNX (80 классов COCO, end-to-end/raw, object-узлы + трекер) [8.E]
 │   ├── mvm-depth/          # ✅ Depth-Anything-V2-Small ONNX (относит. карта → метрич. объекты) [8.E.2]
 │   ├── mvm-hands/          # ✅ MediaPipe handpose ONNX (21 landmark/рука, ROI из запястий) [8.E.4]
-│   ├── mvm-mesh/           # 🆕 Agent Mesh: std::thread агенты + latest-frame + WorldState [8.C скелет]
+│   ├── mvm-mesh/           # ✅ Agent Mesh: Agent trait + LatestFrame + AgentMesh оркестратор на std::thread [8.C]
 │   ├── mvm-pipeline/       # ✅ Camera (Python bridge) + NativeCamera (v4l2 MJPG)
-│   └── mvm-cli/            # ✅ main, StateFile, dump_table(), --native/--native-camera/--once
+│   └── mvm-cli/            # ✅ main + mesh-подкоманда; src/pipeline.rs (BodyPrimaryPipeline),
+│                           #    src/agents/ (Capture/Human/Scene/Depth/Fusion/StateFileWriter), state.rs, scene_debug.rs
 ├── xtask/                  # ✅ cargo xtask bundle → dist/mvm
 ├── dist/                   # bundled binary output
 └── models/                 # ONNX: YuNet (228KB), SFace (37MB), EmotiEffLib (16MB)
@@ -355,17 +363,26 @@ mvm/
 | 7.5.5 G6 оракул точности позы (native vs MediaPipe) | ✅ воспроизводимый оракул (`spike_pose/golden_refs.py` + regression-тест `pose_class_oracle_vs_python`) на 7 закоммиченных эталонах. **Согласие классов native↔Python = 5/7 (71%)**, гейт ≥5/7. Расхождения — `standing`→`sitting_at_desk` (слабый класс на потолочном ракурсе, остаточный z-зазор). **Quality:** pose-суперсэмплинг (≈INTER_AREA) снизил z-расхождение vs Python на 33% (0.099→0.067) |
 | 7.6 Python-zero: удалить bridge + venv ⚠️ **только с явного согласия владельца** | 🔜 |
 
-### 🟢 Фаза 8 — Body-primary + scene-graph наружу (в работе, 2026-06-28)
+### 🟢 Фаза 8 — Body-primary + Agent Mesh + Fusion (✅ ЯДРО ЗАКРЫТО, 2026-06-30)
 
-> **CHECKPOINT 2026-06-29 (8.E/8.E.2/8.E.4 + Agent-Mesh 8.A/8.B/8.C-скелет приземлены).** Ветка `rust-core`. **212 тестов зелёных, 12 крейтов**, release чист.
-> Коммиты поверх `117b8df1`: `52907ca4` (спайк 8.0.1), `dfdca72c` (body-primary+id 8.0.2), `b50d7288`
-> (A1+A3 8.0.3), `4380c1e9` (R+A2-lite 8.0.4), `ebd9e5a9` (docs), `0cae2f17` (mvm-scene + object-узлы +
-> cadence 8.E), `5eebed53` (YOLO26n end-to-end decode + person + модель), `ddae6139` (docs),
-> `1978a869` (fix: Near-рёбра только при pos_conf>0), `413436cd` (фильтры A/C/D + стабильный
-> ObjectTracker B), `faa6b990` (--scene-debug визуализатор), `tune→0.30`+`13f09803` (камера default,
-> rotate_180=false), `21363ab3` (крейт mvm-depth 8.E.2), `b832f7bf` (depth-anchoring → метрич. объекты),
-> `a48f517c` (крейт mvm-hands 8.E.4 → G₁ Human полна). Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
-> План фазы: `wiki/machine-vision/IMPLEMENTATION_PLAN.md`; оценка Agent Mesh: `wiki/machine-vision/08-fusion-architecture/agent-mesh-eval-8.0.1.md`.
+> **CHECKPOINT 2026-06-30 — ядро фазы 8 закрыто и live-validated на 0/1/2 людях.** Ветка `rust-core`,
+> **248 тестов зелёных, 12 крейтов**, release чист.
+> **Тред-меш работает:** `mvm-cli mesh` гоняет цепочку `Capture → {Human, Scene, Depth} → Fusion →
+> StateFileWriter` на `std::thread` (ноль tokio). **HOL-блокинг снят** — depth (~230мс) и YOLO на своих
+> cadence/потоках не стопорят человеко-цепочку. `WorldState` заполняется агентами; Scene JSON контракт
+> (faces+objects+zones+relations, +activities+anomaly_score) сохранён.
+> **Взаимодействие человек↔объект — по body-landmarks** (запястье/кисть ∈ bbox объекта), не по body-bbox.
+> **FPS (честно, человек в кадре):** человеко-движок ~16-17 fps (mesh) vs ~14 синхронно; capture/delivery
+> ~25 fps. ⚠️ `fps` в StateFile считается по приросту `frame_id` = это **темп доставки кадров**, не темп
+> обработки человеко-цепочки.
+> **Коммиты ядра 8.C→8.F:** `a1ba23aa` (8.C-R `BodyPrimaryPipeline` — native-путь владеет моделями),
+> `320641d4` (8.C.5 агенты Capture/Human/Scene/Depth), `febe481f` (8.C.7 FusionAgent depth-anchor +
+> StateFileWriter), `fb2913e7` (8.D подкоманда `mesh` + `--stub`/`--max-frames`), `1356850e`
+> (8.F activities + anomaly_score), `3e6469f8` (8.F взаимодействие по body-landmarks + привязка рук
+> per-person). Ранее: `4efedf08` (8.A/8.B WorldState), `64f0f295` (8.C mvm-mesh скелет).
+> 8.E-задел (scene/depth/hands): `0cae2f17`,`5eebed53`,`413436cd`,`faa6b990`,`21363ab3`,`b832f7bf`,`a48f517c`.
+> Решение владельца: **venv остаётся для тестов/дебага** (7.6-снос отменён).
+> План фазы: `mvm/docs/phase-8-plan.md`; оценка Agent Mesh: `wiki/machine-vision/08-fusion-architecture/agent-mesh-eval-8.0.1.md`.
 
 | Задача | Статус |
 |--------|--------|
@@ -376,14 +393,43 @@ mvm/
 | **8.E cadence + YOLO26n object-узлы** (крейт `mvm-scene`, 9-й крейт) | ✅ **live-validated 2026-06-29**. Модель = **YOLO26n** (ultralytics 8.4.81, end-to-end NMS-free `[1,300,6]`, 9.5МБ, gitignored). Object-узлы → `build_scene` (overlap-рёбра человек↔объект; Near только при pos_conf>0). Cadence `object_cadence=3`. **Фильтры:** A score≥0.45, B стабильный `ObjectTracker` (IoU+free-list, id≥10000, `age`), C allow-list релевантных классов (person исключён → G₁), D min bbox area 0.004. Вживую: couch#10000 трекается во времени, фликер ушёл |
 | **8.E.2 depth (Depth-Anything-V2-Small)** — крейт `mvm-depth` (10-й) | ✅ **live-validated 2026-06-29**. Квант ONNX 27МБ (gitignored), вход 518², выход относит. inverse-depth (~230мс CPU → cadence 30). **Depth-anchoring:** относит. карта привязывается к метрич. торс-Z человека (Z·d≈k, медиана по людям) → объекты получают метрич. 3D в той же системе → реальные 3D-`near` рёбра. Вживую: cup 0.68м/keyboard 0.87м/mouse 0.94м + человек = одна зона рабочего места, кровать (2.0м) — отдельная. FPS 20→15 (depth-стойлы = HOL-блокинг → мотивирует mesh) |
 | **8.E.4 hands (MediaPipe handpose)** — крейт `mvm-hands` (11-й) → **G₁ Human полна → HumanAgent готов** | ✅ **live 2026-06-29**. OpenCV Zoo handpose ONNX 4МБ (gitignored). **Body-primary:** ROI кисти из запястий BlazePose (15/16)+пальцев → `hand_rois_from_pose` (без palm-детектора/анкоров), 21 landmark/рука + presence-gate. Врезано в `build_body_primary`; `--scene-debug` рисует зелёные боксы+точки. Caveat: ROI из запястья требует тюнинга на чётком жесте; FPS 15→13 (hands per-frame — cadence = очевидная оптимизация) |
-| 8.E audio (YAMNet) | 🔜 |
-| 8.F cross-group fusion = object/audio-узлы → существующий `build_scene` (НЕ MBT) | 🟡 object-часть готова (8.E); audio/depth-узлы — с их крейтами |
 | **8.A/8.B WorldState blackboard** (`mvm-core::world`: PersonState/ObjectState/Position3D/Activity + per-entity freshness) | ✅ (commit `4efedf08`) |
 | **8.C Agent Mesh скелет** — крейт `mvm-mesh` (12-й): `Agent` trait + `Frame`/`LatestFrame` (single-slot latest-wins) + Stub-агенты + `AgentMesh` оркестратор на `std::thread` | ✅ (commit `64f0f295`, 8 тестов) |
-| 8.C HumanAgent (обёртка body-primary) + CaptureAgent (NativeCamera) + object/depth-агенты + StateFileWriter | 🔜 СЛЕДУЮЩЕЕ — требует вынести `build_body_primary` в самодостаточный юнит, владеющий моделями |
-| 8.D подкоманда `mvm-cli mesh` + 8.E.3 audio (YAMNet) | 🔜 |
+| **8.C-R `BodyPrimaryPipeline`** — вынос native-пути в самодостаточный юнит, владеющий моделями (`mvm-cli/src/pipeline.rs`); `process(frame) → FrameResult`; `--native-camera` стал отдельным codepath (ранний return) | ✅ (commit `a1ba23aa`) |
+| **8.C.5 агенты Capture/Human/Scene/Depth** (`mvm-cli/src/agents/`) — каждый `impl mvm_mesh::Agent` на потоке; Human владеет human-only pipeline + своим `PersonTracker`; Depth публикует в общий `DepthSlot` (slot в cli, не в MeshContext → mesh detector-agnostic) | ✅ (commit `320641d4`) |
+| **8.C.7 FusionAgent + StateFileWriter** — depth-anchoring на fusion-шаге (видит людей+объекты+depth); StateFileWriter сериализует `WorldState` → StateFile+Scene JSON (`write_world`/`to_json_line_world`) | ✅ (commit `febe481f`) |
+| **8.D подкоманда `mvm-cli mesh`** — парсер + сборка `AgentMesh`; `--stub` (model-free CI-smoke) + `--max-frames`; завершение через `stop_flag` | ✅ (commit `fb2913e7`) **live: HOL снят, движок ~16-17 fps vs ~14 синхр.** |
+| **8.F cross-group fusion** = activities + anomaly_score (чистая арифметика в FusionAgent) → `build_scene` (НЕ MBT). person↔person near; **взаимодействие человек↔объект по body-landmarks** (запястье/кисть ∈ bbox), привязка рук per-person; anomaly v1 по «нежданным» объектам | ✅ (commits `1356850e`, `3e6469f8`) **live: typing/holding_drink по реальному контакту** |
+| 8.E.3 audio (YAMNet) — группа G₄ | 🔜 опц. (новая dep `cpal`/`alsa` против инварианта минимализма — вне ядра) |
 
 > **Решения 8.0.1 (зафиксированы спайками):** mesh на `std::thread` (НЕ tokio; contention опровергнут — текущие эксперты ~12мс/~80fps); cross-group fusion = object-узлы в `build_scene` (НЕ MBT; verified-research); cadence врезается вместе с тяжёлым детектором (YOLO/depth). A2 (полный torso-center matching) — не нужен, A1+A2-lite хватило.
+
+> **Открытые хвосты фазы 8 (вне ядра):** 8.E.3 audio (YAMNet) — новая dep; ре-валидация 8.0.4 на 3 людях;
+> калибровка `torso_length_m` рулеткой; семантика `fps` в StateFileWriter (сейчас = темп доставки, не обработки);
+> hand-точность зависит от visibility BlazePose-запястий (vis-gate 0.5 → нет руки = нет контакта, консервативно).
+
+### 🟠 Фаза 8.G — Segmentation + tracker upgrade (ПЛАН, next по roadmap)
+
+> **Цель:** инстанс-сегментация (маски) как cadenced-агент в меше → апгрейд (а) точности контакта
+> человек↔объект, (б) depth-anchoring, (в) **трекинга** (разделение инстансов при наложении bbox). Нагрузка
+> на hot-path ≈ 0 (меш уже снял HOL → можно позволить тяжёлую перцепцию объектов на потоке).
+> **Почему Segmentation и tracker вместе:** маски — это и есть механизм mask-based association (инстанс-
+> разделение чинит swap при перекрытии), т.е. сегментация и апгрейд трекера — одна работа.
+> **Полный разбор релевантность/сложность/нагрузка** — см. ниже + `wiki/machine-vision/03-segmentation/`.
+
+| Этап | Задача | Гейт/тесты |
+|------|--------|-----------|
+| **8.G.0** | **Спайк-гейт** (обязателен): на боевом потолочном ракурсе замерить выигрыш масок vs bbox/landmark для (1) мелких настольных предметов — выигрыш под вопросом (грубые nano-маски) и (2) близкого контакта рука↔предмет — вероятно да. **go/no-go по замеру**, не по презумпции | реальная кривая выигрыша задокументирована |
+| **8.G.1** | YOLO-seg nano как **drop-in замена** `mvm-scene::YoloDetector` (детект+маски из одной модели; +~4МБ ONNX; ~60-90мс на потоке `SceneAgent`, cadenced). Декод: prototype-маски (32×160²) + per-instance коэффициенты → линейн. комбинация + sigmoid + crop. **Ноль новых deps** (ndarray/ort). SAM/Mask R-CNN отвергнуты ($0/CPU инвариант) | golden mask vs Python; декод-тесты |
+| **8.G.2** | `mask` плумбинг: `TrackedObject` → `ObjectState` → `Entity` (low-res bitmask + origin) | сериализация контракта |
+| **8.G.3** | **Depth-anchoring по маске:** `median_in_mask` вместо `median_in_bbox` (убирает фон-bleed → точнее метрич. Z объекта) | quality-тест vs bbox |
+| **8.G.4** | **Tracker upgrade:** mask-IoU association в `ObjectTracker` (разделение инстансов при наложении bbox); опц. person-mask из YOLO-seg → привязка к body-треку для person↔person mask-смежности | swap-регрессия на перекрытии |
+| **8.G.5** | **Fusion по маске:** контакт человек↔объект через mask-смежность/IoU (точнее landmark-точек) + окклюзия-порядок (кто держит / кто перед кем) | mask-контакт тесты |
+
+> **Инварианты 8.G:** cadenced на потоке `SceneAgent` (hot-path = 0); ноль новых deps (декод на ndarray/ort);
+> +1 ONNX-эксперт (footprint ок, как depth/yolo); человеко-сторона остаётся body-primary (BlazePose) —
+> person-mask лишь усиливает ассоциацию. **Caveat:** на мелких/дальних объектах потолочного ракурса nano-маски
+> грубы → выигрыш неоднороден (потому спайк-гейт 8.G.0 первый). Landmark-контакт (8.F) остаётся baseline.
 
 ### 🟢 Фаза 9 — Продукт
 
