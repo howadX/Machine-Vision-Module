@@ -1,7 +1,3 @@
-// These agents are constructed by the `mesh` subcommand (8.D); until then the
-// wrappers + helpers are referenced only by their own unit tests.
-#![allow(dead_code, unused_imports)]
-
 //! Mesh agent wrappers (phase 8.C.5).
 //!
 //! Each detector chain becomes an `mvm_mesh::Agent` running on its own thread at
@@ -24,7 +20,7 @@ mod human;
 mod scene;
 mod statefile;
 
-pub(crate) use capture::{CaptureAgent, FrameSource};
+pub(crate) use capture::CaptureAgent;
 pub(crate) use depth::{DepthAgent, DepthSlot};
 pub(crate) use fusion::FusionAgent;
 pub(crate) use human::HumanAgent;

@@ -16,6 +16,7 @@ use anyhow::{Context, Result};
 use mvm_core::Module;
 use mvm_core::Detection;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Returns true when the Rust emotion result should replace the current (Python bridge) prediction.
@@ -75,6 +76,53 @@ mod tests {
         };
         // Python only has 0.1 confidence, but uncertain Rust should still lose
         assert!(!emotion_wins(&uncertain, Some(0.1)), "uncertain prediction should lose");
+    }
+
+    // ── mesh subcommand (phase 8.D) ─────────────────────────────────────────
+
+    #[test]
+    fn mesh_parse_stub_and_max_frames() {
+        let raw: Vec<String> =
+            ["mvm", "mesh", "--stub", "--max-frames", "100"].iter().map(|s| s.to_string()).collect();
+        let a = parse_mesh_args(&raw);
+        assert!(a.stub);
+        assert_eq!(a.max_frames, Some(100));
+    }
+
+    #[test]
+    fn mesh_parse_defaults() {
+        let raw: Vec<String> = ["mvm", "mesh"].iter().map(|s| s.to_string()).collect();
+        let a = parse_mesh_args(&raw);
+        assert!(!a.stub);
+        assert_eq!(a.max_frames, None);
+        assert_eq!(a.interval_ms, 100);
+        assert!(!a.dump_json);
+    }
+
+    #[test]
+    fn mesh_parse_dump_json_and_interval() {
+        let raw: Vec<String> =
+            ["mvm", "mesh", "--dump-json", "--interval-ms", "50"].iter().map(|s| s.to_string()).collect();
+        let a = parse_mesh_args(&raw);
+        assert!(a.dump_json);
+        assert_eq!(a.interval_ms, 50);
+    }
+
+    /// The model-free stub mesh actually runs on threads and writes a valid
+    /// StateFile — the CI smoke test of the mesh plumbing (8.D acceptance).
+    #[test]
+    fn mesh_stub_runs_and_writes_statefile() {
+        let path = std::env::temp_dir().join(format!("mvm_mesh_stub_{}.md", std::process::id()));
+        let sf = state::StateFile::open_at(path.clone()).unwrap();
+        let mesh = build_stub_mesh(sf, false, Duration::from_millis(1), 20);
+        let health = mesh.run();
+
+        let cap = health.iter().find(|h| h.name == "stub-capture").expect("capture present");
+        assert_eq!(cap.ticks, 20, "stub capture produced its frame budget");
+        assert!(path.exists(), "StateFile written");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("# Camera State"), "valid StateFile, got:\n{content}");
+        let _ = std::fs::remove_file(&path);
     }
 }
 
@@ -325,7 +373,230 @@ fn run_native_loop(
     Ok(())
 }
 
+// ── `mesh` subcommand (phase 8.D) ───────────────────────────────────────────
+
+/// Args for `mvm-cli mesh [--stub] [--max-frames N] [--dump-json] [--interval-ms N]`.
+struct MeshArgs {
+    /// Build a model-free mesh (StubCapture + FrameCounter + StateFileWriter) —
+    /// CI-safe smoke test of the threading + StateFile plumbing.
+    stub: bool,
+    /// Stop the producer after N frames (bounded run). `None` = until Ctrl-C.
+    max_frames: Option<u64>,
+    dump_json: bool,
+    emotion_debug: bool,
+    /// StateFileWriter snapshot interval (ms).
+    interval_ms: u64,
+}
+
+fn parse_mesh_args(raw: &[String]) -> MeshArgs {
+    let mut a = MeshArgs {
+        stub: false,
+        max_frames: None,
+        dump_json: false,
+        emotion_debug: false,
+        interval_ms: 100,
+    };
+    let mut i = 2; // skip program name + "mesh"
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--stub" => a.stub = true,
+            "--dump-json" => a.dump_json = true,
+            "--emotion-debug" => a.emotion_debug = true,
+            "--max-frames" => {
+                if i + 1 < raw.len() {
+                    a.max_frames = raw[i + 1].parse().ok();
+                    i += 1;
+                }
+            }
+            "--interval-ms" => {
+                if i + 1 < raw.len() {
+                    a.interval_ms = raw[i + 1].parse().unwrap_or(100);
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    a
+}
+
+fn report_health(health: &[mvm_mesh::AgentHealth]) {
+    eprintln!("  mesh stopped — agent health:");
+    for h in health {
+        eprintln!("    {:<10} ticks={:<6} errors={}", h.name, h.ticks, h.errors);
+    }
+}
+
+/// Model-free stub mesh: synthetic capture + frame counter + StateFileWriter.
+/// Exercises the threading and StateFile plumbing without models or a camera.
+fn build_stub_mesh(
+    state_file: state::StateFile,
+    dump_json: bool,
+    interval: Duration,
+    max_frames: u64,
+) -> mvm_mesh::AgentMesh {
+    let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
+    mesh.add(Box::new(mvm_mesh::StubCaptureAgent::new(1000.0, max_frames)));
+    mesh.add(Box::new(mvm_mesh::FrameCounterAgent::new()));
+    mesh.add(Box::new(agents::StateFileWriter::new(
+        state_file, dump_json, interval, None,
+    )));
+    mesh
+}
+
+fn load_yolo(config: &mvm_core::Config) -> Option<mvm_scene::YoloDetector> {
+    let p = config.models_path.join("yolo_object_detect.onnx");
+    if !p.exists() {
+        eprintln!("  scene: no YOLO model at {} — object agent disabled", p.display());
+        return None;
+    }
+    match mvm_scene::YoloDetector::from_path(&p) {
+        Ok(mut d) => {
+            d.set_score_threshold(config.object_score_thresh);
+            eprintln!("  scene: YOLO loaded ({})", p.display());
+            Some(d)
+        }
+        Err(e) => {
+            eprintln!("  scene: YOLO load failed: {e} (object agent disabled)");
+            None
+        }
+    }
+}
+
+fn load_depth(config: &mvm_core::Config) -> Option<mvm_depth::DepthEstimator> {
+    let p = config.models_path.join("depth_anything_v2_small.onnx");
+    if !p.exists() {
+        eprintln!("  depth: no model at {} — depth agent disabled", p.display());
+        return None;
+    }
+    match mvm_depth::DepthEstimator::from_path(&p) {
+        Ok(d) => {
+            eprintln!("  depth: Depth-Anything loaded ({})", p.display());
+            Some(d)
+        }
+        Err(e) => {
+            eprintln!("  depth: load failed: {e} (depth agent disabled)");
+            None
+        }
+    }
+}
+
+fn load_hands(config: &mvm_core::Config) -> Option<mvm_hands::HandLandmarker> {
+    let p = config.models_path.join("handpose_estimation_mediapipe_2023feb.onnx");
+    if !p.exists() {
+        return None;
+    }
+    match mvm_hands::HandLandmarker::from_path(&p) {
+        Ok(h) => {
+            eprintln!("  hands: handpose loaded ({})", p.display());
+            Some(h)
+        }
+        Err(e) => {
+            eprintln!("  hands: load failed: {e} (hands disabled)");
+            None
+        }
+    }
+}
+
+/// Run the Agent Mesh (phase 8.D). `--stub` builds a model-free mesh; otherwise
+/// loads every model + the native camera and assembles
+/// Capture → {Human, Scene, Depth} → Fusion → StateFileWriter on threads.
+fn run_mesh(args: MeshArgs) -> Result<()> {
+    let state_file = state::StateFile::open()?;
+    let interval = Duration::from_millis(args.interval_ms);
+
+    if args.stub {
+        eprintln!("mvm mesh — starting (stub, model-free)");
+        let mesh = build_stub_mesh(state_file, args.dump_json, interval, args.max_frames.unwrap_or(100));
+        let health = mesh.run();
+        report_health(&health);
+        return Ok(());
+    }
+
+    eprintln!("mvm mesh — starting (live)");
+    let mut config = mvm_core::Config::default();
+    config.face_height_m = config.face_height_m_yunet; // YuNet-calibrated 3D
+
+    // Required models (human chain).
+    eprintln!("  detect: loading YuNet");
+    let mut detector = mvm_detect::YunetDetector::init(&config)?;
+    eprintln!("  emotion: loading EmotiEffLib B0");
+    let emotion = mvm_emotion::EmotionModule::init(&config)?;
+    eprintln!("  identity: loading SFace");
+    let mut identity = mvm_identity::IdentityModule::init(&config)?;
+    build_gallery(&mut identity, &mut detector, &config)?;
+    detector.set_score_threshold(0.5); // undo the loose gallery threshold
+    eprintln!("  posture: loading native BlazePose");
+    let native_pose = mvm_posture::NativePose::init(&config)?;
+    let hands = load_hands(&config);
+
+    // Optional heavy detectors (own agents).
+    let yolo = load_yolo(&config);
+    let depth = load_depth(&config);
+
+    // Person tracker (body-primary: torso-3D from detections, no face pinhole).
+    let mut person_tracker = mvm_core::PersonTracker::with_config(&config);
+    person_tracker.pinhole = None;
+    let mut names = identity.gallery_names();
+    names.sort();
+    for name in &names {
+        let uid = person_tracker.register_user(name);
+        eprintln!("  identity: user '{name}' → reserved id {uid}");
+    }
+
+    // Human-only pipeline (scene/depth are their own agents → None here). The
+    // object_tracker field is unused in this mode but the type requires a value.
+    let pipeline = pipeline::BodyPrimaryPipeline::new(
+        config.clone(),
+        args.emotion_debug,
+        detector,
+        Some(native_pose),
+        Some(emotion),
+        Some(identity),
+        hands,
+        None,
+        mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
+        None,
+    );
+
+    // Shared depth slot: DepthAgent writes, FusionAgent reads.
+    let depth_slot: agents::DepthSlot = Arc::new(Mutex::new(None));
+
+    eprintln!("  camera: opening native v4l2 MJPG");
+    let camera = mvm_pipeline::native::NativeCamera::open("/dev/video0", 1280, 720, false)?;
+
+    // Assemble the mesh: capture → {human, scene, depth} → fusion → statefile.
+    let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
+    mesh.add(Box::new(agents::CaptureAgent::new(Box::new(camera), args.max_frames)));
+    mesh.add(Box::new(agents::HumanAgent::new(pipeline, person_tracker)));
+    if let Some(yolo) = yolo {
+        mesh.add(Box::new(agents::SceneAgent::new(
+            yolo,
+            mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
+            config.object_score_thresh,
+            config.object_min_area,
+            config.object_cadence,
+        )));
+    }
+    if let Some(depth) = depth {
+        mesh.add(Box::new(agents::DepthAgent::new(depth, depth_slot.clone(), config.depth_cadence)));
+    }
+    mesh.add(Box::new(agents::FusionAgent::new(config.clone(), depth_slot.clone())));
+    mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.dump_json, interval, None)));
+
+    eprintln!("  mesh: running agents on threads (Ctrl-C or --max-frames to stop)");
+    let health = mesh.run();
+    report_health(&health);
+    Ok(())
+}
+
 fn main() -> Result<()> {
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some("mesh") {
+        return run_mesh(parse_mesh_args(&raw));
+    }
+
     let args = parse_args();
     let dump_secs = args.dump_interval;
     let once = args.once;
