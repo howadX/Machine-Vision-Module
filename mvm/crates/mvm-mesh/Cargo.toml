@@ -1,0 +1,11 @@
+[package]
+name = "mvm-mesh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MVM Agent Mesh — std::thread agents over a single-slot latest-frame channel + WorldState blackboard"
+
+[dependencies]
+mvm-core = { path = "../mvm-core" }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+anyhow = "1"

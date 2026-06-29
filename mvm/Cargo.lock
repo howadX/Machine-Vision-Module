@@ -549,6 +549,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mvm-mesh"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "mvm-core",
+]
+
+[[package]]
 name = "mvm-pipeline"
 version = "0.1.0"
 dependencies = [

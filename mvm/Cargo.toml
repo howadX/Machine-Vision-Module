@@ -9,6 +9,7 @@ members = [
     "crates/mvm-depth",
     "crates/mvm-hands",
     "crates/mvm-fusion",
+    "crates/mvm-mesh",
     "crates/mvm-pipeline",
     "crates/mvm-cli",
     "xtask",
