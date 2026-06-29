@@ -9,6 +9,7 @@
 
 mod state;
 mod scene_debug;
+mod pipeline;
 
 use anyhow::{Context, Result};
 use mvm_core::Module;
@@ -19,7 +20,7 @@ use std::time::{Duration, Instant};
 /// Returns true when the Rust emotion result should replace the current (Python bridge) prediction.
 /// Comparison uses `calibrated_conf` (prob × (1 - entropy)) — a high-entropy prediction
 /// loses even if its raw probability looks reasonable.
-fn emotion_wins(rust: &mvm_emotion::EmotionResult, py_conf: Option<f32>) -> bool {
+pub(crate) fn emotion_wins(rust: &mvm_emotion::EmotionResult, py_conf: Option<f32>) -> bool {
     rust.calibrated_conf > py_conf.unwrap_or(0.0)
 }
 
@@ -42,65 +43,6 @@ mod tests {
     #[test]
     fn emotion_wins_when_no_python_conf() {
         assert!(emotion_wins(&make_result(0.6), None));
-    }
-
-    // ── body-primary face↔body matching (phase 8, FRONTIER) ──
-    fn face(x1: f32, y1: f32, x2: f32, y2: f32) -> Detection {
-        Detection::bare(x1, y1, x2, y2)
-    }
-
-    #[test]
-    fn best_face_for_nose_matches_containing() {
-        let faces = vec![face(0.20, 0.10, 0.30, 0.20)]; // contains nose (0.25,0.15)
-        let used = vec![false];
-        assert_eq!(best_face_for_nose(&faces, &used, (0.25, 0.15)), Some(0));
-    }
-
-    #[test]
-    fn best_face_for_nose_rejects_outside() {
-        let faces = vec![face(0.20, 0.10, 0.30, 0.20)];
-        let used = vec![false];
-        assert_eq!(best_face_for_nose(&faces, &used, (0.80, 0.80)), None);
-    }
-
-    #[test]
-    fn best_face_for_nose_skips_used() {
-        // both faces contain the nose; first already taken → second
-        let faces = vec![face(0.10, 0.10, 0.40, 0.40), face(0.10, 0.10, 0.40, 0.40)];
-        let used = vec![true, false];
-        assert_eq!(best_face_for_nose(&faces, &used, (0.20, 0.20)), Some(1));
-    }
-
-    #[test]
-    fn best_face_for_nose_picks_smallest() {
-        // both contain nose (0.2,0.2); second is smaller (tighter) → preferred
-        let faces = vec![face(0.0, 0.0, 0.5, 0.5), face(0.15, 0.15, 0.30, 0.30)];
-        let used = vec![false, false];
-        assert_eq!(best_face_for_nose(&faces, &used, (0.20, 0.20)), Some(1));
-    }
-
-    #[test]
-    fn face_center_in_any_suppresses_fallback() {
-        let body = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 0.5, y2: 1.0 };
-        let inside = face(0.20, 0.10, 0.30, 0.20); // centre (0.25,0.15) ∈ body
-        let outside = face(0.70, 0.10, 0.80, 0.20); // centre (0.75,0.15) ∉ body
-        assert!(face_center_in_any(&inside.bbox, &[body]));
-        assert!(!face_center_in_any(&outside.bbox, &[body]));
-        assert!(!face_center_in_any(&inside.bbox, &[]), "no regions → not suppressed");
-    }
-
-    /// The swap-bug regression: two people whose person bboxes OVERLAP. A
-    /// body-bbox-center match would assign person B's face to person A; the
-    /// nose-based match keeps each face with its own head.
-    #[test]
-    fn nose_match_survives_overlapping_bodies() {
-        // Person A face left, Person B face right; noses inside their own faces.
-        let faces = vec![face(0.10, 0.10, 0.25, 0.30), face(0.60, 0.10, 0.75, 0.30)];
-        let used = vec![false, false];
-        let nose_a = (0.17, 0.20);
-        let nose_b = (0.67, 0.20);
-        assert_eq!(best_face_for_nose(&faces, &used, nose_a), Some(0));
-        assert_eq!(best_face_for_nose(&faces, &used, nose_b), Some(1));
     }
 
     #[test]
@@ -210,293 +152,10 @@ fn parse_args() -> Args {
     args
 }
 
-/// Depth-anchor tracked objects to metric 3D (phase 8.E.2).
-///
-/// Depth-Anything outputs an affine-relative **inverse** depth (larger = nearer),
-/// so for a metric Z and depth value d, `Z·d ≈ k` is roughly constant. People
-/// supply the anchor: each has a metric torso-Z (body-primary) and a depth sample,
-/// giving `k_i = Z_i·d_i`; we take the median `k`. Each object's metric depth is
-/// then `Z = k / d_obj`, back-projected to 3D through the same pinhole people use,
-/// so objects land in the **same metric frame** → real person↔object `Near` edges.
-///
-/// With no person anchor this frame, objects are left depthless (overlap-only) —
-/// no fabricated distance.
-fn anchor_objects_depth(
-    objects: &mut [mvm_scene::TrackedObject],
-    depth: &mvm_depth::DepthMap,
-    tracker: &mvm_core::PersonTracker,
-    config: &mvm_core::Config,
-    frame: &image::DynamicImage,
-) {
-    const OBJ_DEPTH_CONF: f32 = 0.4; // below a person's ws_confidence (anchored, approx)
-    const Z_MIN: f32 = 0.3;
-    const Z_MAX: f32 = 8.0;
-
-    let mut ks: Vec<f32> = Vec::new();
-    for t in tracker.active() {
-        if let (Some(z), Some(d)) = (t.position_z, depth.median_in_bbox(&t.bbox)) {
-            if d > 1e-3 && z > 0.0 {
-                ks.push(z * d);
-            }
-        }
-    }
-    if ks.is_empty() {
-        for o in objects.iter_mut() {
-            o.pos_3d = None;
-            o.pos_conf = 0.0;
-        }
-        return;
-    }
-    ks.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    let k = ks[ks.len() / 2];
-
-    let pinhole = mvm_core::space::Pinhole::from_config(config);
-    let (fw, fh) = (frame.width() as f32, frame.height() as f32);
-    for o in objects.iter_mut() {
-        match depth.median_in_bbox(&o.bbox) {
-            Some(d) if d > 1e-3 => {
-                let z = (k / d).clamp(Z_MIN, Z_MAX);
-                let cx = (o.bbox.x1 + o.bbox.x2) * 0.5 * fw;
-                let cy = (o.bbox.y1 + o.bbox.y2) * 0.5 * fh;
-                o.pos_3d = Some(pinhole.pixel_to_3d(cx, cy, z));
-                o.pos_conf = OBJ_DEPTH_CONF;
-            }
-            _ => {
-                o.pos_3d = None;
-                o.pos_conf = 0.0;
-            }
-        }
-    }
-}
-
 /// Build identity gallery from reference photos.
 /// Supports multi-angle: p_V_01.jpg, p_V_02.jpg, … all map to "Вадим".
 /// Uses YuNet to detect and crop faces before SFace embedding.
 /// EMA (α=0.3) merges multiple photos of the same person.
-/// Crop a face from `face_bbox` (normalized) and enrich `det` with emotion +
-/// identity. Shared by the body-primary path (matched face) and the face-entity
-/// fallback. Mirrors the bridge-path enrichment so behaviour is identical.
-#[allow(clippy::too_many_arguments)]
-fn enrich_face_crop(
-    frame: &image::DynamicImage,
-    face_bbox: &mvm_core::BBox,
-    det: &mut Detection,
-    emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
-    identity_mod: Option<&mut mvm_identity::IdentityModule>,
-    config: &mvm_core::Config,
-    emotion_debug: bool,
-    det_idx: usize,
-    debug_out: &mut Vec<state::EmotionDebugEntry>,
-) {
-    let (fw, fh) = (frame.width(), frame.height());
-    let x1 = (face_bbox.x1 * fw as f32) as u32;
-    let y1 = (face_bbox.y1 * fh as f32) as u32;
-    let x2 = (face_bbox.x2 * fw as f32) as u32;
-    let y2 = (face_bbox.y2 * fh as f32) as u32;
-    let face = frame.crop_imm(x1, y1, x2.saturating_sub(x1), y2.saturating_sub(y1));
-
-    // Emotion: keep higher calibrated-confidence prediction.
-    if let Some(emo) = emotion_mod {
-        if let Ok(result) = emo.classify(&face) {
-            let py_emotion = det.emotion.clone();
-            let py_conf = det.emotion_confidence;
-            det.emotion_distribution = Some(result.distribution);
-            let winner = if emotion_wins(&result, det.emotion_confidence) {
-                det.emotion = Some(result.label.clone());
-                det.emotion_confidence = Some(result.calibrated_conf);
-                "rust"
-            } else {
-                "python"
-            };
-            if emotion_debug {
-                debug_out.push(state::EmotionDebugEntry {
-                    id: det_idx as u32,
-                    rust_emotion: result.label,
-                    rust_conf: result.calibrated_conf,
-                    py_emotion,
-                    py_conf,
-                    winner,
-                });
-            }
-        }
-    }
-
-    // Identity + embedding (margin gate, #5/#6).
-    if let Some(id) = identity_mod {
-        if let Ok((name, sim, emb)) =
-            id.identify_margin(&face, config.identity_abs_thresh, config.identity_margin_thresh)
-        {
-            det.embedding = Some(emb);
-            if det.identity.is_none() && name != "unknown" {
-                det.identity = Some(name);
-                det.identity_confidence = Some(sim);
-            }
-        }
-    }
-}
-
-/// Index of the smallest unused YuNet face whose bbox **contains the body's nose
-/// landmark** (`nose` normalized [0..1]). Keypoint-in-bbox association: the face
-/// belongs to the body whose head is inside it. Robust to overlapping person
-/// bboxes — a coarse body-bbox-center match swaps identities when two people are
-/// close (their person boxes overlap); the nose is physically inside its own
-/// face, so it never crosses over.
-/// True if the face's centre falls inside any of `regions` (body bboxes this
-/// frame, or active-track bboxes from last frame). Used to suppress the
-/// face-entity fallback so a person isn't represented twice / doesn't flip
-/// between a body-entity and a face-entity (A1 anti-flip, phase 8).
-fn face_center_in_any(face: &mvm_core::BBox, regions: &[mvm_core::BBox]) -> bool {
-    let cx = (face.x1 + face.x2) * 0.5;
-    let cy = (face.y1 + face.y2) * 0.5;
-    regions
-        .iter()
-        .any(|r| cx >= r.x1 && cx <= r.x2 && cy >= r.y1 && cy <= r.y2)
-}
-
-fn best_face_for_nose(faces: &[Detection], used: &[bool], nose: (f32, f32)) -> Option<usize> {
-    let area = |b: &mvm_core::BBox| (b.x2 - b.x1) * (b.y2 - b.y1);
-    faces
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| !used[*i])
-        .filter(|(_, f)| {
-            nose.0 >= f.bbox.x1 && nose.0 <= f.bbox.x2 && nose.1 >= f.bbox.y1 && nose.1 <= f.bbox.y2
-        })
-        .min_by(|(_, a), (_, b)| area(&a.bbox).partial_cmp(&area(&b.bbox)).unwrap())
-        .map(|(i, _)| i)
-}
-
-/// Body-primary enrichment (phase 8, FRONTIER). Bodies (person detector) are the
-/// carrying entity: each yields a track with posture + torso-3D **always**. A
-/// YuNet face matched into the body adds identity + emotion (optional, frontal
-/// only). A body without a face still tracks (identity/emotion None) — the core
-/// FRONTIER fix. An unmatched face falls back to a face-entity so a blinked
-/// body-detection never drops a known person (decision #4).
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
-fn build_body_primary(
-    frame: &image::DynamicImage,
-    native_pose: Option<&mut mvm_posture::NativePose>,
-    detector: &mut mvm_detect::YunetDetector,
-    mut emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
-    mut identity_mod: Option<&mut mvm_identity::IdentityModule>,
-    mut hand_landmarker: Option<&mut mvm_hands::HandLandmarker>,
-    overlay: &mut scene_debug::DetectorOverlay,
-    config: &mvm_core::Config,
-    emotion_debug: bool,
-    debug_out: &mut Vec<state::EmotionDebugEntry>,
-    prev_tracks: &[mvm_core::BBox],
-) -> Vec<Detection> {
-    let pinhole = mvm_core::space::Pinhole::from_config(config);
-    let (fw, fh) = (frame.width() as f32, frame.height() as f32);
-    let bodies = native_pose
-        .map(|np| np.bodies(frame).unwrap_or_default())
-        .unwrap_or_default();
-    // RGB frame for hand ROIs (only materialised when the hand model is loaded).
-    let hand_rgb = hand_landmarker.as_ref().map(|_| frame.to_rgb8());
-    let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();
-    let faces = detector.detect(frame).unwrap_or_default();
-    // Overlay (scene-debug): every detector's output, drawn per-agent. Faces =
-    // all YuNet boxes; poses + hands collected per body below.
-    overlay.faces.extend(faces.iter().map(|f| f.bbox));
-    let mut face_used = vec![false; faces.len()];
-    let mut dets: Vec<Detection> = Vec::with_capacity(bodies.len() + faces.len());
-
-    for body in &bodies {
-        let b = &body.bbox;
-        let mut det = Detection::bare(b.x1, b.y1, b.x2, b.y2);
-        // Posture (always present for a body).
-        det.posture = Some(body.posture.label.to_string());
-        det.posture_confidence = Some(body.posture.confidence);
-        det.recon_error = Some(body.posture.recon_error);
-        det.plausibility =
-            Some(if body.posture.plausibility < 14.3 { "normal" } else { "unusual" }.to_string());
-        // Torso-3D (anatomically stable; robust to head turn): shoulders 11/12, hips 23/24.
-        // R (phantom filter, phase 8): only trust torso-3D when those landmarks are
-        // actually visible. BlazePose visibility = sigmoid(logit) ∈ [0,1]; visible
-        // joints sit ~0.9+. Hallucinated landmarks (occlusion / lying poses) score
-        // low and otherwise produce garbage 3D (negative-y / far phantoms) — gate
-        // them out (the body is still tracked, just without a position this frame).
-        let lm = &body.landmarks_px;
-        overlay.poses.push(*lm); // scene-debug: BlazePose skeleton (pose agent)
-        const TORSO_VIS_MIN: f32 = 0.5;
-        let torso_vis = lm[11][3].min(lm[12][3]).min(lm[23][3]).min(lm[24][3]);
-        if torso_vis >= TORSO_VIS_MIN {
-            let shoulder = ((lm[11][0] + lm[12][0]) * 0.5, (lm[11][1] + lm[12][1]) * 0.5);
-            let hip = ((lm[23][0] + lm[24][0]) * 0.5, (lm[23][1] + lm[24][1]) * 0.5);
-            if let Some((pos, z, ws)) =
-                mvm_core::space::torso_to_3d(&pinhole, shoulder, hip, config.torso_length_m)
-            {
-                det.distance = Some(z);
-                det.position_x = Some(pos[0]);
-                det.position_y = Some(pos[1]);
-                det.position_z = Some(pos[2]);
-                det.ws_confidence = Some(ws);
-            }
-        }
-        // Hands (phase 8.E.4): ROIs from this body's wrists → handpose (presence-
-        // gated). Body-primary — hands belong to the body whose wrist drove them.
-        if let (Some(hl), Some(rgb)) = (hand_landmarker.as_deref_mut(), hand_rgb.as_ref()) {
-            let rois = mvm_hands::hand_rois_from_pose(lm, 0.5);
-            overlay.hands.extend(hl.infer_rois(rgb, &rois));
-        }
-        // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
-        // emotion (optional). Keypoint-in-bbox ties the face to the body whose
-        // head is in it, so overlapping person bboxes never swap identities.
-        let nose = (lm[0][0] / fw, lm[0][1] / fh);
-        if let Some(fi) = best_face_for_nose(&faces, &face_used, nose) {
-            face_used[fi] = true;
-            let fb = faces[fi].bbox;
-            let idx = dets.len();
-            enrich_face_crop(
-                frame, &fb, &mut det,
-                emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
-                config, emotion_debug, idx, debug_out,
-            );
-        }
-        dets.push(det);
-    }
-
-    // Fallback: unmatched faces → face-entity (don't lose a person whose body
-    // detection blinked). 3D from face height (YuNet-calibrated `face_height_m`).
-    //
-    // A1 anti-flip (phase 8): suppress the fallback when the face is already
-    // explained by a body THIS frame (nose-match just missed a tight YuNet box)
-    // or by an active track from LAST frame (the person-detector blinked — let
-    // the body track bridge the gap via Kalman inertia instead of swapping in a
-    // posture-less, face-3D entity that makes id 0 jump body↔face every blink).
-    for (fi, f) in faces.iter().enumerate() {
-        if face_used[fi] {
-            continue;
-        }
-        if face_center_in_any(&f.bbox, &body_bboxes) || face_center_in_any(&f.bbox, prev_tracks) {
-            continue;
-        }
-        let fb = f.bbox;
-        let mut det = Detection::bare(fb.x1, fb.y1, fb.x2, fb.y2);
-        let cx = (fb.x1 + fb.x2) * 0.5;
-        let cy = (fb.y1 + fb.y2) * 0.5;
-        if let Some((pos, z, ws)) =
-            mvm_core::space::face_bbox_to_3d(&pinhole, fb.y1, fb.y2, cx, cy, config.face_height_m)
-        {
-            det.distance = Some(z);
-            det.position_x = Some(pos[0]);
-            det.position_y = Some(pos[1]);
-            det.position_z = Some(pos[2]);
-            det.ws_confidence = Some(ws);
-        }
-        let idx = dets.len();
-        enrich_face_crop(
-            frame, &fb, &mut det,
-            emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
-            config, emotion_debug, idx, debug_out,
-        );
-        dets.push(det);
-    }
-
-    dets
-}
-
 fn build_gallery(
     identity: &mut mvm_identity::IdentityModule,
     detector: &mut mvm_detect::YunetDetector,
@@ -569,6 +228,99 @@ fn build_gallery(
         identity.gallery_size(),
         total
     );
+    Ok(())
+}
+
+/// The pure-Rust `--native-camera` loop (phase 8.C-R). Drives a
+/// [`BodyPrimaryPipeline`](pipeline::BodyPrimaryPipeline) that owns every model;
+/// the `PersonTracker` and `StateFile` stay here. Behaviour matches the previous
+/// in-`main` native path exactly: process → track → depth-anchor → dump.
+fn run_native_loop(
+    mut native_camera: mvm_pipeline::native::NativeCamera,
+    mut pipeline: pipeline::BodyPrimaryPipeline,
+    mut tracker: mvm_core::PersonTracker,
+    state_file: state::StateFile,
+    args: &Args,
+    dump_interval: Duration,
+) -> Result<()> {
+    let mut last_dump = Instant::now();
+    let mut frame_count: u64 = 0;
+    let start = Instant::now();
+
+    loop {
+        let frame = match native_camera.read() {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("  native camera error: {e}");
+                break;
+            }
+        };
+
+        // Last frame's active track bboxes feed A1 anti-flip suppression.
+        let prev_tracks: Vec<mvm_core::BBox> = tracker.active().map(|t| t.bbox).collect();
+        let pipeline::FrameResult { detections, overlay, emotion_debug_entries } =
+            pipeline.process(&frame, frame_count, &prev_tracks);
+
+        frame_count += 1;
+        tracker.tick(&detections);
+        // Depth-anchoring needs the post-tick tracker (people's metric torso-Z).
+        pipeline.anchor_depth(&tracker, &frame);
+
+        if last_dump.elapsed() >= dump_interval {
+            let elapsed = start.elapsed().as_secs_f64();
+            let fps = if elapsed > 0.0 { frame_count as f64 / elapsed } else { 0.0 };
+            eprintln!(
+                "  tick {frame_count}: {} tracks, {fps:.1} fps",
+                tracker.track_count()
+            );
+
+            state_file.write(&tracker, fps, pipeline.objects())?;
+            if args.emotion_debug {
+                state_file.dump_table_debug(&tracker, fps, &emotion_debug_entries);
+            } else {
+                state_file.dump_table(&tracker, fps);
+            }
+            if args.dump_json {
+                let line = if args.emotion_debug {
+                    state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
+                } else {
+                    state_file.to_json_line(&tracker, fps, pipeline.objects())
+                };
+                println!("{line}");
+            }
+
+            // Scene visual debug (phase 8.E): annotated JPG + printed legend.
+            if args.scene_debug {
+                let person_bboxes: Vec<mvm_core::BBox> =
+                    tracker.active().map(|t| t.bbox).collect();
+                match scene_debug::write_annotated(
+                    "/tmp/mvm_scene.jpg",
+                    &frame,
+                    &person_bboxes,
+                    pipeline.objects(),
+                    &overlay,
+                ) {
+                    Ok(legend) => {
+                        eprintln!("  scene-debug → /tmp/mvm_scene.jpg");
+                        for line in &legend {
+                            eprintln!("    {line}");
+                        }
+                    }
+                    Err(e) => eprintln!("  scene-debug: write failed: {e}"),
+                }
+            }
+            last_dump = Instant::now();
+
+            if args.once {
+                eprintln!("  once: done after {frame_count} frames");
+                break;
+            }
+        }
+
+        // Camera already paces itself; just a tiny yield.
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
     Ok(())
 }
 
@@ -694,8 +446,8 @@ fn main() -> Result<()> {
     // bootstrap weights aren't downloaded yet, object nodes are simply disabled
     // (chain still runs, like a missing optional detector).
     let mut scene_detector: Option<mvm_scene::YoloDetector> = None;
-    let mut object_tracker = mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5);
-    let mut latest_objects: Vec<mvm_scene::TrackedObject> = Vec::new();
+    let object_tracker = mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5);
+    let latest_objects: Vec<mvm_scene::TrackedObject> = Vec::new();
     if args.native_camera {
         let model_path = config.models_path.join("yolo_object_detect.onnx");
         if model_path.exists() {
@@ -725,7 +477,6 @@ fn main() -> Result<()> {
     // Gives objects metric 3D by anchoring the relative depth map to a person's
     // torso-Z. Gated on the model file like the scene detector.
     let mut depth_estimator: Option<mvm_depth::DepthEstimator> = None;
-    let mut latest_depth: Option<mvm_depth::DepthMap> = None;
     if args.native_camera {
         let model_path = config.models_path.join("depth_anything_v2_small.onnx");
         if model_path.exists() {
@@ -802,13 +553,38 @@ fn main() -> Result<()> {
         eprintln!("  detect-ab: logging native YuNet coverage vs Python SCRFD (measurement only)");
     }
 
+    // ── Native-camera path (phase 8.C-R) ───────────────────────────────────
+    // Move every model into a self-owning `BodyPrimaryPipeline` and run a
+    // dedicated loop. The bridge path (`--native` / default) stays below — the
+    // early return means its references to the moved values are never reached
+    // (flow-sensitive), and `.take()` leaves `native_camera = None` on the
+    // open-failed fallthrough so the old "idle stub" behaviour is preserved.
+    if args.native_camera {
+        if let Some(nc) = native_camera.take() {
+            let pipeline = pipeline::BodyPrimaryPipeline::new(
+                config,
+                args.emotion_debug,
+                _detector,
+                native_pose,
+                emotion_mod,
+                identity_mod,
+                hand_landmarker,
+                scene_detector,
+                object_tracker,
+                depth_estimator,
+            );
+            return run_native_loop(nc, pipeline, tracker, state_file, &args, dump_interval);
+        }
+        // Native camera failed to open → fall through to the idle bridge loop.
+    }
+
     loop {
         // ── Frame + detections acquisition ──────────────────────────────────
         // `tick_frame` is the working image for this tick (enrichment + A/B).
         // Native-camera path (Variant A): capture in memory + YuNet detection,
         // no Python, no pose. Bridge path: detections from JSON, frame on disk.
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
-        let mut overlay = scene_debug::DetectorOverlay::default();
+        let overlay = scene_debug::DetectorOverlay::default();
         let mut tick_frame: Option<image::DynamicImage> = None;
         let mut detections: Vec<Detection> = if let Some(ncam) = &mut native_camera {
             // Body-primary (phase 8): grab the frame here; detections are built
@@ -836,82 +612,10 @@ fn main() -> Result<()> {
             }
         };
 
-        // ── BODY-PRIMARY enrichment (phase 8, FRONTIER) — native-camera only ──
-        // Bodies (person detector) are the carrying entity, so a person whose face
-        // is turned/down still produces a track (posture + torso-3D); identity and
-        // emotion attach only when a frontal face is present.
-        if native_camera.is_some() {
-            if let Some(frame) = &tick_frame {
-                // Last frame's active track bboxes — let A1 suppress a face-entity
-                // fallback when an existing track already covers that face.
-                let prev_tracks: Vec<mvm_core::BBox> =
-                    tracker.active().map(|t| t.bbox).collect();
-                detections = build_body_primary(
-                    frame,
-                    native_pose.as_mut(),
-                    &mut _detector,
-                    emotion_mod.as_mut(),
-                    identity_mod.as_mut(),
-                    hand_landmarker.as_mut(),
-                    &mut overlay,
-                    &config,
-                    args.emotion_debug,
-                    &mut emotion_debug_entries,
-                    &prev_tracks,
-                );
-            }
-        }
-
-        // ── Scene objects (phase 8.E) on a cadence ──────────────────────────
-        // YOLO is the heaviest detector (~39ms); run it every Nth frame and
-        // reuse `latest_objects` in between (decision 8.0.1: cadence in the
-        // synchronous loop). On non-cadence frames the previous objects persist.
-        if let Some(det) = &mut scene_detector {
-            if config.object_cadence <= 1 || frame_count % config.object_cadence as u64 == 0 {
-                if let Some(frame) = &tick_frame {
-                    match det.detect(frame) {
-                        Ok(objs) => {
-                            // Filters C + D: keep only interaction-relevant classes
-                            // (the allow-list excludes "person" — humans are owned by
-                            // the body-primary tracker G₁ — plus outdoor/vehicle/animal
-                            // noise) and drop tiny boxes. Then tracker B assigns stable
-                            // ids so a node id means the same object across frames.
-                            let filtered: Vec<_> = objs
-                                .into_iter()
-                                .filter(|o| mvm_scene::is_relevant(o.class_name))
-                                .filter(|o| {
-                                    // Filter A (per-class): small objects keep the
-                                    // low floor; flicker-prone furniture needs more.
-                                    o.score
-                                        >= mvm_scene::class_score_threshold(
-                                            o.class_name,
-                                            config.object_score_thresh,
-                                        )
-                                })
-                                .filter(|o| {
-                                    let area = (o.bbox.x2 - o.bbox.x1) * (o.bbox.y2 - o.bbox.y1);
-                                    area >= config.object_min_area
-                                })
-                                .collect();
-                            latest_objects = object_tracker.update(&filtered);
-                        }
-                        Err(e) => eprintln!("  scene: detect error: {e}"),
-                    }
-                }
-            }
-        }
-
-        // ── Monocular depth (phase 8.E.2) on a sparse cadence ───────────────
-        if let Some(est) = &mut depth_estimator {
-            if config.depth_cadence <= 1 || frame_count % config.depth_cadence as u64 == 0 {
-                if let Some(frame) = &tick_frame {
-                    match est.estimate(frame) {
-                        Ok(dm) => latest_depth = Some(dm),
-                        Err(e) => eprintln!("  depth: estimate error: {e}"),
-                    }
-                }
-            }
-        }
+        // Body-primary enrichment + object/depth cadence (phase 8) now live in
+        // the native-camera path (`run_native_loop` + `BodyPrimaryPipeline`),
+        // reached via early return above. This bridge loop only handles the
+        // Python-bridge `--native` path, which carries no object/depth nodes.
 
         // Bridge path: the frame lives on disk (Python --write-frame). Load it
         // once for A/B + enrichment. Native path already holds it in memory.
@@ -1001,13 +705,6 @@ fn main() -> Result<()> {
 
         frame_count += 1;
         tracker.tick(&detections);
-
-        // ── Depth-anchoring (phase 8.E.2): give objects metric 3D ───────────
-        // Anchor the relative depth map to people's metric torso-Z, then place
-        // each object in the same metric frame so person↔object 3D Near edges form.
-        if let (Some(depth), Some(frame)) = (&latest_depth, &tick_frame) {
-            anchor_objects_depth(&mut latest_objects, depth, &tracker, &config, frame);
-        }
 
         if last_dump.elapsed() >= dump_interval {
             let elapsed = start.elapsed().as_secs_f64();
