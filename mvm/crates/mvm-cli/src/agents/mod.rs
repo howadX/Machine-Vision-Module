@@ -19,13 +19,17 @@
 
 mod capture;
 mod depth;
+mod fusion;
 mod human;
 mod scene;
+mod statefile;
 
 pub(crate) use capture::{CaptureAgent, FrameSource};
 pub(crate) use depth::{DepthAgent, DepthSlot};
+pub(crate) use fusion::FusionAgent;
 pub(crate) use human::HumanAgent;
 pub(crate) use scene::SceneAgent;
+pub(crate) use statefile::StateFileWriter;
 
 use mvm_core::{ObjectState, PersonState, PersonTracker, Position3D, WorldState};
 use std::sync::{Arc, RwLock};
@@ -72,6 +76,7 @@ pub(crate) fn project_objects(
             class: t.class_name.to_string(),
             bbox: t.bbox,
             confidence: t.score,
+            age: t.age,
             position_3d: t
                 .pos_3d
                 .map(|[x, y, z]| Position3D { x, y, z, confidence: t.pos_conf }),

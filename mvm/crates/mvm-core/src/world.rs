@@ -38,6 +38,9 @@ pub struct PersonState {
     pub emotion: Option<(String, f32)>,
     pub posture: Option<(String, f32)>,
     pub position_3d: Option<Position3D>,
+    /// Full 8-class emotion softmax (for the Scene JSON contract); `None` when the
+    /// track has no Rust-model distribution.
+    pub emotion_distribution: Option<[f32; 8]>,
     pub last_seen: Instant,
 }
 
@@ -63,6 +66,7 @@ impl PersonState {
             emotion: t.emotion.clone().map(|l| (l, t.emotion_confidence.unwrap_or(0.0))),
             posture: t.posture.clone().map(|l| (l, t.posture_confidence.unwrap_or(0.0))),
             position_3d,
+            emotion_distribution: t.emotion_distribution,
             last_seen: now,
         }
     }
@@ -78,6 +82,9 @@ pub struct ObjectState {
     pub class: String,
     pub bbox: BBox,
     pub confidence: f32,
+    /// Frames this object has been tracked (temporal persistence, mirrors
+    /// `TrackedObject::age`).
+    pub age: u32,
     /// Metric position from depth-anchoring; `None` when no depth anchor.
     pub position_3d: Option<Position3D>,
     pub last_seen: Instant,
@@ -132,6 +139,13 @@ impl WorldState {
     /// relate fresh nodes (per-entity freshness, decision 8.0.1).
     pub fn fresh_people(&self, now: Instant, max_age: std::time::Duration) -> impl Iterator<Item = &PersonState> {
         self.people.iter().filter(move |p| now.duration_since(p.last_seen) <= max_age)
+    }
+
+    /// Objects whose `last_seen` is within `max_age` of `now` — the object-side
+    /// twin of [`fresh_people`](Self::fresh_people). Fusion relates only fresh
+    /// nodes, so a stale object (its agent fell behind) drops out of the graph.
+    pub fn fresh_objects(&self, now: Instant, max_age: std::time::Duration) -> impl Iterator<Item = &ObjectState> {
+        self.objects.iter().filter(move |o| now.duration_since(o.last_seen) <= max_age)
     }
 }
 
@@ -189,6 +203,7 @@ mod tests {
             class: "cup".into(),
             bbox: BBox { x1: 0.4, y1: 0.4, x2: 0.5, y2: 0.55 },
             confidence: 0.82,
+            age: 5,
             position_3d: Some(Position3D { x: 0.18, y: 0.65, z: 0.68, confidence: 0.4 }),
             last_seen: Instant::now(),
         };
@@ -227,5 +242,27 @@ mod tests {
         w.people.push(fresh);
         let n = w.fresh_people(now, std::time::Duration::from_millis(100)).count();
         assert_eq!(n, 1, "only the fresh person within 100ms");
+    }
+
+    #[test]
+    fn fresh_objects_filters_by_age() {
+        let now = Instant::now();
+        let mut w = WorldState::new(now);
+        let mk = |id: u32, age_ms: u64| ObjectState {
+            id,
+            class: "cup".into(),
+            bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 },
+            confidence: 0.8,
+            age: 1,
+            position_3d: None,
+            last_seen: now - std::time::Duration::from_millis(age_ms),
+        };
+        w.objects.push(mk(10000, 500)); // stale
+        w.objects.push(mk(10001, 10)); // fresh
+        let ids: Vec<u32> = w
+            .fresh_objects(now, std::time::Duration::from_millis(100))
+            .map(|o| o.id)
+            .collect();
+        assert_eq!(ids, vec![10001], "only the fresh object within 100ms");
     }
 }

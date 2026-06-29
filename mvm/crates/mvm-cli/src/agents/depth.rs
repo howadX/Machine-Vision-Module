@@ -11,7 +11,9 @@ use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::{Arc, Mutex};
 
 /// Shared latest-depth slot: the `DepthAgent` writes it, the fusion step reads it.
-pub(crate) type DepthSlot = Arc<Mutex<Option<mvm_depth::DepthMap>>>;
+/// The map is behind an inner `Arc` so the reader (fusion) clones the handle
+/// cheaply and releases the slot lock before doing work — no ~1 MB map copy.
+pub(crate) type DepthSlot = Arc<Mutex<Option<Arc<mvm_depth::DepthMap>>>>;
 
 pub(crate) struct DepthAgent {
     estimator: mvm_depth::DepthEstimator,
@@ -41,7 +43,7 @@ impl Agent for DepthAgent {
                     match self.estimator.estimate(frame.image.as_ref()) {
                         Ok(map) => {
                             if let Ok(mut slot) = self.slot.lock() {
-                                *slot = Some(map);
+                                *slot = Some(Arc::new(map));
                             }
                             ticks += 1;
                         }
@@ -68,7 +70,7 @@ mod tests {
         assert!(slot.lock().unwrap().is_none());
         // A reader (fusion) and writer (agent) share the same Arc.
         let writer = slot.clone();
-        *writer.lock().unwrap() = Some(mvm_depth::DepthMap { data: vec![0.5; 4], w: 2, h: 2 });
+        *writer.lock().unwrap() = Some(Arc::new(mvm_depth::DepthMap { data: vec![0.5; 4], w: 2, h: 2 }));
         let got = slot.lock().unwrap();
         assert!(got.is_some(), "fusion sees the published map");
         assert_eq!(got.as_ref().unwrap().w, 2);

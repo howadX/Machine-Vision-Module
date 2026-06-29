@@ -109,7 +109,7 @@ struct JsonObject {
     /// Stable tracked id (≥ OBJECT_ID_BASE) — matches ids in zones/relations and
     /// is the same physical object across frames (phase 8.E filter B).
     id: u32,
-    class: &'static str,
+    class: String,
     score: f32,
     /// Frames this object has been tracked (temporal persistence).
     age: u32,
@@ -163,6 +163,76 @@ fn object_entities(objects: &[TrackedObject]) -> Vec<mvm_core::types::Entity> {
             }
         })
         .collect()
+}
+
+// ── WorldState projections (phase 8.C.7, mesh StateFileWriter) ────────────────
+// The mesh serialises the blackboard (PersonState/ObjectState) instead of a
+// PersonTracker, but must emit the *same* Scene JSON contract. These mirror the
+// tracker-keyed builders above.
+
+fn person_to_json_face(p: &mvm_core::PersonState) -> JsonFace {
+    JsonFace {
+        id: p.track_id,
+        identity: p.identity.as_ref().map(|(n, _)| n.clone()),
+        identity_conf: p.identity.as_ref().map(|(_, c)| *c),
+        emotion: p.emotion.as_ref().map(|(e, _)| e.clone()),
+        emotion_conf: p.emotion.as_ref().map(|(_, c)| *c),
+        emotion_distribution: p.emotion_distribution,
+        bbox_h: p.bbox.y2 - p.bbox.y1,
+        posture: p.posture.as_ref().map(|(s, _)| s.clone()),
+        posture_conf: p.posture.as_ref().map(|(_, c)| *c),
+        dist_m: p.position_3d.map(|q| q.z),
+        pos: p.position_3d.map(|q| [q.x, q.y, q.z]),
+    }
+}
+
+fn person_to_entity(p: &mvm_core::PersonState) -> mvm_core::types::Entity {
+    use mvm_core::types::{Entity, EntityKind};
+    let (pos_3d, pos_conf) = match p.position_3d {
+        Some(q) => ([q.x, q.y, q.z], q.confidence),
+        None => ([0.0, 0.0, 0.0], 0.0),
+    };
+    Entity {
+        id: p.track_id,
+        kind: EntityKind::Person,
+        bbox: p.bbox,
+        pos_3d,
+        radius_m: 0.15,
+        pos_conf,
+        identity: p.identity.as_ref().map(|(n, _)| n.clone()),
+        emotion: p.emotion.as_ref().map(|(e, _)| e.clone()),
+        emotion_distribution: p.emotion_distribution,
+    }
+}
+
+fn object_state_to_entity(o: &mvm_core::ObjectState) -> mvm_core::types::Entity {
+    use mvm_core::types::{Entity, EntityKind};
+    let (pos_3d, pos_conf) = match o.position_3d {
+        Some(q) => ([q.x, q.y, q.z], q.confidence),
+        None => ([0.0, 0.0, 0.0], 0.0),
+    };
+    Entity {
+        id: o.id,
+        kind: EntityKind::Object(o.class.clone()),
+        bbox: o.bbox,
+        pos_3d,
+        radius_m: 0.1,
+        pos_conf,
+        identity: None,
+        emotion: None,
+        emotion_distribution: None,
+    }
+}
+
+fn object_state_to_json(o: &mvm_core::ObjectState) -> JsonObject {
+    JsonObject {
+        id: o.id,
+        class: o.class.clone(),
+        score: o.confidence,
+        age: o.age,
+        pos: o.position_3d.map(|q| [q.x, q.y, q.z]),
+        bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
+    }
 }
 
 pub struct StateFile {
@@ -346,7 +416,7 @@ impl StateFile {
 
         let json_objects: Vec<JsonObject> = objects.iter().map(|o| JsonObject {
             id: o.id,
-            class: o.class_name,
+            class: o.class_name.to_string(),
             score: o.score,
             age: o.age,
             pos: o.pos_3d,
@@ -387,6 +457,123 @@ impl StateFile {
 
         let frame = JsonFrame { ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Serialise a `WorldState` snapshot to the Scene JSON line (phase 8.C.7).
+    /// Same contract as [`to_json_line`](Self::to_json_line) — faces + objects +
+    /// zones + relations — but sourced from the blackboard the agents fill.
+    pub fn to_json_line_world(&self, world: &mvm_core::WorldState, fps: f64) -> String {
+        let now = Local::now().with_timezone(&self.tz);
+        let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+        let status = if world.people.is_empty() { "empty" } else { "occupied" };
+
+        // Entities for the relational graph (people + objects, object-agnostic).
+        let mut entities: Vec<mvm_core::types::Entity> =
+            world.people.iter().map(person_to_entity).collect();
+        entities.extend(world.objects.iter().map(object_state_to_entity));
+
+        let faces: Vec<JsonFace> = world.people.iter().map(person_to_json_face).collect();
+        let json_objects: Vec<JsonObject> = world.objects.iter().map(object_state_to_json).collect();
+
+        let scene = mvm_fusion::build_scene(entities);
+        let relations: Vec<JsonRelation> = scene.relations.iter().map(|r| {
+            use mvm_core::types::RelationKind;
+            let kind = match r.kind {
+                RelationKind::Near => "near",
+                RelationKind::Overlapping => "overlapping",
+                RelationKind::PartOf => "part_of",
+            };
+            JsonRelation { a: r.a, b: r.b, dist_m: r.distance_m, overlap: r.overlap, kind }
+        }).collect();
+
+        let frame = JsonFrame { ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations };
+        serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Write a `WorldState` snapshot to the Hermes StateFile (phase 8.C.7) — the
+    /// markdown twin of [`write`](Self::write), sourced from the blackboard.
+    pub fn write_world(&self, world: &mvm_core::WorldState, fps: f64) -> Result<()> {
+        let now = Local::now().with_timezone(&self.tz);
+        let timestamp = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+
+        let mut people: Vec<&mvm_core::PersonState> = world.people.iter().collect();
+        people.sort_by_key(|p| p.track_id);
+        let face_count = people.len();
+        let status = if face_count > 0 { "occupied" } else { "empty" };
+        let dominant_emotion = people
+            .iter()
+            .filter_map(|p| p.emotion.as_ref().map(|(e, _)| e.as_str()))
+            .next()
+            .unwrap_or("none");
+
+        let mut lines = vec![
+            "# Camera State (mvm v0.4)".to_string(),
+            format!("- Last checked: {timestamp}"),
+            "- Camera: /dev/video0".to_string(),
+            "- Uptime: —".to_string(),
+            format!("- FPS: {fps:.1}"),
+            format!("- Face count: {face_count}"),
+            format!("- Dominant emotion: {dominant_emotion}"),
+        ];
+
+        if face_count > 0 {
+            let names: Vec<String> = people
+                .iter()
+                .map(|p| p.identity.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| "unknown".into()))
+                .collect();
+            lines.push(format!("- Persons visible: {}", names.join(", ")));
+            for (i, p) in people.iter().enumerate() {
+                let identity = p.identity.as_ref().map(|(n, _)| n.as_str()).unwrap_or("unknown");
+                let id_conf = p.identity.as_ref().map(|(_, c)| format!(" ({c:.2})")).unwrap_or_default();
+                let emotion = p.emotion.as_ref().map(|(e, _)| e.as_str()).unwrap_or("none");
+                let emo_conf = p.emotion.as_ref().map(|(_, c)| format!(" ({c:.2})")).unwrap_or_default();
+                let posture = p.posture.as_ref().map(|(s, _)| s.as_str()).unwrap_or("—");
+                let pos_conf = p.posture.as_ref().map(|(_, c)| format!(" ({c:.2})")).unwrap_or_default();
+                lines.push(format!("- Person_{}:", i + 1));
+                lines.push(format!("  - id: {}", p.track_id));
+                lines.push(format!("  - identity: {identity}{id_conf}"));
+                lines.push(format!(
+                    "  - bbox: {:.2},{:.2},{:.2},{:.2}",
+                    p.bbox.x1, p.bbox.y1, p.bbox.x2, p.bbox.y2
+                ));
+                lines.push(format!("  - emotion: {emotion}{emo_conf}"));
+                lines.push(format!("  - posture: {posture}{pos_conf}"));
+                if let Some(q) = p.position_3d {
+                    lines.push(format!("  - distance: {:.2}", q.z));
+                    lines.push(format!("  - position: ({:.2}, {:.2}, {:.2})m", q.x, q.y, q.z));
+                    lines.push(format!("  - ws_confidence: {:.2}", q.confidence));
+                }
+            }
+        } else {
+            lines.push("- Persons visible: none".to_string());
+        }
+
+        if world.objects.is_empty() {
+            lines.push("- Objects visible: none".to_string());
+        } else {
+            let summary: Vec<String> = world
+                .objects
+                .iter()
+                .map(|o| format!("{} ({:.2})", o.class, o.confidence))
+                .collect();
+            lines.push(format!("- Objects visible: {}", summary.join(", ")));
+            for (i, o) in world.objects.iter().enumerate() {
+                lines.push(format!("- Object_{}:", i + 1));
+                lines.push(format!("  - id: {}", o.id));
+                lines.push(format!("  - class: {}", o.class));
+                lines.push(format!("  - score: {:.2}", o.confidence));
+                lines.push(format!("  - age: {} frames", o.age));
+                lines.push(format!(
+                    "  - bbox: {:.2},{:.2},{:.2},{:.2}",
+                    o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2
+                ));
+            }
+        }
+
+        lines.push(format!("- Status: {status}"));
+        lines.push(String::new());
+        fs::write(&self.path, lines.join("\n"))?;
+        Ok(())
     }
 
     /// Print a formatted table of all tracked persons to stderr.
@@ -887,5 +1074,85 @@ mod tests {
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!(v["faces"][0]["emotion_debug"].is_null());
+    }
+
+    // ── WorldState serialisation (phase 8.C.7, mesh StateFileWriter) ─────────
+
+    fn person_state(id: u32, bbox: mvm_core::BBox) -> mvm_core::PersonState {
+        mvm_core::PersonState {
+            track_id: id,
+            bbox,
+            identity: None,
+            emotion: None,
+            posture: None,
+            position_3d: None,
+            emotion_distribution: None,
+            last_seen: std::time::Instant::now(),
+        }
+    }
+
+    fn object_state(id: u32, class: &str, bbox: mvm_core::BBox) -> mvm_core::ObjectState {
+        mvm_core::ObjectState {
+            id,
+            class: class.into(),
+            bbox,
+            confidence: 0.8,
+            age: 2,
+            position_3d: None,
+            last_seen: std::time::Instant::now(),
+        }
+    }
+
+    #[test]
+    fn world_json_valid_and_empty_status() {
+        let sf = StateFile::open_at(temp_state_path("test_world_empty.md")).unwrap();
+        let world = mvm_core::WorldState::new(std::time::Instant::now());
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+        assert_eq!(v["status"], "empty");
+        assert_eq!(v["faces"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn world_json_person_object_overlap_relation() {
+        let sf = StateFile::open_at(temp_state_path("test_world_rel.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        world.people.push(person_state(10, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.objects.push(object_state(
+            mvm_scene::OBJECT_ID_BASE,
+            "cup",
+            mvm_core::BBox { x1: 0.4, y1: 0.4, x2: 0.55, y2: 0.6 },
+        ));
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["status"], "occupied");
+        assert_eq!(v["objects"][0]["class"], "cup");
+        assert_eq!(v["objects"][0]["age"].as_u64().unwrap(), 2);
+        let rels = v["relations"].as_array().unwrap();
+        let oid = mvm_scene::OBJECT_ID_BASE;
+        let edge = rels.iter().find(|r| {
+            let a = r["a"].as_u64().unwrap() as u32;
+            let b = r["b"].as_u64().unwrap() as u32;
+            (a == 10 && b == oid) || (a == oid && b == 10)
+        });
+        assert_eq!(edge.expect("person↔object edge")["kind"], "overlapping");
+    }
+
+    #[test]
+    fn world_md_lists_person_and_object() {
+        let sf = StateFile::open_at(temp_state_path("test_world_md.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        world.people.push(person_state(10, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.objects.push(object_state(
+            mvm_scene::OBJECT_ID_BASE,
+            "chair",
+            mvm_core::BBox { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.9 },
+        ));
+        sf.write_world(&world, 25.0).unwrap();
+        let content = read_state(&sf.path);
+        assert!(content.contains("- Status: occupied"), "got:\n{content}");
+        assert!(content.contains("Objects visible: chair"));
+        assert!(content.contains("  - id: 10"));
+        assert!(content.contains("class: chair"));
     }
 }
