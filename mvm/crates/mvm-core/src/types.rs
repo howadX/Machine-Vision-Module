@@ -124,6 +124,37 @@ pub struct PersonTrack {
 }
 
 impl PersonTrack {
+    /// Create a bare track from an id + bbox: Kalman seeded from the bbox, all
+    /// enrichment fields `None`. `display_id` starts equal to `id` (the tracker
+    /// resolves it each tick). Convenience for projection/tests; the tracker's
+    /// live path builds tracks inline with native-3D priority.
+    pub fn new(id: u32, bbox: BBox) -> Self {
+        Self {
+            id,
+            display_id: id,
+            bbox,
+            kalman: crate::kalman::KalmanBBox::new(bbox),
+            age: 1,
+            missed: 0,
+            identity: None,
+            identity_confidence: None,
+            emotion: None,
+            emotion_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            depth_ema: None,
+            emotion_distribution: None,
+            embedding: None,
+        }
+    }
+
     /// Identity to SHOW (phase 8 identity model): the name only when this track
     /// currently holds a reserved user slot (`display_id < FIRST_EPHEMERAL_ID`).
     /// A track that matched a user label but lost the exclusive binding (e.g. the
