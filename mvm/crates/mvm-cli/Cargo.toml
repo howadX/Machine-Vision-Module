@@ -20,6 +20,7 @@ mvm-depth = { path = "../mvm-depth" }
 mvm-hands = { path = "../mvm-hands" }
 mvm-pipeline = { path = "../mvm-pipeline" }
 mvm-fusion = { path = "../mvm-fusion" }
+mvm-mesh = { path = "../mvm-mesh" }
 anyhow = "1"
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }

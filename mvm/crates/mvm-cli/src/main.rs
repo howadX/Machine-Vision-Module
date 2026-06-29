@@ -10,6 +10,7 @@
 mod state;
 mod scene_debug;
 mod pipeline;
+mod agents;
 
 use anyhow::{Context, Result};
 use mvm_core::Module;
