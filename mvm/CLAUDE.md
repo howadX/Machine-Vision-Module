@@ -253,7 +253,7 @@ cargo run --release -- --native --once --dump-interval 1
 # Camera::spawn() внутри запускает ../venv/bin/python3 ../tools/mvm_bridge.py
 ```
 
-## Структура (11 крейтов)
+## Структура (12 крейтов)
 
 ```
 mvm/
@@ -269,6 +269,7 @@ mvm/
 │   ├── mvm-scene/          # ✅ YOLO26n ONNX (80 классов COCO, end-to-end/raw, object-узлы + трекер) [8.E]
 │   ├── mvm-depth/          # ✅ Depth-Anything-V2-Small ONNX (относит. карта → метрич. объекты) [8.E.2]
 │   ├── mvm-hands/          # ✅ MediaPipe handpose ONNX (21 landmark/рука, ROI из запястий) [8.E.4]
+│   ├── mvm-mesh/           # 🆕 Agent Mesh: std::thread агенты + latest-frame + WorldState [8.C скелет]
 │   ├── mvm-pipeline/       # ✅ Camera (Python bridge) + NativeCamera (v4l2 MJPG)
 │   └── mvm-cli/            # ✅ main, StateFile, dump_table(), --native/--native-camera/--once
 ├── xtask/                  # ✅ cargo xtask bundle → dist/mvm
@@ -356,7 +357,7 @@ mvm/
 
 ### 🟢 Фаза 8 — Body-primary + scene-graph наружу (в работе, 2026-06-28)
 
-> **CHECKPOINT 2026-06-29 (8.E + 8.E.2 + 8.E.4 приземлены + live-validated; G₁ Human полна).** Ветка `rust-core`. **197 тестов зелёных**, release чист.
+> **CHECKPOINT 2026-06-29 (8.E/8.E.2/8.E.4 + Agent-Mesh 8.A/8.B/8.C-скелет приземлены).** Ветка `rust-core`. **212 тестов зелёных, 12 крейтов**, release чист.
 > Коммиты поверх `117b8df1`: `52907ca4` (спайк 8.0.1), `dfdca72c` (body-primary+id 8.0.2), `b50d7288`
 > (A1+A3 8.0.3), `4380c1e9` (R+A2-lite 8.0.4), `ebd9e5a9` (docs), `0cae2f17` (mvm-scene + object-узлы +
 > cadence 8.E), `5eebed53` (YOLO26n end-to-end decode + person + модель), `ddae6139` (docs),
@@ -377,7 +378,10 @@ mvm/
 | **8.E.4 hands (MediaPipe handpose)** — крейт `mvm-hands` (11-й) → **G₁ Human полна → HumanAgent готов** | ✅ **live 2026-06-29**. OpenCV Zoo handpose ONNX 4МБ (gitignored). **Body-primary:** ROI кисти из запястий BlazePose (15/16)+пальцев → `hand_rois_from_pose` (без palm-детектора/анкоров), 21 landmark/рука + presence-gate. Врезано в `build_body_primary`; `--scene-debug` рисует зелёные боксы+точки. Caveat: ROI из запястья требует тюнинга на чётком жесте; FPS 15→13 (hands per-frame — cadence = очевидная оптимизация) |
 | 8.E audio (YAMNet) | 🔜 |
 | 8.F cross-group fusion = object/audio-узлы → существующий `build_scene` (НЕ MBT) | 🟡 object-часть готова (8.E); audio/depth-узлы — с их крейтами |
-| Agent Mesh (async threads) — отложен до появления тяжёлого детектора (depth ~100мс) | 🔜 |
+| **8.A/8.B WorldState blackboard** (`mvm-core::world`: PersonState/ObjectState/Position3D/Activity + per-entity freshness) | ✅ (commit `4efedf08`) |
+| **8.C Agent Mesh скелет** — крейт `mvm-mesh` (12-й): `Agent` trait + `Frame`/`LatestFrame` (single-slot latest-wins) + Stub-агенты + `AgentMesh` оркестратор на `std::thread` | ✅ (commit `64f0f295`, 8 тестов) |
+| 8.C HumanAgent (обёртка body-primary) + CaptureAgent (NativeCamera) + object/depth-агенты + StateFileWriter | 🔜 СЛЕДУЮЩЕЕ — требует вынести `build_body_primary` в самодостаточный юнит, владеющий моделями |
+| 8.D подкоманда `mvm-cli mesh` + 8.E.3 audio (YAMNet) | 🔜 |
 
 > **Решения 8.0.1 (зафиксированы спайками):** mesh на `std::thread` (НЕ tokio; contention опровергнут — текущие эксперты ~12мс/~80fps); cross-group fusion = object-узлы в `build_scene` (НЕ MBT; verified-research); cadence врезается вместе с тяжёлым детектором (YOLO/depth). A2 (полный torso-center matching) — не нужен, A1+A2-lite хватило.
 
