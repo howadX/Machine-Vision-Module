@@ -117,8 +117,9 @@ pub(crate) fn anchor_objects(
 
 /// Two people closer than this (metric 3D) count as "together".
 const ACTIVITY_NEAR_M: f32 = 1.5;
-/// An object at least this fraction inside a person's bbox counts as in use.
-const CONTAINMENT_MIN: f32 = 0.3;
+/// A hand point within this normalised margin of an object bbox counts as contact
+/// (absorbs landmark jitter and tight object boxes).
+const CONTACT_MARGIN: f32 = 0.03;
 
 /// The activity label a person↔object interaction yields, or `None` for objects
 /// that are context only (furniture you don't "use" as an activity).
@@ -134,15 +135,22 @@ fn interaction_label(class: &str) -> Option<&'static str> {
     }
 }
 
-/// Fraction of `inner` that lies inside `outer` (intersection / inner-area).
-fn containment(outer: &BBox, inner: &BBox) -> f32 {
-    let ix1 = outer.x1.max(inner.x1);
-    let iy1 = outer.y1.max(inner.y1);
-    let ix2 = outer.x2.min(inner.x2);
-    let iy2 = outer.y2.min(inner.y2);
-    let inter = (ix2 - ix1).max(0.0) * (iy2 - iy1).max(0.0);
-    let inner_area = (inner.x2 - inner.x1) * (inner.y2 - inner.y1);
-    if inner_area > 0.0 { inter / inner_area } else { 0.0 }
+/// A normalised point lies within `b` expanded by `CONTACT_MARGIN`.
+fn point_near_bbox(pt: [f32; 2], b: &BBox) -> bool {
+    pt[0] >= b.x1 - CONTACT_MARGIN
+        && pt[0] <= b.x2 + CONTACT_MARGIN
+        && pt[1] >= b.y1 - CONTACT_MARGIN
+        && pt[1] <= b.y2 + CONTACT_MARGIN
+}
+
+/// All interaction points of a person: every detected hand landmark plus the
+/// wrist anchors (always present, even when no hand model fired).
+fn contact_points(p: &PersonState) -> Vec<[f32; 2]> {
+    let mut pts = p.wrists.clone();
+    for h in &p.hands {
+        pts.extend(h.iter().copied());
+    }
+    pts
 }
 
 fn dist3(a: Position3D, b: Position3D) -> f32 {
@@ -152,10 +160,12 @@ fn dist3(a: Position3D, b: Position3D) -> f32 {
 
 /// Infer cross-group activities from the fused world (phase 8.F). Pure arithmetic:
 ///   - person↔person within `ACTIVITY_NEAR_M` (metric) → "people_together";
-///   - person↔interactive-object (object mostly inside the person bbox) →
-///     a class-specific label ("typing", "holding_drink", …).
-/// Furniture is context only (no activity). Hand-precise variants ("hand∩keyboard")
-/// need hand landmarks on the blackboard (or masks) — a later refinement.
+///   - person↔interactive-object: a **hand/wrist landmark** of the person lands
+///     inside the object bbox → a class-specific label ("typing", "using_mouse",
+///     "holding_drink", …). Body-landmark contact, not body-bbox overlap — on a
+///     ceiling cam the wrists reach the desk while the body bbox (head/shoulders)
+///     does not.
+/// Furniture is context only (no activity).
 pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) -> Vec<Activity> {
     let mut acts = Vec::new();
 
@@ -175,36 +185,18 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
         }
     }
 
-    // person ↔ interactive object. Two triggers:
-    //   1. strong — the object sits mostly inside the person's bbox (e.g. a cup
-    //      held against the torso);
-    //   2. posture-gated — a desk object (keyboard/mouse/laptop) anywhere while
-    //      the person's posture says they're at a desk. On a ceiling cam the body
-    //      bbox is head/shoulders and never reaches the desk, so containment alone
-    //      misses "typing"; the posture classifier already encodes "at a desk", so
-    //      we lean on it. Hand-precise contact ("hand∩keyboard") needs hand
-    //      landmarks on the blackboard (a deferred tail) or masks.
+    // person ↔ interactive object by hand/wrist contact.
     for p in people {
-        let at_desk = p
-            .posture
-            .as_ref()
-            .map(|(s, _)| s.contains("desk") || s == "sitting")
-            .unwrap_or(false);
-        let posture_conf = p.posture.as_ref().map(|(_, c)| *c).unwrap_or(0.5);
+        let pts = contact_points(p);
+        if pts.is_empty() {
+            continue; // no landmarks → no contact claim
+        }
         for o in objects {
             if let Some(label) = interaction_label(&o.class) {
-                let c = containment(&p.bbox, &o.bbox);
-                let desk_obj = matches!(o.class.as_str(), "keyboard" | "mouse" | "laptop");
-                if c >= CONTAINMENT_MIN {
+                if pts.iter().any(|&pt| point_near_bbox(pt, &o.bbox)) {
                     acts.push(Activity {
                         label: label.into(),
-                        confidence: (0.5 * o.confidence + 0.5 * c).clamp(0.0, 1.0),
-                        participants: vec![p.track_id, o.id],
-                    });
-                } else if at_desk && desk_obj {
-                    acts.push(Activity {
-                        label: label.into(),
-                        confidence: (0.5 * posture_conf + 0.5 * o.confidence).clamp(0.0, 1.0),
+                        confidence: o.confidence.clamp(0.0, 1.0),
                         participants: vec![p.track_id, o.id],
                     });
                 }
@@ -255,6 +247,8 @@ mod tests {
             posture: None,
             position_3d: Some(Position3D { x: 0.0, y: 0.0, z, confidence: 0.5 }),
             emotion_distribution: None,
+            wrists: Vec::new(),
+            hands: Vec::new(),
             last_seen: Instant::now(),
         }
     }
@@ -318,10 +312,12 @@ mod tests {
     }
 
     #[test]
-    fn typing_when_keyboard_inside_person() {
-        // person bbox is {0.3,0.2,0.5,0.7}; keyboard fully inside it.
-        let p = person(1.0);
+    fn typing_when_wrist_on_keyboard() {
+        // Wrist landmark lands inside the keyboard bbox — body-landmark contact,
+        // not body-bbox overlap.
+        let mut p = person(1.0);
         let kb = obj_class(10001, "keyboard", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.62 });
+        p.wrists = vec![[0.40, 0.58]];
         let acts = infer_activities(&[p], &[kb]);
         assert!(
             acts.iter().any(|a| a.label == "typing" && a.participants == vec![10, 10001]),
@@ -330,30 +326,36 @@ mod tests {
     }
 
     #[test]
-    fn no_activity_when_object_outside_and_not_at_desk() {
-        // person(1.0) has posture None → no desk gate, keyboard outside bbox → nothing.
-        let p = person(1.0);
+    fn hand_landmark_triggers_object_use() {
+        // No wrists, but a detected hand landmark on the mouse → "using_mouse".
+        let mut p = person(1.0);
+        p.hands = vec![vec![[0.33, 0.57], [0.34, 0.56]]];
+        let mouse = obj_class(10001, "mouse", BBox { x1: 0.31, y1: 0.54, x2: 0.36, y2: 0.60 });
+        let acts = infer_activities(&[p], &[mouse]);
+        assert!(acts.iter().any(|a| a.label == "using_mouse"), "got {acts:?}");
+    }
+
+    #[test]
+    fn no_activity_when_landmarks_far_from_object() {
+        let mut p = person(1.0);
         let kb = obj_class(10001, "keyboard", BBox { x1: 0.8, y1: 0.8, x2: 0.9, y2: 0.85 });
+        p.wrists = vec![[0.2, 0.2]];
         assert!(infer_activities(&[p], &[kb]).is_empty());
     }
 
     #[test]
-    fn desk_posture_infers_activity_even_without_containment() {
-        // Ceiling-cam case: mouse on the desk, outside the head/shoulders bbox, but
-        // posture says the person is at a desk → posture-gated "using_mouse".
-        let mut p = person(1.0);
-        p.posture = Some(("sitting_at_desk".into(), 0.8));
-        let mouse = obj_class(10001, "mouse", BBox { x1: 0.8, y1: 0.8, x2: 0.85, y2: 0.85 });
-        let acts = infer_activities(&[p], &[mouse]);
-        assert!(
-            acts.iter().any(|a| a.label == "using_mouse" && a.participants == vec![10, 10001]),
-            "got {acts:?}"
-        );
+    fn no_landmarks_means_no_object_activity() {
+        // Object sits inside the body bbox, but the person has no wrists/hands →
+        // we don't fabricate a contact claim from bbox overlap alone.
+        let p = person(1.0); // wrists/hands empty
+        let mouse = obj_class(10001, "mouse", BBox { x1: 0.35, y1: 0.3, x2: 0.45, y2: 0.4 });
+        assert!(infer_activities(&[p], &[mouse]).is_empty());
     }
 
     #[test]
     fn furniture_is_context_not_activity() {
-        let p = person(1.0);
+        let mut p = person(1.0);
+        p.wrists = vec![[0.40, 0.60]];
         let chair = obj_class(10001, "chair", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.65 });
         assert!(infer_activities(&[p], &[chair]).is_empty(), "chair is context, not an activity");
     }

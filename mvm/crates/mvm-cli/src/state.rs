@@ -1131,6 +1131,8 @@ mod tests {
             posture: None,
             position_3d: None,
             emotion_distribution: None,
+            wrists: Vec::new(),
+            hands: Vec::new(),
             last_seen: std::time::Instant::now(),
         }
     }

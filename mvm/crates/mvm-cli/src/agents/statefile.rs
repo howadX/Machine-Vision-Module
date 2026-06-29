@@ -122,6 +122,8 @@ mod tests {
             posture: Some(("sitting".into(), 0.9)),
             position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.5, confidence: 0.6 }),
             emotion_distribution: None,
+            wrists: Vec::new(),
+            hands: Vec::new(),
             last_seen: now,
         });
         let ctx = MeshContext {

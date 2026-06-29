@@ -36,7 +36,7 @@ impl Agent for HumanAgent {
                     let result =
                         self.pipeline.process(frame.image.as_ref(), frame.id, &prev_tracks);
                     self.tracker.tick(&result.detections);
-                    project_people(&ctx.world, &self.tracker, frame.id, frame.captured);
+                    project_people(&ctx.world, &self.tracker, &result.bodies, frame.id, frame.captured);
                     ticks += 1;
                 }
             }
@@ -62,7 +62,7 @@ mod tests {
         tracker.tick(&[Detection::bare(0.2, 0.2, 0.4, 0.6)]);
 
         let world = Arc::new(RwLock::new(WorldState::new(Instant::now())));
-        project_people(&world, &tracker, 1, Instant::now());
+        project_people(&world, &tracker, &[], 1, Instant::now());
 
         let w = world.read().unwrap();
         assert_eq!(w.people.len(), 1);
@@ -80,7 +80,7 @@ mod tests {
         ]);
 
         let world = Arc::new(RwLock::new(WorldState::new(Instant::now())));
-        project_people(&world, &tracker, 2, Instant::now());
+        project_people(&world, &tracker, &[], 2, Instant::now());
 
         assert_eq!(world.read().unwrap().people.len(), 2);
     }

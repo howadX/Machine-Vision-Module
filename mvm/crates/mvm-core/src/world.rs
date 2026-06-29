@@ -41,6 +41,14 @@ pub struct PersonState {
     /// Full 8-class emotion softmax (for the Scene JSON contract); `None` when the
     /// track has no Rust-model distribution.
     pub emotion_distribution: Option<[f32; 8]>,
+    /// Normalised [x,y] of this person's visible wrist landmarks (BlazePose 15/16).
+    /// The always-available interaction anchor — on a ceiling cam the wrists reach
+    /// the desk even when the body bbox (head/shoulders) does not.
+    pub wrists: Vec<[f32; 2]>,
+    /// Normalised hand landmark sets attached to this person (one inner vec per
+    /// detected hand). Empty when the hand model found none. Filled by the agent
+    /// after tracking — `from_track` leaves it empty.
+    pub hands: Vec<Vec<[f32; 2]>>,
     pub last_seen: Instant,
 }
 
@@ -67,6 +75,10 @@ impl PersonState {
             posture: t.posture.clone().map(|l| (l, t.posture_confidence.unwrap_or(0.0))),
             position_3d,
             emotion_distribution: t.emotion_distribution,
+            // Landmarks aren't on the track — the agent attaches them post-tracking
+            // from the per-body pose/hand data (see `project_people`).
+            wrists: Vec::new(),
+            hands: Vec::new(),
             last_seen: now,
         }
     }

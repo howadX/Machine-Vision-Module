@@ -307,7 +307,7 @@ fn run_native_loop(
 
         // Last frame's active track bboxes feed A1 anti-flip suppression.
         let prev_tracks: Vec<mvm_core::BBox> = tracker.active().map(|t| t.bbox).collect();
-        let pipeline::FrameResult { detections, overlay, emotion_debug_entries } =
+        let pipeline::FrameResult { detections, overlay, emotion_debug_entries, .. } =
             pipeline.process(&frame, frame_count, &prev_tracks);
 
         frame_count += 1;

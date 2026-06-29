@@ -27,7 +27,8 @@ pub(crate) use human::HumanAgent;
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::StateFileWriter;
 
-use mvm_core::{ObjectState, PersonState, PersonTracker, Position3D, WorldState};
+use crate::pipeline::BodyData;
+use mvm_core::{BBox, ObjectState, PersonState, PersonTracker, Position3D, WorldState};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -39,23 +40,53 @@ pub(crate) fn cadence_due(frame_id: u64, cadence: u32) -> bool {
 }
 
 /// Project the tracker's active people into `WorldState.people` and advance the
-/// frame stamp. Called by the `HumanAgent` every frame (it owns the frame_id /
-/// timestamp advance; other agents only touch their own slice).
+/// frame stamp. Each person's wrists/hands are attached from the per-body
+/// landmark data by best bbox match (phase 8.F: interaction by landmarks). Called
+/// by the `HumanAgent` every frame (it owns the frame_id / timestamp advance).
 pub(crate) fn project_people(
     world: &Arc<RwLock<WorldState>>,
     tracker: &PersonTracker,
+    bodies: &[BodyData],
     frame_id: u64,
     now: Instant,
 ) {
     let people: Vec<PersonState> = tracker
         .active()
-        .map(|t| PersonState::from_track(t, now))
+        .map(|t| {
+            let mut p = PersonState::from_track(t, now);
+            if let Some(b) = best_body_for_bbox(&p.bbox, bodies) {
+                p.wrists = b.wrists.clone();
+                p.hands = b.hands.clone();
+            }
+            p
+        })
         .collect();
     if let Ok(mut w) = world.write() {
         w.people = people;
         w.frame_id = frame_id;
         w.timestamp = now;
     }
+}
+
+/// The body whose bbox overlaps `target` most (IoU), above a small floor. Ties a
+/// track back to the pose/hand data it came from.
+fn best_body_for_bbox<'a>(target: &BBox, bodies: &'a [BodyData]) -> Option<&'a BodyData> {
+    bodies
+        .iter()
+        .map(|b| (b, bbox_iou(target, &b.bbox)))
+        .filter(|(_, iou)| *iou > 0.1)
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(b, _)| b)
+}
+
+fn bbox_iou(a: &BBox, b: &BBox) -> f32 {
+    let ix1 = a.x1.max(b.x1);
+    let iy1 = a.y1.max(b.y1);
+    let ix2 = a.x2.min(b.x2);
+    let iy2 = a.y2.min(b.y2);
+    let inter = (ix2 - ix1).max(0.0) * (iy2 - iy1).max(0.0);
+    let ua = (a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - inter;
+    if ua > 0.0 { inter / ua } else { 0.0 }
 }
 
 /// Project tracked objects into `WorldState.objects`. 3D is whatever the tracked
@@ -117,7 +148,7 @@ mod tests {
 
         let world = Arc::new(RwLock::new(WorldState::new(Instant::now())));
         let now = Instant::now();
-        project_people(&world, &tracker, 42, now);
+        project_people(&world, &tracker, &[], 42, now);
 
         let w = world.read().unwrap();
         assert_eq!(w.frame_id, 42);

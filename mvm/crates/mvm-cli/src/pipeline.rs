@@ -15,10 +15,24 @@ use crate::scene_debug;
 use crate::state;
 use mvm_core::Detection;
 
+/// Per-body landmark data, kept grouped by body (not flattened) so the mesh can
+/// attach each person's wrists + hands to their track (phase 8.F interaction by
+/// landmarks). All coordinates normalised [0,1].
+pub(crate) struct BodyData {
+    pub bbox: mvm_core::BBox,
+    /// Visible wrist points (BlazePose 15/16, visibility-gated).
+    pub wrists: Vec<[f32; 2]>,
+    /// Hand landmark sets for this body (one per detected hand).
+    pub hands: Vec<Vec<[f32; 2]>>,
+}
+
 /// Per-frame output of [`BodyPrimaryPipeline::process`].
 pub(crate) struct FrameResult {
     /// Bodies (+ fallback faces), fully enriched — feed to the tracker.
     pub detections: Vec<Detection>,
+    /// Per-body landmark data (wrists + hands), grouped by body for per-person
+    /// association after tracking.
+    pub bodies: Vec<BodyData>,
     /// Per-agent detector overlay for `--scene-debug` (faces / poses / hands).
     pub overlay: scene_debug::DetectorOverlay,
     /// Emotion A/B entries for `--emotion-debug` (empty unless enabled).
@@ -87,6 +101,7 @@ impl BodyPrimaryPipeline {
     ) -> FrameResult {
         let mut overlay = scene_debug::DetectorOverlay::default();
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
+        let mut bodies: Vec<BodyData> = Vec::new();
 
         // ── Body-primary enrichment (was build_body_primary) ────────────────
         let detections = build_body_primary(
@@ -97,6 +112,7 @@ impl BodyPrimaryPipeline {
             self.identity_mod.as_mut(),
             self.hand_landmarker.as_mut(),
             &mut overlay,
+            &mut bodies,
             &self.config,
             self.emotion_debug,
             &mut emotion_debug_entries,
@@ -142,7 +158,7 @@ impl BodyPrimaryPipeline {
             }
         }
 
-        FrameResult { detections, overlay, emotion_debug_entries }
+        FrameResult { detections, bodies, overlay, emotion_debug_entries }
     }
 
     /// Depth-anchor the latest objects to the (post-tick) tracker's people so
@@ -331,6 +347,7 @@ fn build_body_primary(
     mut identity_mod: Option<&mut mvm_identity::IdentityModule>,
     mut hand_landmarker: Option<&mut mvm_hands::HandLandmarker>,
     overlay: &mut scene_debug::DetectorOverlay,
+    bodies_out: &mut Vec<BodyData>,
     config: &mvm_core::Config,
     emotion_debug: bool,
     debug_out: &mut Vec<state::EmotionDebugEntry>,
@@ -383,12 +400,27 @@ fn build_body_primary(
                 det.ws_confidence = Some(ws);
             }
         }
+        // Wrist landmarks (BlazePose 15/16, visibility-gated) — the always-on
+        // interaction anchor for this body (normalised).
+        let mut wrists: Vec<[f32; 2]> = Vec::new();
+        for &idx in &[15usize, 16] {
+            if lm[idx][3] >= 0.5 {
+                wrists.push([lm[idx][0] / fw, lm[idx][1] / fh]);
+            }
+        }
         // Hands (phase 8.E.4): ROIs from this body's wrists → handpose (presence-
         // gated). Body-primary — hands belong to the body whose wrist drove them.
+        // Keep them grouped per body (phase 8.F: per-person attachment).
+        let mut body_hands: Vec<Vec<[f32; 2]>> = Vec::new();
         if let (Some(hl), Some(rgb)) = (hand_landmarker.as_deref_mut(), hand_rgb.as_ref()) {
             let rois = mvm_hands::hand_rois_from_pose(lm, 0.5);
-            overlay.hands.extend(hl.infer_rois(rgb, &rois));
+            let hands = hl.infer_rois(rgb, &rois);
+            for h in &hands {
+                body_hands.push(h.landmarks_px.iter().map(|p| [p[0] / fw, p[1] / fh]).collect());
+            }
+            overlay.hands.extend(hands); // flat list still feeds --scene-debug
         }
+        bodies_out.push(BodyData { bbox: *b, wrists, hands: body_hands });
         // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
         // emotion (optional). Keypoint-in-bbox ties the face to the body whose
         // head is in it, so overlapping person bboxes never swap identities.
