@@ -120,6 +120,14 @@ struct JsonObject {
     bbox: [f32; 4],
 }
 
+/// A cross-group activity in the JSON (phase 8.F).
+#[derive(Serialize)]
+struct JsonActivity {
+    label: String,
+    confidence: f32,
+    participants: Vec<u32>,
+}
+
 #[derive(Serialize)]
 struct JsonFrame<'a> {
     ts: String,
@@ -132,6 +140,11 @@ struct JsonFrame<'a> {
     /// Relational scene-graph: zones (connected components) and edges (phase 6.4).
     zones: Vec<Vec<u32>>,
     relations: Vec<JsonRelation>,
+    /// Cross-group activities (phase 8.F); omitted when empty (e.g. sync path).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    activities: Vec<JsonActivity>,
+    /// Scene anomaly score [0,1] (phase 8.F).
+    anomaly_score: f32,
 }
 
 /// Build scene-graph entities for tracked objects (phase 8.E / 8.E.2).
@@ -455,7 +468,11 @@ impl StateFile {
             }
         }).collect();
 
-        let frame = JsonFrame { ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations };
+        let frame = JsonFrame {
+            ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
+            activities: Vec::new(), // sync path computes no activities
+            anomaly_score: 0.0,
+        };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
     }
 
@@ -486,7 +503,21 @@ impl StateFile {
             JsonRelation { a: r.a, b: r.b, dist_m: r.distance_m, overlap: r.overlap, kind }
         }).collect();
 
-        let frame = JsonFrame { ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations };
+        let activities: Vec<JsonActivity> = world
+            .activities
+            .iter()
+            .map(|a| JsonActivity {
+                label: a.label.clone(),
+                confidence: a.confidence,
+                participants: a.participants.clone(),
+            })
+            .collect();
+
+        let frame = JsonFrame {
+            ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
+            activities,
+            anomaly_score: world.anomaly_score,
+        };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
     }
 
@@ -569,6 +600,19 @@ impl StateFile {
                 ));
             }
         }
+
+        // Cross-group activities + anomaly (phase 8.F).
+        if world.activities.is_empty() {
+            lines.push("- Activities: none".to_string());
+        } else {
+            let summary: Vec<String> = world
+                .activities
+                .iter()
+                .map(|a| format!("{} ({:.2})", a.label, a.confidence))
+                .collect();
+            lines.push(format!("- Activities: {}", summary.join(", ")));
+        }
+        lines.push(format!("- Anomaly: {:.2}", world.anomaly_score));
 
         lines.push(format!("- Status: {status}"));
         lines.push(String::new());
@@ -1154,5 +1198,23 @@ mod tests {
         assert!(content.contains("Objects visible: chair"));
         assert!(content.contains("  - id: 10"));
         assert!(content.contains("class: chair"));
+    }
+
+    #[test]
+    fn world_json_surfaces_activities_and_anomaly() {
+        let sf = StateFile::open_at(temp_state_path("test_world_act.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        world.people.push(person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.activities.push(mvm_core::Activity {
+            label: "typing".into(),
+            confidence: 0.8,
+            participants: vec![0, 10000],
+        });
+        world.anomaly_score = 0.25;
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["activities"][0]["label"], "typing");
+        assert_eq!(v["activities"][0]["participants"][1].as_u64().unwrap(), 10000);
+        assert!((v["anomaly_score"].as_f64().unwrap() - 0.25).abs() < 1e-6);
     }
 }
