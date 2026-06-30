@@ -40,8 +40,19 @@ impl Agent for HumanAgent {
                     // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
                     let emotion_fresh: Vec<mvm_core::BBox> =
                         self.tracker.active().filter(|t| !t.needs_emotion()).map(|t| t.bbox).collect();
+                    // Id-locked tracks (phase 9.9) → pose-ROI recovery if the detector
+                    // drops them. Locked-only (not merely established) so a recognised /
+                    // cosine-stable body is sustained through a detector gap, but an anon
+                    // fragment is NOT propped up into a coexisting phantom.
+                    let predicted_rois: Vec<mvm_core::BBox> = self
+                        .tracker
+                        .active()
+                        .filter(|t| t.is_id_locked())
+                        .map(|t| t.bbox)
+                        .collect();
                     let result = self.pipeline.process(
-                        frame.image.as_ref(), frame.id, &prev_tracks, &locked_tracks, &emotion_fresh,
+                        frame.image.as_ref(), frame.id, &prev_tracks, &locked_tracks,
+                        &emotion_fresh, &predicted_rois,
                     );
                     // Monotonic seconds since the first frame → motion velocities (9.8).
                     let t_secs = frame

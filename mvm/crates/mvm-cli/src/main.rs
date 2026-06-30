@@ -313,8 +313,12 @@ fn run_native_loop(
         // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
         let emotion_fresh: Vec<mvm_core::BBox> =
             tracker.active().filter(|t| !t.needs_emotion()).map(|t| t.bbox).collect();
+        // Id-locked tracks (phase 9.9) → pose-ROI recovery if the detector drops
+        // them. Locked-only so an anon fragment isn't propped into a phantom.
+        let predicted_rois: Vec<mvm_core::BBox> =
+            tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
         let pipeline::FrameResult { detections, low_conf, landmarks, overlay, emotion_debug_entries, .. } =
-            pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks, &emotion_fresh);
+            pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks, &emotion_fresh, &predicted_rois);
 
         frame_count += 1;
         // Monotonic seconds since loop start → motion velocities (phase 9.8).

@@ -107,6 +107,7 @@ impl BodyPrimaryPipeline {
         prev_tracks: &[mvm_core::BBox],
         locked_tracks: &[mvm_core::BBox],
         emotion_fresh_tracks: &[mvm_core::BBox],
+        predicted_rois: &[mvm_core::BBox],
     ) -> FrameResult {
         let mut overlay = scene_debug::DetectorOverlay::default();
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
@@ -136,6 +137,7 @@ impl BodyPrimaryPipeline {
             prev_tracks,
             locked_tracks,
             emotion_fresh_tracks,
+            predicted_rois,
             recheck,
         );
 
@@ -442,12 +444,13 @@ fn build_body_primary(
     prev_tracks: &[mvm_core::BBox],
     locked_tracks: &[mvm_core::BBox],
     emotion_fresh_tracks: &[mvm_core::BBox],
+    predicted_rois: &[mvm_core::BBox],
     recheck: bool,
 ) -> Vec<Detection> {
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
     let body_dets = native_pose
-        .map(|np| np.bodies_byte(frame).unwrap_or_default())
+        .map(|np| np.bodies_byte_recover(frame, predicted_rois).unwrap_or_default())
         .unwrap_or_default();
     let bodies = body_dets.bodies;
     // Weak boxes ride straight through to the tracker's recovery stage (9.4) —

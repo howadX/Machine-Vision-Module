@@ -68,6 +68,43 @@ pub const BYTE_HIGH_SCORE: f32 = 0.5;
 /// are kept bbox-only for ByteTrack recovery; below it they are noise.
 pub const BYTE_LOW_SCORE: f32 = 0.2;
 
+// ── Pose-ROI recovery (phase 9.9) ───────────────────────────────────────────
+/// Score a body recovered from a stable track's predicted ROI enters with — it is
+/// a trusted confirmed track, so it counts as high-confidence (≥ `BYTE_HIGH_SCORE`).
+const PREDICTED_SCORE: f32 = 0.6;
+/// Pose-ROI side = this × the predicted bbox's longer side (pixels). Generous
+/// enough to capture limbs a tight track bbox may clip. Tunable; live-validated.
+const POSE_RECOVER_ROI_SCALE: f32 = 1.3;
+/// A recovered pose is accepted only when the torso is visible at least this much
+/// — the guard that keeps an empty ROI from posing into a phantom.
+const RECOVER_TORSO_VIS: f32 = 0.5;
+/// IoU above which a detector body already covers a predicted ROI (skip recovery).
+const RECOVER_COVERED_IOU: f32 = 0.3;
+
+/// Normalised bbox spanning the visible landmarks (phase 9.9) — the recovered
+/// body's extent, so it tracks the body's *current* position (not the stale ROI).
+fn bbox_from_landmarks(lm: &Landmarks33, w: f32, h: f32) -> mvm_core::BBox {
+    let (mut x1, mut y1, mut x2, mut y2) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for p in lm.iter() {
+        if p[3] < 0.3 {
+            continue; // ignore low-visibility (hallucinated) joints
+        }
+        x1 = x1.min(p[0]);
+        y1 = y1.min(p[1]);
+        x2 = x2.max(p[0]);
+        y2 = y2.max(p[1]);
+    }
+    if x1 > x2 {
+        return mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 0.0, y2: 0.0 };
+    }
+    mvm_core::BBox {
+        x1: (x1 / w).clamp(0.0, 1.0),
+        y1: (y1 / h).clamp(0.0, 1.0),
+        x2: (x2 / w).clamp(0.0, 1.0),
+        y2: (y2 / h).clamp(0.0, 1.0),
+    }
+}
+
 /// Native two-stage pose: person detection → per-person ROI → BlazePose landmarks.
 /// Multi-persona by construction (one pose inference per detected person) — this is
 /// what fixes #3 (the MediaPipe `.task` only ever returned a single pose).
@@ -159,6 +196,58 @@ impl NativePose {
                     score: p.score,
                 });
             }
+        }
+        Ok(out)
+    }
+
+    /// ByteTrack bodies (9.4) **plus pose-ROI recovery** (phase 9.9). Any stable
+    /// track whose predicted ROI the person detector **missed** this frame is posed
+    /// directly from that ROI — so a confirmed body the detector fragmented or
+    /// dropped (e.g. mid-walk under the ceiling cam) is sustained from the track's
+    /// own prediction instead of churning a fresh id.
+    ///
+    /// The detector path is **untouched** ([`Self::bodies_byte`] runs first); this
+    /// only ADDS bodies the detector didn't already cover, and each is gated on
+    /// **torso visibility** so posing an empty ROI never fabricates a phantom. With
+    /// no predicted ROIs it is exactly `bodies_byte`.
+    pub fn bodies_byte_recover(
+        &mut self,
+        image: &DynamicImage,
+        predicted: &[mvm_core::BBox],
+    ) -> anyhow::Result<BodyDetections> {
+        let mut out = self.bodies_byte(image)?;
+        if predicted.is_empty() {
+            return Ok(out);
+        }
+        let rgb = image.to_rgb8();
+        let (w, h) = (image.width() as f32, image.height() as f32);
+        for roi in predicted {
+            // Skip if a detector body/box already covers this track's ROI.
+            let covered = out.bodies.iter().any(|b| b.bbox.iou(roi) > RECOVER_COVERED_IOU)
+                || out.low_conf.iter().any(|l| l.bbox.iou(roi) > RECOVER_COVERED_IOU);
+            if covered {
+                continue;
+            }
+            // ROI center + side (pixels) from the predicted bbox; upright (angle 0).
+            let cx = (roi.x1 + roi.x2) * 0.5 * w;
+            let cy = (roi.y1 + roi.y2) * 0.5 * h;
+            let side = ((roi.x2 - roi.x1) * w).max((roi.y2 - roi.y1) * h) * POSE_RECOVER_ROI_SCALE;
+            let Some(lm) = self.pose.infer_roi(&rgb, cx, cy, side, 0.0)? else { continue; };
+            // Torso visible → a real body is in the ROI (not an empty patch).
+            let torso_vis = lm[11][3].min(lm[12][3]).min(lm[23][3]).min(lm[24][3]);
+            if torso_vis < RECOVER_TORSO_VIS {
+                continue;
+            }
+            let mut norm = [[0f32; 4]; 33];
+            for k in 0..33 {
+                norm[k] = [lm[k][0] / w, lm[k][1] / h, lm[k][2] / w, lm[k][3]];
+            }
+            out.bodies.push(BodyPose {
+                bbox: bbox_from_landmarks(&lm, w, h),
+                landmarks_px: lm,
+                posture: self.head.classify(&norm),
+                score: PREDICTED_SCORE,
+            });
         }
         Ok(out)
     }
@@ -279,6 +368,26 @@ mod tests {
             models_path: std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models")),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn bbox_from_landmarks_spans_visible_joints() {
+        let mut lm = [[0.0f32; 4]; 33];
+        // three visible joints + one low-vis outlier that must be ignored
+        lm[11] = [100.0, 200.0, 0.0, 0.9];
+        lm[12] = [300.0, 220.0, 0.0, 0.9];
+        lm[24] = [250.0, 600.0, 0.0, 0.9];
+        lm[0] = [9999.0, 9999.0, 0.0, 0.1]; // low vis → ignored
+        let b = bbox_from_landmarks(&lm, 1000.0, 1000.0);
+        assert!((b.x1 - 0.10).abs() < 1e-4 && (b.y1 - 0.20).abs() < 1e-4);
+        assert!((b.x2 - 0.30).abs() < 1e-4 && (b.y2 - 0.60).abs() < 1e-4);
+    }
+
+    #[test]
+    fn bbox_from_landmarks_empty_when_none_visible() {
+        let lm = [[0.0f32; 4]; 33]; // all visibility 0
+        let b = bbox_from_landmarks(&lm, 1000.0, 1000.0);
+        assert_eq!((b.x1, b.y1, b.x2, b.y2), (0.0, 0.0, 0.0, 0.0));
     }
 
     #[test]
