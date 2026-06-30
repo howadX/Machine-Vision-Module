@@ -15,6 +15,7 @@ pub mod space;
 pub mod emotion;
 pub mod world;
 pub mod motion;
+pub mod assignment;
 
 pub use types::{BBox, Detection, PersonTrack, EntityKind, Entity, RelationKind, Relation, Scene};
 pub use motion::{Landmarks33, LandmarkHistory};

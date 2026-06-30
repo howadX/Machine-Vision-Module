@@ -7,14 +7,16 @@
 
 ## Статус (2026-06-30)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 331 тест зелёный**, release чист.
+- **Ветка:** `rust-core` (основная). **12 крейтов, 346 тестов зелёных**, release чист.
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
-- **Фаза 9 — Tracker: 9.1–9.9 ЗАКРЫТЫ** (`+0 ONNX`), осталось **9.10 (Hungarian)**. Закрыто:
+- **Фаза 9 — Tracker: 9.1–9.10 ЗАКРЫТЫ** (`+0 ONNX`) — **фаза завершена**. Закрыто:
   кинематика B1 (motion ring + `MotionClassifier` + жесты) → OCM/OCR (9.2) → lifecycle FSM (9.3) →
   ByteTrack two-stage по телам (9.4) → инверсия контракта `associate/apply_detection/finalize` (9.5) →
   cadenced SFace + identity-lock (9.6) → emotion cadence (9.7) → лендмарки на треке + motion в Scene JSON
-  (9.8) → pose-ROI recovery для locked-треков (9.9). План — `docs/phase-9-plan.md`. **Фаза 10 —
-  Segmentation** (+1 ONNX YOLO-seg) вынесена отдельно — `docs/phase-10-plan.md`.
+  (9.8) → pose-ROI recovery для locked-треков (9.9) → **Hungarian global assignment (9.10)**: жадный
+  порядко-зависимый IoU-матчинг → оптимальный Kuhn–Munkres (`assignment.rs`, zero-deps) над той же
+  IoU+OCM cost-матрицей. План — `docs/phase-9-plan.md`. **Фаза 10 — Segmentation** (+1 ONNX YOLO-seg)
+  вынесена отдельно — `docs/phase-10-plan.md`.
 - **Live-ревалидация 9 (1 чел., потолочный ракурс):** idle/сидя — `id=0` lock 100%, motion idle↔walking
   + velocity в JSON. Ходьба — `id=0` держится 91% кадров (9.9), но детектор фрагментирует тело → краткие
   анон-мелькания остаются (**эмпирика для 10.7 person-масок**; см. память `walking-track-fragmentation`).
@@ -88,7 +90,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 
 | Крейт | Содержимое |
 |-------|------------|
-| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space, EMOTION fuse (PoE), **WorldState** (блэкборд, 8.A/8.B) |
+| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space, EMOTION fuse (PoE), **WorldState** (блэкборд, 8.A/8.B), `assignment` (Hungarian/Kuhn–Munkres, 9.10) |
 | **mvm-detect** | YuNet ONNX (228KB, embed, multi-stride NMS) — лицо |
 | **mvm-identity** | SFace ONNX (37MB, 128d L2-эмбеддинг, gallery, `embed()`) |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |
@@ -182,7 +184,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **7** | ✅ | Python-light: hot-path `--native-camera` = pure-Rust (v4l2→YuNet→ONNX), ~25 fps; SFace-эмбеддинг + margin-identity + cosine-re-link |
 | **7.5** | ✅ | Нативная поза: BlazePose+PoseVAE порт (bit-close к Python), мульти-persona (#3 закрыт) |
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
-| **9** | 🟢 9.1–9.9 | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery, **+0 ONNX**; осталось 9.10 Hungarian (см. ниже) |
+| **9** | ✅ | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery + Hungarian global assignment, **+0 ONNX** — закрыта |
 | **10** | 🔜 | **Segmentation** — YOLO-seg инстанс-маски (взаимодействие), **+1 ONNX** (`docs/phase-10-plan.md`) |
 | **11** | 🔜 | Продукт |
 
@@ -215,7 +217,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **9.7** ✅ | **Emotion cadence:** `frames_since_emotion`/`needs_emotion`; лейбл заморожен между прогонами (matched → нет decay) | core+cli; 818376b8 |
 | **9.8** ✅ | **Motion на треке:** `MotionTrack` (bounded ring), `tick_motion`; `motion_state`/`velocity` → `PersonState` → Scene JSON; live idle↔walking | core+cli; 7d818fc6 |
 | **9.9** ✅ | **Pose-ROI recovery:** `bodies_byte_recover` — locked-трек, потерянный детектором, позируется из предсказанного ROI (torso-vis гейт). Live: id-continuity 91%, 0 фантомов на пустом | posture+cli; 326cbc19 |
-| **9.10** 🟠 | **Hungarian assignment:** hand-rolled Kuhn–Munkres для малого N, **zero-deps**; слой cost→assignment (переиспользуется фазой 10) | `mvm-core` (новый модуль), `tracker.rs` — **активный** |
+| **9.10** ✅ | **Hungarian assignment:** hand-rolled Kuhn–Munkres (compact O(n³), dual-potentials, zero-deps) в новом `assignment.rs`; жадный IoU-матчинг Step 3 → глобально-оптимальный над IoU+OCM cost-матрицей (cols sorted by id → детерминизм; `IOU_GATE→∞`; каскад re-link + ByteTrack сохранены как fallback). 158 прежних тестов трекера зелёные (байт-идентичность 1–2 тел) + дискриминирующий тест оптимальности vs greedy | `assignment.rs`+`tracker.rs` |
 
 > **Инварианты 9 (соблюдены):** **+0 ONNX**; всё — чистая арифметика + оркестрация; модели **не** въехали
 > в `mvm-core`; body-primary FRONTIER сохранён. Робастность (9.2–9.4) сделана **до** инверсии (9.5).

@@ -308,31 +308,68 @@ impl PersonTracker {
         let mut matched_ids: Vec<u32> = Vec::new();
         let mut ids: Vec<u32> = Vec::with_capacity(high.len());
 
-        for det in high {
-            let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
-            let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
-            let mut best_score = f32::NEG_INFINITY;
-            let mut best_id = None;
+        // ── Step 3a: GLOBAL primary assignment (Hungarian, phase 9.10) ─────
+        // Formerly a per-detection greedy IoU pick: each detection independently
+        // grabbed the best free track in detector-output order. Greedy is locally
+        // optimal but globally wrong on a crossing — the first detection can steal
+        // the track a later one needed, forcing an id swap or a phantom id. We now
+        // build the whole IoU+OCM cost matrix and solve it once with Kuhn–Munkres,
+        // minimising the TOTAL cost across all detections. The per-pair score is
+        // unchanged (`iou + W_OCM·momentum`, gated by IOU_GATE → forbidden), so on
+        // 1–2 unambiguous bodies the result is identical to the old greedy match;
+        // it only diverges where greedy was suboptimal. Columns are the tracks
+        // holding a prediction this tick, sorted by id for a deterministic matrix.
+        let cand_ids: Vec<u32> = {
+            let mut v: Vec<u32> = predicted.keys().copied().collect();
+            v.sort_unstable();
+            v
+        };
+        let primary_track: Vec<Option<u32>> = if high.is_empty() || cand_ids.is_empty() {
+            vec![None; high.len()]
+        } else {
+            let cost: Vec<Vec<f32>> = high
+                .iter()
+                .map(|det| {
+                    let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
+                    let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
+                    cand_ids
+                        .iter()
+                        .map(|id| {
+                            let pred_bbox = predicted[id];
+                            let iou = det.bbox.iou(&pred_bbox);
+                            if iou <= IOU_GATE {
+                                return f32::INFINITY; // gate → forbidden pair
+                            }
+                            // OCM (phase 9.2): the momentum term re-orders matches
+                            // above the gate toward the track whose motion points
+                            // at this detection. Inert for a lone candidate; on a
+                            // crossing it (with the global solve) prevents the swap.
+                            let t = &self.tracks[id];
+                            let momentum = match (t.obs_velocity, t.last_obs_center) {
+                                (Some(v), Some(c)) => {
+                                    ocm_consistency(v, [det_cx - c[0], det_cy - c[1]])
+                                }
+                                _ => 0.0,
+                            };
+                            -(iou + W_OCM * momentum) // minimise cost = maximise score
+                        })
+                        .collect()
+                })
+                .collect();
+            crate::assignment::solve(&cost)
+                .into_iter()
+                .map(|c| c.map(|j| cand_ids[j]))
+                .collect()
+        };
+        // Reserve every primary-matched track up front so the re-link cascade for
+        // an UNMATCHED detection cannot steal a track the global solver already
+        // assigned to a different detection (the cascade skips `matched_ids`).
+        for &id in primary_track.iter().flatten() {
+            matched_ids.push(id);
+        }
 
-            for (&id, t) in &self.tracks {
-                if matched_ids.contains(&id) { continue; }
-                // Tracks created earlier in this same tick have no prediction entry.
-                let Some(&pred_bbox) = predicted.get(&id) else { continue; };
-                let iou = det.bbox.iou(&pred_bbox);
-                if iou <= IOU_GATE { continue; } // gate unchanged from phase 6.1
-                // OCM (phase 9.2): bias the score toward the track whose motion
-                // points at this detection. For a lone candidate the term is
-                // inert; on a crossing it deterministically prevents the swap.
-                let momentum = match (t.obs_velocity, t.last_obs_center) {
-                    (Some(v), Some(c)) => ocm_consistency(v, [det_cx - c[0], det_cy - c[1]]),
-                    _ => 0.0,
-                };
-                let score = iou + W_OCM * momentum;
-                if score > best_score {
-                    best_score = score;
-                    best_id = Some(id);
-                }
-            }
+        for (d, det) in high.iter().enumerate() {
+            let mut best_id = primary_track[d];
 
             // Identity re-link (fixes #6): if IoU found nothing, try to re-attach
             // to a recently-missed track instead of spawning a new id.
@@ -425,7 +462,12 @@ impl PersonTracker {
                     record_obs(t, [(det.bbox.x1 + det.bbox.x2) * 0.5,
                                    (det.bbox.y1 + det.bbox.y2) * 0.5]);
                     t.missed = 0;
-                    matched_ids.push(id);
+                    // Primary (Hungarian) matches are already reserved above; a
+                    // cascade re-link match is not — reserve it now so later
+                    // detections in this tick don't double-claim the track.
+                    if !matched_ids.contains(&id) {
+                        matched_ids.push(id);
+                    }
                     id
                 }
                 None => {
@@ -1198,6 +1240,44 @@ mod tests {
         let lc = t.tracks.get(&left_id).unwrap().last_obs_center.unwrap();
         assert!(rc[0] > 0.5, "rightward track followed the right detection, got {rc:?}");
         assert!(lc[0] < 0.5, "leftward track followed the left detection, got {lc:?}");
+    }
+
+    #[test]
+    fn hungarian_global_assignment_beats_greedy_order() {
+        // Ambiguity the greedy-by-detector-order matcher gets wrong (phase 9.10).
+        // Two existing tracks: T0 centred 0.45, T1 centred 0.52. Two detections:
+        //   D0 @0.48 overlaps BOTH (IoU 0.54 to T0, 0.43 to T1) — prefers T0.
+        //   D1 @0.43 overlaps ONLY T0 (IoU 0.67 to T0, 0.05 to T1 → below gate).
+        //
+        // Greedy in detector order: D0 (first) grabs its best, T0. D1's only IoU
+        // option (T0) is now taken → it falls to the center re-link cascade and
+        // mis-attaches to T1 (0.09 < relink_center_dist), so T0 ends following the
+        // 0.48 box and T1 the 0.43 box — a swapped, suboptimal association.
+        //
+        // Hungarian minimises total cost: D1→T0 is forced (its only feasible cell),
+        // so D0→T1. Each track follows its NEAREST detection: T0→0.43, T1→0.48.
+        let mut t = PersonTracker::new();
+        // Tick 1 — seed the two tracks (centres 0.45 and 0.52).
+        t.tick(&vec![
+            Detection::bare(0.40, 0.45, 0.50, 0.55), // centre 0.45 → smaller id (T0)
+            Detection::bare(0.47, 0.45, 0.57, 0.55), // centre 0.52 → T1
+        ]);
+        assert_eq!(t.track_count(), 2, "two tracks seeded");
+        let mut ids: Vec<u32> = t.all().keys().copied().collect();
+        ids.sort_unstable();
+        let (t0, t1) = (ids[0], ids[1]);
+
+        // Tick 2 — the ambiguous pair.
+        t.tick(&vec![
+            Detection::bare(0.43, 0.45, 0.53, 0.55), // D0 centre 0.48
+            Detection::bare(0.38, 0.45, 0.48, 0.55), // D1 centre 0.43
+        ]);
+        assert_eq!(t.track_count(), 2, "no phantom track — both detections matched");
+        let c0 = t.tracks.get(&t0).unwrap().last_obs_center.unwrap();
+        let c1 = t.tracks.get(&t1).unwrap().last_obs_center.unwrap();
+        // Optimal (Hungarian): T0 follows D1 (0.43), T1 follows D0 (0.48).
+        assert!((c0[0] - 0.43).abs() < 0.01, "T0 took the nearer detection D1, got {c0:?}");
+        assert!((c1[0] - 0.48).abs() < 0.01, "T1 took D0, got {c1:?}");
     }
 
     #[test]
