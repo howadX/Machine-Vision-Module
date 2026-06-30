@@ -264,6 +264,152 @@ impl MotionClassifier {
     }
 }
 
+// BlazePose wrist indices — the only arm joints the gesture math reads.
+const L_WRIST: usize = 15;
+const R_WRIST: usize = 16;
+
+/// Which arm a gesture query is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+impl Side {
+    fn wrist_idx(self) -> usize {
+        match self {
+            Side::Left => L_WRIST,
+            Side::Right => R_WRIST,
+        }
+    }
+}
+
+/// Wrist position `[x,y]` for one arm, gated on visibility.
+pub fn wrist_pos(lm: &Landmarks33, side: Side) -> Option<[f32; 2]> {
+    let w = &lm[side.wrist_idx()];
+    if w[3] < VIS_GATE {
+        return None;
+    }
+    Some([w[0], w[1]])
+}
+
+/// Lateral arm extension (B1.4): how far the wrist sits **off the torso axis**,
+/// in torso-lengths. Measured as the perpendicular distance of the wrist from
+/// the shoulder-centre↔hip-centre line, normalised by torso length — so it is
+/// **orientation-invariant** in the image plane (a body rotated 90° reads the
+/// same) and **distance-invariant** (torso-normalised).
+///
+/// A hanging arm lies *along* the axis → ~0. An outstretched arm sits far to the
+/// side/front → ≈ arm length in torso units. This direction-based measure beats
+/// raw wrist↔shoulder distance, which barely changes between hanging and
+/// reaching (the arm is roughly rigid — only its *direction* changes).
+pub fn arm_reach(lm: &Landmarks33, side: Side) -> Option<f32> {
+    let sc = shoulder_center(lm)?;
+    let hc = hip_center(lm)?;
+    let w = wrist_pos(lm, side)?;
+    // Torso axis (hip→shoulder) and its length (the normaliser).
+    let ax = [sc[0] - hc[0], sc[1] - hc[1]];
+    let len = (ax[0] * ax[0] + ax[1] * ax[1]).sqrt();
+    if len < 1e-3 {
+        return None;
+    }
+    let unit = [ax[0] / len, ax[1] / len];
+    // Wrist relative to the shoulder (the arm's anchor).
+    let rel = [w[0] - sc[0], w[1] - sc[1]];
+    // Perpendicular component magnitude = |rel − (rel·unit)·unit|.
+    let along = rel[0] * unit[0] + rel[1] * unit[1];
+    let perp = [rel[0] - along * unit[0], rel[1] - along * unit[1]];
+    let perp_len = (perp[0] * perp[0] + perp[1] * perp[1]).sqrt();
+    Some(perp_len / len)
+}
+
+/// A coarse single-arm gesture event (B1.4) — feeds `activities` (8.F).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArmGesture {
+    /// Arm resting / not doing anything notable.
+    None,
+    /// Arm extended outward and steady — reaching toward something.
+    Reaching,
+    /// Hand moving fast — waving / gesturing.
+    Waving,
+}
+
+impl ArmGesture {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ArmGesture::None => "none",
+            ArmGesture::Reaching => "reaching",
+            ArmGesture::Waving => "waving",
+        }
+    }
+}
+
+/// Thresholds for [`LandmarkHistory::arm_gesture`] (torso-normalised units).
+#[derive(Debug, Clone, Copy)]
+pub struct GestureThresholds {
+    /// Lateral extension (torso) at/above which a steady arm counts as reaching.
+    pub reach_above: f32,
+    /// Wrist speed (torso/s) at/above which the arm counts as waving.
+    pub wave_above: f32,
+}
+
+impl Default for GestureThresholds {
+    /// Reach ≥ 0.8 torso lateral; wave ≥ 1.5 torso/s wrist speed.
+    fn default() -> Self {
+        Self {
+            reach_above: 0.8,
+            wave_above: 1.5,
+        }
+    }
+}
+
+impl LandmarkHistory {
+    /// Wrist speed for one arm over the retained window, in **torso-lengths per
+    /// second** (B1.4) — same scale-invariant treatment as [`Self::centroid_speed`]
+    /// but tracking the wrist. Uses the oldest/newest frames with a visible wrist,
+    /// normalised by the latest valid torso length. `None` when fewer than two
+    /// usable frames, a non-positive span, or no measurable torso.
+    pub fn wrist_speed(&self, side: Side) -> Option<f32> {
+        let first = self
+            .buf
+            .iter()
+            .find_map(|(t, lm)| wrist_pos(lm, side).map(|w| (*t, w)));
+        let last = self
+            .buf
+            .iter()
+            .rev()
+            .find_map(|(t, lm)| wrist_pos(lm, side).map(|w| (*t, w)));
+        let ((t0, w0), (t1, w1)) = (first?, last?);
+        let dt = (t1 - t0) as f32;
+        if dt <= 0.0 {
+            return None;
+        }
+        let scale = self.buf.iter().rev().find_map(|(_, lm)| torso_scale(lm))?;
+        let disp = ((w1[0] - w0[0]).powi(2) + (w1[1] - w0[1]).powi(2)).sqrt();
+        Some((disp / scale) / dt)
+    }
+
+    /// Classify one arm's gesture from the window (B1.4). **Speed wins:** a fast
+    /// wrist is *waving* even if also extended; an extended-but-steady arm is
+    /// *reaching*; otherwise `None`. Reach is read from the latest frame, speed
+    /// from the window. Returns `None` (the variant) when geometry is unavailable.
+    pub fn arm_gesture(&self, side: Side, th: &GestureThresholds) -> ArmGesture {
+        if let Some(v) = self.wrist_speed(side) {
+            if v >= th.wave_above {
+                return ArmGesture::Waving;
+            }
+        }
+        if let Some((_, lm)) = self.latest() {
+            if let Some(r) = arm_reach(lm, side) {
+                if r >= th.reach_above {
+                    return ArmGesture::Reaching;
+                }
+            }
+        }
+        ArmGesture::None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,5 +660,124 @@ mod tests {
         assert_eq!(MotionState::Unknown.as_str(), "unknown");
         assert_eq!(MotionState::Idle.as_str(), "idle");
         assert_eq!(MotionState::Walking.as_str(), "walking");
+    }
+
+    // ── arm gesture / reach (B1.4) ─────────────────────────────────────────
+
+    /// Set one wrist visible at `(x, y)` on an existing frame.
+    fn with_wrist(mut f: Landmarks33, side: Side, x: f32, y: f32) -> Landmarks33 {
+        let idx = match side {
+            Side::Left => L_WRIST,
+            Side::Right => R_WRIST,
+        };
+        f[idx] = [x, y, 0.0, 1.0];
+        f
+    }
+
+    #[test]
+    fn reach_zero_for_hanging_arm() {
+        // Torso axis vertical (shoulders y=100, hips y=200). A wrist hanging
+        // straight below the shoulder-centre sits ON the axis → ~zero lateral
+        // reach.
+        let f = with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 180.0);
+        let r = arm_reach(&f, Side::Left).unwrap();
+        assert!(r < 1e-3, "hanging arm should read ~0 reach, got {r}");
+    }
+
+    #[test]
+    fn reach_large_for_outstretched_arm() {
+        // Wrist 90px to the side of the shoulder-centre, torso = 100px → 0.9 torso.
+        let f = with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 110.0);
+        let r = arm_reach(&f, Side::Left).unwrap();
+        assert!((r - 0.9).abs() < 1e-2, "expected ~0.9 torso reach, got {r}");
+    }
+
+    #[test]
+    fn reach_is_orientation_invariant() {
+        // Same arm pose, body rotated 90° in-image: reach magnitude is unchanged
+        // because it's measured perpendicular to the torso axis, not along x.
+        // Vertical body: shoulders (100,100), hips (100,200); wrist 90px left.
+        let vert = with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 100.0);
+        // Horizontal body: build a frame with a horizontal torso axis and a
+        // wrist 90px perpendicular to it.
+        let mut horiz = [[0.0f32; 4]; 33];
+        horiz[L_SHOULDER] = [100.0, 100.0, 0.0, 1.0];
+        horiz[R_SHOULDER] = [100.0, 100.0, 0.0, 1.0]; // shoulder-centre (100,100)
+        horiz[L_HIP] = [200.0, 100.0, 0.0, 1.0];
+        horiz[R_HIP] = [200.0, 100.0, 0.0, 1.0]; // hip-centre (200,100) → axis along -x
+        horiz[L_WRIST] = [100.0, 10.0, 0.0, 1.0]; // 90px perpendicular (in y)
+        let rv = arm_reach(&vert, Side::Left).unwrap();
+        let rh = arm_reach(&horiz, Side::Left).unwrap();
+        assert!((rv - rh).abs() < 1e-2, "vertical {rv} vs horizontal {rh}");
+    }
+
+    #[test]
+    fn reach_none_without_wrist() {
+        let f = frame(100.0, 100.0, 200.0); // no wrist set
+        assert!(arm_reach(&f, Side::Left).is_none());
+    }
+
+    #[test]
+    fn wrist_speed_is_torso_lengths_per_second() {
+        // Wrist moves 50px in x over 0.5s, torso = 100px → 1.0 torso/s.
+        let mut h = LandmarkHistory::new(8);
+        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Right, 200.0, 100.0));
+        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Right, 250.0, 100.0));
+        let v = h.wrist_speed(Side::Right).unwrap();
+        assert!((v - 1.0).abs() < 1e-3, "expected 1.0 torso/s, got {v}");
+    }
+
+    #[test]
+    fn wrist_speed_none_with_single_frame() {
+        let mut h = LandmarkHistory::new(8);
+        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 180.0));
+        assert!(h.wrist_speed(Side::Left).is_none());
+    }
+
+    #[test]
+    fn gesture_waving_on_fast_wrist() {
+        // Wrist whips 200px in 0.5s, torso 100px → 4.0 torso/s ≥ wave_above.
+        let mut h = LandmarkHistory::new(8);
+        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 110.0));
+        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 300.0, 110.0));
+        let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
+        assert_eq!(g, ArmGesture::Waving, "fast wrist → waving");
+    }
+
+    #[test]
+    fn gesture_reaching_on_extended_steady_arm() {
+        // Arm extended (0.9 torso lateral) but barely moving → reaching, not wave.
+        let mut h = LandmarkHistory::new(8);
+        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 12.0, 110.0));
+        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 110.0));
+        let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
+        assert_eq!(g, ArmGesture::Reaching, "extended + steady → reaching");
+    }
+
+    #[test]
+    fn gesture_none_for_resting_arm() {
+        // Wrist hanging, not moving → no gesture.
+        let mut h = LandmarkHistory::new(8);
+        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 180.0));
+        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 181.0));
+        let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
+        assert_eq!(g, ArmGesture::None, "resting arm → no gesture");
+    }
+
+    #[test]
+    fn gesture_waving_beats_reaching_when_both_fire() {
+        // Extended AND fast → waving wins (priority on speed).
+        let mut h = LandmarkHistory::new(8);
+        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 110.0));
+        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 210.0, 110.0));
+        let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
+        assert_eq!(g, ArmGesture::Waving);
+    }
+
+    #[test]
+    fn gesture_as_str_round_trips() {
+        assert_eq!(ArmGesture::None.as_str(), "none");
+        assert_eq!(ArmGesture::Reaching.as_str(), "reaching");
+        assert_eq!(ArmGesture::Waving.as_str(), "waving");
     }
 }
