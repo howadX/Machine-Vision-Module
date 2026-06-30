@@ -9,8 +9,10 @@
 
 - **Ветка:** `rust-core` (основная). **12 крейтов, 248 тестов зелёные**, release чист.
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
-- **Активная фаза — 9: точное взаимодействие с объектами (Трек A, маски) + трекинг движений Human
-  (Трек B, кинематика-арифметика + OC-SORT).** Точка входа — **спайк-гейт 9.1** (go/no-go). План — `docs/phase-9-plan.md`.
+- **Активная фаза — 9: Tracker (body-first track-centric рефактор `HumanAgent`, +0 ONNX).**
+  Кинематика движений (B1) + робастность ассоциации (ByteTrack-страховка по телам + OC-SORT OCM/OCR) +
+  инверсия обогащения с cadenced SFace. План — `docs/phase-9-plan.md`. **Фаза 10 — Segmentation**
+  (+1 ONNX YOLO-seg) вынесена отдельно — `docs/phase-10-plan.md`.
 - Hot-path `--native-camera` — **чистый Rust** (ноль Python). Bridge (`--native`) сохранён для
   тестов/дебага (снос venv отменён решением владельца).
 
@@ -175,51 +177,63 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **7** | ✅ | Python-light: hot-path `--native-camera` = pure-Rust (v4l2→YuNet→ONNX), ~25 fps; SFace-эмбеддинг + margin-identity + cosine-re-link |
 | **7.5** | ✅ | Нативная поза: BlazePose+PoseVAE порт (bit-close к Python), мульти-persona (#3 закрыт) |
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
-| **9** | 🟠 активная | Segmentation + tracker upgrade (см. ниже) |
-| **10** | 🔜 | Продукт |
+| **9** | 🟠 активная | **Tracker** — body-first track-centric (кинематика + ByteTrack/OCM + инверсия обогащения), **+0 ONNX** (см. ниже) |
+| **10** | 🔜 | **Segmentation** — YOLO-seg инстанс-маски (взаимодействие), **+1 ONNX** (`docs/phase-10-plan.md`) |
+| **11** | 🔜 | Продукт |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
 
-### 🟠 Фаза 9 — точное взаимодействие с объектами + трекинг движений Human (активная)
+### 🟠 Фаза 9 — Tracker: body-first track-centric рефактор (активная)
 
-> **Цель (две оси):** (A) **точное взаимодействие с объектами** через инстанс-сегментацию и
-> (B) **трекинг движений Human**. Объединены **одной моделью**: один forward-pass **YOLO-seg** даёт
-> И object-маски (Трек A), И person-маски (Трек B-ассоциация) → **+1 ONNX на обе цели**.
-> **Ключ:** маски дают instance-separation и контакт, но **не кинематику** — «движение» = траектории
-> лендмарков во времени = **чистая арифметика**. Детальный план — `mvm/docs/phase-9-plan.md`.
-> Разбор релевантности — `~/wiki/machine-vision/03-segmentation/`, `02-tracking/`, `04-pose-action/`.
+> **Архитектура:** **Body-first tracking + Face-as-attribute + ByteTrack для робастности.** Тело видно
+> всегда → трекаем **тело**, не лицо; identity/emotion — **атрибуты тела**, переживают окклюзию лица;
+> SFace — для долгосрочной ре-идентификации, **не каждый кадр**. ByteTrack по телам — **страховка**
+> (пересечение людей / слабый кадр детектора), не главный механизм. **+0 ONNX** — всё чистая арифметика
+> и оркестрация. Детальный план — `mvm/docs/phase-9-plan.md`. Разбор — `~/wiki/machine-vision/02-tracking/`.
 
-**Каким агентам нужна сегментация:** ✅ объекты (контакт, `median_in_mask`, instance-разделение);
-🟡 ассоциация Human-трека (person-mask при перекрытии body-bbox). ❌ posture/hands/identity/emotion и
-кинематика движения (лендмарки/арифметика, силуэт не добавляет). **Точка входа — спайк-гейт 9.1.**
+**Что фаза 8 уже даёт:** тело — несущая сущность; лицо матчится по носу, identity/emotion/3D — уже
+атрибуты `PersonTrack`; reserved-id sticky; каскад re-link = грубый OCR. **Дельта 9 — три оси:**
+(A) инверсия потока обогащения в track-gated, (B) робастность ассоциации, (C) identity lifecycle + cadenced SFace.
 
-**Трек A — object segmentation (взаимодействие):**
-
-| Этап | Задача | Гейт/тесты |
-|------|--------|-----------|
-| **9.1** | **Спайк-гейт** (обязателен, первый): на боевом ракурсе замерить выигрыш масок vs bbox/landmark для (1) мелких настольных предметов (под вопросом — грубые nano-маски), (2) близкого контакта рука↔предмет (вероятно да); **заодно частоту перекрытия person-bbox** (вход для 9.B2b). **go/no-go по замеру** | кривая выигрыша задокументирована |
-| **9.2** | YOLO-seg nano как **drop-in замена** `mvm-scene::YoloDetector` (детект+маски из одной модели; +~4МБ ONNX; ~60-90мс на потоке `SceneAgent`, cadenced). Декод: prototype-маски (32×160²) + per-instance коэффициенты → линейн. комбинация + sigmoid + crop. **Ноль новых deps** (ndarray/ort). SAM/Mask R-CNN отвергнуты ($0/CPU) | golden mask vs Python; декод-тесты |
-| **9.3** | `mask` плумбинг: `TrackedObject` → `ObjectState` → `Entity` (low-res bitmask + origin) | сериализация контракта |
-| **9.4** | **Depth-anchoring по маске:** `median_in_mask` вместо `median_in_bbox` (убирает фон-bleed → точнее метрич. Z) | quality-тест vs bbox |
-| **9.5** | **ObjectTracker по маске:** mask-IoU association (разделение инстансов при наложении bbox) | swap-регрессия на перекрытии |
-| **9.6** | **Fusion по маске:** контакт человек↔объект через mask-смежность/IoU (точнее landmark-точек) + окклюзия-порядок (кто держит / кто перед кем) | mask-контакт тесты |
-
-**Трек B — трекинг движений Human:**
+> **⛔ Слоистость (критично):** `PersonTracker` в `mvm-core` (нет `ort`/`image`) — трекер **НЕ вызывает
+> модели**. Спина оркестрируется в `HumanAgent` (`mvm-cli`); трекер лишь **экспонирует запросы**
+> («какие треки без identity / устаревший emotion / дай предсказанный ROI»).
 
 | Этап | Задача | Гейт/тесты |
 |------|--------|-----------|
-| **9.B1** | **Кинематика (чистая арифметика, БЕЗ сегментации):** кольцевой буфер 33-лендмарков per-track (N≈16) → скорости суставов/центроида, переходы sit↔stand / idle↔walking (порог скорости + dwell + гистерезис), жест/reach по запястью; эмит `motion_state`/`velocity`/transitions в Scene JSON. **Ноль новых deps.** ⚠️ сейчас лендмарки в трек **не** персистятся — greenfield | юнит-тесты на синтетике; тест отсутствия роста памяти |
-| **9.B2a** | **OCM/OCR апгрейд `PersonTracker`** (чистая арифметика): observation-centric momentum (согласованность направления скорости в cost матчинга) + recovery через виртуальную траекторию сквозь окклюзию. Дополняет Kalman+IoU+cosine+center-relink (OC-SORT-стиль) | регрессия churn (как 8.0.3) |
-| **9.B2b** | **person-mask ассоциация** (опц., gated 9.1): класс `person` в YOLO-seg **только для маски** (не узел!) → mask-IoU разделяет перекрытые тела; матч к BlazePose-телу по носу/лендмаркам | только если 9.1 показал перекрытие людей как реальный failure-mode |
+| **9.1** | **Кинематика (B1):** bounded ring 33-лендмарков per-track (N≈16) → скорости центроида (torso-lengths/sec) → `motion_state` idle↔walking (порог+dwell+гистерезис) + жест/reach по запястью | юнит на синтетике; **9.1.1/9.1.2 закоммичены** |
+| **9.2** | **OCM/OCR** апгрейд (B2a): согласованность направления скорости в cost + recovery через виртуальную траекторию сквозь окклюзию (OC-SORT-стиль, обобщает center-relink) | регрессия churn (как 8.0.3) |
+| **9.3** | **Track lifecycle FSM:** явные `Tentative→Confirmed→IdLocked→Occluded→Lost` (фундамент гейтинга) | переходы под тестами; churn не хуже |
+| **9.4** | **ByteTrack two-stage по телам:** протащить `score` в `BodyPose`, понизить порог детектора, BYTE high/low; low-conf — **bbox-only** | swap на пересечении тел; восстановление при слабом кадре |
+| **9.5** | **Инверсия контракта:** lean `BodyObservation` → ассоциация **до** обогащения; `Detection` худеет, enrich per-track post-match | контракт-тесты; 1 человек идентичен текущему |
+| **9.6** | **Identity lifecycle + cadenced SFace:** SFace только на id-less/unlocked или slow-cadence; lock на cosine-стабильности (главный perf-приз) | #5 margin сохранён; latency ↓ |
+| **9.7** | **Emotion cadence per track** (согласованно с temporal-PoE `forget_lambda`) | метка не дёргается; latency ↓ |
+| **9.8** | **Persist лендмарков на треке + эмит motion** (убирает IoU-round-trip в `project_people`); motion → Scene JSON | тест отсутствия роста памяти; live sit↔stand/idle↔walk |
+| **9.9** | **Pose ROI из предсказания трека:** гибрид (predict для стабильных, detect-first для новых) — пропуск стадии person-детектора | ⚠️ трогает FRONTIER ROI → live 0/1/2/3 чел.; последним |
+| **9.10** | **Hungarian assignment:** hand-rolled Kuhn–Munkres для малого N, **zero-deps**; слой cost→assignment (переиспользуется фазой 10) | оптимальность vs greedy; 1–2 тела идентичны |
 
-> **Инварианты 9:** **+1 ONNX** (YOLO-seg) и не более; всё остальное (кинематика, OCM/OCR, mask-декод,
-> контакт) — **чистая арифметика, ноль новых deps**; cadenced на потоке `SceneAgent` (hot-path = 0);
-> человеко-сторона остаётся body-primary (BlazePose) — person-mask лишь усиливает ассоциацию, person
-> **не** становится узлом графа. **❌ Отложено:** ST-GCN/MPED-RNN/VideoMAE (нейро-действия — ещё +N ONNX,
-> вне scope; движение берём арифметикой). **Caveat:** nano-маски грубы на мелких/дальних объектах
-> потолочного ракурса → выигрыш неоднороден (потому спайк-гейт 9.1 первый). Landmark-контакт (8.F) — baseline.
+> **Инварианты 9:** **+0 ONNX**; всё (кинематика, ByteTrack, OCM/OCR, Hungarian, гейтинг, lifecycle) —
+> чистая арифметика + оркестрация; модели **не** въезжают в `mvm-core`; body-primary FRONTIER сохраняется
+> (цель — тело, лицо — атрибут). Робастность (9.2–9.4) делается **до** инверсии (9.5): гейтинг повышает
+> цену swap-а. **Эмпирический вход для фазы 10:** частота пересечения тел → нужны ли person-маски (10.7).
 
-### 🔜 Фаза 10 — Продукт
+### 🔜 Фаза 10 — Segmentation: инстанс-маски (взаимодействие)
+
+> **+1 ONNX (YOLO-seg nano)** и больше ничего. Один forward-pass даёт object-маски (взаимодействие,
+> instance-разделение) + опц. person-маски (ассоциация). Mask-декод/контакт/depth-по-маске — чистая
+> арифметика. Cadenced на `SceneAgent` (hot-path ≈ 0). Детальный план — `mvm/docs/phase-10-plan.md`.
+> **Точка входа — спайк-гейт 10.1** (go/no-go по замеру масок vs bbox + учёт эмпирики фазы 9).
+
+| Этап | Задача |
+|------|--------|
+| **10.1** | **Спайк-гейт** (первый): выигрыш маски vs bbox/landmark на боевом ракурсе + частота перекрытия людей (с учётом фазы 9) → go/no-go + судьба 10.7 |
+| **10.2–10.6** | **Object masks:** YOLO-seg drop-in (декод 32 прото 160²) → mask→`Entity` → `median_in_mask` depth → mask-IoU `ObjectTracker` (переиспользует Hungarian 9.10) → mask-контакт fusion |
+| **10.7** | **person-mask ассоциация** (опц., gated 10.1): `person`-маска **только в cost-матрицу фазы 9** (не узел!); только если арифметика 9 не закрыла перекрытие тел |
+
+> **❌ Отложено (фаза 11+):** ST-GCN/MPED-RNN/VideoMAE (нейро-действия). **Caveat:** nano-маски грубы на
+> мелких/дальних объектах → спайк-гейт 10.1 первый. SAM/Mask R-CNN отвергнуты ($0/CPU).
+
+### 🔜 Фаза 11 — Продукт
 
 Авто-калибровка fx (zero-config) · drag-and-drop галерея (фото в папку = новый человек) · one-click
 install (один бинарник, без pip/venv/Python) · systemd service + cron state dump.
