@@ -467,6 +467,7 @@ dependencies = [
  "mvm-fusion",
  "mvm-hands",
  "mvm-identity",
+ "mvm-mesh",
  "mvm-pipeline",
  "mvm-posture",
  "mvm-scene",
