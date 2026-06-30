@@ -226,6 +226,10 @@ pub struct PersonTrack {
     /// tick, resets to 0 when an emotion observation lands. Drives
     /// [`PersonTrack::needs_emotion`] / the emotion cadence gate.
     pub frames_since_emotion: u32,
+    /// Per-track motion (phase 9.8): the landmark ring + derived kinematics, owned
+    /// by the track so motion needs no IoU round-trip. Updated by the tracker when
+    /// a landmark-bearing observation is associated.
+    pub motion: crate::motion::MotionTrack,
 }
 
 impl PersonTrack {
@@ -264,6 +268,7 @@ impl PersonTrack {
             lifecycle: LifecycleState::Tentative,
             id_stable_count: 0,
             frames_since_emotion: u32::MAX, // never enriched → first sight needs emotion
+            motion: crate::motion::MotionTrack::new(),
         }
     }
 

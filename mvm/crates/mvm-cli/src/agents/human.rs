@@ -27,6 +27,7 @@ impl Agent for HumanAgent {
     fn run(&mut self, ctx: &MeshContext) -> AgentHealth {
         let mut ticks = 0u64;
         let mut last_id: Option<u64> = None;
+        let mut epoch: Option<std::time::Instant> = None; // motion timestamp origin (9.8)
         while ctx.running() {
             if let Some(frame) = ctx.frames.latest() {
                 if last_id != Some(frame.id) {
@@ -42,7 +43,14 @@ impl Agent for HumanAgent {
                     let result = self.pipeline.process(
                         frame.image.as_ref(), frame.id, &prev_tracks, &locked_tracks, &emotion_fresh,
                     );
-                    self.tracker.tick_byte(&result.detections, &result.low_conf);
+                    // Monotonic seconds since the first frame → motion velocities (9.8).
+                    let t_secs = frame
+                        .captured
+                        .duration_since(*epoch.get_or_insert(frame.captured))
+                        .as_secs_f64();
+                    self.tracker.tick_motion(
+                        &result.detections, &result.low_conf, &result.landmarks, t_secs,
+                    );
                     project_people(&ctx.world, &self.tracker, &result.bodies, frame.id, frame.captured);
                     ticks += 1;
                 }

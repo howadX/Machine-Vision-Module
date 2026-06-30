@@ -49,6 +49,11 @@ pub struct PersonState {
     /// detected hand). Empty when the hand model found none. Filled by the agent
     /// after tracking — `from_track` leaves it empty.
     pub hands: Vec<Vec<[f32; 2]>>,
+    /// Coarse locomotion state read straight off the track (phase 9.8): `"idle"` /
+    /// `"walking"`. `None` until the motion ring has committed a state (`Unknown`).
+    pub motion_state: Option<&'static str>,
+    /// Centroid speed in torso-lengths/sec (phase 9.8) — distance-invariant.
+    pub velocity: Option<f32>,
     pub last_seen: Instant,
 }
 
@@ -79,6 +84,13 @@ impl PersonState {
             // from the per-body pose/hand data (see `project_people`).
             wrists: Vec::new(),
             hands: Vec::new(),
+            // Motion comes straight off the track (phase 9.8) — no round-trip.
+            // Emit a committed state only (skip the startup `Unknown`).
+            motion_state: match t.motion.state() {
+                crate::motion::MotionState::Unknown => None,
+                s => Some(s.as_str()),
+            },
+            velocity: if t.motion.is_empty() { None } else { Some(t.motion.speed()) },
             last_seen: now,
         }
     }

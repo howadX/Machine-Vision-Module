@@ -410,6 +410,89 @@ impl LandmarkHistory {
     }
 }
 
+/// Landmark-ring capacity per track (phase 9.8). ≈0.5 s of history at typical
+/// fps — enough for a stable centroid-speed window, small enough that the ring
+/// (and the track that owns it) stays O(1) in memory.
+pub const MOTION_RING_CAP: usize = 16;
+
+/// Per-track motion (phase 9.8): the bounded landmark ring **owned by the track**
+/// plus the kinematics derived from it. Persisting this on `PersonTrack` removes
+/// the IoU round-trip that previously re-matched pose data to a track after the
+/// fact — motion is now read straight off the track it belongs to.
+///
+/// Each [`observe`](Self::observe) folds one landmark frame in and refreshes the
+/// cached outputs (`state`, `speed`, per-arm gestures). Bounded by construction:
+/// the ring evicts its oldest frame past capacity, so memory never grows.
+#[derive(Debug, Clone)]
+pub struct MotionTrack {
+    history: LandmarkHistory,
+    classifier: MotionClassifier,
+    state: MotionState,
+    speed: f32,
+    left: ArmGesture,
+    right: ArmGesture,
+}
+
+impl Default for MotionTrack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MotionTrack {
+    pub fn new() -> Self {
+        Self {
+            history: LandmarkHistory::new(MOTION_RING_CAP),
+            classifier: MotionClassifier::default(),
+            state: MotionState::Unknown,
+            speed: 0.0,
+            left: ArmGesture::None,
+            right: ArmGesture::None,
+        }
+    }
+
+    /// Fold one landmark frame (image **pixels**) stamped `t_secs` (seconds) into
+    /// the ring and refresh the derived kinematics. Velocity stays `0` and state
+    /// `Unknown` until two usable frames exist.
+    pub fn observe(&mut self, lm: Landmarks33, t_secs: f64) {
+        self.history.push(t_secs, lm);
+        if let Some(v) = self.history.centroid_speed() {
+            self.speed = v;
+            self.state = self.classifier.update(v);
+        }
+        let th = GestureThresholds::default();
+        self.left = self.history.arm_gesture(Side::Left, &th);
+        self.right = self.history.arm_gesture(Side::Right, &th);
+    }
+
+    /// Committed locomotion state (idle / walking / unknown).
+    pub fn state(&self) -> MotionState {
+        self.state
+    }
+
+    /// Last centroid speed in torso-lengths per second.
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+
+    pub fn left_gesture(&self) -> ArmGesture {
+        self.left
+    }
+
+    pub fn right_gesture(&self) -> ArmGesture {
+        self.right
+    }
+
+    /// Frames currently retained (≤ [`MOTION_RING_CAP`]) — the no-growth invariant.
+    pub fn len(&self) -> usize {
+        self.history.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.history.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -779,5 +862,46 @@ mod tests {
         assert_eq!(ArmGesture::None.as_str(), "none");
         assert_eq!(ArmGesture::Reaching.as_str(), "reaching");
         assert_eq!(ArmGesture::Waving.as_str(), "waving");
+    }
+
+    // ── per-track motion (B1.5 / phase 9.8) ─────────────────────────────────
+
+    #[test]
+    fn motion_track_ring_is_bounded() {
+        // Feeding far more frames than capacity never grows the ring (no leak).
+        let mut m = MotionTrack::new();
+        for i in 0..200 {
+            m.observe(frame(i as f32, 100.0, 200.0), i as f64 * 0.05);
+        }
+        assert_eq!(m.len(), MOTION_RING_CAP, "ring stays at capacity");
+    }
+
+    #[test]
+    fn motion_track_commits_walking_on_translation() {
+        // Hip centre marching across the frame at ~1 torso/s for enough frames.
+        let mut m = MotionTrack::new();
+        for i in 0..8 {
+            // torso 100px; +50px/frame at 0.5s steps → 1.0 torso/s ≥ walk threshold
+            m.observe(frame(100.0 + i as f32 * 50.0, 100.0, 200.0), i as f64 * 0.5);
+        }
+        assert_eq!(m.state(), MotionState::Walking);
+        assert!(m.speed() > 0.3, "speed {} should clear the walk threshold", m.speed());
+    }
+
+    #[test]
+    fn motion_track_commits_idle_when_still() {
+        let mut m = MotionTrack::new();
+        for i in 0..8 {
+            m.observe(frame(100.0, 100.0, 200.0), i as f64 * 0.1); // no translation
+        }
+        assert_eq!(m.state(), MotionState::Idle);
+        assert!(m.speed() < 0.05);
+    }
+
+    #[test]
+    fn motion_track_starts_unknown() {
+        let m = MotionTrack::new();
+        assert_eq!(m.state(), MotionState::Unknown);
+        assert!(m.is_empty());
     }
 }

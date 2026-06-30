@@ -227,9 +227,31 @@ impl PersonTracker {
     /// unmatched ones spawn tracks). `low` — weak bbox-only boxes that only recover
     /// a track that missed this frame (never enriched, never spawn).
     pub fn tick_byte(&mut self, high: &[Detection], low: &[BBox]) {
+        self.tick_motion(high, low, &[], 0.0);
+    }
+
+    /// Like [`Self::tick_byte`] but also folds each high detection's landmarks into
+    /// its matched track's motion ring (phase 9.8). `landmarks[i]` aligns with
+    /// `high[i]` (image pixels), stamped `t_secs` seconds; a `None` entry or a
+    /// short/empty slice simply skips the motion update (so `tick_byte` is exactly
+    /// this with no landmarks). Persisting motion on the track is what removes the
+    /// IoU round-trip in `project_people`.
+    pub fn tick_motion(
+        &mut self,
+        high: &[Detection],
+        low: &[BBox],
+        landmarks: &[Option<crate::motion::Landmarks33>],
+        t_secs: f64,
+    ) {
         let ids = self.associate_core(high, low);
-        for (det, &id) in high.iter().zip(ids.iter()) {
+        for (i, det) in high.iter().enumerate() {
+            let id = ids[i];
             self.apply_detection(id, det);
+            if let Some(Some(lm)) = landmarks.get(i) {
+                if let Some(t) = self.tracks.get_mut(&id) {
+                    t.motion.observe(*lm, t_secs);
+                }
+            }
         }
         self.finalize();
     }
@@ -1215,6 +1237,51 @@ mod tests {
         t.tick(&det(0.52, 0.40, 0.72, 0.60)); // center 0.62, ahead on the trajectory
         assert_eq!(t.track_count(), 1, "occluded moving body recovers as one track");
         assert_eq!(t.active().next().unwrap().id, id0, "id persists across occlusion");
+    }
+
+    // ── per-track motion (phase 9.8) ────────────────────────────────────────
+
+    /// Synthetic landmark frame with shoulders (11/12) + hips (23/24) around `cx`.
+    fn motion_lm(cx: f32) -> crate::motion::Landmarks33 {
+        let mut lm = [[0.0f32; 4]; 33];
+        lm[11] = [cx - 20.0, 100.0, 0.0, 1.0];
+        lm[12] = [cx + 20.0, 100.0, 0.0, 1.0];
+        lm[23] = [cx - 15.0, 200.0, 0.0, 1.0];
+        lm[24] = [cx + 15.0, 200.0, 0.0, 1.0];
+        lm
+    }
+
+    #[test]
+    fn tick_motion_feeds_walking_into_track() {
+        // A single body whose landmarks translate → the track's own motion reads
+        // Walking, with no IoU round-trip.
+        let mut t = PersonTracker::new();
+        for i in 0..8 {
+            let lm = motion_lm(100.0 + i as f32 * 50.0); // +50px/0.5s, torso 100px → 1 torso/s
+            t.tick_motion(&det(0.3, 0.3, 0.5, 0.5), &[], &[Some(lm)], i as f64 * 0.5);
+        }
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.motion.state(), crate::motion::MotionState::Walking);
+    }
+
+    #[test]
+    fn tick_motion_ring_does_not_grow() {
+        // Many frames on one track → the per-track ring stays bounded (no leak).
+        let mut t = PersonTracker::new();
+        for i in 0..300 {
+            let lm = motion_lm(100.0);
+            t.tick_motion(&det(0.3, 0.3, 0.5, 0.5), &[], &[Some(lm)], i as f64 * 0.05);
+        }
+        assert_eq!(t.track_count(), 1);
+        assert!(t.active().next().unwrap().motion.len() <= crate::motion::MOTION_RING_CAP);
+    }
+
+    #[test]
+    fn tick_byte_leaves_motion_unknown() {
+        // The no-landmarks path doesn't touch motion (stays Unknown).
+        let mut t = PersonTracker::new();
+        t.tick_byte(&det(0.3, 0.3, 0.5, 0.5), &[]);
+        assert_eq!(t.active().next().unwrap().motion.state(), crate::motion::MotionState::Unknown);
     }
 
     // ── lifecycle FSM (phase 9.3) ───────────────────────────────────────────

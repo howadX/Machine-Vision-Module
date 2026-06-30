@@ -34,6 +34,9 @@ pub(crate) struct FrameResult {
     /// Weak, bbox-only body boxes (phase 9.4) — the ByteTrack low-confidence
     /// recovery stage (`tick_byte`'s `low`). Never enriched, never spawn tracks.
     pub low_conf: Vec<mvm_core::BBox>,
+    /// Per-detection pixel landmarks (phase 9.8), aligned 1:1 with `detections`:
+    /// `Some` for a body, `None` for a fallback face. Fed to `tick_motion`.
+    pub landmarks: Vec<Option<mvm_core::motion::Landmarks33>>,
     /// Per-body landmark data (wrists + hands), grouped by body for per-person
     /// association after tracking.
     pub bodies: Vec<BodyData>,
@@ -109,6 +112,7 @@ impl BodyPrimaryPipeline {
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         let mut bodies: Vec<BodyData> = Vec::new();
         let mut low_conf: Vec<mvm_core::BBox> = Vec::new();
+        let mut landmarks: Vec<Option<mvm_core::motion::Landmarks33>> = Vec::new();
 
         // SFace re-check cadence (phase 9.6): every Nth frame re-identify all bodies
         // (defend locked identities); between, locked bodies skip SFace.
@@ -125,6 +129,7 @@ impl BodyPrimaryPipeline {
             &mut overlay,
             &mut bodies,
             &mut low_conf,
+            &mut landmarks,
             &self.config,
             self.emotion_debug,
             &mut emotion_debug_entries,
@@ -173,7 +178,7 @@ impl BodyPrimaryPipeline {
             }
         }
 
-        FrameResult { detections, low_conf, bodies, overlay, emotion_debug_entries }
+        FrameResult { detections, low_conf, landmarks, bodies, overlay, emotion_debug_entries }
     }
 
     /// Depth-anchor the latest objects to the (post-tick) tracker's people so
@@ -407,6 +412,7 @@ fn build_body_primary(
     overlay: &mut scene_debug::DetectorOverlay,
     bodies_out: &mut Vec<BodyData>,
     low_conf_out: &mut Vec<mvm_core::BBox>,
+    landmarks_out: &mut Vec<Option<mvm_core::motion::Landmarks33>>,
     config: &mvm_core::Config,
     emotion_debug: bool,
     debug_out: &mut Vec<state::EmotionDebugEntry>,
@@ -508,6 +514,9 @@ fn build_body_primary(
             );
         }
         dets.push(det);
+        // Pixel landmarks travel alongside the detection (phase 9.8) → the tracker
+        // folds them into this body's track motion ring. Aligned 1:1 with `dets`.
+        landmarks_out.push(Some(*lm));
     }
 
     // Fallback: unmatched faces → face-entity (don't lose a person whose body
@@ -547,6 +556,7 @@ fn build_body_primary(
             config, emotion_debug, idx, debug_out,
         );
         dets.push(det);
+        landmarks_out.push(None); // fallback face has no body landmarks
     }
 
     dets

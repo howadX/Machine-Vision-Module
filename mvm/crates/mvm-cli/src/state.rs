@@ -92,6 +92,13 @@ struct JsonFace {
     dist_m: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pos: Option<[f32; 3]>,
+    /// Coarse locomotion state (phase 9.8): "idle" / "walking". Absent until the
+    /// motion ring commits a state.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    motion: Option<&'static str>,
+    /// Centroid speed in torso-lengths/sec (phase 9.8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    velocity: Option<f32>,
 }
 
 #[derive(Serialize)]
@@ -196,6 +203,8 @@ fn person_to_json_face(p: &mvm_core::PersonState) -> JsonFace {
         posture_conf: p.posture.as_ref().map(|(_, c)| *c),
         dist_m: p.position_3d.map(|q| q.z),
         pos: p.position_3d.map(|q| [q.x, q.y, q.z]),
+        motion: p.motion_state,
+        velocity: p.velocity,
     }
 }
 
@@ -465,6 +474,12 @@ impl StateFile {
                 dist_m: t.distance,
                 pos,
                 bbox_h: t.bbox.y2 - t.bbox.y1,
+                // Motion straight off the track (phase 9.8) — skip the startup Unknown.
+                motion: match t.motion.state() {
+                    mvm_core::motion::MotionState::Unknown => None,
+                    s => Some(s.as_str()),
+                },
+                velocity: if t.motion.is_empty() { None } else { Some(t.motion.speed()) },
             }
         }).collect();
 
@@ -1133,6 +1148,8 @@ mod tests {
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
+            motion_state: None,
+            velocity: None,
             last_seen: std::time::Instant::now(),
         }
     }
@@ -1200,6 +1217,32 @@ mod tests {
         assert!(content.contains("Objects visible: chair"));
         assert!(content.contains("  - id: 10"));
         assert!(content.contains("class: chair"));
+    }
+
+    #[test]
+    fn world_json_surfaces_motion() {
+        // Phase 9.8 contract: a person's motion_state/velocity reach the Scene JSON.
+        let sf = StateFile::open_at(temp_state_path("test_world_motion.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        p.motion_state = Some("walking");
+        p.velocity = Some(0.8);
+        world.people.push(p);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["faces"][0]["motion"], "walking");
+        assert!((v["faces"][0]["velocity"].as_f64().unwrap() - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn world_json_omits_motion_when_absent() {
+        // No motion committed → the fields are skipped (contract unchanged).
+        let sf = StateFile::open_at(temp_state_path("test_world_nomotion.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        world.people.push(person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!(v["faces"][0].get("motion").is_none(), "motion omitted when absent");
     }
 
     #[test]

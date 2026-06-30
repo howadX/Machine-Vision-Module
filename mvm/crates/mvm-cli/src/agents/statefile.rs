@@ -124,6 +124,8 @@ mod tests {
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
+            motion_state: None,
+            velocity: None,
             last_seen: now,
         });
         let ctx = MeshContext {

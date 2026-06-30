@@ -313,11 +313,13 @@ fn run_native_loop(
         // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
         let emotion_fresh: Vec<mvm_core::BBox> =
             tracker.active().filter(|t| !t.needs_emotion()).map(|t| t.bbox).collect();
-        let pipeline::FrameResult { detections, low_conf, overlay, emotion_debug_entries, .. } =
+        let pipeline::FrameResult { detections, low_conf, landmarks, overlay, emotion_debug_entries, .. } =
             pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks, &emotion_fresh);
 
         frame_count += 1;
-        tracker.tick_byte(&detections, &low_conf);
+        // Monotonic seconds since loop start → motion velocities (phase 9.8).
+        let t_secs = start.elapsed().as_secs_f64();
+        tracker.tick_motion(&detections, &low_conf, &landmarks, t_secs);
         // Depth-anchoring needs the post-tick tracker (people's metric torso-Z).
         pipeline.anchor_depth(&tracker, &frame);
 
