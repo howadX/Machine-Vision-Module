@@ -310,8 +310,11 @@ fn run_native_loop(
         // Id-locked tracks (phase 9.6) → their bodies skip SFace this frame.
         let locked_tracks: Vec<mvm_core::BBox> =
             tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
+        // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
+        let emotion_fresh: Vec<mvm_core::BBox> =
+            tracker.active().filter(|t| !t.needs_emotion()).map(|t| t.bbox).collect();
         let pipeline::FrameResult { detections, low_conf, overlay, emotion_debug_entries, .. } =
-            pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks);
+            pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks, &emotion_fresh);
 
         frame_count += 1;
         tracker.tick_byte(&detections, &low_conf);

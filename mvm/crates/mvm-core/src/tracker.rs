@@ -268,6 +268,9 @@ impl PersonTracker {
         // ── Step 2: missed-frame bookkeeping + emotion decay ───────────────
         for t in self.tracks.values_mut() {
             t.missed += 1;
+            // Emotion-cadence age (phase 9.7): climbs every tick; apply_detection
+            // resets it to 0 when an emotion observation lands.
+            t.frames_since_emotion = t.frames_since_emotion.saturating_add(1);
             if t.missed > self.decay_start_frames {
                 if let Some(conf) = t.emotion_confidence.as_mut() {
                     *conf *= self.decay_factor;
@@ -535,6 +538,11 @@ impl PersonTracker {
             } else if det.emotion.is_some() {
                 t.emotion = det.emotion.clone();
                 t.emotion_confidence = det.emotion_confidence;
+            }
+            // Emotion cadence (phase 9.7): an observation landed → reset the age,
+            // so this track coasts on its fused label until the cadence elapses.
+            if det.emotion_distribution.is_some() || det.emotion.is_some() {
+                t.frames_since_emotion = 0;
             }
             if det.posture.is_some() {
                 t.posture = det.posture.clone();
@@ -1478,6 +1486,52 @@ mod tests {
         let tr = t.active().next().unwrap();
         assert_eq!(tr.id_stable_count, 0, "no embeddings");
         assert!(tr.is_id_locked(), "reserved user is locked regardless");
+    }
+
+    // ── emotion cadence (phase 9.7) ─────────────────────────────────────────
+
+    #[test]
+    fn fresh_track_needs_emotion() {
+        // A brand-new body has never been emotion-classified → it needs it.
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.3, 0.3, 0.7, 0.7));
+        assert!(t.active().next().unwrap().needs_emotion(), "first sight needs emotion");
+    }
+
+    #[test]
+    fn emotion_observation_resets_cadence() {
+        // An emotion observation zeroes the cadence age → coasts (no re-run yet).
+        let mut t = PersonTracker::new();
+        t.tick(&det_with_emotion("Happiness", 0.9));
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.frames_since_emotion, 0);
+        assert!(!tr.needs_emotion(), "just classified → coast");
+    }
+
+    #[test]
+    fn emotion_cadence_ages_until_stale() {
+        // After EMOTION_CADENCE frames without an emotion observation, the track
+        // is stale and asks to be re-classified.
+        let mut t = PersonTracker::new();
+        t.tick(&det_with_emotion("Happiness", 0.9)); // resets to 0
+        assert!(!t.active().next().unwrap().needs_emotion());
+        for _ in 0..crate::types::EMOTION_CADENCE {
+            t.tick(&det(0.3, 0.3, 0.7, 0.7)); // matched, but no emotion observed
+        }
+        assert!(t.active().next().unwrap().needs_emotion(), "coasted past cadence → stale");
+    }
+
+    #[test]
+    fn emotion_label_frozen_while_coasting() {
+        // The headline "не дёргается": skipping emotion frames keeps the last
+        // fused label/confidence intact (a matched track does not decay).
+        let mut t = PersonTracker::new();
+        t.tick(&det_with_emotion("Happiness", 0.9));
+        for _ in 0..2 {
+            t.tick(&det(0.3, 0.3, 0.7, 0.7)); // no emotion observed
+        }
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.emotion.as_deref(), Some("Happiness"), "label frozen, not dropped");
     }
 
     #[test]

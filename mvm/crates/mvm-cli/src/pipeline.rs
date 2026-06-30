@@ -103,6 +103,7 @@ impl BodyPrimaryPipeline {
         frame_id: u64,
         prev_tracks: &[mvm_core::BBox],
         locked_tracks: &[mvm_core::BBox],
+        emotion_fresh_tracks: &[mvm_core::BBox],
     ) -> FrameResult {
         let mut overlay = scene_debug::DetectorOverlay::default();
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
@@ -129,6 +130,7 @@ impl BodyPrimaryPipeline {
             &mut emotion_debug_entries,
             prev_tracks,
             locked_tracks,
+            emotion_fresh_tracks,
             recheck,
         );
 
@@ -263,6 +265,7 @@ fn enrich_face_crop(
     det: &mut Detection,
     emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
     identity_mod: Option<&mut mvm_identity::IdentityModule>,
+    run_emotion: bool,
     run_identity: bool,
     config: &mvm_core::Config,
     emotion_debug: bool,
@@ -276,8 +279,10 @@ fn enrich_face_crop(
     let y2 = (face_bbox.y2 * fh as f32) as u32;
     let face = frame.crop_imm(x1, y1, x2.saturating_sub(x1), y2.saturating_sub(y1));
 
-    // Emotion: keep higher calibrated-confidence prediction.
-    if let Some(emo) = emotion_mod {
+    // Emotion: keep higher calibrated-confidence prediction — **cadenced** (phase
+    // 9.7). Skipped for a body whose track is still coasting on a fresh fused
+    // label; the track keeps that label (frozen, no decay while matched).
+    if let (true, Some(emo)) = (run_emotion, emotion_mod) {
         if let Ok(result) = emo.classify(&face) {
             let py_emotion = det.emotion.clone();
             let py_conf = det.emotion_confidence;
@@ -331,13 +336,27 @@ const SFACE_RECHECK_CADENCE: u64 = 30;
 /// can be skipped this frame). Matches the tracker's association gate.
 const IDENTITY_SKIP_IOU: f32 = 0.3;
 
+/// Whether a body overlaps any of `regions` enough to be "the same" entity
+/// (shared by the SFace and emotion cadence gates).
+fn covered_by_track(body: &mvm_core::BBox, regions: &[mvm_core::BBox]) -> bool {
+    regions.iter().any(|r| body.iou(r) > IDENTITY_SKIP_IOU)
+}
+
 /// Whether SFace identity should run for one body this frame (phase 9.6 cadence).
 /// Skip it only when the body is already covered by an id-locked track from last
 /// frame **and** this is not a re-check frame — the locked track keeps its
 /// identity, so re-embedding is wasted. A new/unlocked body, or any body on the
 /// re-check cadence, runs SFace. Pure decision — unit-tested without models.
 fn should_run_identity(body: &mvm_core::BBox, locked: &[mvm_core::BBox], recheck: bool) -> bool {
-    recheck || !locked.iter().any(|lb| body.iou(lb) > IDENTITY_SKIP_IOU)
+    recheck || !covered_by_track(body, locked)
+}
+
+/// Whether EmotiEffLib should run for one body this frame (phase 9.7 cadence).
+/// Skip it when the body is covered by a track whose emotion is still fresh (it
+/// coasts on its fused label); run it for a new body or one whose track has aged
+/// past the emotion cadence. Pure decision — unit-tested without models.
+fn should_run_emotion(body: &mvm_core::BBox, emotion_fresh: &[mvm_core::BBox]) -> bool {
+    !covered_by_track(body, emotion_fresh)
 }
 
 /// True if the face's centre falls inside any of `regions` (body bboxes this
@@ -393,6 +412,7 @@ fn build_body_primary(
     debug_out: &mut Vec<state::EmotionDebugEntry>,
     prev_tracks: &[mvm_core::BBox],
     locked_tracks: &[mvm_core::BBox],
+    emotion_fresh_tracks: &[mvm_core::BBox],
     recheck: bool,
 ) -> Vec<Detection> {
     let pinhole = mvm_core::space::Pinhole::from_config(config);
@@ -475,13 +495,15 @@ fn build_body_primary(
             face_used[fi] = true;
             let fb = faces[fi].bbox;
             let idx = dets.len();
-            // Cadence (phase 9.6): skip SFace when this body is already covered by
-            // an id-locked track from last frame (its identity persists), unless a
-            // re-check frame forces re-validation.
+            // Cadence (phase 9.6/9.7): skip SFace when this body is covered by an
+            // id-locked track (unless a re-check frame); skip emotion when covered
+            // by a track still coasting on a fresh emotion label.
             let run_identity = should_run_identity(b, locked_tracks, recheck);
+            let run_emotion = should_run_emotion(b, emotion_fresh_tracks);
             enrich_face_crop(
                 frame, &fb, &mut det,
-                emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), run_identity,
+                emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
+                run_emotion, run_identity,
                 config, emotion_debug, idx, debug_out,
             );
         }
@@ -518,10 +540,10 @@ fn build_body_primary(
         }
         let idx = dets.len();
         // Fallback faces are, by A1, not covered by any body/track this frame — a
-        // genuinely uncovered face, so always identify it (no locked track to reuse).
+        // genuinely uncovered face, so always enrich it fully (nothing to reuse).
         enrich_face_crop(
             frame, &fb, &mut det,
-            emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), true,
+            emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), true, true,
             config, emotion_debug, idx, debug_out,
         );
         dets.push(det);
@@ -566,6 +588,20 @@ mod tests {
         let body = bb(0.30, 0.30, 0.50, 0.50);
         let locked = bb(0.31, 0.31, 0.51, 0.51);
         assert!(should_run_identity(&body, std::slice::from_ref(&locked), true));
+    }
+
+    #[test]
+    fn emotion_runs_for_uncovered_body() {
+        let body = bb(0.30, 0.30, 0.50, 0.50);
+        assert!(should_run_emotion(&body, &[]), "no fresh track → run");
+        assert!(should_run_emotion(&body, &[bb(0.80, 0.80, 0.95, 0.95)]), "non-overlap → run");
+    }
+
+    #[test]
+    fn emotion_skipped_for_body_covered_by_fresh_track() {
+        let body = bb(0.30, 0.30, 0.50, 0.50);
+        let fresh = bb(0.31, 0.31, 0.51, 0.51);
+        assert!(!should_run_emotion(&body, std::slice::from_ref(&fresh)), "fresh → coast");
     }
 
     #[test]

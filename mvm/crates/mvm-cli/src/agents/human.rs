@@ -36,8 +36,11 @@ impl Agent for HumanAgent {
                     // Id-locked tracks (phase 9.6) → their bodies skip SFace this frame.
                     let locked_tracks: Vec<mvm_core::BBox> =
                         self.tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
+                    // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
+                    let emotion_fresh: Vec<mvm_core::BBox> =
+                        self.tracker.active().filter(|t| !t.needs_emotion()).map(|t| t.bbox).collect();
                     let result = self.pipeline.process(
-                        frame.image.as_ref(), frame.id, &prev_tracks, &locked_tracks,
+                        frame.image.as_ref(), frame.id, &prev_tracks, &locked_tracks, &emotion_fresh,
                     );
                     self.tracker.tick_byte(&result.detections, &result.low_conf);
                     project_people(&ctx.world, &self.tracker, &result.bodies, frame.id, frame.captured);

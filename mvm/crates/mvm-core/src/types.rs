@@ -114,6 +114,12 @@ pub const FIRST_EPHEMERAL_ID: u32 = 10;
 /// stop re-running on it. The headline cadence gate: a locked track skips SFace.
 pub const ID_LOCK_FRAMES: u32 = 3;
 
+/// Frames a track coasts on its fused emotion before EmotiEffLib re-runs on it
+/// (phase 9.7). Between runs the label is **frozen** (a matched track does not
+/// decay), so the cadence saves the classify pass without the label jittering —
+/// the temporal-PoE fusion already smooths across the (now sparser) observations.
+pub const EMOTION_CADENCE: u32 = 3;
+
 /// Explicit lifecycle state of a track (phase 9.3). Until now the track's status
 /// was reasoned out ad-hoc from raw `age`/`missed` at each call site; this names
 /// it once as a tested state machine and is the **scaffold for state-gated
@@ -216,6 +222,10 @@ pub struct PersonTrack {
     /// incoming embedding agrees with the track's; resets when a different face
     /// arrives (re-lock on doubt). Drives [`PersonTrack::is_id_locked`].
     pub id_stable_count: u32,
+    /// Frames since EmotiEffLib last enriched this track (phase 9.7). Climbs each
+    /// tick, resets to 0 when an emotion observation lands. Drives
+    /// [`PersonTrack::needs_emotion`] / the emotion cadence gate.
+    pub frames_since_emotion: u32,
 }
 
 impl PersonTrack {
@@ -253,7 +263,16 @@ impl PersonTrack {
             obs_velocity: None,
             lifecycle: LifecycleState::Tentative,
             id_stable_count: 0,
+            frames_since_emotion: u32::MAX, // never enriched → first sight needs emotion
         }
+    }
+
+    /// Whether this track's emotion is stale enough to re-run EmotiEffLib (phase
+    /// 9.7): it has coasted on its fused label for at least [`EMOTION_CADENCE`]
+    /// frames. A fresh track (counter below the cadence) reuses its label and
+    /// skips the classify pass.
+    pub fn needs_emotion(&self) -> bool {
+        self.frames_since_emotion >= EMOTION_CADENCE
     }
 
     /// Whether this track's identity is **locked** (phase 9.6) — either it holds a
