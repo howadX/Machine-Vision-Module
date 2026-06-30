@@ -151,6 +151,119 @@ impl LandmarkHistory {
     }
 }
 
+/// Coarse locomotion state of a tracked body (B1.3). The headline "movement"
+/// signal: is this person holding still or travelling across the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MotionState {
+    /// Not enough evidence committed yet (startup).
+    Unknown,
+    /// Centroid effectively still.
+    Idle,
+    /// Centroid translating across the scene.
+    Walking,
+}
+
+impl MotionState {
+    /// Lowercase tag for serialization / Scene JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MotionState::Unknown => "unknown",
+            MotionState::Idle => "idle",
+            MotionState::Walking => "walking",
+        }
+    }
+}
+
+/// Hysteresis + dwell state machine over centroid speed (B1.3) — **pure
+/// arithmetic, no allocation**.
+///
+/// Two guards kill the per-frame chatter a single threshold would produce:
+/// - **Hysteresis (dead zone):** `idle_below < walk_above`. A speed *between*
+///   the two does not change the committed state — you must clearly cross into
+///   the other regime to flip, so a body hovering near one threshold stays put.
+/// - **Dwell:** the new regime must hold for `dwell` *consecutive* updates
+///   before it commits. A one-frame velocity spike (occlusion jitter, a single
+///   bad landmark) never flips the state.
+#[derive(Debug, Clone)]
+pub struct MotionClassifier {
+    state: MotionState,
+    idle_below: f32,
+    walk_above: f32,
+    dwell: u32,
+    candidate: MotionState,
+    streak: u32,
+}
+
+impl Default for MotionClassifier {
+    /// Defaults from the phase-9 plan: idle below 0.05 torso/s, walking above
+    /// 0.3 torso/s, commit after 3 consecutive frames.
+    fn default() -> Self {
+        Self::new(0.05, 0.3, 3)
+    }
+}
+
+impl MotionClassifier {
+    /// `idle_below` / `walk_above` are centroid-speed thresholds in torso/s
+    /// (must satisfy `idle_below ≤ walk_above` for a sane dead zone); `dwell` is
+    /// the consecutive-frame count required to commit a flip (clamped to ≥1).
+    pub fn new(idle_below: f32, walk_above: f32, dwell: u32) -> Self {
+        Self {
+            state: MotionState::Unknown,
+            idle_below,
+            walk_above: walk_above.max(idle_below),
+            dwell: dwell.max(1),
+            candidate: MotionState::Unknown,
+            streak: 0,
+        }
+    }
+
+    pub fn state(&self) -> MotionState {
+        self.state
+    }
+
+    /// Feed one centroid speed (torso/s); returns the committed state.
+    ///
+    /// A speed in the dead zone (between the thresholds) is *ambiguous*: it
+    /// breaks any in-progress streak (so evidence must be consecutive) but never
+    /// flips the committed state.
+    pub fn update(&mut self, speed: f32) -> MotionState {
+        let bucket = if speed >= self.walk_above {
+            Some(MotionState::Walking)
+        } else if speed <= self.idle_below {
+            Some(MotionState::Idle)
+        } else {
+            None // dead zone → ambiguous
+        };
+
+        match bucket {
+            // Already in this regime: nothing to prove, clear any pending streak.
+            Some(b) if b == self.state => {
+                self.candidate = self.state;
+                self.streak = 0;
+            }
+            // A definite, different regime: accumulate consecutive evidence.
+            Some(b) => {
+                if b == self.candidate {
+                    self.streak += 1;
+                } else {
+                    self.candidate = b;
+                    self.streak = 1;
+                }
+                if self.streak >= self.dwell {
+                    self.state = b;
+                    self.streak = 0;
+                }
+            }
+            // Ambiguous frame: interrupt the streak, hold the committed state.
+            None => {
+                self.candidate = self.state;
+                self.streak = 0;
+            }
+        }
+        self.state
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,5 +392,127 @@ mod tests {
         h.push(1.0, frame(200.0, 100.0, 200.0)); // 100px over 1s, torso 100px
         let v = h.centroid_speed().unwrap();
         assert!((v - 1.0).abs() < 1e-3, "endpoints only → 1.0 torso/s, got {v}");
+    }
+
+    // ── motion-state machine (B1.3) ────────────────────────────────────────
+
+    #[test]
+    fn motion_starts_unknown() {
+        let c = MotionClassifier::default();
+        assert_eq!(c.state(), MotionState::Unknown);
+    }
+
+    #[test]
+    fn motion_commits_walking_after_dwell() {
+        // dwell=3: a clear walking speed must hold for 3 consecutive frames
+        // before it commits.
+        let mut c = MotionClassifier::new(0.05, 0.3, 3);
+        assert_eq!(c.update(1.0), MotionState::Unknown, "1st frame: not yet");
+        assert_eq!(c.update(1.0), MotionState::Unknown, "2nd frame: not yet");
+        assert_eq!(c.update(1.0), MotionState::Walking, "3rd frame: commits");
+    }
+
+    #[test]
+    fn motion_commits_idle_after_dwell() {
+        let mut c = MotionClassifier::new(0.05, 0.3, 3);
+        assert_eq!(c.update(0.0), MotionState::Unknown);
+        assert_eq!(c.update(0.0), MotionState::Unknown);
+        assert_eq!(c.update(0.0), MotionState::Idle);
+    }
+
+    #[test]
+    fn motion_dwell_one_commits_immediately() {
+        let mut c = MotionClassifier::new(0.05, 0.3, 1);
+        assert_eq!(c.update(1.0), MotionState::Walking, "dwell=1 → instant");
+    }
+
+    #[test]
+    fn motion_zero_dwell_clamped_to_one() {
+        // dwell is clamped to ≥1 so a flip always needs at least one frame.
+        let mut c = MotionClassifier::new(0.05, 0.3, 0);
+        assert_eq!(c.update(1.0), MotionState::Walking);
+    }
+
+    #[test]
+    fn motion_single_spike_does_not_flip() {
+        // Commit idle, then a one-frame walking spike must NOT flip the state.
+        let mut c = MotionClassifier::new(0.05, 0.3, 3);
+        for _ in 0..3 {
+            c.update(0.0);
+        }
+        assert_eq!(c.state(), MotionState::Idle);
+        assert_eq!(c.update(1.0), MotionState::Idle, "lone spike ignored");
+        // and a return to idle keeps it idle (streak was for walking, now reset)
+        assert_eq!(c.update(0.0), MotionState::Idle);
+    }
+
+    #[test]
+    fn motion_dead_zone_holds_committed_state() {
+        // Between idle_below(0.05) and walk_above(0.3) is ambiguous: it never
+        // changes the committed state.
+        let mut c = MotionClassifier::new(0.05, 0.3, 2);
+        c.update(1.0);
+        assert_eq!(c.update(1.0), MotionState::Walking);
+        // now feed dead-zone speeds forever — stays walking
+        for _ in 0..10 {
+            assert_eq!(c.update(0.15), MotionState::Walking, "dead zone holds");
+        }
+    }
+
+    #[test]
+    fn motion_dead_zone_interrupts_streak() {
+        // A dead-zone frame breaks an in-progress flip: evidence must be
+        // consecutive.
+        let mut c = MotionClassifier::new(0.05, 0.3, 3);
+        for _ in 0..3 {
+            c.update(0.0);
+        }
+        assert_eq!(c.state(), MotionState::Idle);
+        c.update(1.0); // walking streak = 1
+        c.update(1.0); // walking streak = 2
+        c.update(0.15); // dead zone → streak reset, still idle
+        assert_eq!(c.state(), MotionState::Idle);
+        // need a fresh full dwell of walking to flip
+        c.update(1.0);
+        c.update(1.0);
+        assert_eq!(c.update(1.0), MotionState::Walking, "fresh streak commits");
+    }
+
+    #[test]
+    fn motion_idle_walk_idle_round_trip() {
+        let mut c = MotionClassifier::new(0.05, 0.3, 2);
+        c.update(0.0);
+        assert_eq!(c.update(0.0), MotionState::Idle);
+        c.update(1.0);
+        assert_eq!(c.update(1.0), MotionState::Walking);
+        c.update(0.0);
+        assert_eq!(c.update(0.0), MotionState::Idle, "flips back after dwell");
+    }
+
+    #[test]
+    fn motion_thresholds_are_inclusive() {
+        // Speed exactly at walk_above counts as walking; exactly at idle_below
+        // counts as idle.
+        let mut c = MotionClassifier::new(0.05, 0.3, 1);
+        assert_eq!(c.update(0.3), MotionState::Walking, "== walk_above → walk");
+        let mut d = MotionClassifier::new(0.05, 0.3, 1);
+        assert_eq!(d.update(0.05), MotionState::Idle, "== idle_below → idle");
+    }
+
+    #[test]
+    fn motion_bad_thresholds_collapse_dead_zone() {
+        // walk_above < idle_below is clamped so walk_above ≥ idle_below; the
+        // dead zone collapses but the machine stays sane (no panic, commits).
+        let mut c = MotionClassifier::new(0.3, 0.1, 1);
+        // walk_above was clamped up to 0.3; 0.5 ≥ 0.3 → walking
+        assert_eq!(c.update(0.5), MotionState::Walking);
+        assert_eq!(c.update(0.0), MotionState::Idle);
+    }
+
+    #[test]
+    fn motion_state_as_str_round_trips() {
+        assert_eq!(MotionState::Unknown.as_str(), "unknown");
+        assert_eq!(MotionState::Idle.as_str(), "idle");
+        assert_eq!(MotionState::Walking.as_str(), "walking");
     }
 }
