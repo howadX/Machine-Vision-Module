@@ -347,13 +347,36 @@ fn covered_by_track(body: &mvm_core::BBox, regions: &[mvm_core::BBox]) -> bool {
     regions.iter().any(|r| body.iou(r) > IDENTITY_SKIP_IOU)
 }
 
-/// Whether SFace identity should run for one body this frame (phase 9.6 cadence).
-/// Skip it only when the body is already covered by an id-locked track from last
-/// frame **and** this is not a re-check frame — the locked track keeps its
-/// identity, so re-embedding is wasted. A new/unlocked body, or any body on the
-/// re-check cadence, runs SFace. Pure decision — unit-tested without models.
-fn should_run_identity(body: &mvm_core::BBox, locked: &[mvm_core::BBox], recheck: bool) -> bool {
-    recheck || !covered_by_track(body, locked)
+/// Per-body SFace gate (phase 9.6, refined after the walking-fragmentation
+/// finding). Each id-locked track from last frame claims its **single
+/// best-overlapping** body as its continuation — that one body skips SFace (its
+/// identity persists on the track). **Every other body runs SFace**, so a phantom
+/// fragment or a second person that merely overlaps a locked track is still
+/// identified instead of lingering anonymous (the old per-body "covered → skip"
+/// let all overlapping bodies skip, so phantoms near `id=0` never got re-ID'd).
+/// On a re-check frame every body runs. Returns one flag per body, aligned with
+/// `bodies`. Pure — unit-tested without models.
+fn identity_run_flags(bodies: &[mvm_core::BBox], locked: &[mvm_core::BBox], recheck: bool) -> Vec<bool> {
+    let mut run = vec![true; bodies.len()];
+    if recheck {
+        return run;
+    }
+    for lb in locked {
+        // The locked track's continuation = its single best-IoU body above the gate.
+        let mut best_iou = IDENTITY_SKIP_IOU;
+        let mut best = None;
+        for (i, b) in bodies.iter().enumerate() {
+            let iou = b.iou(lb);
+            if iou > best_iou {
+                best_iou = iou;
+                best = Some(i);
+            }
+        }
+        if let Some(i) = best {
+            run[i] = false; // only the true continuation skips SFace
+        }
+    }
+    run
 }
 
 /// Whether EmotiEffLib should run for one body this frame (phase 9.7 cadence).
@@ -439,8 +462,11 @@ fn build_body_primary(
     overlay.faces.extend(faces.iter().map(|f| f.bbox));
     let mut face_used = vec![false; faces.len()];
     let mut dets: Vec<Detection> = Vec::with_capacity(bodies.len() + faces.len());
+    // SFace cadence (phase 9.6, refined): one flag per body — only each locked
+    // track's true continuation skips SFace; phantoms / a second person near it run.
+    let id_flags = identity_run_flags(&body_bboxes, locked_tracks, recheck);
 
-    for body in &bodies {
+    for (bi, body) in bodies.iter().enumerate() {
         let b = &body.bbox;
         let mut det = Detection::bare(b.x1, b.y1, b.x2, b.y2);
         // Posture (always present for a body).
@@ -501,10 +527,10 @@ fn build_body_primary(
             face_used[fi] = true;
             let fb = faces[fi].bbox;
             let idx = dets.len();
-            // Cadence (phase 9.6/9.7): skip SFace when this body is covered by an
-            // id-locked track (unless a re-check frame); skip emotion when covered
-            // by a track still coasting on a fresh emotion label.
-            let run_identity = should_run_identity(b, locked_tracks, recheck);
+            // Cadence (phase 9.6/9.7): skip SFace only for this locked track's own
+            // continuation (precomputed in id_flags); skip emotion when covered by
+            // a track still coasting on a fresh emotion label.
+            let run_identity = id_flags[bi];
             let run_emotion = should_run_emotion(b, emotion_fresh_tracks);
             enrich_face_crop(
                 frame, &fb, &mut det,
@@ -577,27 +603,46 @@ mod tests {
     }
 
     #[test]
-    fn identity_runs_for_uncovered_body() {
-        // No locked track overlaps → SFace must run (need to identify it).
-        let body = bb(0.30, 0.30, 0.50, 0.50);
-        assert!(should_run_identity(&body, &[bb(0.80, 0.80, 0.95, 0.95)], false));
-        assert!(should_run_identity(&body, &[], false), "no locked tracks → run");
+    fn identity_runs_for_uncovered_bodies() {
+        // No locked track → every body runs SFace.
+        let bodies = [bb(0.30, 0.30, 0.50, 0.50), bb(0.10, 0.10, 0.20, 0.20)];
+        assert_eq!(identity_run_flags(&bodies, &[], false), vec![true, true]);
+        assert_eq!(
+            identity_run_flags(&bodies, &[bb(0.80, 0.80, 0.95, 0.95)], false),
+            vec![true, true],
+            "non-overlapping locked track → all run"
+        );
     }
 
     #[test]
-    fn identity_skipped_for_body_covered_by_locked_track() {
-        // Overlaps an id-locked track and not a re-check frame → skip SFace.
-        let body = bb(0.30, 0.30, 0.50, 0.50);
-        let locked = bb(0.31, 0.31, 0.51, 0.51); // high IoU
-        assert!(!should_run_identity(&body, std::slice::from_ref(&locked), false));
+    fn identity_skipped_only_for_locked_continuation() {
+        // One locked track covers body 0 → it skips; a lone body runs.
+        let bodies = [bb(0.30, 0.30, 0.50, 0.50)];
+        let locked = [bb(0.31, 0.31, 0.51, 0.51)]; // high IoU with body 0
+        assert_eq!(identity_run_flags(&bodies, &locked, false), vec![false]);
+    }
+
+    #[test]
+    fn identity_runs_for_phantom_near_locked_track() {
+        // THE refinement (walking-fragmentation fix): two bodies both overlap one
+        // locked track; only the BEST match (its continuation) skips SFace, the
+        // other — a phantom / second person — still runs and gets identified.
+        let cont = bb(0.31, 0.31, 0.51, 0.51); // IoU ≈ 0.82 with locked (best)
+        let phantom = bb(0.35, 0.35, 0.55, 0.55); // IoU ≈ 0.39 — also ABOVE the gate
+        let bodies = [cont, phantom];
+        let locked = [bb(0.30, 0.30, 0.50, 0.50)];
+        let flags = identity_run_flags(&bodies, &locked, false);
+        // Old per-body logic skipped BOTH (both covered). Refined: only the best
+        // match skips; the phantom still runs and gets identified.
+        assert_eq!(flags, vec![false, true], "continuation skips, phantom runs");
     }
 
     #[test]
     fn identity_forced_on_recheck_frame() {
         // Even a covered body re-identifies on the re-check cadence (defend drift).
-        let body = bb(0.30, 0.30, 0.50, 0.50);
-        let locked = bb(0.31, 0.31, 0.51, 0.51);
-        assert!(should_run_identity(&body, std::slice::from_ref(&locked), true));
+        let bodies = [bb(0.30, 0.30, 0.50, 0.50)];
+        let locked = [bb(0.31, 0.31, 0.51, 0.51)];
+        assert_eq!(identity_run_flags(&bodies, &locked, true), vec![true]);
     }
 
     #[test]
