@@ -492,14 +492,24 @@ impl PersonTracker {
         let face_height_m = self.face_height_m;
         let depth_ema_alpha = self.depth_ema_alpha;
         let forget = self.emotion_forget_lambda;
+        let lock_cos = self.relink_cos_thresh;
 
         // ── Part A: metadata ───────────────────────────────────────────────
         {
             let t = self.tracks.get_mut(&id).unwrap();
-            // Keep the latest embedding so cosine re-link compares against a fresh
-            // face vector after a gap.
-            if det.embedding.is_some() {
-                t.embedding = det.embedding.clone();
+            // Identity lock (phase 9.6). A fresh embedding either CONFIRMS the
+            // track's face (cosine-stable → climb toward a lock so SFace can stop)
+            // or CONTRADICTS it (reset → SFace re-engages: defend / re-check on
+            // doubt). Update the counter against the OLD embedding before replacing
+            // it. Also keeps the latest vector for cosine re-link after a gap.
+            if let Some(new_emb) = &det.embedding {
+                t.id_stable_count = match &t.embedding {
+                    Some(old) if cosine(new_emb, old) >= lock_cos => {
+                        t.id_stable_count.saturating_add(1)
+                    }
+                    _ => 1, // first sighting or a different face → fresh lock attempt
+                };
+                t.embedding = Some(new_emb.clone());
             }
             // Propagate metadata: keep best identity, latest emotion/posture.
             if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
@@ -586,7 +596,8 @@ impl PersonTracker {
     pub fn finalize(&mut self) {
         self.resolve_display_ids();
         for t in self.tracks.values_mut() {
-            let locked = t.display_id < FIRST_EPHEMERAL_ID;
+            // IdLocked (phase 9.6): a reserved gallery user OR a cosine-stable face.
+            let locked = t.is_id_locked();
             t.lifecycle = next_lifecycle(t.lifecycle, t.age, t.missed, locked);
         }
     }
@@ -1416,6 +1427,57 @@ mod tests {
             LifecycleState::Confirmed,
             "low-conf recovery keeps it Confirmed, not Occluded"
         );
+    }
+
+    // ── identity lock + cadence (phase 9.6) ─────────────────────────────────
+
+    #[test]
+    fn id_locks_after_stable_embeddings() {
+        // The same face seen ID_LOCK_FRAMES times locks the identity → IdLocked.
+        let mut t = PersonTracker::new();
+        for _ in 0..crate::types::ID_LOCK_FRAMES {
+            t.tick(&det_emb(0.3, 0.3, 0.5, 0.5, "Вадим", vec![1.0, 0.0, 0.0]));
+        }
+        let tr = t.active().next().unwrap();
+        assert!(tr.is_id_locked(), "stable face should lock");
+        assert_eq!(tr.lifecycle, LifecycleState::IdLocked);
+    }
+
+    #[test]
+    fn id_lock_not_reached_before_threshold() {
+        // One sighting is not enough to lock.
+        let mut t = PersonTracker::new();
+        t.tick(&det_emb(0.3, 0.3, 0.5, 0.5, "Вадим", vec![1.0, 0.0, 0.0]));
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.id_stable_count, 1);
+        assert!(!tr.is_id_locked(), "single observation must not lock");
+    }
+
+    #[test]
+    fn id_lock_resets_on_different_face() {
+        // A locked track that suddenly sees a different face un-locks (re-check on
+        // doubt) so SFace re-engages.
+        let mut t = PersonTracker::new();
+        for _ in 0..crate::types::ID_LOCK_FRAMES {
+            t.tick(&det_emb(0.3, 0.3, 0.5, 0.5, "Вадим", vec![1.0, 0.0, 0.0]));
+        }
+        assert!(t.active().next().unwrap().is_id_locked());
+        t.tick(&det_emb(0.3, 0.3, 0.5, 0.5, "Вадим", vec![0.0, 1.0, 0.0])); // orthogonal
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.id_stable_count, 1, "different face restarts the lock");
+        assert!(!tr.is_id_locked(), "no longer locked → SFace re-engages");
+    }
+
+    #[test]
+    fn reserved_user_is_locked_without_embeddings() {
+        // A recognised gallery user is locked by virtue of its reserved id, even
+        // with no face vectors at all.
+        let mut t = PersonTracker::new();
+        t.register_user("Вадим");
+        t.tick(&det_id(0.3, 0.3, 0.7, 0.7, "Вадим", 0.9));
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.id_stable_count, 0, "no embeddings");
+        assert!(tr.is_id_locked(), "reserved user is locked regardless");
     }
 
     #[test]

@@ -102,11 +102,16 @@ impl BodyPrimaryPipeline {
         frame: &image::DynamicImage,
         frame_id: u64,
         prev_tracks: &[mvm_core::BBox],
+        locked_tracks: &[mvm_core::BBox],
     ) -> FrameResult {
         let mut overlay = scene_debug::DetectorOverlay::default();
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         let mut bodies: Vec<BodyData> = Vec::new();
         let mut low_conf: Vec<mvm_core::BBox> = Vec::new();
+
+        // SFace re-check cadence (phase 9.6): every Nth frame re-identify all bodies
+        // (defend locked identities); between, locked bodies skip SFace.
+        let recheck = SFACE_RECHECK_CADENCE <= 1 || frame_id % SFACE_RECHECK_CADENCE == 0;
 
         // ── Body-primary enrichment (was build_body_primary) ────────────────
         let detections = build_body_primary(
@@ -123,6 +128,8 @@ impl BodyPrimaryPipeline {
             self.emotion_debug,
             &mut emotion_debug_entries,
             prev_tracks,
+            locked_tracks,
+            recheck,
         );
 
         // ── Scene objects (phase 8.E) on a cadence ──────────────────────────
@@ -249,12 +256,14 @@ fn anchor_objects_depth(
 /// identity. Shared by the body-primary path (matched face) and the face-entity
 /// fallback. Mirrors the bridge-path enrichment so behaviour is identical.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn enrich_face_crop(
     frame: &image::DynamicImage,
     face_bbox: &mvm_core::BBox,
     det: &mut Detection,
     emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
     identity_mod: Option<&mut mvm_identity::IdentityModule>,
+    run_identity: bool,
     config: &mvm_core::Config,
     emotion_debug: bool,
     det_idx: usize,
@@ -293,18 +302,42 @@ fn enrich_face_crop(
         }
     }
 
-    // Identity + embedding (margin gate, #5/#6).
-    if let Some(id) = identity_mod {
-        if let Ok((name, sim, emb)) =
-            id.identify_margin(&face, config.identity_abs_thresh, config.identity_margin_thresh)
-        {
-            det.embedding = Some(emb);
-            if det.identity.is_none() && name != "unknown" {
-                det.identity = Some(name);
-                det.identity_confidence = Some(sim);
+    // Identity + embedding (margin gate, #5/#6) — **cadenced** (phase 9.6).
+    // SFace is the priciest model in the chain; `run_identity` is false for a body
+    // already covered by an id-locked track (its identity persists on the track),
+    // so this whole block — the embed + gallery match — is skipped until the
+    // re-check cadence or the track unlocks. Emotion above still runs every frame.
+    if run_identity {
+        if let Some(id) = identity_mod {
+            if let Ok((name, sim, emb)) =
+                id.identify_margin(&face, config.identity_abs_thresh, config.identity_margin_thresh)
+            {
+                det.embedding = Some(emb);
+                if det.identity.is_none() && name != "unknown" {
+                    det.identity = Some(name);
+                    det.identity_confidence = Some(sim);
+                }
             }
         }
     }
+}
+
+/// Frames between forced SFace re-checks of an id-locked body (phase 9.6 cadence).
+/// Between these, a locked body skips SFace entirely; on a re-check frame every
+/// body is re-identified to defend against drift / a swapped face. 1 disables the
+/// cadence (always run).
+const SFACE_RECHECK_CADENCE: u64 = 30;
+/// IoU above which a body is considered "the same" as a locked track (so SFace
+/// can be skipped this frame). Matches the tracker's association gate.
+const IDENTITY_SKIP_IOU: f32 = 0.3;
+
+/// Whether SFace identity should run for one body this frame (phase 9.6 cadence).
+/// Skip it only when the body is already covered by an id-locked track from last
+/// frame **and** this is not a re-check frame — the locked track keeps its
+/// identity, so re-embedding is wasted. A new/unlocked body, or any body on the
+/// re-check cadence, runs SFace. Pure decision — unit-tested without models.
+fn should_run_identity(body: &mvm_core::BBox, locked: &[mvm_core::BBox], recheck: bool) -> bool {
+    recheck || !locked.iter().any(|lb| body.iou(lb) > IDENTITY_SKIP_IOU)
 }
 
 /// True if the face's centre falls inside any of `regions` (body bboxes this
@@ -359,6 +392,8 @@ fn build_body_primary(
     emotion_debug: bool,
     debug_out: &mut Vec<state::EmotionDebugEntry>,
     prev_tracks: &[mvm_core::BBox],
+    locked_tracks: &[mvm_core::BBox],
+    recheck: bool,
 ) -> Vec<Detection> {
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
@@ -440,9 +475,13 @@ fn build_body_primary(
             face_used[fi] = true;
             let fb = faces[fi].bbox;
             let idx = dets.len();
+            // Cadence (phase 9.6): skip SFace when this body is already covered by
+            // an id-locked track from last frame (its identity persists), unless a
+            // re-check frame forces re-validation.
+            let run_identity = should_run_identity(b, locked_tracks, recheck);
             enrich_face_crop(
                 frame, &fb, &mut det,
-                emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
+                emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), run_identity,
                 config, emotion_debug, idx, debug_out,
             );
         }
@@ -478,9 +517,11 @@ fn build_body_primary(
             det.ws_confidence = Some(ws);
         }
         let idx = dets.len();
+        // Fallback faces are, by A1, not covered by any body/track this frame — a
+        // genuinely uncovered face, so always identify it (no locked track to reuse).
         enrich_face_crop(
             frame, &fb, &mut det,
-            emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
+            emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), true,
             config, emotion_debug, idx, debug_out,
         );
         dets.push(det);
@@ -498,6 +539,34 @@ mod tests {
     }
 
     // ── body-primary face↔body matching (phase 8, FRONTIER) ──
+
+    fn bb(x1: f32, y1: f32, x2: f32, y2: f32) -> mvm_core::BBox {
+        mvm_core::BBox { x1, y1, x2, y2 }
+    }
+
+    #[test]
+    fn identity_runs_for_uncovered_body() {
+        // No locked track overlaps → SFace must run (need to identify it).
+        let body = bb(0.30, 0.30, 0.50, 0.50);
+        assert!(should_run_identity(&body, &[bb(0.80, 0.80, 0.95, 0.95)], false));
+        assert!(should_run_identity(&body, &[], false), "no locked tracks → run");
+    }
+
+    #[test]
+    fn identity_skipped_for_body_covered_by_locked_track() {
+        // Overlaps an id-locked track and not a re-check frame → skip SFace.
+        let body = bb(0.30, 0.30, 0.50, 0.50);
+        let locked = bb(0.31, 0.31, 0.51, 0.51); // high IoU
+        assert!(!should_run_identity(&body, std::slice::from_ref(&locked), false));
+    }
+
+    #[test]
+    fn identity_forced_on_recheck_frame() {
+        // Even a covered body re-identifies on the re-check cadence (defend drift).
+        let body = bb(0.30, 0.30, 0.50, 0.50);
+        let locked = bb(0.31, 0.31, 0.51, 0.51);
+        assert!(should_run_identity(&body, std::slice::from_ref(&locked), true));
+    }
 
     #[test]
     fn best_face_for_nose_matches_containing() {

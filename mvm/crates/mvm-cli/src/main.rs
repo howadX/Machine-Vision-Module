@@ -307,8 +307,11 @@ fn run_native_loop(
 
         // Last frame's active track bboxes feed A1 anti-flip suppression.
         let prev_tracks: Vec<mvm_core::BBox> = tracker.active().map(|t| t.bbox).collect();
+        // Id-locked tracks (phase 9.6) → their bodies skip SFace this frame.
+        let locked_tracks: Vec<mvm_core::BBox> =
+            tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
         let pipeline::FrameResult { detections, low_conf, overlay, emotion_debug_entries, .. } =
-            pipeline.process(&frame, frame_count, &prev_tracks);
+            pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks);
 
         frame_count += 1;
         tracker.tick_byte(&detections, &low_conf);

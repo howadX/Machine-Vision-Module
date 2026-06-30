@@ -109,6 +109,11 @@ impl BodyObservation {
 /// allocated on appearance and freed on exit (phase 8 identity model).
 pub const FIRST_EPHEMERAL_ID: u32 = 10;
 
+/// Consecutive cosine-stable face observations after which a track's identity is
+/// **locked** (phase 9.6) — the same face vector seen enough times that SFace can
+/// stop re-running on it. The headline cadence gate: a locked track skips SFace.
+pub const ID_LOCK_FRAMES: u32 = 3;
+
 /// Explicit lifecycle state of a track (phase 9.3). Until now the track's status
 /// was reasoned out ad-hoc from raw `age`/`missed` at each call site; this names
 /// it once as a tested state machine and is the **scaffold for state-gated
@@ -207,6 +212,10 @@ pub struct PersonTrack {
     /// Explicit lifecycle state (phase 9.3). Recomputed each tick by the tracker
     /// from `age`/`missed` + identity lock. Born `Tentative`.
     pub lifecycle: LifecycleState,
+    /// Consecutive cosine-stable face observations (phase 9.6). Climbs while the
+    /// incoming embedding agrees with the track's; resets when a different face
+    /// arrives (re-lock on doubt). Drives [`PersonTrack::is_id_locked`].
+    pub id_stable_count: u32,
 }
 
 impl PersonTrack {
@@ -243,7 +252,17 @@ impl PersonTrack {
             last_obs_center: Some([(bbox.x1 + bbox.x2) * 0.5, (bbox.y1 + bbox.y2) * 0.5]),
             obs_velocity: None,
             lifecycle: LifecycleState::Tentative,
+            id_stable_count: 0,
         }
+    }
+
+    /// Whether this track's identity is **locked** (phase 9.6) — either it holds a
+    /// reserved gallery id (a recognised user, already high-trust) or its face
+    /// embedding has been cosine-stable for [`ID_LOCK_FRAMES`] observations. A
+    /// locked track no longer needs SFace each frame (the cadence perf win); the
+    /// re-check cadence and the stability reset still defend it against drift.
+    pub fn is_id_locked(&self) -> bool {
+        self.display_id < FIRST_EPHEMERAL_ID || self.id_stable_count >= ID_LOCK_FRAMES
     }
 
     /// Identity to SHOW (phase 8 identity model): the name only when this track

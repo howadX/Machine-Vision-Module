@@ -33,8 +33,12 @@ impl Agent for HumanAgent {
                     last_id = Some(frame.id);
                     let prev_tracks: Vec<mvm_core::BBox> =
                         self.tracker.active().map(|t| t.bbox).collect();
-                    let result =
-                        self.pipeline.process(frame.image.as_ref(), frame.id, &prev_tracks);
+                    // Id-locked tracks (phase 9.6) → their bodies skip SFace this frame.
+                    let locked_tracks: Vec<mvm_core::BBox> =
+                        self.tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
+                    let result = self.pipeline.process(
+                        frame.image.as_ref(), frame.id, &prev_tracks, &locked_tracks,
+                    );
                     self.tracker.tick_byte(&result.detections, &result.low_conf);
                     project_people(&ctx.world, &self.tracker, &result.bodies, frame.id, frame.captured);
                     ticks += 1;
