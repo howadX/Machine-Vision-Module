@@ -121,6 +121,19 @@ pub struct PersonTrack {
     /// Latest SFace embedding (phase 7.5). Used for cosine re-link (#6) so two
     /// distinct people are never merged into one id under a single-name gallery.
     pub embedding: Option<Vec<f32>>,
+    /// Centre `[cx, cy]` of the most recent **observed** (matched) bbox — the
+    /// anchor for observation-centric tracking (OC-SORT, phase 9.2). Distinct
+    /// from `bbox` (which is the Kalman-smoothed/inertia estimate): this is the
+    /// last raw measurement, so recovery extrapolates from a real observation,
+    /// not a drifted filter state. `None` until the first observation.
+    pub last_obs_center: Option<[f32; 2]>,
+    /// EMA-smoothed **observation-centric velocity** `[vx, vy]` in normalised
+    /// units per frame (OC-SORT momentum, phase 9.2). Built from the deltas
+    /// between successive *observations* (gap-normalised), not the Kalman
+    /// velocity — robust through occlusion. Its *direction* drives the momentum
+    /// term in association (OCM) and the virtual trajectory in recovery (OCR).
+    /// `None` until two observations exist.
+    pub obs_velocity: Option<[f32; 2]>,
 }
 
 impl PersonTrack {
@@ -152,6 +165,10 @@ impl PersonTrack {
             depth_ema: None,
             emotion_distribution: None,
             embedding: None,
+            // Seed the observation anchor from the birth bbox; velocity is unknown
+            // until a second observation establishes a direction.
+            last_obs_center: Some([(bbox.x1 + bbox.x2) * 0.5, (bbox.y1 + bbox.y2) * 0.5]),
+            obs_velocity: None,
         }
     }
 

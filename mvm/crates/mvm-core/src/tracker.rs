@@ -64,6 +64,35 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
+/// IoU below which a detection cannot match a track (State-Gating threshold).
+/// The OCM momentum term only *re-orders* candidates above this gate — it never
+/// pulls a non-overlapping detection into a match.
+const IOU_GATE: f32 = 0.3;
+/// Weight of the OCM (observation-centric momentum) term added to the IoU score
+/// during association (OC-SORT, phase 9.2). Small by design: it disambiguates
+/// near-ties (crossing bodies, weak frames) without overriding a clear IoU win.
+const W_OCM: f32 = 0.05;
+/// EMA factor for the observation-centric velocity (phase 9.2). Responsive
+/// enough to follow real motion, smoothed enough to reject single-frame jitter.
+const OBS_VEL_EMA: f32 = 0.5;
+/// Vector magnitudes below this read as "no direction" (avoids 0/0 in cosine).
+const DIR_EPS: f32 = 1e-4;
+
+/// Observation-Centric Momentum consistency (OC-SORT OCM/OCA, phase 9.2): the
+/// cosine between a track's observation velocity `vel` and the bearing `delta`
+/// from its last observation to a candidate detection. `+1` = the detection lies
+/// straight ahead on the track's path, `-1` = directly behind, `0` = orthogonal
+/// **or** undefined (either vector too short to have a direction). Pure scalar
+/// arithmetic — no allocation, no model.
+fn ocm_consistency(vel: [f32; 2], delta: [f32; 2]) -> f32 {
+    let vlen = (vel[0] * vel[0] + vel[1] * vel[1]).sqrt();
+    let dlen = (delta[0] * delta[0] + delta[1] * delta[1]).sqrt();
+    if vlen < DIR_EPS || dlen < DIR_EPS {
+        return 0.0;
+    }
+    (vel[0] * delta[0] + vel[1] * delta[1]) / (vlen * dlen)
+}
+
 impl PersonTracker {
     /// Create tracker without 3D capability (tests, headless use).
     pub fn new() -> Self {
@@ -159,16 +188,27 @@ impl PersonTracker {
         let mut matched_ids: Vec<u32> = Vec::new();
 
         for det in detections {
-            let mut best_iou = 0.3_f32;
+            let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
+            let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
+            let mut best_score = f32::NEG_INFINITY;
             let mut best_id = None;
 
-            for (&id, _) in &self.tracks {
+            for (&id, t) in &self.tracks {
                 if matched_ids.contains(&id) { continue; }
                 // Tracks created earlier in this same tick have no prediction entry.
                 let Some(&pred_bbox) = predicted.get(&id) else { continue; };
                 let iou = det.bbox.iou(&pred_bbox);
-                if iou > best_iou {
-                    best_iou = iou;
+                if iou <= IOU_GATE { continue; } // gate unchanged from phase 6.1
+                // OCM (phase 9.2): bias the score toward the track whose motion
+                // points at this detection. For a lone candidate the term is
+                // inert; on a crossing it deterministically prevents the swap.
+                let momentum = match (t.obs_velocity, t.last_obs_center) {
+                    (Some(v), Some(c)) => ocm_consistency(v, [det_cx - c[0], det_cy - c[1]]),
+                    _ => 0.0,
+                };
+                let score = iou + W_OCM * momentum;
+                if score > best_score {
+                    best_score = score;
                     best_id = Some(id);
                 }
             }
@@ -229,9 +269,22 @@ impl PersonTracker {
                     if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
                     // Only re-link to anonymous tracks (don't steal a user's track).
                     if t.identity.is_some() { continue; }
-                    let tcx = (t.bbox.x1 + t.bbox.x2) * 0.5;
-                    let tcy = (t.bbox.y1 + t.bbox.y2) * 0.5;
-                    let d = ((dcx - tcx).powi(2) + (dcy - tcy).powi(2)).sqrt();
+                    // OCR (OC-SORT, phase 9.2): compare against the track's VIRTUAL
+                    // position — its last *observation* extrapolated along its
+                    // observation velocity across the gap — not the drifted Kalman
+                    // bbox. A body that kept moving while unseen is sought where its
+                    // own trajectory predicts, so a fast occluded body re-links
+                    // instead of churning a fresh id. Falls back to the last
+                    // observation (then the bbox) when no velocity is known yet.
+                    let (vcx, vcy) = match (t.last_obs_center, t.obs_velocity) {
+                        (Some(c), Some(v)) => {
+                            let gap = t.missed as f32;
+                            (c[0] + v[0] * gap, c[1] + v[1] * gap)
+                        }
+                        (Some(c), None) => (c[0], c[1]),
+                        (None, _) => ((t.bbox.x1 + t.bbox.x2) * 0.5, (t.bbox.y1 + t.bbox.y2) * 0.5),
+                    };
+                    let d = ((dcx - vcx).powi(2) + (dcy - vcy).powi(2)).sqrt();
                     if d < best_dist {
                         best_dist = d;
                         best_id = Some(id);
@@ -246,6 +299,26 @@ impl PersonTracker {
                     t.kalman.update(det.bbox);
                     t.bbox = t.kalman.smoothed_bbox();
                     t.age += 1;
+
+                    // Observation-centric velocity (OC-SORT, phase 9.2). `t.missed`
+                    // is still the pre-match gap (frames since the last observation,
+                    // ≥1), so dividing by it yields a per-frame rate that is correct
+                    // even after an occlusion. EMA-smoothed to reject jitter; seeds
+                    // raw on the second observation. Updated BEFORE zeroing `missed`.
+                    let obs_c = [(det.bbox.x1 + det.bbox.x2) * 0.5,
+                                 (det.bbox.y1 + det.bbox.y2) * 0.5];
+                    if let Some(prev) = t.last_obs_center {
+                        let gap = t.missed.max(1) as f32;
+                        let inst = [(obs_c[0] - prev[0]) / gap, (obs_c[1] - prev[1]) / gap];
+                        t.obs_velocity = Some(match t.obs_velocity {
+                            Some(v) => [
+                                OBS_VEL_EMA * inst[0] + (1.0 - OBS_VEL_EMA) * v[0],
+                                OBS_VEL_EMA * inst[1] + (1.0 - OBS_VEL_EMA) * v[1],
+                            ],
+                            None => inst,
+                        });
+                    }
+                    t.last_obs_center = Some(obs_c);
                     t.missed = 0;
 
                     // Keep the latest embedding so cosine re-link compares against
@@ -402,6 +475,11 @@ impl PersonTracker {
                     depth_ema: nat_ema,
                     emotion_distribution: det.emotion_distribution,
                     embedding: det.embedding.clone(),
+                    last_obs_center: Some([
+                        (det.bbox.x1 + det.bbox.x2) * 0.5,
+                        (det.bbox.y1 + det.bbox.y2) * 0.5,
+                    ]),
+                    obs_velocity: None,
                 });
             }
         }
@@ -912,5 +990,129 @@ mod tests {
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].emotion.as_deref(), Some("Happiness"));
         assert!((active[0].emotion_confidence.unwrap() - 0.75).abs() < 0.01);
+    }
+
+    // ── OC-SORT: observation-centric momentum + recovery (phase 9.2) ─────────
+
+    #[test]
+    fn ocm_consistency_aligned_opposed_perp_and_zero() {
+        // Pure cosine of velocity vs bearing-to-detection.
+        assert!((ocm_consistency([1.0, 0.0], [2.0, 0.0]) - 1.0).abs() < 1e-6, "aligned → +1");
+        assert!((ocm_consistency([1.0, 0.0], [-2.0, 0.0]) + 1.0).abs() < 1e-6, "opposed → -1");
+        assert!(ocm_consistency([1.0, 0.0], [0.0, 2.0]).abs() < 1e-6, "perpendicular → 0");
+        assert!(ocm_consistency([0.0, 0.0], [1.0, 0.0]).abs() < 1e-6, "no velocity → 0");
+        assert!(ocm_consistency([1.0, 0.0], [0.0, 0.0]).abs() < 1e-6, "no displacement → 0");
+    }
+
+    #[test]
+    fn obs_velocity_none_until_second_observation() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.25, 0.45, 0.35, 0.55));
+        let tr = t.active().next().unwrap();
+        assert!(tr.last_obs_center.is_some(), "anchor seeded at birth");
+        assert!(tr.obs_velocity.is_none(), "no direction from a single observation");
+    }
+
+    #[test]
+    fn obs_velocity_tracks_rightward_motion() {
+        // A body drifting right (overlapping boxes keep one track) builds a
+        // positive-x observation velocity.
+        let mut t = PersonTracker::new();
+        for i in 0..5u32 {
+            let x1 = 0.20 + i as f32 * 0.05;
+            t.tick(&det(x1, 0.40, x1 + 0.20, 0.60));
+        }
+        assert_eq!(t.track_count(), 1, "drifting body stays one track");
+        let v = t.active().next().unwrap().obs_velocity.expect("velocity after motion");
+        assert!(v[0] > 0.0, "observation velocity points right, got {v:?}");
+        assert!(v[1].abs() < 1e-3, "no vertical drift, got {}", v[1]);
+    }
+
+    #[test]
+    fn obs_velocity_is_gap_normalized() {
+        // Observe at 0.30, miss one frame, observe at 0.40: the 0.10 displacement
+        // spans a 2-frame gap → 0.05 per frame, NOT 0.10. Locks per-frame rate.
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.25, 0.45, 0.35, 0.55)); // center 0.30
+        t.tick(&[]); // occluded one frame
+        t.tick(&det(0.35, 0.45, 0.45, 0.55)); // center 0.40, re-linked
+        assert_eq!(t.track_count(), 1, "should re-link across the 1-frame gap");
+        let v = t.active().next().unwrap().obs_velocity.expect("velocity after gap");
+        assert!((v[0] - 0.05).abs() < 0.01, "gap-normalised 0.05/frame, got {}", v[0]);
+    }
+
+    #[test]
+    fn ocm_resolves_crossing_without_swap() {
+        // Two tracks at the SAME predicted box (pure IoU tie) but opposite
+        // observation velocities. Two detections continue each motion. OCM must
+        // route each detection to the direction-consistent track — no id swap.
+        // Without the momentum term the IoU tie is broken by HashMap order (flaky
+        // swap); with it the assignment is deterministic and correct.
+        let mut t = PersonTracker::new();
+        t.tick(&[
+            Detection::bare(0.10, 0.45, 0.20, 0.55),
+            Detection::bare(0.80, 0.45, 0.90, 0.55),
+        ]);
+        let mut ids: Vec<u32> = t.all().keys().copied().collect();
+        ids.sort();
+        let (right_id, left_id) = (ids[0], ids[1]);
+        let box5 = BBox { x1: 0.45, y1: 0.45, x2: 0.55, y2: 0.55 };
+        for &(id, vx) in [(right_id, 0.10_f32), (left_id, -0.10_f32)].iter() {
+            let tr = t.tracks.get_mut(&id).unwrap();
+            tr.kalman = KalmanBBox::new(box5);
+            tr.bbox = box5;
+            tr.last_obs_center = Some([0.5, 0.5]);
+            tr.obs_velocity = Some([vx, 0.0]);
+            tr.missed = 0;
+        }
+        // R continues right (center 0.54), L continues left (center 0.46).
+        t.tick(&[
+            Detection::bare(0.49, 0.45, 0.59, 0.55),
+            Detection::bare(0.41, 0.45, 0.51, 0.55),
+        ]);
+        assert_eq!(t.track_count(), 2, "no churn — both tracks persist");
+        let rc = t.tracks.get(&right_id).unwrap().last_obs_center.unwrap();
+        let lc = t.tracks.get(&left_id).unwrap().last_obs_center.unwrap();
+        assert!(rc[0] > 0.5, "rightward track followed the right detection, got {rc:?}");
+        assert!(lc[0] < 0.5, "leftward track followed the left detection, got {lc:?}");
+    }
+
+    #[test]
+    fn ocr_virtual_trajectory_beats_stale_filter() {
+        // A body seen once at 0.25, then (manually) occluded for several frames
+        // while carrying a rightward observation velocity. Its Kalman bbox is
+        // stale at 0.25, but its virtual trajectory extrapolates to ~0.65. A new
+        // detection at 0.65 is DISJOINT from the stale filter (IoU 0) → only the
+        // observation-centric virtual position recovers it. The old stale-bbox
+        // re-link (compare to 0.25) would be 0.40 away → spawn a churned track.
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.20, 0.45, 0.30, 0.55)); // center 0.25, id = FIRST_EPHEMERAL_ID
+        let id0 = t.active().next().unwrap().id;
+        {
+            let tr = t.tracks.get_mut(&id0).unwrap();
+            tr.obs_velocity = Some([0.10, 0.0]); // rightward
+            tr.last_obs_center = Some([0.25, 0.50]);
+            tr.missed = 3; // pretend 3 occluded frames already elapsed
+            // kalman left stale at center 0.25 (velocity ~0)
+        }
+        t.tick(&det(0.60, 0.45, 0.70, 0.55)); // center 0.65 = virtual (0.25 + 0.10*4)
+        assert_eq!(t.track_count(), 1, "virtual trajectory recovers the moving body");
+        assert_eq!(t.active().next().unwrap().id, id0, "id persists via OCR, no churn");
+    }
+
+    #[test]
+    fn ocr_recovers_occluded_moving_body() {
+        // End-to-end regression guard: a body moving right, briefly occluded,
+        // reappearing ahead on its path stays one track.
+        let mut t = PersonTracker::new();
+        for i in 0..4u32 {
+            let x1 = 0.20 + i as f32 * 0.05;
+            t.tick(&det(x1, 0.40, x1 + 0.20, 0.60)); // centers 0.30..0.45
+        }
+        let id0 = t.active().next().unwrap().id;
+        for _ in 0..3 { t.tick(&[]); } // occluded
+        t.tick(&det(0.52, 0.40, 0.72, 0.60)); // center 0.62, ahead on the trajectory
+        assert_eq!(t.track_count(), 1, "occluded moving body recovers as one track");
+        assert_eq!(t.active().next().unwrap().id, id0, "id persists across occlusion");
     }
 }
