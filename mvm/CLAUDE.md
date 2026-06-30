@@ -7,12 +7,17 @@
 
 ## Статус (2026-06-30)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 248 тестов зелёные**, release чист.
+- **Ветка:** `rust-core` (основная). **12 крейтов, 331 тест зелёный**, release чист.
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
-- **Активная фаза — 9: Tracker (body-first track-centric рефактор `HumanAgent`, +0 ONNX).**
-  Кинематика движений (B1) + робастность ассоциации (ByteTrack-страховка по телам + OC-SORT OCM/OCR) +
-  инверсия обогащения с cadenced SFace. План — `docs/phase-9-plan.md`. **Фаза 10 — Segmentation**
-  (+1 ONNX YOLO-seg) вынесена отдельно — `docs/phase-10-plan.md`.
+- **Фаза 9 — Tracker: 9.1–9.9 ЗАКРЫТЫ** (`+0 ONNX`), осталось **9.10 (Hungarian)**. Закрыто:
+  кинематика B1 (motion ring + `MotionClassifier` + жесты) → OCM/OCR (9.2) → lifecycle FSM (9.3) →
+  ByteTrack two-stage по телам (9.4) → инверсия контракта `associate/apply_detection/finalize` (9.5) →
+  cadenced SFace + identity-lock (9.6) → emotion cadence (9.7) → лендмарки на треке + motion в Scene JSON
+  (9.8) → pose-ROI recovery для locked-треков (9.9). План — `docs/phase-9-plan.md`. **Фаза 10 —
+  Segmentation** (+1 ONNX YOLO-seg) вынесена отдельно — `docs/phase-10-plan.md`.
+- **Live-ревалидация 9 (1 чел., потолочный ракурс):** idle/сидя — `id=0` lock 100%, motion idle↔walking
+  + velocity в JSON. Ходьба — `id=0` держится 91% кадров (9.9), но детектор фрагментирует тело → краткие
+  анон-мелькания остаются (**эмпирика для 10.7 person-масок**; см. память `walking-track-fragmentation`).
 - Hot-path `--native-camera` — **чистый Rust** (ноль Python). Bridge (`--native`) сохранён для
   тестов/дебага (снос venv отменён решением владельца).
 
@@ -177,13 +182,13 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **7** | ✅ | Python-light: hot-path `--native-camera` = pure-Rust (v4l2→YuNet→ONNX), ~25 fps; SFace-эмбеддинг + margin-identity + cosine-re-link |
 | **7.5** | ✅ | Нативная поза: BlazePose+PoseVAE порт (bit-close к Python), мульти-persona (#3 закрыт) |
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
-| **9** | 🟠 активная | **Tracker** — body-first track-centric (кинематика + ByteTrack/OCM + инверсия обогащения), **+0 ONNX** (см. ниже) |
+| **9** | 🟢 9.1–9.9 | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery, **+0 ONNX**; осталось 9.10 Hungarian (см. ниже) |
 | **10** | 🔜 | **Segmentation** — YOLO-seg инстанс-маски (взаимодействие), **+1 ONNX** (`docs/phase-10-plan.md`) |
 | **11** | 🔜 | Продукт |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
 
-### 🟠 Фаза 9 — Tracker: body-first track-centric рефактор (активная)
+### 🟢 Фаза 9 — Tracker: body-first track-centric рефактор (9.1–9.9 закрыты, осталось 9.10)
 
 > **Архитектура:** **Body-first tracking + Face-as-attribute + ByteTrack для робастности.** Тело видно
 > всегда → трекаем **тело**, не лицо; identity/emotion — **атрибуты тела**, переживают окклюзию лица;
@@ -199,23 +204,24 @@ Machine Vision Module/           ← корень (cwd при запуске)
 > модели**. Спина оркестрируется в `HumanAgent` (`mvm-cli`); трекер лишь **экспонирует запросы**
 > («какие треки без identity / устаревший emotion / дай предсказанный ROI»).
 
-| Этап | Задача | Гейт/тесты |
+| Этап | Задача | Реализация / коммит |
 |------|--------|-----------|
-| **9.1** | **Кинематика (B1):** bounded ring 33-лендмарков per-track (N≈16) → скорости центроида (torso-lengths/sec) → `motion_state` idle↔walking (порог+dwell+гистерезис) + жест/reach по запястью | юнит на синтетике; **9.1.1/9.1.2 закоммичены** |
-| **9.2** | **OCM/OCR** апгрейд (B2a): согласованность направления скорости в cost + recovery через виртуальную траекторию сквозь окклюзию (OC-SORT-стиль, обобщает center-relink) | регрессия churn (как 8.0.3) |
-| **9.3** | **Track lifecycle FSM:** явные `Tentative→Confirmed→IdLocked→Occluded→Lost` (фундамент гейтинга) | переходы под тестами; churn не хуже |
-| **9.4** | **ByteTrack two-stage по телам:** протащить `score` в `BodyPose`, понизить порог детектора, BYTE high/low; low-conf — **bbox-only** | swap на пересечении тел; восстановление при слабом кадре |
-| **9.5** | **Инверсия контракта:** lean `BodyObservation` → ассоциация **до** обогащения; `Detection` худеет, enrich per-track post-match | контракт-тесты; 1 человек идентичен текущему |
-| **9.6** | **Identity lifecycle + cadenced SFace:** SFace только на id-less/unlocked или slow-cadence; lock на cosine-стабильности (главный perf-приз) | #5 margin сохранён; latency ↓ |
-| **9.7** | **Emotion cadence per track** (согласованно с temporal-PoE `forget_lambda`) | метка не дёргается; latency ↓ |
-| **9.8** | **Persist лендмарков на треке + эмит motion** (убирает IoU-round-trip в `project_people`); motion → Scene JSON | тест отсутствия роста памяти; live sit↔stand/idle↔walk |
-| **9.9** | **Pose ROI из предсказания трека:** гибрид (predict для стабильных, detect-first для новых) — пропуск стадии person-детектора | ⚠️ трогает FRONTIER ROI → live 0/1/2/3 чел.; последним |
-| **9.10** | **Hungarian assignment:** hand-rolled Kuhn–Munkres для малого N, **zero-deps**; слой cost→assignment (переиспользуется фазой 10) | оптимальность vs greedy; 1–2 тела идентичны |
+| **9.1** ✅ | **Кинематика (B1):** ring 33-лендмарков (N=16) → centroid speed (torso/s) → `MotionClassifier` idle↔walking (dead-zone+dwell+гистерезис) + `ArmGesture` reach/wave по запястью | `motion.rs`; b34a7be2 / 6740f9b9 |
+| **9.2** ✅ | **OCM/OCR:** `obs_velocity` (EMA, gap-norm) → momentum-терм в cost (анти-swap) + center-relink по **виртуальной траектории** | `tracker.rs`; e87f143d |
+| **9.3** ✅ | **Lifecycle FSM** `Tentative→Confirmed→IdLocked→Occluded→Lost` — чистая `next_lifecycle`, аддитивно (churn идентичен) | `types.rs`+`tracker.rs`; 2d266332 |
+| **9.4** ✅ | **ByteTrack two-stage:** `BodyPose.score`, `detect_scored`, `bodies_byte` (high posed / low bbox-only) → `tick_byte` low-recovery | posture+cli+core; 2db33c7c |
+| **9.5** ✅ | **Инверсия контракта:** `BodyObservation` + `associate`/`apply_detection`/`finalize`; `tick_byte` = тонкий оркестратор, поведение байт-идентично | `tracker.rs`; 5afd2bec |
+| **9.6** ✅ | **Cadenced SFace + lock:** `is_id_locked` (reserved/cosine-стаб); `identity_run_flags` — skip SFace только для continuation locked-трека | core+cli; 671e4221 / **05bdcddf** (рефайн) |
+| **9.7** ✅ | **Emotion cadence:** `frames_since_emotion`/`needs_emotion`; лейбл заморожен между прогонами (matched → нет decay) | core+cli; 818376b8 |
+| **9.8** ✅ | **Motion на треке:** `MotionTrack` (bounded ring), `tick_motion`; `motion_state`/`velocity` → `PersonState` → Scene JSON; live idle↔walking | core+cli; 7d818fc6 |
+| **9.9** ✅ | **Pose-ROI recovery:** `bodies_byte_recover` — locked-трек, потерянный детектором, позируется из предсказанного ROI (torso-vis гейт). Live: id-continuity 91%, 0 фантомов на пустом | posture+cli; 326cbc19 |
+| **9.10** 🟠 | **Hungarian assignment:** hand-rolled Kuhn–Munkres для малого N, **zero-deps**; слой cost→assignment (переиспользуется фазой 10) | `mvm-core` (новый модуль), `tracker.rs` — **активный** |
 
-> **Инварианты 9:** **+0 ONNX**; всё (кинематика, ByteTrack, OCM/OCR, Hungarian, гейтинг, lifecycle) —
-> чистая арифметика + оркестрация; модели **не** въезжают в `mvm-core`; body-primary FRONTIER сохраняется
-> (цель — тело, лицо — атрибут). Робастность (9.2–9.4) делается **до** инверсии (9.5): гейтинг повышает
-> цену swap-а. **Эмпирический вход для фазы 10:** частота пересечения тел → нужны ли person-маски (10.7).
+> **Инварианты 9 (соблюдены):** **+0 ONNX**; всё — чистая арифметика + оркестрация; модели **не** въехали
+> в `mvm-core`; body-primary FRONTIER сохранён. Робастность (9.2–9.4) сделана **до** инверсии (9.5).
+> **Эмпирика для фазы 10 (live):** при ходьбе под потолком детектор фрагментирует тело → краткие
+> анон-мелькания даже после 9.9 (recovery держит только locked) → **person-маски 10.7 оправданы**.
+> Подробно — память `walking-track-fragmentation`.
 
 ### 🔜 Фаза 10 — Segmentation: инстанс-маски (взаимодействие)
 
