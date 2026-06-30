@@ -77,6 +77,33 @@ impl Detection {
     }
 }
 
+/// A **lean** body observation — the inverted association input (phase 9.5).
+///
+/// Where [`Detection`] is fat (it carries every enrichment a model could attach),
+/// a `BodyObservation` is only what association actually needs: geometry + the
+/// detector score (for ByteTrack high/low gating) + the raw landmarks (reserved
+/// for the track-owned motion ring in 9.8). The tracker associates these FIRST,
+/// returns a stable id per body, and enrichment (SFace/emotion/posture/3D) is
+/// applied **after**, per track — so 9.6/9.7 can run those models only on the
+/// tracks that need them instead of on every body every frame.
+#[derive(Debug, Clone)]
+pub struct BodyObservation {
+    /// Body bbox, normalised [0..1].
+    pub bbox: BBox,
+    /// Person-detector confidence (ByteTrack gating). 1.0 for legacy callers.
+    pub score: f32,
+    /// 33 raw landmarks `[x,y,z,visibility]`, if posed. `None` for a bbox-only
+    /// (low-confidence) box. Persisted on the track in 9.8; unused by association.
+    pub landmarks: Option<crate::motion::Landmarks33>,
+}
+
+impl BodyObservation {
+    /// Bbox-only observation (high-confidence by default, no landmarks).
+    pub fn bare(bbox: BBox) -> Self {
+        Self { bbox, score: 1.0, landmarks: None }
+    }
+}
+
 /// Track ids below this are reserved for **recognised gallery users** (stable id
 /// per person, e.g. Вадим = 0). Anonymous bodies get ephemeral ids ≥ this value,
 /// allocated on appearance and freed on exit (phase 8 identity model).

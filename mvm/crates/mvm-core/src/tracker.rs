@@ -15,8 +15,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
-use crate::types::{BBox, Detection, LifecycleState, PersonTrack, FIRST_EPHEMERAL_ID};
-use crate::kalman::KalmanBBox;
+use crate::types::{BBox, BodyObservation, Detection, LifecycleState, PersonTrack, FIRST_EPHEMERAL_ID};
 use crate::space::{Pinhole, DepthEma, face_bbox_to_3d};
 
 /// Multi-person tracker — the temporal fusion layer of MVM.
@@ -220,21 +219,46 @@ impl PersonTracker {
         self.tick_byte(detections, &[]);
     }
 
-    /// Process one frame with ByteTrack two-stage association (phase 9.4).
+    /// Process one frame with ByteTrack two-stage association (phase 9.4) under
+    /// the **inverted contract** (phase 9.5): associate FIRST on geometry, then
+    /// apply each detection's enrichment to its matched track, then finalize.
     ///
-    /// `high` — confident, fully-enriched detections: matched first (IoU + OCM),
-    /// then the re-link cascade, then unmatched ones spawn new tracks. This stage
-    /// is identical to the phase 6–8 single-stage tracker.
-    ///
-    /// `low` — weak, **bbox-only** boxes (the body detector fired below the high
-    /// gate). After the high stage, each is matched **only to a track that missed
-    /// this frame**, by IoU, and applied as a bbox-only recovery: it advances the
-    /// Kalman + observation velocity and clears `missed`, but injects **no**
-    /// identity/emotion/posture/3D (a weak box carries no trustworthy attributes).
-    /// Low boxes that match nothing are discarded — they never spawn a track. This
-    /// is ByteTrack's safety net: a confirmed body survives a frame the detector
-    /// only half-saw, instead of churning or being lost on a crossing.
+    /// `high` — confident detections (matched via IoU + OCM + the re-link cascade;
+    /// unmatched ones spawn tracks). `low` — weak bbox-only boxes that only recover
+    /// a track that missed this frame (never enriched, never spawn).
     pub fn tick_byte(&mut self, high: &[Detection], low: &[BBox]) {
+        let ids = self.associate_core(high, low);
+        for (det, &id) in high.iter().zip(ids.iter()) {
+            self.apply_detection(id, det);
+        }
+        self.finalize();
+    }
+
+    /// Lean, enrichment-free association (phase 9.5 — the inverted contract).
+    /// Matches body observations to tracks on **geometry alone** (IoU + OCM +
+    /// observation-centric recovery) and returns the track id chosen for each. An
+    /// observation carries no identity/embedding, so the cosine/label re-link tiers
+    /// are inert — geometry is all there is until enrichment runs. The caller then
+    /// enriches per id via [`Self::apply_detection`] and closes the frame with
+    /// [`Self::finalize`]; this is what lets 9.6/9.7 run SFace/emotion only on the
+    /// tracks that need it instead of on every body every frame.
+    pub fn associate(&mut self, high: &[BodyObservation], low: &[BBox]) -> Vec<u32> {
+        let dets: Vec<Detection> = high
+            .iter()
+            .map(|o| Detection::bare(o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2))
+            .collect();
+        self.associate_core(&dets, low)
+    }
+
+    /// Association core shared by [`Self::tick_byte`] and [`Self::associate`]:
+    /// predict → high match cascade → ByteTrack low recovery → inertia → expire,
+    /// doing only **association bookkeeping** (Kalman update, observation velocity,
+    /// age/missed). No attribute enrichment, no display-id/lifecycle resolution
+    /// (callers do those after enriching). Returns the matched or newly created
+    /// track id for each `high` detection, in order. A detection bearing
+    /// `identity`/`embedding` engages the cosine/label re-link tiers; a bbox-only
+    /// one skips them and relies on geometry.
+    fn associate_core(&mut self, high: &[Detection], low: &[BBox]) -> Vec<u32> {
         // ── Step 1: predict all tracks (State-Gating) ──────────────────────
         // KF is now in predicted state; predicted[id] = bbox to use for IoU.
         let predicted: HashMap<u32, BBox> = self.tracks.iter_mut()
@@ -255,13 +279,9 @@ impl PersonTracker {
             }
         }
 
-        // Pre-capture config values (Copy) to avoid borrow conflicts inside the loop.
-        let pinhole_opt = self.pinhole;
-        let face_height_m = self.face_height_m;
-        let depth_ema_alpha = self.depth_ema_alpha;
-
         // ── Step 3: match detections to predicted bboxes ───────────────────
         let mut matched_ids: Vec<u32> = Vec::new();
+        let mut ids: Vec<u32> = Vec::with_capacity(high.len());
 
         for det in high {
             let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
@@ -368,182 +388,32 @@ impl PersonTracker {
                 }
             }
 
-            if let Some(id) = best_id {
-                // ── Part A: Kalman update + metadata ───────────────────────
-                {
+            // Association bookkeeping ONLY — enrichment is deferred to
+            // apply_detection (phase 9.5 inverted contract).
+            let id = match best_id {
+                Some(id) => {
                     let t = self.tracks.get_mut(&id).unwrap();
                     t.kalman.update(det.bbox);
                     t.bbox = t.kalman.smoothed_bbox();
                     t.age += 1;
-
-                    // Observation-centric velocity (OC-SORT, phase 9.2): update
-                    // from the gap BEFORE zeroing `missed`.
+                    // Observation-centric velocity (OC-SORT, 9.2): BEFORE zeroing missed.
                     record_obs(t, [(det.bbox.x1 + det.bbox.x2) * 0.5,
                                    (det.bbox.y1 + det.bbox.y2) * 0.5]);
                     t.missed = 0;
-
-                    // Keep the latest embedding so cosine re-link compares against
-                    // a fresh face vector after a gap.
-                    if det.embedding.is_some() {
-                        t.embedding = det.embedding.clone();
-                    }
-                    // Propagate metadata: keep best identity, latest emotion/posture
-                    if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
-                        if t.identity_confidence.map_or(true, |c| conf > c) {
-                            t.identity = Some(name.clone());
-                            t.identity_confidence = Some(conf);
-                        }
-                    }
-                    // Emotion: temporal Product-of-Experts fusion (phase 6.4b).
-                    // When the detection carries a full distribution, fold it into
-                    // the track's accumulated prior with forgetting, then re-derive
-                    // the label from the SMOOTHED distribution (kills per-frame
-                    // argmax jitter). Without a distribution (Python-only signal),
-                    // fall back to latest-snapshot.
-                    if let Some(obs) = det.emotion_distribution {
-                        let fused = match t.emotion_distribution {
-                            Some(prior) => crate::emotion::fuse_emotion_temporal(
-                                &prior, &obs, self.emotion_forget_lambda,
-                            ),
-                            None => obs, // first observation seeds the prior
-                        };
-                        let (label, conf) = crate::emotion::emotion_label(&fused);
-                        t.emotion_distribution = Some(fused);
-                        t.emotion = Some(label.to_string());
-                        t.emotion_confidence = Some(conf);
-                    } else if det.emotion.is_some() {
-                        t.emotion = det.emotion.clone();
-                        t.emotion_confidence = det.emotion_confidence;
-                    }
-                    if det.posture.is_some() {
-                        t.posture = det.posture.clone();
-                        t.posture_confidence = det.posture_confidence;
-                    }
-                    // Detection-provided 3D passthrough. Bridge path: overridden by
-                    // the native pinhole block below (pinhole = Some). Body-primary
-                    // (pinhole = None): this IS the final 3D, so EMA-smooth the torso
-                    // estimate against the track's previous position to damp per-frame
-                    // landmark jitter (A3, phase 8).
-                    if det.distance.is_some() {
-                        let a = depth_ema_alpha;
-                        let ema = |prev: Option<f32>, new: Option<f32>| match (prev, new) {
-                            (Some(p), Some(n)) => Some(a * n + (1.0 - a) * p),
-                            (None, n) => n,
-                            (p, None) => p,
-                        };
-                        t.distance = ema(t.distance, det.distance);
-                        t.position_x = ema(t.position_x, det.position_x);
-                        t.position_y = ema(t.position_y, det.position_y);
-                        t.position_z = ema(t.position_z, det.position_z);
-                        t.ws_confidence = det.ws_confidence;
-                    }
-                    if det.recon_error.is_some() { t.recon_error = det.recon_error; }
-                    if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
-                } // t drops here, releasing mutable borrow
-
-                // ── Part B: native 3D (phase 6.2) ──────────────────────────
-                // Two-step: immutable lookup first, then mutable write.
-                if let Some(ph) = pinhole_opt {
-                    // Step 1: read identity, look up personal height (immutable borrow)
-                    let real_h = {
-                        let track = self.tracks.get(&id).unwrap();
-                        track.identity.as_ref()
-                            .and_then(|n| self.personal_heights.get(n.as_str()))
-                            .copied()
-                            .unwrap_or(face_height_m)
-                    }; // immutable borrow drops
-
-                    // Step 2: compute and write (mutable borrow)
-                    let t = self.tracks.get_mut(&id).unwrap();
-                    let b = t.bbox;
-                    let bbox_cx = (b.x1 + b.x2) * 0.5;
-                    let bbox_cy = (b.y1 + b.y2) * 0.5;
-                    if let Some((_pos, z, ws_conf)) =
-                        face_bbox_to_3d(&ph, b.y1, b.y2, bbox_cx, bbox_cy, real_h)
-                    {
-                        let smoothed_z = t.depth_ema
-                            .get_or_insert_with(|| DepthEma::new(z, depth_ema_alpha))
-                            .update(z);
-                        let pos_s = ph.pixel_to_3d(
-                            bbox_cx * ph.width,
-                            bbox_cy * ph.height,
-                            smoothed_z,
-                        );
-                        t.distance = Some(smoothed_z);
-                        t.position_x = Some(pos_s[0]);
-                        t.position_y = Some(pos_s[1]);
-                        t.position_z = Some(pos_s[2]);
-                        t.ws_confidence = Some(ws_conf);
-                    }
+                    matched_ids.push(id);
+                    id
                 }
-
-                matched_ids.push(id);
-            } else {
-                // New track — KF initialized at first observation.
-                // Run native 3D immediately so pos is available from frame 1.
-                let (nat_dist, nat_x, nat_y, nat_z, nat_ws, nat_ema) =
-                    if let Some(ph) = pinhole_opt {
-                        let b = det.bbox;
-                        let bbox_cx = (b.x1 + b.x2) * 0.5;
-                        let bbox_cy = (b.y1 + b.y2) * 0.5;
-                        if let Some((_pos, z, ws_conf)) =
-                            face_bbox_to_3d(&ph, b.y1, b.y2, bbox_cx, bbox_cy, face_height_m)
-                        {
-                            let pos_s = ph.pixel_to_3d(
-                                bbox_cx * ph.width, bbox_cy * ph.height, z,
-                            );
-                            let ema = DepthEma::new(z, depth_ema_alpha);
-                            (Some(z), Some(pos_s[0]), Some(pos_s[1]), Some(pos_s[2]),
-                             Some(ws_conf), Some(ema))
-                        } else {
-                            (None, None, None, None, None, None)
-                        }
-                    } else {
-                        (None, None, None, None, None, None)
-                    };
-
-                let id = self.alloc_id();
-                // Seed emotion from the distribution when present, so the label is
-                // consistent with the vector the temporal fusion will accumulate.
-                let (seed_emotion, seed_emotion_conf) = match det.emotion_distribution {
-                    Some(dist) => {
-                        let (label, conf) = crate::emotion::emotion_label(&dist);
-                        (Some(label.to_string()), Some(conf))
-                    }
-                    None => (det.emotion.clone(), det.emotion_confidence),
-                };
-                self.tracks.insert(id, PersonTrack {
-                    id,
-                    display_id: id, // resolved at end of tick
-                    bbox: det.bbox,
-                    kalman: KalmanBBox::new(det.bbox),
-                    age: 1,
-                    missed: 0,
-                    identity: det.identity.clone(),
-                    identity_confidence: det.identity_confidence,
-                    emotion: seed_emotion,
-                    emotion_confidence: seed_emotion_conf,
-                    posture: det.posture.clone(),
-                    posture_confidence: det.posture_confidence,
-                    // Native 3D takes priority; Python bridge value as fallback.
-                    distance: nat_dist.or(det.distance),
-                    position_x: nat_x.or(det.position_x),
-                    position_y: nat_y.or(det.position_y),
-                    position_z: nat_z.or(det.position_z),
-                    ws_confidence: nat_ws.or(det.ws_confidence),
-                    recon_error: det.recon_error,
-                    plausibility: det.plausibility.clone(),
-                    depth_ema: nat_ema,
-                    emotion_distribution: det.emotion_distribution,
-                    embedding: det.embedding.clone(),
-                    last_obs_center: Some([
-                        (det.bbox.x1 + det.bbox.x2) * 0.5,
-                        (det.bbox.y1 + det.bbox.y2) * 0.5,
-                    ]),
-                    obs_velocity: None,
-                    lifecycle: crate::types::LifecycleState::Tentative,
-                });
-            }
+                None => {
+                    // New body → spawn a BARE track (age 1, missed 0, obs anchor
+                    // seeded, all attributes empty). apply_detection seeds it below
+                    // (its first observation). Not added to matched_ids: it has no
+                    // prediction entry, so the inertia step leaves it untouched.
+                    let id = self.alloc_id();
+                    self.tracks.insert(id, PersonTrack::new(id, det.bbox));
+                    id
+                }
+            };
+            ids.push(id);
         }
 
         // ── Step 3b: ByteTrack low-confidence recovery (phase 9.4) ─────────
@@ -607,13 +477,114 @@ impl PersonTracker {
             self.free_ids.push(Reverse(id));
         }
 
-        self.resolve_display_ids();
+        ids
+    }
 
-        // ── Step 5: explicit lifecycle FSM (phase 9.3) ─────────────────────
-        // Derived after display-id resolution so the identity lock (holds a
-        // reserved gallery id) is known. Purely observational for now — the
-        // gate that 9.6/9.7 cadence on and 9.8 serializes; matching/expiry are
-        // unchanged, so churn is identical.
+    /// Apply one detection's enrichment to track `id` (phase 9.5) — the
+    /// post-association half of the inverted contract. Identity (keep-best),
+    /// temporal-PoE emotion, posture, 3D (passthrough or native pinhole) and the
+    /// fresh embedding. A bare track just spawned by association is **seeded** here
+    /// (its first observation); an existing track is **updated**. Safe to call once
+    /// per (id, frame), between [`Self::associate`] and [`Self::finalize`].
+    pub fn apply_detection(&mut self, id: u32, det: &Detection) {
+        // Pre-capture Copy config to avoid borrowing self alongside self.tracks.
+        let pinhole_opt = self.pinhole;
+        let face_height_m = self.face_height_m;
+        let depth_ema_alpha = self.depth_ema_alpha;
+        let forget = self.emotion_forget_lambda;
+
+        // ── Part A: metadata ───────────────────────────────────────────────
+        {
+            let t = self.tracks.get_mut(&id).unwrap();
+            // Keep the latest embedding so cosine re-link compares against a fresh
+            // face vector after a gap.
+            if det.embedding.is_some() {
+                t.embedding = det.embedding.clone();
+            }
+            // Propagate metadata: keep best identity, latest emotion/posture.
+            if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
+                if t.identity_confidence.map_or(true, |c| conf > c) {
+                    t.identity = Some(name.clone());
+                    t.identity_confidence = Some(conf);
+                }
+            }
+            // Emotion: temporal Product-of-Experts fusion (phase 6.4b). A full
+            // distribution folds into the track's prior with forgetting, then the
+            // label is re-derived from the SMOOTHED distribution (kills per-frame
+            // argmax jitter); a bare track's `None` prior is seeded by the obs.
+            // Without a distribution (Python-only signal), latest-snapshot.
+            if let Some(obs) = det.emotion_distribution {
+                let fused = match t.emotion_distribution {
+                    Some(prior) => crate::emotion::fuse_emotion_temporal(&prior, &obs, forget),
+                    None => obs, // first observation seeds the prior
+                };
+                let (label, conf) = crate::emotion::emotion_label(&fused);
+                t.emotion_distribution = Some(fused);
+                t.emotion = Some(label.to_string());
+                t.emotion_confidence = Some(conf);
+            } else if det.emotion.is_some() {
+                t.emotion = det.emotion.clone();
+                t.emotion_confidence = det.emotion_confidence;
+            }
+            if det.posture.is_some() {
+                t.posture = det.posture.clone();
+                t.posture_confidence = det.posture_confidence;
+            }
+            // Detection-provided 3D passthrough. Body-primary (pinhole = None): this
+            // IS the final 3D, EMA-smoothed against the previous position to damp
+            // per-frame landmark jitter (A3). Bridge path: overridden by Part B.
+            if det.distance.is_some() {
+                let a = depth_ema_alpha;
+                let ema = |prev: Option<f32>, new: Option<f32>| match (prev, new) {
+                    (Some(p), Some(n)) => Some(a * n + (1.0 - a) * p),
+                    (None, n) => n,
+                    (p, None) => p,
+                };
+                t.distance = ema(t.distance, det.distance);
+                t.position_x = ema(t.position_x, det.position_x);
+                t.position_y = ema(t.position_y, det.position_y);
+                t.position_z = ema(t.position_z, det.position_z);
+                t.ws_confidence = det.ws_confidence;
+            }
+            if det.recon_error.is_some() { t.recon_error = det.recon_error; }
+            if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
+        } // mutable borrow drops
+
+        // ── Part B: native 3D (phase 6.2) — two-step borrow ────────────────
+        if let Some(ph) = pinhole_opt {
+            let real_h = {
+                let track = self.tracks.get(&id).unwrap();
+                track.identity.as_ref()
+                    .and_then(|n| self.personal_heights.get(n.as_str()))
+                    .copied()
+                    .unwrap_or(face_height_m)
+            };
+            let t = self.tracks.get_mut(&id).unwrap();
+            let b = t.bbox;
+            let bbox_cx = (b.x1 + b.x2) * 0.5;
+            let bbox_cy = (b.y1 + b.y2) * 0.5;
+            if let Some((_pos, z, ws_conf)) =
+                face_bbox_to_3d(&ph, b.y1, b.y2, bbox_cx, bbox_cy, real_h)
+            {
+                let smoothed_z = t.depth_ema
+                    .get_or_insert_with(|| DepthEma::new(z, depth_ema_alpha))
+                    .update(z);
+                let pos_s = ph.pixel_to_3d(bbox_cx * ph.width, bbox_cy * ph.height, smoothed_z);
+                t.distance = Some(smoothed_z);
+                t.position_x = Some(pos_s[0]);
+                t.position_y = Some(pos_s[1]);
+                t.position_z = Some(pos_s[2]);
+                t.ws_confidence = Some(ws_conf);
+            }
+        }
+    }
+
+    /// Close the frame (phase 9.5): resolve reserved display ids, then step the
+    /// lifecycle FSM (which reads the just-resolved identity lock). Call after all
+    /// [`Self::apply_detection`] write-backs. Matching/expiry are unchanged, so
+    /// churn is identical to the pre-inversion tracker.
+    pub fn finalize(&mut self) {
+        self.resolve_display_ids();
         for t in self.tracks.values_mut() {
             let locked = t.display_id < FIRST_EPHEMERAL_ID;
             t.lifecycle = next_lifecycle(t.lifecycle, t.age, t.missed, locked);
@@ -668,6 +639,7 @@ impl PersonTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kalman::KalmanBBox;
     use crate::types::{BBox, Detection};
 
     fn det(x1: f32, y1: f32, x2: f32, y2: f32) -> Vec<Detection> {
@@ -1300,6 +1272,92 @@ mod tests {
 
     fn bbox(x1: f32, y1: f32, x2: f32, y2: f32) -> BBox {
         BBox { x1, y1, x2, y2 }
+    }
+
+    // ── inverted contract: associate / apply / finalize (phase 9.5) ─────────
+
+    #[test]
+    fn associate_creates_bare_track_without_enrichment() {
+        // Lean association spawns a track on geometry alone — no attributes.
+        let mut t = PersonTracker::new();
+        let ids = t.associate(&[BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50))], &[]);
+        assert_eq!(ids.len(), 1, "one id per observation");
+        let tr = t.all().get(&ids[0]).unwrap();
+        assert!((tr.bbox.x1 - 0.30).abs() < 1e-6, "geometry associated");
+        assert!(tr.identity.is_none(), "association injects no identity");
+        assert!(tr.emotion.is_none(), "association injects no emotion");
+        assert!(tr.posture.is_none(), "association injects no posture");
+    }
+
+    #[test]
+    fn apply_detection_seeds_a_bare_track() {
+        // The post-association half: enrichment lands on the associated id.
+        let mut t = PersonTracker::new();
+        let ids = t.associate(&[BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50))], &[]);
+        let det = det_id(0.30, 0.30, 0.50, 0.50, "Вадим", 0.9).remove(0);
+        t.apply_detection(ids[0], &det);
+        t.finalize();
+        let tr = t.all().get(&ids[0]).unwrap();
+        assert_eq!(tr.identity.as_deref(), Some("Вадим"), "enrichment seeded post-match");
+    }
+
+    #[test]
+    fn associate_re_matches_existing_track_on_geometry() {
+        // A second overlapping observation re-associates to the same id (no churn).
+        let mut t = PersonTracker::new();
+        let id0 = t.associate(&[BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50))], &[])[0];
+        let id1 = t.associate(&[BodyObservation::bare(bbox(0.31, 0.31, 0.51, 0.51))], &[])[0];
+        assert_eq!(id0, id1, "overlapping observation keeps the id");
+        assert_eq!(t.track_count(), 1);
+    }
+
+    #[test]
+    fn associate_runs_low_conf_recovery() {
+        // The inverted entry honours ByteTrack: a weak box recovers a track even
+        // when no high observation arrives, and high-only ids are returned.
+        let mut t = PersonTracker::new();
+        let id0 = t.associate(&[BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50))], &[])[0];
+        let ids = t.associate(&[], &[bbox(0.31, 0.31, 0.51, 0.51)]);
+        assert!(ids.is_empty(), "no high observation → no ids");
+        assert_eq!(t.active().next().unwrap().id, id0, "low box recovered the track");
+    }
+
+    #[test]
+    fn inverted_flow_equals_tick_byte_for_one_person() {
+        // THE contract: associate → apply_detection → finalize must produce the
+        // exact same track state as the integrated tick_byte on one person.
+        let det = Detection {
+            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
+            identity: Some("Вадим".into()),
+            identity_confidence: Some(0.72),
+            emotion: Some("Neutral".into()),
+            emotion_confidence: Some(0.65),
+            posture: Some("сидит".into()),
+            posture_confidence: Some(0.95),
+            distance: Some(1.5), position_x: Some(0.1), position_y: Some(0.2), position_z: Some(1.5),
+            ws_confidence: Some(0.8), recon_error: Some(0.01), plausibility: Some("normal".into()),
+            emotion_distribution: None, embedding: Some(vec![1.0, 0.0, 0.0]),
+        };
+
+        let mut integrated = PersonTracker::new();
+        integrated.tick_byte(std::slice::from_ref(&det), &[]);
+
+        let mut inverted = PersonTracker::new();
+        let ids = inverted.associate(&[BodyObservation::bare(det.bbox)], &[]);
+        inverted.apply_detection(ids[0], &det);
+        inverted.finalize();
+
+        let a = integrated.active().next().unwrap();
+        let b = inverted.active().next().unwrap();
+        assert_eq!(a.identity, b.identity);
+        assert_eq!(a.identity_confidence, b.identity_confidence);
+        assert_eq!(a.emotion, b.emotion);
+        assert_eq!(a.posture, b.posture);
+        assert_eq!(a.age, b.age);
+        assert_eq!(a.lifecycle, b.lifecycle);
+        assert_eq!(a.distance, b.distance);
+        assert_eq!(a.embedding, b.embedding);
+        assert!((a.bbox.x1 - b.bbox.x1).abs() < 1e-6);
     }
 
     #[test]
