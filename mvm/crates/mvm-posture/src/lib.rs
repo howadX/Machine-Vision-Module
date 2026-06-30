@@ -39,7 +39,34 @@ pub struct BodyPose {
     pub landmarks_px: Landmarks33,
     /// Posture classification (label, confidence, recon_error, plausibility).
     pub posture: PoseResult,
+    /// Person-detector confidence (phase 9.4) — threaded through for ByteTrack
+    /// high/low gating. Always ≥ [`BYTE_HIGH_SCORE`] for a posed body.
+    pub score: f32,
 }
+
+/// A weak, **bbox-only** body box (phase 9.4 ByteTrack): the person detector
+/// fired between [`BYTE_LOW_SCORE`] and [`BYTE_HIGH_SCORE`], so no pose was run.
+/// Feeds the tracker's low-confidence recovery stage and nothing else.
+#[derive(Debug, Clone, Copy)]
+pub struct LowConfBody {
+    pub bbox: mvm_core::BBox,
+    pub score: f32,
+}
+
+/// Both confidence tiers from one detector pass (phase 9.4). `bodies` are fully
+/// posed (high-conf); `low_conf` are bbox-only recovery candidates.
+#[derive(Debug, Clone, Default)]
+pub struct BodyDetections {
+    pub bodies: Vec<BodyPose>,
+    pub low_conf: Vec<LowConfBody>,
+}
+
+/// High-confidence gate: a body at/above this score is posed + fully enriched.
+/// Equals the detector's legacy `score_threshold`, so the posed set is unchanged.
+pub const BYTE_HIGH_SCORE: f32 = 0.5;
+/// Low-confidence floor (phase 9.4): boxes in `[BYTE_LOW_SCORE, BYTE_HIGH_SCORE)`
+/// are kept bbox-only for ByteTrack recovery; below it they are noise.
+pub const BYTE_LOW_SCORE: f32 = 0.2;
 
 /// Native two-stage pose: person detection → per-person ROI → BlazePose landmarks.
 /// Multi-persona by construction (one pose inference per detected person) — this is
@@ -96,23 +123,41 @@ impl NativePose {
     /// visible from all angles, so a person without a frontal face still yields a
     /// track here (face/identity/emotion attach later as optional attributes).
     pub fn bodies(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<BodyPose>> {
+        Ok(self.bodies_byte(image)?.bodies)
+    }
+
+    /// ByteTrack two-tier bodies (phase 9.4): one detector pass at the low floor,
+    /// split into posed high-conf [`BodyPose`]s and bbox-only [`LowConfBody`]s.
+    /// **Pose inference runs only on high-conf boxes** — cost is unchanged vs
+    /// [`Self::bodies`]; the weak boxes ride along for tracker recovery only.
+    pub fn bodies_byte(&mut self, image: &DynamicImage) -> anyhow::Result<BodyDetections> {
         let rgb = image.to_rgb8();
         let (w, h) = (image.width() as f32, image.height() as f32);
-        let persons = self.detector.detect(image)?;
-        let mut out = Vec::with_capacity(persons.len());
+        let persons = self.detector.detect_scored(image, BYTE_LOW_SCORE)?;
+        let mut out = BodyDetections::default();
         for p in &persons {
+            let bbox = mvm_core::BBox {
+                x1: p.bbox[0] / w,
+                y1: p.bbox[1] / h,
+                x2: p.bbox[2] / w,
+                y2: p.bbox[3] / h,
+            };
+            if p.score < BYTE_HIGH_SCORE {
+                // Weak box: keep for recovery only, no pose inference.
+                out.low_conf.push(LowConfBody { bbox, score: p.score });
+                continue;
+            }
             if let Some(lm) = self.pose.infer(&rgb, p)? {
                 let mut norm = [[0f32; 4]; 33];
                 for k in 0..33 {
                     norm[k] = [lm[k][0] / w, lm[k][1] / h, lm[k][2] / w, lm[k][3]];
                 }
-                let bbox = mvm_core::BBox {
-                    x1: p.bbox[0] / w,
-                    y1: p.bbox[1] / h,
-                    x2: p.bbox[2] / w,
-                    y2: p.bbox[3] / h,
-                };
-                out.push(BodyPose { bbox, landmarks_px: lm, posture: self.head.classify(&norm) });
+                out.bodies.push(BodyPose {
+                    bbox,
+                    landmarks_px: lm,
+                    posture: self.head.classify(&norm),
+                    score: p.score,
+                });
             }
         }
         Ok(out)

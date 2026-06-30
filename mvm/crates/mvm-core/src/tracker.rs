@@ -111,6 +111,26 @@ const LOST_AFTER_MISSED: u64 = 30;
 /// - missed this frame: an unconfirmed (`Tentative`) track drops straight to
 ///   `Lost`; an established/occluded track goes `Occluded`, then `Lost` once the
 ///   gap reaches `LOST_AFTER_MISSED`.
+/// Fold one observation centre into a track's observation-centric velocity
+/// (OC-SORT, phase 9.2/9.4). MUST be called BEFORE zeroing `missed` — `missed`
+/// is the frame gap since the last observation, so dividing by it yields a
+/// per-frame rate that survives occlusion. EMA-smoothed; seeds raw on the second
+/// observation. Shared by the high- and low-confidence association stages.
+fn record_obs(t: &mut PersonTrack, obs_c: [f32; 2]) {
+    if let Some(prev) = t.last_obs_center {
+        let gap = t.missed.max(1) as f32;
+        let inst = [(obs_c[0] - prev[0]) / gap, (obs_c[1] - prev[1]) / gap];
+        t.obs_velocity = Some(match t.obs_velocity {
+            Some(v) => [
+                OBS_VEL_EMA * inst[0] + (1.0 - OBS_VEL_EMA) * v[0],
+                OBS_VEL_EMA * inst[1] + (1.0 - OBS_VEL_EMA) * v[1],
+            ],
+            None => inst,
+        });
+    }
+    t.last_obs_center = Some(obs_c);
+}
+
 fn next_lifecycle(prev: LifecycleState, age: u64, missed: u64, locked: bool) -> LifecycleState {
     use LifecycleState::*;
     if missed == 0 {
@@ -193,10 +213,28 @@ impl PersonTracker {
         }
     }
 
-    /// Process one frame's detections. Matches new detections to existing
-    /// tracks via IoU on the **Kalman-predicted** bbox (State-Gating),
-    /// propagates metadata, expires stale tracks.
+    /// Process one frame with **only** high-confidence detections (the common
+    /// case and the phase 6–8 behaviour). Equivalent to [`Self::tick_byte`] with
+    /// no low-confidence boxes.
     pub fn tick(&mut self, detections: &[Detection]) {
+        self.tick_byte(detections, &[]);
+    }
+
+    /// Process one frame with ByteTrack two-stage association (phase 9.4).
+    ///
+    /// `high` — confident, fully-enriched detections: matched first (IoU + OCM),
+    /// then the re-link cascade, then unmatched ones spawn new tracks. This stage
+    /// is identical to the phase 6–8 single-stage tracker.
+    ///
+    /// `low` — weak, **bbox-only** boxes (the body detector fired below the high
+    /// gate). After the high stage, each is matched **only to a track that missed
+    /// this frame**, by IoU, and applied as a bbox-only recovery: it advances the
+    /// Kalman + observation velocity and clears `missed`, but injects **no**
+    /// identity/emotion/posture/3D (a weak box carries no trustworthy attributes).
+    /// Low boxes that match nothing are discarded — they never spawn a track. This
+    /// is ByteTrack's safety net: a confirmed body survives a frame the detector
+    /// only half-saw, instead of churning or being lost on a crossing.
+    pub fn tick_byte(&mut self, high: &[Detection], low: &[BBox]) {
         // ── Step 1: predict all tracks (State-Gating) ──────────────────────
         // KF is now in predicted state; predicted[id] = bbox to use for IoU.
         let predicted: HashMap<u32, BBox> = self.tracks.iter_mut()
@@ -225,7 +263,7 @@ impl PersonTracker {
         // ── Step 3: match detections to predicted bboxes ───────────────────
         let mut matched_ids: Vec<u32> = Vec::new();
 
-        for det in detections {
+        for det in high {
             let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
             let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
             let mut best_score = f32::NEG_INFINITY;
@@ -338,25 +376,10 @@ impl PersonTracker {
                     t.bbox = t.kalman.smoothed_bbox();
                     t.age += 1;
 
-                    // Observation-centric velocity (OC-SORT, phase 9.2). `t.missed`
-                    // is still the pre-match gap (frames since the last observation,
-                    // ≥1), so dividing by it yields a per-frame rate that is correct
-                    // even after an occlusion. EMA-smoothed to reject jitter; seeds
-                    // raw on the second observation. Updated BEFORE zeroing `missed`.
-                    let obs_c = [(det.bbox.x1 + det.bbox.x2) * 0.5,
-                                 (det.bbox.y1 + det.bbox.y2) * 0.5];
-                    if let Some(prev) = t.last_obs_center {
-                        let gap = t.missed.max(1) as f32;
-                        let inst = [(obs_c[0] - prev[0]) / gap, (obs_c[1] - prev[1]) / gap];
-                        t.obs_velocity = Some(match t.obs_velocity {
-                            Some(v) => [
-                                OBS_VEL_EMA * inst[0] + (1.0 - OBS_VEL_EMA) * v[0],
-                                OBS_VEL_EMA * inst[1] + (1.0 - OBS_VEL_EMA) * v[1],
-                            ],
-                            None => inst,
-                        });
-                    }
-                    t.last_obs_center = Some(obs_c);
+                    // Observation-centric velocity (OC-SORT, phase 9.2): update
+                    // from the gap BEFORE zeroing `missed`.
+                    record_obs(t, [(det.bbox.x1 + det.bbox.x2) * 0.5,
+                                   (det.bbox.y1 + det.bbox.y2) * 0.5]);
                     t.missed = 0;
 
                     // Keep the latest embedding so cosine re-link compares against
@@ -520,6 +543,44 @@ impl PersonTracker {
                     obs_velocity: None,
                     lifecycle: crate::types::LifecycleState::Tentative,
                 });
+            }
+        }
+
+        // ── Step 3b: ByteTrack low-confidence recovery (phase 9.4) ─────────
+        // Weak bbox-only boxes rescue tracks the high stage left unmatched. A
+        // candidate track must have missed THIS frame (`missed >= 1`) — that
+        // excludes both stage-1 matches and tracks just spawned this tick (those
+        // sit at `missed == 0`). Match by IoU + OCM on the predicted bbox; on a
+        // hit, advance the filter + observation velocity but inject no metadata.
+        for low_bbox in low {
+            let lcx = (low_bbox.x1 + low_bbox.x2) * 0.5;
+            let lcy = (low_bbox.y1 + low_bbox.y2) * 0.5;
+            let mut best_score = f32::NEG_INFINITY;
+            let mut best_id = None;
+            for (&id, t) in &self.tracks {
+                if t.missed == 0 || matched_ids.contains(&id) { continue; }
+                let Some(&pred_bbox) = predicted.get(&id) else { continue; };
+                let iou = low_bbox.iou(&pred_bbox);
+                if iou <= IOU_GATE { continue; }
+                let momentum = match (t.obs_velocity, t.last_obs_center) {
+                    (Some(v), Some(c)) => ocm_consistency(v, [lcx - c[0], lcy - c[1]]),
+                    _ => 0.0,
+                };
+                let score = iou + W_OCM * momentum;
+                if score > best_score {
+                    best_score = score;
+                    best_id = Some(id);
+                }
+            }
+            if let Some(id) = best_id {
+                let t = self.tracks.get_mut(&id).unwrap();
+                t.kalman.update(*low_bbox);
+                t.bbox = t.kalman.smoothed_bbox();
+                t.age += 1;
+                record_obs(t, [lcx, lcy]); // before zeroing missed (gap)
+                t.missed = 0;
+                // No enrichment: a low-conf box has no trustworthy attributes.
+                matched_ids.push(id);
             }
         }
 
@@ -1233,6 +1294,70 @@ mod tests {
         t.tick(&det(0.3, 0.3, 0.5, 0.5)); // Tentative (age 1)
         t.tick(&[]); // miss before confirming → Lost
         assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Lost);
+    }
+
+    // ── ByteTrack two-stage (phase 9.4) ─────────────────────────────────────
+
+    fn bbox(x1: f32, y1: f32, x2: f32, y2: f32) -> BBox {
+        BBox { x1, y1, x2, y2 }
+    }
+
+    #[test]
+    fn low_conf_recovers_unmatched_track() {
+        // High stage finds nothing this frame, but a weak bbox overlapping the
+        // track's prediction rescues it (missed cleared) instead of dropping it.
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.30, 0.30, 0.50, 0.50));
+        let id0 = t.active().next().unwrap().id;
+        t.tick_byte(&[], &[bbox(0.31, 0.31, 0.51, 0.51)]);
+        assert_eq!(t.track_count(), 1);
+        let a = t.active().next().expect("track recovered, still active");
+        assert_eq!(a.id, id0, "recovery keeps the id");
+        assert_eq!(a.age, 2, "bbox-only recovery still ages the track");
+    }
+
+    #[test]
+    fn low_conf_never_spawns_a_track() {
+        // A weak box with no track to rescue is discarded — never a new id.
+        let mut t = PersonTracker::new();
+        t.tick_byte(&[], &[bbox(0.30, 0.30, 0.50, 0.50)]);
+        assert_eq!(t.track_count(), 0, "low-conf alone must not create a track");
+    }
+
+    #[test]
+    fn low_conf_does_not_touch_an_already_matched_track() {
+        // The track is matched by a high detection this frame; an overlapping low
+        // box must NOT double-update it (it already sits at missed == 0).
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.30, 0.30, 0.50, 0.50));
+        t.tick_byte(&det(0.30, 0.30, 0.50, 0.50), &[bbox(0.30, 0.30, 0.50, 0.50)]);
+        assert_eq!(t.active().next().unwrap().age, 2, "aged once, not twice");
+    }
+
+    #[test]
+    fn low_conf_recovery_preserves_identity() {
+        // A bbox-only rescue injects no attributes, so the track's existing
+        // identity survives the weak frame untouched.
+        let mut t = PersonTracker::new();
+        t.tick(&det_id(0.30, 0.30, 0.50, 0.50, "Вадим", 0.9));
+        t.tick_byte(&[], &[bbox(0.31, 0.31, 0.51, 0.51)]);
+        let a = t.active().next().expect("recovered");
+        assert_eq!(a.identity.as_deref(), Some("Вадим"), "identity preserved through recovery");
+    }
+
+    #[test]
+    fn low_conf_keeps_confirmed_track_alive_across_weak_frame() {
+        // ByteTrack's headline: a Confirmed body the detector only half-saw stays
+        // Confirmed via the low box, instead of slipping to Occluded.
+        let mut t = PersonTracker::new();
+        for _ in 0..CONFIRM_AGE { t.tick(&det(0.30, 0.30, 0.50, 0.50)); }
+        assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Confirmed);
+        t.tick_byte(&[], &[bbox(0.31, 0.31, 0.51, 0.51)]);
+        assert_eq!(
+            t.active().next().unwrap().lifecycle,
+            LifecycleState::Confirmed,
+            "low-conf recovery keeps it Confirmed, not Occluded"
+        );
     }
 
     #[test]

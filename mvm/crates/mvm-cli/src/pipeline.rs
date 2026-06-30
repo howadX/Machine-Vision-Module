@@ -28,8 +28,12 @@ pub(crate) struct BodyData {
 
 /// Per-frame output of [`BodyPrimaryPipeline::process`].
 pub(crate) struct FrameResult {
-    /// Bodies (+ fallback faces), fully enriched — feed to the tracker.
+    /// Bodies (+ fallback faces), fully enriched — feed to the tracker as the
+    /// ByteTrack high-confidence stage.
     pub detections: Vec<Detection>,
+    /// Weak, bbox-only body boxes (phase 9.4) — the ByteTrack low-confidence
+    /// recovery stage (`tick_byte`'s `low`). Never enriched, never spawn tracks.
+    pub low_conf: Vec<mvm_core::BBox>,
     /// Per-body landmark data (wrists + hands), grouped by body for per-person
     /// association after tracking.
     pub bodies: Vec<BodyData>,
@@ -102,6 +106,7 @@ impl BodyPrimaryPipeline {
         let mut overlay = scene_debug::DetectorOverlay::default();
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         let mut bodies: Vec<BodyData> = Vec::new();
+        let mut low_conf: Vec<mvm_core::BBox> = Vec::new();
 
         // ── Body-primary enrichment (was build_body_primary) ────────────────
         let detections = build_body_primary(
@@ -113,6 +118,7 @@ impl BodyPrimaryPipeline {
             self.hand_landmarker.as_mut(),
             &mut overlay,
             &mut bodies,
+            &mut low_conf,
             &self.config,
             self.emotion_debug,
             &mut emotion_debug_entries,
@@ -158,7 +164,7 @@ impl BodyPrimaryPipeline {
             }
         }
 
-        FrameResult { detections, bodies, overlay, emotion_debug_entries }
+        FrameResult { detections, low_conf, bodies, overlay, emotion_debug_entries }
     }
 
     /// Depth-anchor the latest objects to the (post-tick) tracker's people so
@@ -348,6 +354,7 @@ fn build_body_primary(
     mut hand_landmarker: Option<&mut mvm_hands::HandLandmarker>,
     overlay: &mut scene_debug::DetectorOverlay,
     bodies_out: &mut Vec<BodyData>,
+    low_conf_out: &mut Vec<mvm_core::BBox>,
     config: &mvm_core::Config,
     emotion_debug: bool,
     debug_out: &mut Vec<state::EmotionDebugEntry>,
@@ -355,9 +362,13 @@ fn build_body_primary(
 ) -> Vec<Detection> {
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
-    let bodies = native_pose
-        .map(|np| np.bodies(frame).unwrap_or_default())
+    let body_dets = native_pose
+        .map(|np| np.bodies_byte(frame).unwrap_or_default())
         .unwrap_or_default();
+    let bodies = body_dets.bodies;
+    // Weak boxes ride straight through to the tracker's recovery stage (9.4) —
+    // never posed, enriched, or turned into a BodyData.
+    low_conf_out.extend(body_dets.low_conf.iter().map(|l| l.bbox));
     // RGB frame for hand ROIs (only materialised when the hand model is loaded).
     let hand_rgb = hand_landmarker.as_ref().map(|_| frame.to_rgb8());
     let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();

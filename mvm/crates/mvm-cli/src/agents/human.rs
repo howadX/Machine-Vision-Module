@@ -35,7 +35,7 @@ impl Agent for HumanAgent {
                         self.tracker.active().map(|t| t.bbox).collect();
                     let result =
                         self.pipeline.process(frame.image.as_ref(), frame.id, &prev_tracks);
-                    self.tracker.tick(&result.detections);
+                    self.tracker.tick_byte(&result.detections, &result.low_conf);
                     project_people(&ctx.world, &self.tracker, &result.bodies, frame.id, frame.captured);
                     ticks += 1;
                 }

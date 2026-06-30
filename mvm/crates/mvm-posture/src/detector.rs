@@ -97,7 +97,18 @@ impl PersonDetector {
         Ok((tensor, pad_x, pad_y, scale))
     }
 
+    /// Detect at the configured `score_threshold` (the phase 6–8 behaviour).
     pub fn detect(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<Person>> {
+        let min_score = self.score_threshold;
+        self.detect_scored(image, min_score)
+    }
+
+    /// Detect at an explicit `min_score` floor (phase 9.4 ByteTrack). Lowering it
+    /// below `score_threshold` surfaces the weak boxes BYTE needs for recovery
+    /// without touching the validated `detect()` path. NMS is unchanged, so the
+    /// high-confidence kept set is identical to `detect()` — extra low boxes only
+    /// add non-overlapping survivors.
+    pub fn detect_scored(&mut self, image: &DynamicImage, min_score: f32) -> anyhow::Result<Vec<Person>> {
         let (input, pad_x, pad_y, scale) = self.preprocess(image)?;
         let outputs = self.session.run(ort::inputs!["input_1:0" => input])?;
         let boxes = outputs["Identity:0"].try_extract_tensor::<f32>()?.1; // [2254*12]
@@ -107,7 +118,7 @@ impl PersonDetector {
         for i in 0..N_ANCHORS {
             let raw = scores[i].clamp(-100.0, 100.0);
             let s = 1.0 / (1.0 + (-raw).exp());
-            if s < self.score_threshold {
+            if s < min_score {
                 continue;
             }
             let b = i * 12;
