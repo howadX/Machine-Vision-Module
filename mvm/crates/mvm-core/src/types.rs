@@ -82,6 +82,49 @@ impl Detection {
 /// allocated on appearance and freed on exit (phase 8 identity model).
 pub const FIRST_EPHEMERAL_ID: u32 = 10;
 
+/// Explicit lifecycle state of a track (phase 9.3). Until now the track's status
+/// was reasoned out ad-hoc from raw `age`/`missed` at each call site; this names
+/// it once as a tested state machine and is the **scaffold for state-gated
+/// enrichment** (9.6 cadenced SFace, 9.7 cadenced emotion) and Scene-JSON output.
+///
+/// Lifecycle: `Tentative → Confirmed → IdLocked` as trust accrues; a gap sends an
+/// established track to `Occluded`, a long gap to `Lost`. An unconfirmed track
+/// that misses drops straight to `Lost` (likely a false positive).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleState {
+    /// Just born — too few matches to trust. Dropped on the first miss.
+    Tentative,
+    /// Matched enough frames to be a real track.
+    Confirmed,
+    /// Confirmed **and** identity locked (a recognised gallery user) — the
+    /// highest-trust state; enrichment can be cadenced hardest here.
+    IdLocked,
+    /// Was established but is currently unmatched (a short gap) — alive on
+    /// inertia, eligible for observation-centric recovery (9.2).
+    Occluded,
+    /// Unmatched too long — slated for expiry.
+    Lost,
+}
+
+impl LifecycleState {
+    /// Lowercase tag for serialization / Scene JSON.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LifecycleState::Tentative => "tentative",
+            LifecycleState::Confirmed => "confirmed",
+            LifecycleState::IdLocked => "id_locked",
+            LifecycleState::Occluded => "occluded",
+            LifecycleState::Lost => "lost",
+        }
+    }
+
+    /// True once the track is trustworthy (Confirmed or IdLocked) — the gate for
+    /// downstream consumers that should ignore flickering Tentative detections.
+    pub fn is_established(self) -> bool {
+        matches!(self, LifecycleState::Confirmed | LifecycleState::IdLocked)
+    }
+}
+
 /// A tracked person — persistent across frames.
 #[derive(Debug, Clone)]
 pub struct PersonTrack {
@@ -134,6 +177,9 @@ pub struct PersonTrack {
     /// term in association (OCM) and the virtual trajectory in recovery (OCR).
     /// `None` until two observations exist.
     pub obs_velocity: Option<[f32; 2]>,
+    /// Explicit lifecycle state (phase 9.3). Recomputed each tick by the tracker
+    /// from `age`/`missed` + identity lock. Born `Tentative`.
+    pub lifecycle: LifecycleState,
 }
 
 impl PersonTrack {
@@ -169,6 +215,7 @@ impl PersonTrack {
             // until a second observation establishes a direction.
             last_obs_center: Some([(bbox.x1 + bbox.x2) * 0.5, (bbox.y1 + bbox.y2) * 0.5]),
             obs_velocity: None,
+            lifecycle: LifecycleState::Tentative,
         }
     }
 

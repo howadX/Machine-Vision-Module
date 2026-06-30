@@ -15,7 +15,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
-use crate::types::{BBox, Detection, PersonTrack, FIRST_EPHEMERAL_ID};
+use crate::types::{BBox, Detection, LifecycleState, PersonTrack, FIRST_EPHEMERAL_ID};
 use crate::kalman::KalmanBBox;
 use crate::space::{Pinhole, DepthEma, face_bbox_to_3d};
 
@@ -91,6 +91,44 @@ fn ocm_consistency(vel: [f32; 2], delta: [f32; 2]) -> f32 {
         return 0.0;
     }
     (vel[0] * delta[0] + vel[1] * delta[1]) / (vlen * dlen)
+}
+
+/// Matched frames a track must accrue before it is `Confirmed` (phase 9.3).
+/// `age` increments only on a match, so this is "seen this many times".
+const CONFIRM_AGE: u64 = 3;
+/// Consecutive missed frames after which an established track is declared `Lost`
+/// (a soft pre-expiry marker — actual removal still happens at `timeout_frames`).
+const LOST_AFTER_MISSED: u64 = 30;
+
+/// One step of the explicit track lifecycle FSM (phase 9.3). Pure function of the
+/// previous state and the track's freshly-updated `age`/`missed` plus whether its
+/// identity is `locked` (holds a reserved gallery id). Tested exhaustively at the
+/// transition boundaries.
+///
+/// - matched this frame (`missed == 0`): climb the trust ladder —
+///   `Tentative` until `age ≥ CONFIRM_AGE`, then `IdLocked` if locked else
+///   `Confirmed` (this also recovers an `Occluded`/`Lost` track on re-match).
+/// - missed this frame: an unconfirmed (`Tentative`) track drops straight to
+///   `Lost`; an established/occluded track goes `Occluded`, then `Lost` once the
+///   gap reaches `LOST_AFTER_MISSED`.
+fn next_lifecycle(prev: LifecycleState, age: u64, missed: u64, locked: bool) -> LifecycleState {
+    use LifecycleState::*;
+    if missed == 0 {
+        if age < CONFIRM_AGE {
+            Tentative
+        } else if locked {
+            IdLocked
+        } else {
+            Confirmed
+        }
+    } else {
+        match prev {
+            Tentative => Lost, // unconfirmed + a miss → almost certainly a flicker
+            Lost => Lost,
+            _ if missed >= LOST_AFTER_MISSED => Lost,
+            _ => Occluded,
+        }
+    }
 }
 
 impl PersonTracker {
@@ -480,6 +518,7 @@ impl PersonTracker {
                         (det.bbox.y1 + det.bbox.y2) * 0.5,
                     ]),
                     obs_velocity: None,
+                    lifecycle: crate::types::LifecycleState::Tentative,
                 });
             }
         }
@@ -508,6 +547,16 @@ impl PersonTracker {
         }
 
         self.resolve_display_ids();
+
+        // ── Step 5: explicit lifecycle FSM (phase 9.3) ─────────────────────
+        // Derived after display-id resolution so the identity lock (holds a
+        // reserved gallery id) is known. Purely observational for now — the
+        // gate that 9.6/9.7 cadence on and 9.8 serializes; matching/expiry are
+        // unchanged, so churn is identical.
+        for t in self.tracks.values_mut() {
+            let locked = t.display_id < FIRST_EPHEMERAL_ID;
+            t.lifecycle = next_lifecycle(t.lifecycle, t.age, t.missed, locked);
+        }
     }
 
     /// Resolve each track's `display_id` (phase 8 identity model). Every track
@@ -1114,5 +1163,88 @@ mod tests {
         t.tick(&det(0.52, 0.40, 0.72, 0.60)); // center 0.62, ahead on the trajectory
         assert_eq!(t.track_count(), 1, "occluded moving body recovers as one track");
         assert_eq!(t.active().next().unwrap().id, id0, "id persists across occlusion");
+    }
+
+    // ── lifecycle FSM (phase 9.3) ───────────────────────────────────────────
+
+    #[test]
+    fn next_lifecycle_transitions() {
+        use LifecycleState::*;
+        // Climbing the trust ladder on matches (missed == 0).
+        assert_eq!(next_lifecycle(Tentative, 2, 0, false), Tentative, "below confirm age");
+        assert_eq!(next_lifecycle(Tentative, 3, 0, false), Confirmed, "reaches confirm age");
+        assert_eq!(next_lifecycle(Confirmed, 5, 0, true), IdLocked, "locked + confirmed");
+        assert_eq!(next_lifecycle(Tentative, 2, 0, true), Tentative, "lock waits for confirm");
+        assert_eq!(next_lifecycle(Occluded, 6, 0, false), Confirmed, "re-match recovers");
+        assert_eq!(next_lifecycle(Lost, 6, 0, true), IdLocked, "even a Lost track recovers on match");
+        // Losing the track on misses (missed >= 1).
+        assert_eq!(next_lifecycle(Tentative, 1, 1, false), Lost, "unconfirmed miss → Lost");
+        assert_eq!(next_lifecycle(Confirmed, 5, 1, false), Occluded, "established miss → Occluded");
+        assert_eq!(next_lifecycle(IdLocked, 5, 1, true), Occluded, "locked miss → Occluded too");
+        assert_eq!(next_lifecycle(Occluded, 5, LOST_AFTER_MISSED, false), Lost, "long gap → Lost");
+        assert_eq!(next_lifecycle(Lost, 5, 40, false), Lost, "Lost stays Lost while missing");
+    }
+
+    #[test]
+    fn born_track_is_tentative() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.3, 0.3, 0.5, 0.5));
+        assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Tentative);
+    }
+
+    #[test]
+    fn track_confirms_after_enough_matches() {
+        let mut t = PersonTracker::new();
+        for _ in 0..(CONFIRM_AGE - 1) {
+            t.tick(&det(0.3, 0.3, 0.5, 0.5));
+            assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Tentative);
+        }
+        t.tick(&det(0.3, 0.3, 0.5, 0.5)); // age now == CONFIRM_AGE
+        assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Confirmed);
+    }
+
+    #[test]
+    fn recognised_user_becomes_id_locked() {
+        let mut t = PersonTracker::new();
+        t.register_user("Вадим");
+        for _ in 0..CONFIRM_AGE {
+            t.tick(&det_id(0.3, 0.3, 0.7, 0.7, "Вадим", 0.9));
+        }
+        let a = t.active().next().unwrap();
+        assert_eq!(a.display_id, 0, "holds the reserved id");
+        assert_eq!(a.lifecycle, LifecycleState::IdLocked);
+        assert!(a.lifecycle.is_established());
+    }
+
+    #[test]
+    fn confirmed_track_occludes_then_lost() {
+        let mut t = PersonTracker::new();
+        for _ in 0..CONFIRM_AGE { t.tick(&det(0.3, 0.3, 0.5, 0.5)); }
+        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Confirmed);
+        t.tick(&[]); // one miss
+        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Occluded);
+        for _ in 0..LOST_AFTER_MISSED { t.tick(&[]); } // long gap
+        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Lost);
+    }
+
+    #[test]
+    fn tentative_track_lost_on_first_miss() {
+        let mut t = PersonTracker::new();
+        t.tick(&det(0.3, 0.3, 0.5, 0.5)); // Tentative (age 1)
+        t.tick(&[]); // miss before confirming → Lost
+        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Lost);
+    }
+
+    #[test]
+    fn lifecycle_as_str_round_trips() {
+        assert_eq!(LifecycleState::Tentative.as_str(), "tentative");
+        assert_eq!(LifecycleState::Confirmed.as_str(), "confirmed");
+        assert_eq!(LifecycleState::IdLocked.as_str(), "id_locked");
+        assert_eq!(LifecycleState::Occluded.as_str(), "occluded");
+        assert_eq!(LifecycleState::Lost.as_str(), "lost");
+        assert!(!LifecycleState::Tentative.is_established());
+        assert!(LifecycleState::Confirmed.is_established());
+        assert!(LifecycleState::IdLocked.is_established());
+        assert!(!LifecycleState::Occluded.is_established());
     }
 }
