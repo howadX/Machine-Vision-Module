@@ -230,6 +230,10 @@ pub struct PersonTrack {
     /// by the track so motion needs no IoU round-trip. Updated by the tracker when
     /// a landmark-bearing observation is associated.
     pub motion: crate::motion::MotionTrack,
+    /// Temporal posture stabiliser (Tier 0.1): dwell + confidence gate over the
+    /// per-frame classifier label so a single bad frame can't flip the emitted
+    /// posture. The committed label feeds `posture`/`posture_confidence`.
+    pub posture_stab: crate::posture::PostureStabilizer,
 }
 
 impl PersonTrack {
@@ -269,6 +273,7 @@ impl PersonTrack {
             id_stable_count: 0,
             frames_since_emotion: u32::MAX, // never enriched → first sight needs emotion
             motion: crate::motion::MotionTrack::new(),
+            posture_stab: crate::posture::PostureStabilizer::default(),
         }
     }
 

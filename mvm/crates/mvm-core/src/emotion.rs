@@ -42,6 +42,25 @@ pub fn emotion_label(dist: &[f32; K]) -> (&'static str, f32) {
     (EMOTION_LABELS[idx], prob)
 }
 
+/// Normalised entropy at/above which an emotion label is too close to chance to
+/// emit (Tier 0.3). Uniform = 1.0; a genuine read peaks well below. Empirically a
+/// live near-chance distribution (peak ≈0.2 over 8 classes) sits at ≈0.97, while a
+/// clearly-read one (peak ≈0.4) sits at ≈0.85 — this threshold separates them.
+pub const EMOTION_MAX_ENTROPY: f32 = 0.90;
+
+/// argmax label + prob, but **only when the distribution is peaked enough to be
+/// informative** (Tier 0.3): returns `None` when normalised entropy is at/above
+/// [`EMOTION_MAX_ENTROPY`] (near-chance), so downstream never sees a meaningless
+/// label. The distribution itself is kept by the caller for anyone reading the
+/// raw signal.
+pub fn emotion_label_gated(dist: &[f32; K]) -> Option<(&'static str, f32)> {
+    if emotion_entropy(dist) >= EMOTION_MAX_ENTROPY {
+        None
+    } else {
+        Some(emotion_label(dist))
+    }
+}
+
 /// Temporal Product-of-Experts: fold a new observation into the accumulated
 /// prior via log-linear pooling with forgetting.
 ///
@@ -83,6 +102,37 @@ mod tests {
         let mut d = [0.01; K];
         d[7] = 0.93;
         assert_eq!(emotion_label(&d).0, "Surprise");
+    }
+
+    #[test]
+    fn gated_suppresses_near_chance() {
+        // The observed live near-chance: Fear peaks ~0.215, rest ~0.09–0.16.
+        // Normalised entropy ≈0.97 ≥ 0.90 → label suppressed.
+        let d = [0.085, 0.096, 0.092, 0.215, 0.086, 0.126, 0.128, 0.161];
+        assert!(emotion_entropy(&d) >= EMOTION_MAX_ENTROPY);
+        assert_eq!(emotion_label_gated(&d), None);
+    }
+
+    #[test]
+    fn gated_emits_clearly_peaked() {
+        // A confident read (peak ~0.93) is well below the entropy gate → emitted.
+        let mut d = [0.01; K];
+        d[4] = 0.93;
+        assert_eq!(emotion_label_gated(&d), Some(("Happiness", 0.93)));
+    }
+
+    #[test]
+    fn gated_emits_moderately_peaked() {
+        // Peak ~0.40 (entropy ≈0.85 < 0.90) is informative enough to keep.
+        let d = [0.044, 0.063, 0.074, 0.402, 0.046, 0.088, 0.118, 0.165];
+        assert!(emotion_entropy(&d) < EMOTION_MAX_ENTROPY);
+        assert_eq!(emotion_label_gated(&d).map(|(l, _)| l), Some("Fear"));
+    }
+
+    #[test]
+    fn gated_suppresses_uniform() {
+        let d = [1.0 / K as f32; K];
+        assert_eq!(emotion_label_gated(&d), None);
     }
 
     #[test]

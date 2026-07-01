@@ -16,11 +16,12 @@ pub mod emotion;
 pub mod world;
 pub mod motion;
 pub mod assignment;
+pub mod posture;
 
 pub use types::{BBox, Detection, PersonTrack, EntityKind, Entity, RelationKind, Relation, Scene};
 pub use motion::{Landmarks33, LandmarkHistory};
 pub use world::{WorldState, PersonState, ObjectState, Position3D, AudioEvent, Activity};
-pub use emotion::{EMOTION_LABELS, emotion_entropy, emotion_label, fuse_emotion_temporal};
+pub use emotion::{EMOTION_LABELS, EMOTION_MAX_ENTROPY, emotion_entropy, emotion_label, emotion_label_gated, fuse_emotion_temporal};
 pub use tracker::PersonTracker;
 pub use module::{Module, ModuleMetadata};
 pub use config::Config;

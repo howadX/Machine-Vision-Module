@@ -595,10 +595,22 @@ impl PersonTracker {
                     Some(prior) => crate::emotion::fuse_emotion_temporal(&prior, &obs, forget),
                     None => obs, // first observation seeds the prior
                 };
-                let (label, conf) = crate::emotion::emotion_label(&fused);
                 t.emotion_distribution = Some(fused);
-                t.emotion = Some(label.to_string());
-                t.emotion_confidence = Some(conf);
+                // Tier 0.3: emit the label only when the smoothed distribution is
+                // peaked enough to be informative. A near-chance read (entropy
+                // ≥ EMOTION_MAX_ENTROPY) suppresses the label — downstream sees no
+                // meaningless "Fear" — while the raw distribution is still kept
+                // above for callers that read the full signal.
+                match crate::emotion::emotion_label_gated(&fused) {
+                    Some((label, conf)) => {
+                        t.emotion = Some(label.to_string());
+                        t.emotion_confidence = Some(conf);
+                    }
+                    None => {
+                        t.emotion = None;
+                        t.emotion_confidence = None;
+                    }
+                }
             } else if det.emotion.is_some() {
                 t.emotion = det.emotion.clone();
                 t.emotion_confidence = det.emotion_confidence;
@@ -608,9 +620,21 @@ impl PersonTracker {
             if det.emotion_distribution.is_some() || det.emotion.is_some() {
                 t.frames_since_emotion = 0;
             }
-            if det.posture.is_some() {
-                t.posture = det.posture.clone();
-                t.posture_confidence = det.posture_confidence;
+            // Posture temporal stabiliser (Tier 0.1): route the per-frame label
+            // through dwell + confidence gate instead of writing it straight onto
+            // the track. A single bad frame (partial landmarks, borderline pose)
+            // no longer flips the emitted posture. Missing confidence reads as 0
+            // → treated as an ambiguous frame that holds the committed label.
+            if let Some(label) = &det.posture {
+                let conf = det.posture_confidence.unwrap_or(0.0);
+                // Tier 0.2: the pose VAE's own OOD verdict (already computed, only
+                // reported before) gates the label too — an "unusual" frame is
+                // treated as ambiguous. Absent plausibility (bridge path/tests)
+                // defaults to trusted.
+                let trusted = det.plausibility.as_deref() != Some("unusual");
+                t.posture_stab.observe(label, conf, trusted);
+                t.posture = t.posture_stab.label().map(str::to_string);
+                t.posture_confidence = t.posture_stab.confidence();
             }
             // Detection-provided 3D passthrough. Body-primary (pinhole = None): this
             // IS the final 3D, EMA-smoothed against the previous position to damp
