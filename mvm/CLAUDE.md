@@ -5,9 +5,9 @@
 
 ---
 
-## Статус (2026-07-01)
+## Статус (2026-07-02)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 361 тест зелёный**, release чист.
+- **Ветка:** `rust-core` (основная). **12 крейтов, 362 теста зелёных** (2 ignored), release чист.
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
 - **Фаза 9 — Tracker: 9.1–9.10 ЗАКРЫТЫ** (`+0 ONNX`) — **фаза завершена**. Закрыто:
   кинематика B1 (motion ring + `MotionClassifier` + жесты) → OCM/OCR (9.2) → lifecycle FSM (9.3) →
@@ -20,12 +20,24 @@
 - **Live-ревалидация 9 (1 чел., камера eye-level ~175см, ~горизонтальна):** idle/сидя — `id=0` lock 100%, motion idle↔walking
   + velocity в JSON. Ходьба — `id=0` держится 91% кадров (9.9), но детектор фрагментирует тело → краткие
   анон-мелькания остаются (**эмпирика для 10.7 person-масок**; см. память `walking-track-fragmentation`).
-- **Tier 0 — robustness позы/эмоции ЗАКРЫТ** (`+0 ONNX`, чистая арифметика; коммит `1f9caead`), **live-validated**:
-  0.1 `PostureStabilizer` (dwell+conf-гейт) + 0.2 OOD-гейт по VAE-`plausibility` → покадровый флип позы
-  снят (live: flip-rate 2%, длинные стабильные прогоны вместо `standing↔lying_side`); 0.3 гейт эмоции по
-  энтропии (≥0.90) → near-chance метка подавляется (live: 47/48 подавлено, `emotion_distribution` сохранён,
-  редкий уверенный кадр проходит). Лечит **симптом** #1/#2; корни (вход EmotiEffLib / точность позы) открыты.
-  Модули `mvm-core/posture.rs`, `emotion.rs::emotion_label_gated`.
+- **Pose-классификатор ПЕРЕПИСАН (method C, коммит `9308783c`)** — корень хвоста #2 закрыт по данным/методу.
+  Старый `PoseVAE→head` (переобучен на ~1137 самозаснятых кадрах) заменён на **инженерные вьюпойнт-инвариантные
+  фичи (14: наклоны торса/конечностей к гравитации, флексии суставов, extent/aspect) → RandomForest** (soft-vote,
+  `pose_rf_forest.bin` 873КБ) → **3 класса `standing/sitting/lying`** (экзотика `sitting_at_desk/lying_*/arms_crossed`
+  = артефакты мусорного файн-тюна, удалены). BlazePose-лендмарки (публичные) сохранены. VAE понижен до OOD-only
+  (`pose_vae_public.bin`, переобучен на публичных, seeded). Обучение — **только публичные данные** (URFD через наш
+  BlazePose + Zenodo MultiPosture); grouped 5-fold **0.959** на невиданных людях, азимут-ровно (сырые коорд.
+  рушились до 0.31 @az90). Спайк/тренер — `spike_pose/{spike_data,spike_feats,train_pose_p1}.py`, findings —
+  `spike_pose/spike_feature_findings.md`. Golden Rust↔Python бит-точен (`pose_p1_golden.in`). **Хвост:** остаётся
+  **домен-гэп** — публичная модель читает боевой desk-sitting как `lying` (тело согнуто/компактно, ноги под столом,
+  вне распределения публичного full-chair sitting); тест-оракул `pose_class_oracle_vs_python` `#[ignore]`, закрытие =
+  **файн-тюн со своей камеры** (отложенная фаза). См. память `pose-classifier-method-c-spike`.
+- **Tier 0 — robustness позы/эмоции** (`+0 ONNX`, чистая арифметика; коммит `1f9caead`), **live-validated**:
+  0.1 `PostureStabilizer` (dwell+conf-гейт) + 0.2 OOD-гейт по VAE-`plausibility` (порог `POSTURE_OOD_LOGPZ`
+  **перекалиброван 14.3→170** под новый публичный VAE, коммит `9308783c` — старый порог глушил ВСЮ постуру live);
+  0.3 гейт эмоции по энтропии (≥0.90) → near-chance метка подавляется (live: 47/48 подавлено). Позу теперь лечит
+  **по корню** method C (см. выше); Tier 0 остаётся темпоральным сглаживанием. Корень эмоции (#1, вход EmotiEffLib)
+  открыт. Модули `mvm-core/posture.rs`, `emotion.rs::emotion_label_gated`, `mvm-cli/pipeline.rs::plausibility_flag`.
 - **⚠️ Камера — eye-level (~175см, ~горизонтальна, `rotate_180=false`), НЕ потолок/45°.** Прежняя «потолочная»
   формулировка в доках была ошибочной (исправлено); симптомы #1/#2 — не от ракурса. Bridge всё ещё крутит
   `ROTATE_180` (legacy) → на upright-камере перевернёт кадр (код-хвост для bridge-пути).
@@ -58,7 +70,7 @@ per-signal confidence / интерпретируемо / per-agent заменя�
 
 ```
 frame → person_detection (ТЕЛО, первичный) → сущность/трек = ТЕЛО (NativePose::bodies)
-          ├─ BlazePose → 33 lm → PoseVAE → posture                 (всегда)
+          ├─ BlazePose → 33 lm → compute_features(14) → RandomForest → posture (всегда; VAE→OOD-гейт)
           ├─ торс-3D (плечи 11/12 → бёдра 23/24, torso_to_3d)       (всегда; gated на visibility ≥0.5)
           ├─ кисти: ROI из запястий BlazePose (15/16) → handpose 21 lm/рука (presence-gate)
           └─ YuNet (ЛИЦО) по кадру, матч к телу по НОСУ (lm[0] в face-bbox)
@@ -103,7 +115,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-detect** | YuNet ONNX (228KB, embed, multi-stride NMS) — лицо |
 | **mvm-identity** | SFace ONNX (37MB, 128d L2-эмбеддинг, gallery, `embed()`) |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |
-| **mvm-posture** | нативная BlazePose two-stage (детектор+поза) + PoseVAE/Classifier (порт, чистая арифметика); `NativePose` мульти-persona |
+| **mvm-posture** | нативная BlazePose two-stage (детектор+поза) + **feature→RandomForest** классификатор (method C, 3 класса) + VAE (OOD-only); `compute_features`/`pose_from_face`, `NativePose` мульти-persona |
 | **mvm-fusion** | `build_scene` (union-find граф+зоны) + `fuse()` PoE; activities + anomaly_score (8.F) |
 | **mvm-scene** | YOLO26n ONNX (9.5МБ, end-to-end NMS-free), object-узлы (id≥10000) + `ObjectTracker` [8.E] |
 | **mvm-depth** | Depth-Anything-V2-Small ONNX (квант 27МБ, ~230мс CPU), depth-anchoring к торс-Z [8.E.2] |
@@ -167,7 +179,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | # | Проблема | Статус |
 |---|----------|--------|
 | 1 | Эмоция near-chance: распределение почти равномерно (peak ≈0.16–0.22 vs uniform 0.125), метка слабоинформативна. **Причина НЕ в ракурсе** — камера eye-level (~175см, ~горизонтальна), лица фронтальны; под подозрением вход в EmotiEffLib (выравнивание/кроп/размер лица) или подлинная неоднозначность. Tier 0.3 **подавляет** near-chance метку (энтропия ≥0.90); downstream читает `emotion_conf`/entropy/распределение | 🟡 (симптом сглажен; корень открыт) |
-| 2 | Выброс позы `standing`↔`sitting_at_desk` (точность модели, #7.5.5; согласие native↔Python 5/7). **НЕ ракурс** (eye-level). Tier 0.1/0.2 **сглаживают** покадровый флип (dwell+conf+plausibility-гейт) | 🟡 (симптом сглажен; точность классификатора открыта) |
+| 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** — классификатор переписан на feature→RF, method C (коммит `9308783c`). **Остаточный домен-гэп:** публичная модель читает боевой **desk-sitting как `lying`** (согнут/компактен/ноги под столом — вне распределения публичного sitting); оракул `#[ignore]`. Закрытие = файн-тюн со своей камеры (отложено). | 🟡 (метод закрыт; домен-гэп до файн-тюна) |
 | 3 | `torso_length_m=0.5` не откалиброван рулеткой (абсолют 3D приблизителен) | 🟡 |
 | 4 | `fps` в StateFile = темп доставки, не обработки | 🟡 (семантика) |
 | 5 | Hand-ROI из запястья требует чёткого жеста (vis-gate 0.5: нет руки → нет контакта, консервативно) | 🟡 |
