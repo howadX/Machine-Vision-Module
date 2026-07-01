@@ -50,6 +50,12 @@ pub struct PostureStabilizer {
     dwell: u32,
     candidate: Option<String>,
     streak: u32,
+    /// Consecutive frames the posture was *withheld* upstream (body coverage
+    /// `upper`/`head` — the lower body is occluded, so no full-body claim is
+    /// possible). After `dwell` such frames the committed label is cleared:
+    /// a person who sat down behind a desk must not keep emitting the stale
+    /// `standing` they walked in with. Reset by any [`Self::observe`] call.
+    hidden_streak: u32,
 }
 
 impl Default for PostureStabilizer {
@@ -72,6 +78,7 @@ impl PostureStabilizer {
             dwell: dwell.max(1),
             candidate: None,
             streak: 0,
+            hidden_streak: 0,
         }
     }
 
@@ -91,6 +98,7 @@ impl PostureStabilizer {
     /// the (possibly unchanged) committed label. `trusted` is `false` when the
     /// pose VAE flagged the frame out-of-distribution (`plausibility` "unusual").
     pub fn observe(&mut self, label: &str, conf: f32, trusted: bool) -> Option<&str> {
+        self.hidden_streak = 0; // a per-frame label arrived → the body is visible again
         // Ambiguous frame — below the confidence gate OR flagged OOD by the pose
         // VAE. It never changes the committed label and breaks any pending streak,
         // so a flip needs confident, plausible, and consecutive evidence.
@@ -128,6 +136,24 @@ impl PostureStabilizer {
                     self.streak = 0;
                 }
             }
+        }
+        self.label.as_deref()
+    }
+
+    /// Fold one *hidden* frame (occlusion-aware posture): the upstream withheld
+    /// the posture because the body coverage was `upper`/`head` — the lower body
+    /// is occluded and no honest full-body claim exists. After `dwell`
+    /// consecutive hidden frames the committed label is **cleared** (a stale
+    /// `standing` must not survive sitting down behind a desk); a transient blip
+    /// (a fragment frame) shorter than the dwell leaves the label untouched.
+    pub fn observe_hidden(&mut self) -> Option<&str> {
+        self.candidate = self.label.clone();
+        self.streak = 0;
+        self.hidden_streak += 1;
+        if self.hidden_streak >= self.dwell {
+            self.label = None;
+            self.confidence = 0.0;
+            self.candidate = None;
         }
         self.label.as_deref()
     }
@@ -249,6 +275,59 @@ mod tests {
         s.observe("sitting", 0.9, true); // streak 1
         s.observe("sitting", 0.9, true); // streak 2 → not yet
         assert_eq!(s.label(), Some("standing"));
+    }
+
+    // ── occlusion-aware hidden frames (coverage upper/head) ─────────────────
+
+    #[test]
+    fn sustained_hidden_clears_stale_label() {
+        // Walked in standing → sat behind the desk (posture withheld upstream).
+        // After `dwell` hidden frames the stale `standing` is cleared.
+        let mut s = PostureStabilizer::new(0.5, 3);
+        s.observe("standing", 0.9, true);
+        s.observe_hidden();
+        s.observe_hidden();
+        assert_eq!(s.label(), Some("standing"), "below dwell → label holds");
+        s.observe_hidden();
+        assert_eq!(s.label(), None, "sustained occlusion → stale label cleared");
+        assert_eq!(s.confidence(), None);
+    }
+
+    #[test]
+    fn hidden_blip_does_not_clear() {
+        // A 1–2 frame fragment/occlusion blip must not wipe a good posture.
+        let mut s = PostureStabilizer::new(0.5, 3);
+        s.observe("sitting", 0.9, true);
+        s.observe_hidden();
+        s.observe_hidden();
+        s.observe("sitting", 0.9, true); // visible again → hidden streak resets
+        s.observe_hidden();
+        s.observe_hidden();
+        assert_eq!(s.label(), Some("sitting"), "interrupted hidden streak never clears");
+    }
+
+    #[test]
+    fn hidden_breaks_pending_flip_streak() {
+        // A hidden frame is ambiguous for flips too (like low-conf / OOD).
+        let mut s = PostureStabilizer::new(0.5, 3);
+        s.observe("standing", 0.9, true);
+        s.observe("sitting", 0.9, true); // streak 1
+        s.observe_hidden(); // resets the flip streak
+        s.observe("sitting", 0.9, true); // streak 1
+        s.observe("sitting", 0.9, true); // streak 2 → not yet
+        assert_eq!(s.label(), Some("standing"));
+    }
+
+    #[test]
+    fn rebootstrap_after_hidden_clear() {
+        // After a clear, the next confident sight bootstraps immediately.
+        let mut s = PostureStabilizer::new(0.5, 2);
+        s.observe("standing", 0.9, true);
+        s.observe_hidden();
+        s.observe_hidden(); // cleared
+        assert_eq!(s.label(), None);
+        s.observe("sitting", 0.9, true);
+        assert_eq!(s.label(), Some("sitting"), "first confident sight re-bootstraps");
     }
 
     #[test]

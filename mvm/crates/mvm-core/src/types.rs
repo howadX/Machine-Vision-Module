@@ -52,6 +52,15 @@ pub struct Detection {
     // Posture quality
     pub recon_error: Option<f32>,
     pub plausibility: Option<String>,
+    /// Body-visibility regime ("full"/"upper"/"head") — occlusion-aware posture.
+    /// `upper`/`head` mean the lower body was NOT seen (desk, furniture, frame
+    /// edge), so `posture` is withheld upstream and downstream must not assume a
+    /// full-body claim. None on paths that don't compute it (bridge, face-only).
+    pub body_coverage: Option<&'static str>,
+    /// 2D image-plane torso attitude ("upright"/"inclined"/"horizontal") — the
+    /// occlusion-robust orientation signal that flows even when `posture` is
+    /// withheld. None when not computed.
+    pub torso_attitude: Option<&'static str>,
     /// Full softmax distribution over 8 emotion classes (from Rust ONNX model).
     /// None when coming from Python bridge (which only passes label+conf).
     pub emotion_distribution: Option<[f32; 8]>,
@@ -71,6 +80,7 @@ impl Detection {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None,
             emotion_distribution: None,
             embedding: None,
         }
@@ -195,6 +205,11 @@ pub struct PersonTrack {
     /// Posture quality.
     pub recon_error: Option<f32>,
     pub plausibility: Option<String>,
+    /// Latest body-visibility regime ("full"/"upper"/"head") — see
+    /// [`Detection::body_coverage`]. Latest snapshot, like `plausibility`.
+    pub body_coverage: Option<&'static str>,
+    /// Latest 2D torso attitude ("upright"/"inclined"/"horizontal").
+    pub torso_attitude: Option<&'static str>,
     /// EMA state for native depth smoothing (phase 6.2). None until first native 3D estimate.
     pub depth_ema: Option<crate::space::DepthEma>,
     /// Latest emotion distribution from Rust model (8 classes). Used by temporal PoE (6.4b).
@@ -262,6 +277,8 @@ impl PersonTrack {
             ws_confidence: None,
             recon_error: None,
             plausibility: None,
+            body_coverage: None,
+            torso_attitude: None,
             depth_ema: None,
             emotion_distribution: None,
             embedding: None,

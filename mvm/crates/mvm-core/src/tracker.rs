@@ -642,6 +642,16 @@ impl PersonTracker {
                 t.posture_stab.observe(label, conf, trusted);
                 t.posture = t.posture_stab.label().map(str::to_string);
                 t.posture_confidence = t.posture_stab.confidence();
+            } else if matches!(det.body_coverage, Some("upper") | Some("head")) {
+                // Occlusion-aware posture: the upstream *withheld* the label
+                // because the lower body was not seen (desk/furniture/frame
+                // edge) — a hidden frame. Sustained occlusion (dwell) clears the
+                // committed label so a stale full-body claim (e.g. `standing`
+                // from before sitting down at the desk) never outlives what the
+                // camera can actually attest. A short blip leaves it untouched.
+                t.posture_stab.observe_hidden();
+                t.posture = t.posture_stab.label().map(str::to_string);
+                t.posture_confidence = t.posture_stab.confidence();
             }
             // Detection-provided 3D passthrough. Body-primary (pinhole = None): this
             // IS the final 3D, EMA-smoothed against the previous position to damp
@@ -661,6 +671,8 @@ impl PersonTracker {
             }
             if det.recon_error.is_some() { t.recon_error = det.recon_error; }
             if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
+            if det.body_coverage.is_some() { t.body_coverage = det.body_coverage; }
+            if det.torso_attitude.is_some() { t.torso_attitude = det.torso_attitude; }
         } // mutable borrow drops
 
         // ── Part B: native 3D (phase 6.2) — two-step borrow ────────────────
@@ -768,7 +780,8 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
         }]
     }
@@ -879,7 +892,8 @@ mod tests {
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
         }];
         t.tick(&enriched);
@@ -887,6 +901,42 @@ mod tests {
         assert_eq!(active[0].identity.as_deref(), Some("Вадим"));
         assert_eq!(active[0].emotion.as_deref(), Some("Neutral"));
         assert_eq!(active[0].posture.as_deref(), Some("сидит"));
+    }
+
+    #[test]
+    fn sustained_upper_coverage_clears_stale_posture() {
+        // Occlusion-aware posture: walked in standing (Full coverage), then sat
+        // behind the desk — the pipeline withholds `posture` and reports
+        // `body_coverage: "upper"`. After the stabiliser's dwell the stale
+        // `standing` is cleared; coverage/attitude keep flowing as snapshots.
+        let mut t = PersonTracker::new();
+        let full = Detection {
+            posture: Some("standing".into()),
+            posture_confidence: Some(0.9),
+            body_coverage: Some("full"),
+            torso_attitude: Some("upright"),
+            ..Detection::bare(0.3, 0.3, 0.7, 0.7)
+        };
+        t.tick(std::slice::from_ref(&full));
+        assert_eq!(t.active().next().unwrap().posture.as_deref(), Some("standing"));
+
+        let upper = Detection {
+            body_coverage: Some("upper"),
+            torso_attitude: Some("upright"),
+            ..Detection::bare(0.3, 0.3, 0.7, 0.7)
+        };
+        t.tick(std::slice::from_ref(&upper)); // hidden 1
+        t.tick(std::slice::from_ref(&upper)); // hidden 2
+        assert_eq!(
+            t.active().next().unwrap().posture.as_deref(),
+            Some("standing"),
+            "below dwell the committed label holds (blip protection)"
+        );
+        t.tick(std::slice::from_ref(&upper)); // hidden 3 → cleared
+        let tr = t.active().next().unwrap();
+        assert_eq!(tr.posture, None, "sustained occlusion clears the stale claim");
+        assert_eq!(tr.body_coverage, Some("upper"));
+        assert_eq!(tr.torso_attitude, Some("upright"));
     }
 
     #[test]
@@ -899,7 +949,8 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
         }]);
         t.tick(&[Detection {
@@ -909,7 +960,8 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
         }]);
         let active: Vec<_> = t.active().collect();
@@ -926,7 +978,8 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
         }]);
         t.tick(&[Detection {
@@ -935,7 +988,8 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
         }]);
         let active: Vec<_> = t.active().collect();
@@ -1142,7 +1196,8 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
         }]
     }
@@ -1533,6 +1588,7 @@ mod tests {
             posture_confidence: Some(0.95),
             distance: Some(1.5), position_x: Some(0.1), position_y: Some(0.2), position_z: Some(1.5),
             ws_confidence: Some(0.8), recon_error: Some(0.01), plausibility: Some("normal".into()),
+            body_coverage: None, torso_attitude: None,
             emotion_distribution: None, embedding: Some(vec![1.0, 0.0, 0.0]),
         };
 

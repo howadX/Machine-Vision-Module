@@ -142,6 +142,8 @@ impl Camera {
             ws_confidence: d.ws_confidence,
             recon_error: d.recon_error,
             plausibility: d.plausibility,
+            body_coverage: None, // bridge path does not compute the occlusion regime
+            torso_attitude: None,
             emotion_distribution: None, // Python bridge doesn't output distributions
             embedding: None,            // native SFace embedding attached in mvm-cli enrichment
         }).collect())

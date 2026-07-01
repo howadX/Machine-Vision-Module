@@ -49,6 +49,13 @@ pub struct PersonState {
     /// detected hand). Empty when the hand model found none. Filled by the agent
     /// after tracking — `from_track` leaves it empty.
     pub hands: Vec<Vec<[f32; 2]>>,
+    /// Body-visibility regime ("full"/"upper"/"head") — occlusion-aware posture.
+    /// `upper`/`head` mean the lower body was not seen, so `posture` may honestly
+    /// be `None`; fusion reads this (with `torso_attitude` + context) instead.
+    pub body_coverage: Option<&'static str>,
+    /// 2D image-plane torso attitude ("upright"/"inclined"/"horizontal") — flows
+    /// even when `posture` is withheld under occlusion.
+    pub torso_attitude: Option<&'static str>,
     /// Coarse locomotion state read straight off the track (phase 9.8): `"idle"` /
     /// `"moving"`. `None` until the motion ring has committed a state (`Unknown`).
     pub motion_state: Option<&'static str>,
@@ -84,6 +91,8 @@ impl PersonState {
             // from the per-body pose/hand data (see `project_people`).
             wrists: Vec::new(),
             hands: Vec::new(),
+            body_coverage: t.body_coverage,
+            torso_attitude: t.torso_attitude,
             // Motion comes straight off the track (phase 9.8) — no round-trip.
             // Emit a committed state only (skip the startup `Unknown`).
             motion_state: match t.motion.state() {

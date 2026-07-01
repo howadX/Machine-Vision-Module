@@ -23,6 +23,105 @@ pub struct PoseResult {
     pub probs: [f32; N_CLASS],  // [lying, sitting, standing]
     pub recon_error: f32,       // VAE reconstruction MSE (anomaly)
     pub plausibility: f32,      // log_prob_z surprise; lower = more familiar
+    /// Body-visibility regime this frame (occlusion-aware posture): which parts
+    /// of the body BlazePose actually *saw*. Gates how much of the RF label the
+    /// pipeline may claim — see [`BodyCoverage`].
+    pub coverage: BodyCoverage,
+    /// 2D image-plane torso attitude ("upright"/"inclined"/"horizontal") — the
+    /// occlusion-robust orientation signal (see [`torso_attitude_2d`]).
+    pub attitude: &'static str,
+}
+
+// ── Occlusion-aware body coverage + torso attitude ───────────────────────────
+//
+// Target deployments (home/lab/robotics) occlude the lower body routinely: a
+// desk, a workbench, furniture, the frame edge. BlazePose then *hallucinates*
+// knee/ankle coordinates (their visibility collapses), and the leg-dependent
+// features feed the RF garbage — measured on the owner's desk frames this read
+// desk-sitting as confident `lying` (P(sitting) ≤ 0.12 on all 7 references).
+// Rather than fine-tune the classifier to guess from hallucinated joints, the
+// pipeline is honest about what was seen: coverage names the regime, and in
+// `Upper` the posture label is withheld (attitude still flows).
+//
+// Thresholds are calibrated on measured distributions (2026-07-02):
+//   lower_vis (mean vis of knees 25/26 + ankles 27/28):
+//     desk-sitting 0.29–0.40, desk-standing 0.30–0.53 → Upper at < 0.5
+//     URFD full-body p50 ≈ 0.8 (standing p5 = 0.47)   → Full at ≥ 0.5
+//   2D torso attitude (image-plane angle to image-up; camera ~horizontal so
+//   image-y ≈ gravity; the 3D angle is unusable here — BlazePose z on a
+//   truncated body read 55–66° even for an upright subject):
+//     desk (sitting+standing) 10.1–17.5° → upright < 30°
+//     URFD lying p50 = 89°               → horizontal > 60°
+
+/// Which parts of the body were actually visible to BlazePose this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyCoverage {
+    /// Lower body visible → the full 14-feature RF label is trustworthy.
+    Full,
+    /// Hips visible but knees/ankles are not (desk, furniture, frame edge) —
+    /// leg features are hallucinated, so the RF label must not be claimed as-is.
+    Upper,
+    /// Even the hips are invisible — only presence/identity/emotion are safe.
+    Head,
+}
+
+impl BodyCoverage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BodyCoverage::Full => "full",
+            BodyCoverage::Upper => "upper",
+            BodyCoverage::Head => "head",
+        }
+    }
+}
+
+/// `Full` requires mean knee+ankle visibility at/above this.
+pub const COVERAGE_LOWER_VIS: f32 = 0.5;
+/// Below this mean hip visibility the coverage degrades to `Head`.
+pub const COVERAGE_HIP_VIS: f32 = 0.5;
+/// 2D torso angle below this (degrees to image-up) reads "upright".
+pub const ATTITUDE_UPRIGHT_DEG: f32 = 30.0;
+/// 2D torso angle above this reads "horizontal" (lying / fallen).
+pub const ATTITUDE_HORIZONTAL_DEG: f32 = 60.0;
+
+/// Classify the body-visibility regime from landmark visibilities (pure
+/// arithmetic): hips 23/24, knees 25/26, ankles 27/28.
+pub fn coverage_from_vis(lm: &[[f32; 4]; 33]) -> BodyCoverage {
+    let hip_vis = (lm[23][3] + lm[24][3]) / 2.0;
+    if hip_vis < COVERAGE_HIP_VIS {
+        return BodyCoverage::Head;
+    }
+    let lower_vis = (lm[25][3] + lm[26][3] + lm[27][3] + lm[28][3]) / 4.0;
+    if lower_vis < COVERAGE_LOWER_VIS {
+        BodyCoverage::Upper
+    } else {
+        BodyCoverage::Full
+    }
+}
+
+/// 2D image-plane torso attitude: the angle of hip-center → shoulder-center
+/// against image-up. The camera is ~horizontal (eye-level), so image-y ≈
+/// gravity, and — unlike the 3D torso inclination — this ignores BlazePose z,
+/// which is unreliable on a truncated (occluded) body. Degenerate torso reads
+/// "upright" (same convention as `ang_to_vert` for a zero vector).
+pub fn torso_attitude_2d(lm: &[[f32; 4]; 33]) -> &'static str {
+    let hip = [(lm[23][0] + lm[24][0]) / 2.0, (lm[23][1] + lm[24][1]) / 2.0];
+    let sh = [(lm[11][0] + lm[12][0]) / 2.0, (lm[11][1] + lm[12][1]) / 2.0];
+    let v = [sh[0] - hip[0], sh[1] - hip[1]];
+    let n = (v[0] * v[0] + v[1] * v[1]).sqrt();
+    let deg = if n < 1e-6 {
+        0.0
+    } else {
+        // image-up = (0,-1) → cos = -v_y / |v|
+        (-v[1] / n).clamp(-1.0, 1.0).acos().to_degrees()
+    };
+    if deg < ATTITUDE_UPRIGHT_DEG {
+        "upright"
+    } else if deg > ATTITUDE_HORIZONTAL_DEG {
+        "horizontal"
+    } else {
+        "inclined"
+    }
 }
 
 /// A dense layer y = x·Wᵀ + b. `w` is row-major [out][in] (PyTorch convention).
@@ -244,6 +343,8 @@ impl PoseHead {
             probs,
             recon_error: mse,
             plausibility: logpz,
+            coverage: coverage_from_vis(landmarks),
+            attitude: torso_attitude_2d(landmarks),
         }
     }
 }
@@ -485,6 +586,93 @@ mod tests {
                     "feat[{k}] {} vs golden {}", feat[k], feat_g[k]);
             }
         }
+    }
+
+    // ── occlusion-aware coverage + attitude ─────────────────────────────────
+
+    /// A landmark set with a given upright torso and per-group visibilities.
+    /// Geometry: shoulders at y=0.35, hips at y=0.60 (upright in image coords).
+    fn lm_with_vis(hip_vis: f32, knee_vis: f32, ankle_vis: f32) -> [[f32; 4]; 33] {
+        let mut lm = [[0.5f32, 0.5, 0.0, 0.9]; 33];
+        lm[11] = [0.45, 0.35, 0.0, 0.95];
+        lm[12] = [0.55, 0.35, 0.0, 0.95];
+        lm[23] = [0.46, 0.60, 0.0, hip_vis];
+        lm[24] = [0.54, 0.60, 0.0, hip_vis];
+        lm[25] = [0.46, 0.75, 0.0, knee_vis];
+        lm[26] = [0.54, 0.75, 0.0, knee_vis];
+        lm[27] = [0.46, 0.90, 0.0, ankle_vis];
+        lm[28] = [0.54, 0.90, 0.0, ankle_vis];
+        lm
+    }
+
+    #[test]
+    fn coverage_full_when_legs_visible() {
+        // URFD-like full body: lower_vis ≈ 0.8 (measured p50).
+        let lm = lm_with_vis(0.99, 0.8, 0.8);
+        assert_eq!(coverage_from_vis(&lm), BodyCoverage::Full);
+    }
+
+    #[test]
+    fn coverage_upper_on_measured_desk_profile() {
+        // The owner's desk frames (measured 2026-07-02): hips ~1.0, knees ~0.5,
+        // ankles ~0.2 → lower_vis 0.35 → Upper (legs are hallucinated).
+        let lm = lm_with_vis(1.0, 0.5, 0.2);
+        assert_eq!(coverage_from_vis(&lm), BodyCoverage::Upper);
+    }
+
+    #[test]
+    fn coverage_head_when_hips_invisible() {
+        let lm = lm_with_vis(0.2, 0.1, 0.1);
+        assert_eq!(coverage_from_vis(&lm), BodyCoverage::Head);
+    }
+
+    #[test]
+    fn attitude_upright_for_vertical_torso() {
+        // Shoulders directly above hips (0° to image-up) → upright.
+        let lm = lm_with_vis(1.0, 0.8, 0.8);
+        assert_eq!(torso_attitude_2d(&lm), "upright");
+    }
+
+    #[test]
+    fn attitude_horizontal_for_lying_torso() {
+        // Shoulders level with hips, displaced in x (90°) → horizontal.
+        let mut lm = lm_with_vis(1.0, 0.8, 0.8);
+        lm[11] = [0.75, 0.59, 0.0, 0.95];
+        lm[12] = [0.75, 0.61, 0.0, 0.95];
+        lm[23] = [0.30, 0.59, 0.0, 0.9];
+        lm[24] = [0.30, 0.61, 0.0, 0.9];
+        assert_eq!(torso_attitude_2d(&lm), "horizontal");
+    }
+
+    #[test]
+    fn attitude_inclined_between_thresholds() {
+        // 45° torso: dx = dy → inclined.
+        let mut lm = lm_with_vis(1.0, 0.8, 0.8);
+        lm[11] = [0.65, 0.40, 0.0, 0.95];
+        lm[12] = [0.65, 0.40, 0.0, 0.95];
+        lm[23] = [0.45, 0.60, 0.0, 0.9];
+        lm[24] = [0.45, 0.60, 0.0, 0.9];
+        assert_eq!(torso_attitude_2d(&lm), "inclined");
+    }
+
+    #[test]
+    fn attitude_degenerate_torso_reads_upright() {
+        // Shoulders collapsed onto hips (zero torso) → "upright" by convention.
+        let mut lm = lm_with_vis(1.0, 0.8, 0.8);
+        for k in [11usize, 12, 23, 24] {
+            lm[k] = [0.5, 0.5, 0.0, 0.9];
+        }
+        assert_eq!(torso_attitude_2d(&lm), "upright");
+    }
+
+    #[test]
+    fn classify_carries_coverage_and_attitude() {
+        // The full chain surfaces the regime alongside the RF label.
+        let head = PoseHead::load();
+        let (input, ..) = &GOLDEN[0];
+        let r = head.classify(input);
+        assert!(["full", "upper", "head"].contains(&r.coverage.as_str()));
+        assert!(["upright", "inclined", "horizontal"].contains(&r.attitude));
     }
 
     #[test]

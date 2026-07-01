@@ -434,17 +434,17 @@ mod tests {
         assert!(hip_y > sh_y, "hips should be below shoulders in image coords");
     }
 
-    #[ignore = "domain gap: the p_V references are the owner's desk-sitting frames (heavily bent, \
-                compact, legs half-occluded) which the PUBLIC-data RF confuses with lying — desk-sitting \
-                is out-of-distribution vs the public full-chair sitting it trained on. Not a port bug \
-                (golden parity + grouped-CV 0.959 pass). Re-enable/retune at the deferred own-camera \
-                fine-tune phase, which will add exactly these poses. Run manually: records ~3/7."]
     #[test]
-    fn pose_class_oracle_vs_python() {
-        // P1 oracle: full native chain (BlazePose → geometric features → RF) vs HUMAN
-        // ground truth on the committed references, in the standard taxonomy
-        // (standing/sitting/lying; the old sitting_at_desk collapses to sitting).
-        // Gate: ≥5/7 exact agreement over all 7 detected+classified.
+    fn pose_class_oracle_desk_occlusion_contract() {
+        // Occlusion-aware oracle on the owner's desk references. These frames are
+        // the live desk framing: legs behind the desk (measured ankle vis
+        // 0.09–0.51), where the public-data RF used to read sitting as confident
+        // `lying` (the old ≥5/7 label oracle was #[ignore]'d on exactly this).
+        // The honest contract replaces label agreement:
+        //   - every frame detects + classifies;
+        //   - a frame is EITHER Full coverage with the correct human label,
+        //     OR Upper coverage with an upright torso (posture withheld);
+        //   - the claimable label is NEVER a false `lying` — the desk bug.
         let golden: [(&str, &str); 7] = [
             ("p_V_01.jpg", "sitting"),
             ("p_V_02.jpg", "standing"),
@@ -454,20 +454,42 @@ mod tests {
             ("p_V_06.jpg", "sitting"),
             ("p_V_07.jpg", "sitting"),
         ];
+        // Mirror of the pipeline's occlusion-aware claim gate (mvm-cli
+        // `posture_claimable`) — mvm-posture cannot depend on mvm-cli.
+        let claim = |r: &PoseResult| -> Option<&'static str> {
+            use classifier::BodyCoverage as C;
+            if r.label == "lying" && r.attitude == "upright" {
+                return None; // physically inconsistent — hallucinated-leg artifact
+            }
+            match r.coverage {
+                C::Full => Some(r.label),
+                C::Upper if r.label == "lying" && r.attitude == "horizontal" => Some("lying"),
+                _ => None,
+            }
+        };
         let mut np = NativePose::init(&test_config()).unwrap();
         let refdir = test_config().models_path.join("references");
-        let (mut detected, mut agree) = (0, 0);
-        for (file, py) in golden {
+        let mut detected = 0;
+        for (file, human) in golden {
             let img = image::open(refdir.join(file)).unwrap();
-            if let Some(r) = np.poses(&img).unwrap().first() {
-                detected += 1;
-                if r.label == py {
-                    agree += 1;
-                }
-            }
+            let poses = np.poses(&img).unwrap();
+            let Some(r) = poses.first() else { continue };
+            detected += 1;
+            let claimed = claim(r);
+            // The bug this architecture closes: no desk frame may claim `lying`
+            // (the subject is upright at the desk in all seven).
+            assert_ne!(claimed, Some("lying"), "{file}: false lying claim (was the live desk bug)");
+            // Honest contract: a claim, if made, must match the human label;
+            // withholding (None — legs occluded, sitting-vs-standing unknowable)
+            // is never a lie. The desk subject is upright in every frame, so the
+            // attitude must corroborate that too.
+            assert!(
+                claimed.is_none() || claimed == Some(human),
+                "{file}: wrong claim {claimed:?} (human {human})"
+            );
+            assert_eq!(r.attitude, "upright", "{file}: desk subject torso is upright");
         }
         assert_eq!(detected, 7, "native pose should detect+classify all 7 references, got {detected}");
-        assert!(agree >= 5, "class agreement {agree}/7 below the ≥5/7 oracle gate");
     }
 
     #[test]

@@ -124,6 +124,8 @@ mod tests {
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
+            body_coverage: None,
+            torso_attitude: None,
             motion_state: None,
             velocity: None,
             last_seen: now,

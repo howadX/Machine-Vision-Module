@@ -130,6 +130,8 @@ impl YunetDetector {
                     ws_confidence: None,
                     recon_error: None,
                     plausibility: None,
+                    body_coverage: None,
+                    torso_attitude: None,
                     emotion_distribution: None,
                     embedding: None,
                 });

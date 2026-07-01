@@ -88,6 +88,15 @@ struct JsonFace {
     posture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     posture_conf: Option<f32>,
+    /// Body-visibility regime ("full"/"upper"/"head") — occlusion-aware posture.
+    /// With "upper"/"head" the lower body was NOT seen and `posture` is honestly
+    /// absent; read `torso_attitude` + fusion activities instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body_coverage: Option<&'static str>,
+    /// 2D torso attitude ("upright"/"inclined"/"horizontal") — flows even when
+    /// `posture` is withheld under occlusion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    torso_attitude: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     dist_m: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -201,6 +210,8 @@ fn person_to_json_face(p: &mvm_core::PersonState) -> JsonFace {
         bbox_h: p.bbox.y2 - p.bbox.y1,
         posture: p.posture.as_ref().map(|(s, _)| s.clone()),
         posture_conf: p.posture.as_ref().map(|(_, c)| *c),
+        body_coverage: p.body_coverage,
+        torso_attitude: p.torso_attitude,
         dist_m: p.position_3d.map(|q| q.z),
         pos: p.position_3d.map(|q| [q.x, q.y, q.z]),
         motion: p.motion_state,
@@ -345,6 +356,14 @@ impl StateFile {
                 lines.push(format!("  - age: {} frames", t.age));
                 lines.push(format!("  - emotion: {emotion}{emo_conf}"));
                 lines.push(format!("  - posture: {posture}{pos_conf}"));
+                // Occlusion-aware regime: name what the camera actually saw when
+                // the lower body is occluded (posture is then honestly "—").
+                if let Some(cov) = t.body_coverage {
+                    if cov != "full" {
+                        let att = t.torso_attitude.unwrap_or("?");
+                        lines.push(format!("  - body_coverage: {cov} (torso {att})"));
+                    }
+                }
                 if let Some(d) = t.distance {
                     lines.push(format!("  - distance: {d:.2}"));
                 }
@@ -471,6 +490,8 @@ impl StateFile {
                 emotion_distribution: t.emotion_distribution,
                 posture: t.posture.clone(),
                 posture_conf: t.posture_confidence,
+                body_coverage: t.body_coverage,
+                torso_attitude: t.torso_attitude,
                 dist_m: t.distance,
                 pos,
                 bbox_h: t.bbox.y2 - t.bbox.y1,
@@ -584,6 +605,13 @@ impl StateFile {
                 ));
                 lines.push(format!("  - emotion: {emotion}{emo_conf}"));
                 lines.push(format!("  - posture: {posture}{pos_conf}"));
+                // Occlusion-aware regime (mirrors the sync-path StateFile).
+                if let Some(cov) = p.body_coverage {
+                    if cov != "full" {
+                        let att = p.torso_attitude.unwrap_or("?");
+                        lines.push(format!("  - body_coverage: {cov} (torso {att})"));
+                    }
+                }
                 if let Some(q) = p.position_3d {
                     lines.push(format!("  - distance: {:.2}", q.z));
                     lines.push(format!("  - position: ({:.2}, {:.2}, {:.2})m", q.x, q.y, q.z));
@@ -806,6 +834,8 @@ mod tests {
             ws_confidence: None,
             recon_error: None,
             plausibility: None,
+            body_coverage: None,
+            torso_attitude: None,
             emotion_distribution: None, embedding: None,
         }]);
 
@@ -867,6 +897,8 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
+                body_coverage: None,
+                torso_attitude: None,
                 emotion_distribution: None, embedding: None,
             },
             Detection {
@@ -889,6 +921,8 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
+                body_coverage: None,
+                torso_attitude: None,
                 emotion_distribution: None, embedding: None,
             },
         ]);
@@ -985,6 +1019,8 @@ mod tests {
             ws_confidence: Some(0.9),
             recon_error: None,
             plausibility: None,
+            body_coverage: None,
+            torso_attitude: None,
             emotion_distribution: None, embedding: None,
         }]);
         let line = sf.to_json_line(&tracker, 29.9, &[]);
@@ -1096,7 +1132,8 @@ mod tests {
             emotion_confidence: Some(0.80),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None, embedding: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
         }]);
         let debug = vec![EmotionDebugEntry {
             id: 0,
@@ -1128,7 +1165,8 @@ mod tests {
             emotion: Some("Sadness".into()), emotion_confidence: Some(0.6),
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, emotion_distribution: None, embedding: None,
+            ws_confidence: None, recon_error: None, plausibility: None,
+            body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
         }]);
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -1148,6 +1186,8 @@ mod tests {
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
+            body_coverage: None,
+            torso_attitude: None,
             motion_state: None,
             velocity: None,
             last_seen: std::time::Instant::now(),

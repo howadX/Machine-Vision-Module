@@ -7,7 +7,7 @@
 
 ## Статус (2026-07-02)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 362 теста зелёных** (2 ignored), release чист.
+- **Ветка:** `rust-core` (основная). **12 крейтов, 389 тестов зелёных** (1 ignored — hardware live-camera), release чист.
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
 - **Фаза 9 — Tracker: 9.1–9.10 ЗАКРЫТЫ** (`+0 ONNX`) — **фаза завершена**. Закрыто:
   кинематика B1 (motion ring + `MotionClassifier` + жесты) → OCM/OCR (9.2) → lifecycle FSM (9.3) →
@@ -28,10 +28,24 @@
   (`pose_vae_public.bin`, переобучен на публичных, seeded). Обучение — **только публичные данные** (URFD через наш
   BlazePose + Zenodo MultiPosture); grouped 5-fold **0.959** на невиданных людях, азимут-ровно (сырые коорд.
   рушились до 0.31 @az90). Спайк/тренер — `spike_pose/{spike_data,spike_feats,train_pose_p1}.py`, findings —
-  `spike_pose/spike_feature_findings.md`. Golden Rust↔Python бит-точен (`pose_p1_golden.in`). **Хвост:** остаётся
-  **домен-гэп** — публичная модель читает боевой desk-sitting как `lying` (тело согнуто/компактно, ноги под столом,
-  вне распределения публичного full-chair sitting); тест-оракул `pose_class_oracle_vs_python` `#[ignore]`, закрытие =
-  **файн-тюн со своей камеры** (отложенная фаза). См. память `pose-classifier-method-c-spike`.
+  `spike_pose/spike_feature_findings.md`. Golden Rust↔Python бит-точен (`pose_p1_golden.in`).
+- **Occlusion-aware posture — desk-гэп ЗАКРЫТ АРХИТЕКТУРНО, БЕЗ файн-тюна** (`+0 ONNX`, чистая арифметика).
+  Диагноз (замер 2026-07-02 на 7 боевых desk-кадрах `p_V`): при сидении за столом ноги реально не видны
+  BlazePose'у (ankle vis 0.09–0.51 vs full-body p50≈0.8), лег-фичи галлюцинируются → RF читает desk-sitting
+  как уверенный `lying` (P(sitting)≤0.12). Вывод: не файн-тюнить угадывание по мусорным суставам, а **не
+  утверждать то, что камера не видела**. Реализация: `mvm-posture/classifier.rs` — `BodyCoverage{Full,Upper,Head}`
+  (`coverage_from_vis`, порог lower_vis 0.5) + `torso_attitude_2d` (2D-наклон торса в плоскости кадра — image-y≈
+  гравитация; 3D `torso_inc` тут мусор, даёт 55–66° и стоя, и сидя на обрезанном теле). Гейт claim'а —
+  `mvm-cli/pipeline.rs::posture_claimable`: Full→как раньше; Upper→метка **withheld** (кроме safety-`lying` при
+  `attitude=horizontal`); Head→ничего; кросс-чек: `lying`+upright **невозможен** физически → отвергается на всех
+  coverage. Сохранена честность: `body_coverage`/`torso_attitude` + recon/plausibility **всегда** в Scene JSON.
+  `PostureStabilizer::observe_hidden` (dwell) **чистит stale-метку** при устойчивом Upper (сел за стол — `standing`
+  не переживает). Fusion (`agents/fusion.rs`) даёт контекст реляционно: `seated_at_workstation` (Upper+upright+
+  не-moving рядом с desk-объектом) и `partially_in_frame` (bbox у края кадра). sitting-vs-standing без ног
+  **сознательно не утверждается** — это вывод fusion, не класс. Оракул `pose_class_oracle_desk_occlusion_contract`
+  **переписан и включён** (не `#[ignore]`): 7/7 detect, ни одного ложного `lying`, claim⇒верен-или-withheld.
+  Файн-тюн со своей камеры **отменён как ненужный** (опционален для тонкого sitting/standing за столом — отдельный
+  спайк). См. память `pose-classifier-method-c-spike`.
 - **Tier 0 — robustness позы/эмоции** (`+0 ONNX`, чистая арифметика; коммит `1f9caead`), **live-validated**:
   0.1 `PostureStabilizer` (dwell+conf-гейт) + 0.2 OOD-гейт по VAE-`plausibility` (порог `POSTURE_OOD_LOGPZ`
   **перекалиброван 14.3→170** под новый публичный VAE, коммит `9308783c` — старый порог глушил ВСЮ постуру live);
@@ -179,7 +193,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | # | Проблема | Статус |
 |---|----------|--------|
 | 1 | Эмоция near-chance: распределение почти равномерно (peak ≈0.16–0.22 vs uniform 0.125), метка слабоинформативна. **Причина НЕ в ракурсе** — камера eye-level (~175см, ~горизонтальна), лица фронтальны; под подозрением вход в EmotiEffLib (выравнивание/кроп/размер лица) или подлинная неоднозначность. Tier 0.3 **подавляет** near-chance метку (энтропия ≥0.90); downstream читает `emotion_conf`/entropy/распределение | 🟡 (симптом сглажен; корень открыт) |
-| 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** — классификатор переписан на feature→RF, method C (коммит `9308783c`). **Остаточный домен-гэп:** публичная модель читает боевой **desk-sitting как `lying`** (согнут/компактен/ноги под столом — вне распределения публичного sitting); оракул `#[ignore]`. Закрытие = файн-тюн со своей камеры (отложено). | 🟡 (метод закрыт; домен-гэп до файн-тюна) |
+| 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** (method C, `9308783c`). Остаточный desk-гэп (публичная модель читала desk-sitting как `lying`, ноги под столом) **закрыт архитектурно, occlusion-aware, БЕЗ файн-тюна**: `BodyCoverage`+2D-attitude → метка withheld в Upper-режиме, `lying`+upright отвергается, fusion даёт `seated_at_workstation` реляционно; оракул переписан и включён. | ✅ (occlusion-aware; файн-тюн отменён как ненужный) |
 | 3 | `torso_length_m=0.5` не откалиброван рулеткой (абсолют 3D приблизителен) | 🟡 |
 | 4 | `fps` в StateFile = темп доставки, не обработки | 🟡 (семантика) |
 | 5 | Hand-ROI из запястья требует чёткого жеста (vis-gate 0.5: нет руки → нет контакта, консервативно) | 🟡 |

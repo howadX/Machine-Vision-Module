@@ -38,6 +38,55 @@ fn plausibility_flag(logpz: f32) -> &'static str {
     }
 }
 
+/// Occlusion-aware posture claim gate. The RF's 3-class label is a *full-body*
+/// claim; whether the pipeline may make it depends on what the camera saw:
+///
+/// - **Full** coverage → the label is trustworthy as-is.
+/// - **Upper** (legs occluded — desk/furniture/frame edge): the leg features
+///   are hallucinated, so the label is withheld — measured on the owner's desk
+///   frames the RF read desk-sitting as confident `lying` (its P(sitting) was
+///   ≤0.12 on all 7 references). The one exception is safety-critical: `lying`
+///   is still claimed when the **2D torso attitude independently reads
+///   horizontal** (a fallen person's legs are often occluded too — the claim
+///   then rests on the attitude, not on the hallucinated legs).
+/// - **Head** (even hips unseen) → no posture claim at all.
+///
+/// Sitting-vs-standing behind a desk is geometrically indistinguishable without
+/// legs — it is deliberately NOT claimed here; fusion infers the context
+/// (`seated_at_workstation`) relationally instead.
+///
+/// Cross-check on `lying` (all coverages): a `lying` claim additionally requires
+/// the 2D attitude to NOT read upright — a lying body cannot have a vertical
+/// image-plane torso, so `lying`+upright is a physically impossible combination
+/// that only hallucinated legs produce (observed live: a desk frame whose leg
+/// visibilities squeaked past the coverage gate still read `lying` at 0.77
+/// while the torso was plainly vertical).
+fn posture_claimable(coverage: mvm_posture::classifier::BodyCoverage, attitude: &str, label: &str) -> bool {
+    use mvm_posture::classifier::BodyCoverage as C;
+    if label == "lying" && attitude == "upright" {
+        return false; // physically inconsistent — hallucinated-leg artifact
+    }
+    match coverage {
+        C::Full => true,
+        C::Upper => label == "lying" && attitude == "horizontal",
+        C::Head => false,
+    }
+}
+
+/// Attach one classified pose to a detection, applying the occlusion-aware
+/// claim gate. Coverage/attitude/quality always flow (observability); the
+/// `posture` label itself only when [`posture_claimable`] allows the claim.
+fn attach_posture(det: &mut Detection, pose: &mvm_posture::classifier::PoseResult) {
+    det.body_coverage = Some(pose.coverage.as_str());
+    det.torso_attitude = Some(pose.attitude);
+    det.recon_error = Some(pose.recon_error);
+    det.plausibility = Some(plausibility_flag(pose.plausibility).to_string());
+    if posture_claimable(pose.coverage, pose.attitude, pose.label) {
+        det.posture = Some(pose.label.to_string());
+        det.posture_confidence = Some(pose.confidence);
+    }
+}
+
 /// Per-body landmark data, kept grouped by body (not flattened) so the mesh can
 /// attach each person's wrists + hands to their track (phase 8.F interaction by
 /// landmarks). All coordinates normalised [0,1].
@@ -501,10 +550,7 @@ fn build_body_primary(
         // (live: bbox_h≈0.08 fragments produced confident false `lying`). Skip
         // posture there; the body is still tracked, just without a pose this frame.
         if (b.y2 - b.y1) >= POSTURE_MIN_BBOX_H {
-            det.posture = Some(body.posture.label.to_string());
-            det.posture_confidence = Some(body.posture.confidence);
-            det.recon_error = Some(body.posture.recon_error);
-            det.plausibility = Some(plausibility_flag(body.posture.plausibility).to_string());
+            attach_posture(&mut det, &body.posture);
         }
         // Torso-3D (anatomically stable; robust to head turn): shoulders 11/12, hips 23/24.
         // R (phantom filter, phase 8): only trust torso-3D when those landmarks are
@@ -625,10 +671,7 @@ fn build_body_primary(
             if let Ok(Some((pose, lm))) =
                 np.pose_from_face(rgb, fw, fh, [fb.x1, fb.y1, fb.x2, fb.y2])
             {
-                det.posture = Some(pose.label.to_string());
-                det.posture_confidence = Some(pose.confidence);
-                det.recon_error = Some(pose.recon_error);
-                det.plausibility = Some(plausibility_flag(pose.plausibility).to_string());
+                attach_posture(&mut det, &pose);
                 overlay.poses.push(lm);
                 face_lm = Some(lm);
             }
@@ -763,6 +806,90 @@ mod tests {
         let nose_b = (0.67, 0.20);
         assert_eq!(best_face_for_nose(&faces, &used, nose_a), Some(0));
         assert_eq!(best_face_for_nose(&faces, &used, nose_b), Some(1));
+    }
+
+    // ── occlusion-aware posture claim gate ──
+
+    use mvm_posture::classifier::{BodyCoverage, PoseResult};
+
+    fn pose(label: &'static str, coverage: BodyCoverage, attitude: &'static str) -> PoseResult {
+        let mut probs = [0.0f32; 3];
+        let idx = mvm_posture::classifier::POSE_LABELS.iter().position(|l| *l == label).unwrap();
+        probs[idx] = 0.9;
+        PoseResult {
+            label,
+            label_idx: idx,
+            confidence: 0.9,
+            probs,
+            recon_error: 0.01,
+            plausibility: 50.0, // in-distribution → "normal"
+            coverage,
+            attitude,
+        }
+    }
+
+    #[test]
+    fn full_coverage_claims_upright_and_lying() {
+        // Full body: standing/sitting claimable with an upright torso; `lying`
+        // claimable when the torso attests horizontal (its natural attitude).
+        assert!(posture_claimable(BodyCoverage::Full, "upright", "standing"));
+        assert!(posture_claimable(BodyCoverage::Full, "upright", "sitting"));
+        assert!(posture_claimable(BodyCoverage::Full, "horizontal", "lying"));
+    }
+
+    #[test]
+    fn lying_with_upright_torso_never_claimed() {
+        // Physically impossible combination (a lying body can't have a vertical
+        // image-plane torso) — the hallucinated-leg artifact, rejected at every
+        // coverage including Full.
+        assert!(!posture_claimable(BodyCoverage::Full, "upright", "lying"));
+        assert!(!posture_claimable(BodyCoverage::Upper, "upright", "lying"));
+    }
+
+    #[test]
+    fn upper_coverage_withholds_the_desk_false_lying() {
+        // THE live bug this closes: desk-sitting (legs occluded, upright torso)
+        // → RF says `lying` → must NOT be claimed.
+        assert!(!posture_claimable(BodyCoverage::Upper, "upright", "lying"));
+        assert!(!posture_claimable(BodyCoverage::Upper, "upright", "standing"));
+        assert!(!posture_claimable(BodyCoverage::Upper, "upright", "sitting"));
+        assert!(!posture_claimable(BodyCoverage::Upper, "inclined", "lying"));
+    }
+
+    #[test]
+    fn upper_coverage_keeps_safety_lying_when_torso_horizontal() {
+        // A fallen person's legs are often occluded too — `lying` survives when
+        // the 2D attitude independently attests horizontal.
+        assert!(posture_claimable(BodyCoverage::Upper, "horizontal", "lying"));
+        assert!(!posture_claimable(BodyCoverage::Upper, "horizontal", "standing"));
+    }
+
+    #[test]
+    fn head_coverage_claims_nothing() {
+        for label in ["standing", "sitting", "lying"] {
+            assert!(!posture_claimable(BodyCoverage::Head, "horizontal", label));
+        }
+    }
+
+    #[test]
+    fn attach_posture_withholds_label_but_flows_regime() {
+        // Upper + upright (the desk case): no posture label, but coverage,
+        // attitude and quality signals still reach the detection.
+        let mut det = Detection::bare(0.1, 0.1, 0.6, 0.9);
+        attach_posture(&mut det, &pose("lying", BodyCoverage::Upper, "upright"));
+        assert_eq!(det.posture, None, "hallucinated-leg lying must be withheld");
+        assert_eq!(det.body_coverage, Some("upper"));
+        assert_eq!(det.torso_attitude, Some("upright"));
+        assert_eq!(det.plausibility.as_deref(), Some("normal"));
+    }
+
+    #[test]
+    fn attach_posture_claims_on_full_coverage() {
+        let mut det = Detection::bare(0.1, 0.1, 0.6, 0.9);
+        attach_posture(&mut det, &pose("sitting", BodyCoverage::Full, "upright"));
+        assert_eq!(det.posture.as_deref(), Some("sitting"));
+        assert_eq!(det.posture_confidence, Some(0.9));
+        assert_eq!(det.body_coverage, Some("full"));
     }
 
     // ── depth-anchoring (phase 8.E.2) ──
