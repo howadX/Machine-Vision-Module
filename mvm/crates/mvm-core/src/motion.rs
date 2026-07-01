@@ -160,7 +160,7 @@ pub enum MotionState {
     /// Centroid effectively still.
     Idle,
     /// Centroid translating across the scene.
-    Walking,
+    Moving,
 }
 
 impl MotionState {
@@ -169,7 +169,7 @@ impl MotionState {
         match self {
             MotionState::Unknown => "unknown",
             MotionState::Idle => "idle",
-            MotionState::Walking => "walking",
+            MotionState::Moving => "moving",
         }
     }
 }
@@ -195,7 +195,7 @@ pub struct MotionClassifier {
 }
 
 impl Default for MotionClassifier {
-    /// Defaults from the phase-9 plan: idle below 0.05 torso/s, walking above
+    /// Defaults from the phase-9 plan: idle below 0.05 torso/s, moving above
     /// 0.3 torso/s, commit after 3 consecutive frames.
     fn default() -> Self {
         Self::new(0.05, 0.3, 3)
@@ -228,7 +228,7 @@ impl MotionClassifier {
     /// flips the committed state.
     pub fn update(&mut self, speed: f32) -> MotionState {
         let bucket = if speed >= self.walk_above {
-            Some(MotionState::Walking)
+            Some(MotionState::Moving)
         } else if speed <= self.idle_below {
             Some(MotionState::Idle)
         } else {
@@ -465,7 +465,7 @@ impl MotionTrack {
         self.right = self.history.arm_gesture(Side::Right, &th);
     }
 
-    /// Committed locomotion state (idle / walking / unknown).
+    /// Committed locomotion state (idle / moving / unknown).
     pub fn state(&self) -> MotionState {
         self.state
     }
@@ -632,13 +632,13 @@ mod tests {
     }
 
     #[test]
-    fn motion_commits_walking_after_dwell() {
-        // dwell=3: a clear walking speed must hold for 3 consecutive frames
+    fn motion_commits_moving_after_dwell() {
+        // dwell=3: a clear moving speed must hold for 3 consecutive frames
         // before it commits.
         let mut c = MotionClassifier::new(0.05, 0.3, 3);
         assert_eq!(c.update(1.0), MotionState::Unknown, "1st frame: not yet");
         assert_eq!(c.update(1.0), MotionState::Unknown, "2nd frame: not yet");
-        assert_eq!(c.update(1.0), MotionState::Walking, "3rd frame: commits");
+        assert_eq!(c.update(1.0), MotionState::Moving, "3rd frame: commits");
     }
 
     #[test]
@@ -652,26 +652,26 @@ mod tests {
     #[test]
     fn motion_dwell_one_commits_immediately() {
         let mut c = MotionClassifier::new(0.05, 0.3, 1);
-        assert_eq!(c.update(1.0), MotionState::Walking, "dwell=1 → instant");
+        assert_eq!(c.update(1.0), MotionState::Moving, "dwell=1 → instant");
     }
 
     #[test]
     fn motion_zero_dwell_clamped_to_one() {
         // dwell is clamped to ≥1 so a flip always needs at least one frame.
         let mut c = MotionClassifier::new(0.05, 0.3, 0);
-        assert_eq!(c.update(1.0), MotionState::Walking);
+        assert_eq!(c.update(1.0), MotionState::Moving);
     }
 
     #[test]
     fn motion_single_spike_does_not_flip() {
-        // Commit idle, then a one-frame walking spike must NOT flip the state.
+        // Commit idle, then a one-frame moving spike must NOT flip the state.
         let mut c = MotionClassifier::new(0.05, 0.3, 3);
         for _ in 0..3 {
             c.update(0.0);
         }
         assert_eq!(c.state(), MotionState::Idle);
         assert_eq!(c.update(1.0), MotionState::Idle, "lone spike ignored");
-        // and a return to idle keeps it idle (streak was for walking, now reset)
+        // and a return to idle keeps it idle (streak was for moving, now reset)
         assert_eq!(c.update(0.0), MotionState::Idle);
     }
 
@@ -681,10 +681,10 @@ mod tests {
         // changes the committed state.
         let mut c = MotionClassifier::new(0.05, 0.3, 2);
         c.update(1.0);
-        assert_eq!(c.update(1.0), MotionState::Walking);
-        // now feed dead-zone speeds forever — stays walking
+        assert_eq!(c.update(1.0), MotionState::Moving);
+        // now feed dead-zone speeds forever — stays moving
         for _ in 0..10 {
-            assert_eq!(c.update(0.15), MotionState::Walking, "dead zone holds");
+            assert_eq!(c.update(0.15), MotionState::Moving, "dead zone holds");
         }
     }
 
@@ -697,14 +697,14 @@ mod tests {
             c.update(0.0);
         }
         assert_eq!(c.state(), MotionState::Idle);
-        c.update(1.0); // walking streak = 1
-        c.update(1.0); // walking streak = 2
+        c.update(1.0); // moving streak = 1
+        c.update(1.0); // moving streak = 2
         c.update(0.15); // dead zone → streak reset, still idle
         assert_eq!(c.state(), MotionState::Idle);
-        // need a fresh full dwell of walking to flip
+        // need a fresh full dwell of moving to flip
         c.update(1.0);
         c.update(1.0);
-        assert_eq!(c.update(1.0), MotionState::Walking, "fresh streak commits");
+        assert_eq!(c.update(1.0), MotionState::Moving, "fresh streak commits");
     }
 
     #[test]
@@ -713,17 +713,17 @@ mod tests {
         c.update(0.0);
         assert_eq!(c.update(0.0), MotionState::Idle);
         c.update(1.0);
-        assert_eq!(c.update(1.0), MotionState::Walking);
+        assert_eq!(c.update(1.0), MotionState::Moving);
         c.update(0.0);
         assert_eq!(c.update(0.0), MotionState::Idle, "flips back after dwell");
     }
 
     #[test]
     fn motion_thresholds_are_inclusive() {
-        // Speed exactly at walk_above counts as walking; exactly at idle_below
+        // Speed exactly at walk_above counts as moving; exactly at idle_below
         // counts as idle.
         let mut c = MotionClassifier::new(0.05, 0.3, 1);
-        assert_eq!(c.update(0.3), MotionState::Walking, "== walk_above → walk");
+        assert_eq!(c.update(0.3), MotionState::Moving, "== walk_above → walk");
         let mut d = MotionClassifier::new(0.05, 0.3, 1);
         assert_eq!(d.update(0.05), MotionState::Idle, "== idle_below → idle");
     }
@@ -733,8 +733,8 @@ mod tests {
         // walk_above < idle_below is clamped so walk_above ≥ idle_below; the
         // dead zone collapses but the machine stays sane (no panic, commits).
         let mut c = MotionClassifier::new(0.3, 0.1, 1);
-        // walk_above was clamped up to 0.3; 0.5 ≥ 0.3 → walking
-        assert_eq!(c.update(0.5), MotionState::Walking);
+        // walk_above was clamped up to 0.3; 0.5 ≥ 0.3 → moving
+        assert_eq!(c.update(0.5), MotionState::Moving);
         assert_eq!(c.update(0.0), MotionState::Idle);
     }
 
@@ -742,7 +742,7 @@ mod tests {
     fn motion_state_as_str_round_trips() {
         assert_eq!(MotionState::Unknown.as_str(), "unknown");
         assert_eq!(MotionState::Idle.as_str(), "idle");
-        assert_eq!(MotionState::Walking.as_str(), "walking");
+        assert_eq!(MotionState::Moving.as_str(), "moving");
     }
 
     // ── arm gesture / reach (B1.4) ─────────────────────────────────────────
@@ -877,14 +877,14 @@ mod tests {
     }
 
     #[test]
-    fn motion_track_commits_walking_on_translation() {
+    fn motion_track_commits_moving_on_translation() {
         // Hip centre marching across the frame at ~1 torso/s for enough frames.
         let mut m = MotionTrack::new();
         for i in 0..8 {
             // torso 100px; +50px/frame at 0.5s steps → 1.0 torso/s ≥ walk threshold
             m.observe(frame(100.0 + i as f32 * 50.0, 100.0, 200.0), i as f64 * 0.5);
         }
-        assert_eq!(m.state(), MotionState::Walking);
+        assert_eq!(m.state(), MotionState::Moving);
         assert!(m.speed() > 0.3, "speed {} should clear the walk threshold", m.speed());
     }
 

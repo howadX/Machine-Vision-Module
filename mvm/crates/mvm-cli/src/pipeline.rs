@@ -23,6 +23,12 @@ use mvm_core::Detection;
 /// The retired 14.3 belonged to the old user-data VAE and gated *everything* here.
 const POSTURE_OOD_LOGPZ: f32 = 170.0;
 
+/// Minimum body-bbox height (normalized) to classify posture at all. A body shorter
+/// than this is a fragment / far-partial detection whose landmarks are unreliable —
+/// live these bbox_h≈0.08 fragments produced confident false `lying`. Full/seated
+/// bodies sit ≥0.35; 0.15 cleanly separates fragments without touching real bodies.
+const POSTURE_MIN_BBOX_H: f32 = 0.15;
+
 /// Tier 0.2 plausibility label from a pose's `log_prob_z`.
 fn plausibility_flag(logpz: f32) -> &'static str {
     if logpz < POSTURE_OOD_LOGPZ {
@@ -490,11 +496,16 @@ fn build_body_primary(
     for (bi, body) in bodies.iter().enumerate() {
         let b = &body.bbox;
         let mut det = Detection::bare(b.x1, b.y1, b.x2, b.y2);
-        // Posture (always present for a body).
-        det.posture = Some(body.posture.label.to_string());
-        det.posture_confidence = Some(body.posture.confidence);
-        det.recon_error = Some(body.posture.recon_error);
-        det.plausibility = Some(plausibility_flag(body.posture.plausibility).to_string());
+        // Posture — gated on body size: a bbox shorter than `POSTURE_MIN_BBOX_H`
+        // is a fragment / far-partial detection whose landmarks are unreliable
+        // (live: bbox_h≈0.08 fragments produced confident false `lying`). Skip
+        // posture there; the body is still tracked, just without a pose this frame.
+        if (b.y2 - b.y1) >= POSTURE_MIN_BBOX_H {
+            det.posture = Some(body.posture.label.to_string());
+            det.posture_confidence = Some(body.posture.confidence);
+            det.recon_error = Some(body.posture.recon_error);
+            det.plausibility = Some(plausibility_flag(body.posture.plausibility).to_string());
+        }
         // Torso-3D (anatomically stable; robust to head turn): shoulders 11/12, hips 23/24.
         // R (phantom filter, phase 8): only trust torso-3D when those landmarks are
         // actually visible. BlazePose visibility = sigmoid(logit) ∈ [0,1]; visible

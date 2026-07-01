@@ -30,6 +30,16 @@
 //! The first confident observation **bootstraps** immediately (there is nothing to
 //! protect yet), preserving the old first-sight behaviour.
 
+/// Trust verdict for one per-frame posture observation, fed as `trusted` to
+/// [`PostureStabilizer::observe`]. A frame is distrusted (treated as ambiguous —
+/// never flips the committed label) when either:
+/// - the pose VAE flagged it out-of-distribution (`plausibility == "unusual"`), or
+/// - it says **`lying` while the body is moving** — `lying` is a static posture, so
+///   `moving + lying` is almost always a bad/fragment frame (mitigation, 2026-07).
+pub fn posture_trusted(plausibility: Option<&str>, label: &str, moving: bool) -> bool {
+    plausibility != Some("unusual") && !(label == "lying" && moving)
+}
+
 /// Per-track posture stabiliser. Feed each frame's `(label, confidence)` through
 /// [`Self::observe`]; read the smoothed committed label via [`Self::label`].
 #[derive(Debug, Clone)]
@@ -239,5 +249,18 @@ mod tests {
         s.observe("sitting", 0.9, true); // streak 1
         s.observe("sitting", 0.9, true); // streak 2 → not yet
         assert_eq!(s.label(), Some("standing"));
+    }
+
+    #[test]
+    fn posture_trusted_gates_ood_and_moving_lying() {
+        // OOD frame → distrusted regardless of label/motion.
+        assert!(!posture_trusted(Some("unusual"), "standing", false));
+        // `lying` while moving → distrusted (lying is static).
+        assert!(!posture_trusted(Some("normal"), "lying", true));
+        assert!(!posture_trusted(None, "lying", true));
+        // `lying` while still → trusted; moving non-lying → trusted.
+        assert!(posture_trusted(Some("normal"), "lying", false));
+        assert!(posture_trusted(None, "standing", true));
+        assert!(posture_trusted(None, "sitting", true));
     }
 }

@@ -92,7 +92,7 @@ struct JsonFace {
     dist_m: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pos: Option<[f32; 3]>,
-    /// Coarse locomotion state (phase 9.8): "idle" / "walking". Absent until the
+    /// Coarse locomotion state (phase 9.8): "idle" / "moving". Absent until the
     /// motion ring commits a state.
     #[serde(skip_serializing_if = "Option::is_none")]
     motion: Option<&'static str>,
@@ -1225,12 +1225,12 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_world_motion.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
         let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
-        p.motion_state = Some("walking");
+        p.motion_state = Some("moving");
         p.velocity = Some(0.8);
         world.people.push(p);
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(v["faces"][0]["motion"], "walking");
+        assert_eq!(v["faces"][0]["motion"], "moving");
         assert!((v["faces"][0]["velocity"].as_f64().unwrap() - 0.8).abs() < 1e-6);
     }
 

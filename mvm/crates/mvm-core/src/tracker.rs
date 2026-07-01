@@ -627,11 +627,18 @@ impl PersonTracker {
             // → treated as an ambiguous frame that holds the committed label.
             if let Some(label) = &det.posture {
                 let conf = det.posture_confidence.unwrap_or(0.0);
-                // Tier 0.2: the pose VAE's own OOD verdict (already computed, only
-                // reported before) gates the label too — an "unusual" frame is
-                // treated as ambiguous. Absent plausibility (bridge path/tests)
-                // defaults to trusted.
-                let trusted = det.plausibility.as_deref() != Some("unusual");
+                // Tier 0.2: the pose VAE's own OOD verdict ("unusual") gates the
+                // label; additionally a `lying` label while the track is *moving*
+                // is distrusted (lying is static — moving+lying = bad/fragment
+                // frame). Absent plausibility (bridge/tests) defaults to trusted.
+                // "Moving" = committed Moving OR instantaneous centroid speed above
+                // a still-line (0.15 torso/s). Speed catches the startup/settling
+                // case the committed state misses (ring not yet dwelled to Moving);
+                // a truly lying body is ~motionless and passes.
+                let speed = if t.motion.is_empty() { 0.0 } else { t.motion.speed() };
+                let moving = t.motion.state() == crate::motion::MotionState::Moving || speed > 0.15;
+                let trusted =
+                    crate::posture::posture_trusted(det.plausibility.as_deref(), label, moving);
                 t.posture_stab.observe(label, conf, trusted);
                 t.posture = t.posture_stab.label().map(str::to_string);
                 t.posture_confidence = t.posture_stab.confidence();
@@ -1356,16 +1363,16 @@ mod tests {
     }
 
     #[test]
-    fn tick_motion_feeds_walking_into_track() {
+    fn tick_motion_feeds_moving_into_track() {
         // A single body whose landmarks translate → the track's own motion reads
-        // Walking, with no IoU round-trip.
+        // Moving, with no IoU round-trip.
         let mut t = PersonTracker::new();
         for i in 0..8 {
             let lm = motion_lm(100.0 + i as f32 * 50.0); // +50px/0.5s, torso 100px → 1 torso/s
             t.tick_motion(&det(0.3, 0.3, 0.5, 0.5), &[], &[Some(lm)], i as f64 * 0.5);
         }
         let tr = t.active().next().unwrap();
-        assert_eq!(tr.motion.state(), crate::motion::MotionState::Walking);
+        assert_eq!(tr.motion.state(), crate::motion::MotionState::Moving);
     }
 
     #[test]

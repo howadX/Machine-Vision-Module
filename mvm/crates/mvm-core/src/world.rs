@@ -50,7 +50,7 @@ pub struct PersonState {
     /// after tracking — `from_track` leaves it empty.
     pub hands: Vec<Vec<[f32; 2]>>,
     /// Coarse locomotion state read straight off the track (phase 9.8): `"idle"` /
-    /// `"walking"`. `None` until the motion ring has committed a state (`Unknown`).
+    /// `"moving"`. `None` until the motion ring has committed a state (`Unknown`).
     pub motion_state: Option<&'static str>,
     /// Centroid speed in torso-lengths/sec (phase 9.8) — distance-invariant.
     pub velocity: Option<f32>,
