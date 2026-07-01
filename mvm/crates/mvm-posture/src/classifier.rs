@@ -1,26 +1,28 @@
-//! Hand-rolled Rust port of the Python pose chain: `normalize_landmarks` (33×4 → 99)
-//! → PoseVAE encoder (BN + 2 Linears + fc_mu) → z32 → PoseClassifier (3 Linears) → 6 poses,
-//! plus decoder → reconstruction MSE and `log_prob_z` → plausibility.
-//! Closed-form arithmetic, zero new deps. Weights from `pose_weights.bin`
-//! (exported by `spike_pose/export_pose_weights.py`, fixed order).
+//! Hand-rolled Rust port of the pose classifier (P1 method C): raw 33×4 landmarks →
+//! `compute_features` (14 azimuth-invariant, gravity-preserving geometric features) →
+//! RandomForest soft-vote → {lying, sitting, standing}. Plus the VAE (retrained on public
+//! data) for `recon_error` and `log_prob_z` → plausibility (OOD only, Tier 0.2).
+//! Closed-form arithmetic, zero new deps. Weights from `pose_rf_forest.bin` + `pose_vae_public.bin`
+//! (exported by `spike_pose/train_pose_p1.py`, fixed order).
 
-/// EN class labels (G7 — straight from the checkpoint `class_names`).
-pub const POSE_LABELS: [&str; 6] = [
-    "standing", "sitting", "lying_back", "lying_side", "arms_crossed", "sitting_at_desk",
-];
+/// EN class labels — MUST match the forest probability order (`rf.classes_`, alphabetical).
+pub const POSE_LABELS: [&str; 3] = ["lying", "sitting", "standing"];
+pub const N_CLASS: usize = 3;
+pub const N_FEAT: usize = 14;
 
 const BN_EPS: f32 = 1e-5;
 
-static WEIGHTS_BIN: &[u8] = include_bytes!("pose_weights.bin");
+static VAE_BIN: &[u8] = include_bytes!("pose_vae_public.bin");
+static FOREST_BIN: &[u8] = include_bytes!("pose_rf_forest.bin");
 
 #[derive(Debug, Clone)]
 pub struct PoseResult {
     pub label: &'static str,
     pub label_idx: usize,
-    pub confidence: f32,    // max softmax prob
-    pub probs: [f32; 6],
-    pub recon_error: f32,   // VAE reconstruction MSE (anomaly)
-    pub plausibility: f32,  // log_prob_z surprise; lower = more familiar
+    pub confidence: f32,        // max class probability
+    pub probs: [f32; N_CLASS],  // [lying, sitting, standing]
+    pub recon_error: f32,       // VAE reconstruction MSE (anomaly)
+    pub plausibility: f32,      // log_prob_z surprise; lower = more familiar
 }
 
 /// A dense layer y = x·Wᵀ + b. `w` is row-major [out][in] (PyTorch convention).
@@ -74,27 +76,102 @@ impl<'a> Cursor<'a> {
     }
 }
 
+// ── RandomForest (soft-vote over trees) ──────────────────────────────────────
+
+/// One CART node. `left < 0` marks a leaf (then `probs` is the class distribution).
+struct Node {
+    feature: i32,
+    threshold: f32,
+    left: i32,
+    right: i32,
+    probs: [f32; N_CLASS],
+}
+
+struct Forest {
+    trees: Vec<Vec<Node>>,
+}
+
+impl Forest {
+    fn load(bytes: &[u8]) -> Self {
+        let rd_u32 = |b: &[u8], p: usize| u32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]);
+        let rd_i32 = |b: &[u8], p: usize| i32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]);
+        let rd_f32 = |b: &[u8], p: usize| f32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]);
+        let mut p = 0usize;
+        let n_trees = rd_u32(bytes, p) as usize;
+        p += 4;
+        let mut trees = Vec::with_capacity(n_trees);
+        for _ in 0..n_trees {
+            let n_nodes = rd_u32(bytes, p) as usize;
+            p += 4;
+            let mut nodes = Vec::with_capacity(n_nodes);
+            for _ in 0..n_nodes {
+                let feature = rd_i32(bytes, p);
+                let threshold = rd_f32(bytes, p + 4);
+                let left = rd_i32(bytes, p + 8);
+                let right = rd_i32(bytes, p + 12);
+                let mut probs = [0f32; N_CLASS];
+                for (k, pr) in probs.iter_mut().enumerate() {
+                    *pr = rd_f32(bytes, p + 16 + k * 4);
+                }
+                p += 16 + N_CLASS * 4;
+                nodes.push(Node { feature, threshold, left, right, probs });
+            }
+            trees.push(nodes);
+        }
+        assert_eq!(p, bytes.len(), "forest.bin length mismatch (used {} of {})", p, bytes.len());
+        Forest { trees }
+    }
+
+    /// Soft-vote: average the leaf class-distribution across all trees.
+    fn predict(&self, feat: &[f32; N_FEAT]) -> [f32; N_CLASS] {
+        let mut acc = [0f32; N_CLASS];
+        for tree in &self.trees {
+            let mut i = 0usize;
+            loop {
+                let n = &tree[i];
+                if n.left < 0 {
+                    for k in 0..N_CLASS {
+                        acc[k] += n.probs[k];
+                    }
+                    break;
+                }
+                // sklearn: X[feature] <= threshold → left child
+                i = if feat[n.feature as usize] <= n.threshold {
+                    n.left as usize
+                } else {
+                    n.right as usize
+                };
+            }
+        }
+        let inv = 1.0 / self.trees.len() as f32;
+        for a in acc.iter_mut() {
+            *a *= inv;
+        }
+        acc
+    }
+}
+
 pub struct PoseHead {
+    // VAE (OOD only)
     bn_w: Vec<f32>,
     bn_b: Vec<f32>,
     bn_mean: Vec<f32>,
     bn_var: Vec<f32>,
-    enc1: Linear, // 99→128
-    enc2: Linear, // 128→64
-    fc_mu: Linear, // 64→32
+    enc1: Linear,      // 99→128
+    enc2: Linear,      // 128→64
+    fc_mu: Linear,     // 64→32
     fc_logvar: Linear, // 64→32
-    dec1: Linear, // 32→64
-    dec2: Linear, // 64→128
-    dec3: Linear, // 128→99
-    clf1: Linear, // 32→64
-    clf2: Linear, // 64→32
-    clf3: Linear, // 32→6
+    dec1: Linear,      // 32→64
+    dec2: Linear,      // 64→128
+    dec3: Linear,      // 128→99
+    // classifier
+    forest: Forest,
 }
 
 impl PoseHead {
     pub fn load() -> Self {
-        assert_eq!(WEIGHTS_BIN.len() % 4, 0, "pose_weights.bin not f32-aligned");
-        let f: Vec<f32> = WEIGHTS_BIN
+        assert_eq!(VAE_BIN.len() % 4, 0, "pose_vae_public.bin not f32-aligned");
+        let f: Vec<f32> = VAE_BIN
             .chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect();
@@ -110,18 +187,27 @@ impl PoseHead {
         let dec1 = c.linear(64, 32);
         let dec2 = c.linear(128, 64);
         let dec3 = c.linear(99, 128);
-        let clf1 = c.linear(64, 32);
-        let clf2 = c.linear(32, 64);
-        let clf3 = c.linear(6, 32);
-        assert_eq!(c.pos, f.len(), "pose_weights.bin length mismatch (got {}, used {})", f.len(), c.pos);
-        Self { bn_w, bn_b, bn_mean, bn_var, enc1, enc2, fc_mu, fc_logvar, dec1, dec2, dec3, clf1, clf2, clf3 }
+        assert_eq!(c.pos, f.len(), "pose_vae_public.bin length mismatch (got {}, used {})", f.len(), c.pos);
+        Self {
+            bn_w, bn_b, bn_mean, bn_var, enc1, enc2, fc_mu, fc_logvar, dec1, dec2, dec3,
+            forest: Forest::load(FOREST_BIN),
+        }
     }
 
     /// Full chain: landmarks (33×[x,y,z,vis], MediaPipe-normalized) → PoseResult.
     pub fn classify(&self, landmarks: &[[f32; 4]; 33]) -> PoseResult {
-        let x99 = normalize_landmarks(landmarks);
+        // classification: geometric features → forest soft-vote
+        let feat = compute_features(landmarks);
+        let probs = self.forest.predict(&feat);
+        let mut idx = 0;
+        for k in 1..N_CLASS {
+            if probs[k] > probs[idx] {
+                idx = k;
+            }
+        }
 
-        // encoder: BN → Lin → ReLU → Lin → ReLU
+        // VAE (OOD only): recon MSE + log_prob_z on the normalized-99 vector
+        let x99 = normalize_landmarks(landmarks);
         let mut h = vec![0f32; 99];
         for i in 0..99 {
             h[i] = (x99[i] - self.bn_mean[i]) / (self.bn_var[i] + BN_EPS).sqrt() * self.bn_w[i] + self.bn_b[i];
@@ -130,10 +216,9 @@ impl PoseHead {
         relu(&mut h1);
         let mut h2 = self.enc2.forward(&h1);
         relu(&mut h2);
-        let mu = self.fc_mu.forward(&h2); // z (deterministic)
+        let mu = self.fc_mu.forward(&h2);
         let logvar = self.fc_logvar.forward(&h2);
 
-        // decoder for reconstruction MSE
         let mut d1 = self.dec1.forward(&mu);
         relu(&mut d1);
         let mut d2 = self.dec2.forward(&d1);
@@ -146,27 +231,12 @@ impl PoseHead {
         }
         mse /= 99.0;
 
-        // log_prob_z = 0.5 * Σ(mu² + var − 1 − logvar)
         let mut logpz = 0f32;
         for k in 0..32 {
             logpz += mu[k] * mu[k] + logvar[k].exp() - 1.0 - logvar[k];
         }
         logpz *= 0.5;
 
-        // classifier: Lin → ReLU → Lin → ReLU → Lin → softmax
-        let mut c1 = self.clf1.forward(&mu);
-        relu(&mut c1);
-        let mut c2 = self.clf2.forward(&c1);
-        relu(&mut c2);
-        let logits = self.clf3.forward(&c2);
-        let probs = softmax6(&logits);
-
-        let mut idx = 0;
-        for k in 1..6 {
-            if probs[k] > probs[idx] {
-                idx = k;
-            }
-        }
         PoseResult {
             label: POSE_LABELS[idx],
             label_idx: idx,
@@ -178,21 +248,103 @@ impl PoseHead {
     }
 }
 
-fn softmax6(logits: &[f32]) -> [f32; 6] {
-    let m = logits.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let mut e = [0f32; 6];
-    let mut s = 0f32;
-    for k in 0..6 {
-        e[k] = (logits[k] - m).exp();
-        s += e[k];
-    }
-    for k in 0..6 {
-        e[k] /= s;
-    }
-    e
+// ── Geometric features (port of spike_pose/spike_feats.py::features) ──────────
+
+const UP: [f32; 3] = [0.0, -1.0, 0.0]; // MediaPipe: +y is down → up = -y
+
+#[inline]
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-/// Port of `core/pose_encoder.normalize_landmarks` + flatten → [99].
+/// Angle (degrees) between `v` and the gravity-up axis.
+fn ang_to_vert(v: [f32; 3]) -> f32 {
+    let n = norm3(&v);
+    if n < 1e-6 {
+        return 0.0;
+    }
+    let d = ((v[0] * UP[0] + v[1] * UP[1] + v[2] * UP[2]) / n).clamp(-1.0, 1.0);
+    d.acos().to_degrees()
+}
+
+/// Interior angle (degrees) at `b` between `a-b` and `c-b`.
+fn flex(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
+    let u = sub(a, b);
+    let w = sub(c, b);
+    let (nu, nw) = (norm3(&u), norm3(&w));
+    if nu < 1e-6 || nw < 1e-6 {
+        return 180.0;
+    }
+    let d = ((u[0] * w[0] + u[1] * w[1] + u[2] * w[2]) / (nu * nw)).clamp(-1.0, 1.0);
+    d.acos().to_degrees()
+}
+
+/// 33×4 landmarks → 14 features (order matches `FEATURE_NAMES` in the trainer).
+pub fn compute_features(lm: &[[f32; 4]; 33]) -> [f32; N_FEAT] {
+    let p = |k: usize| [lm[k][0], lm[k][1], lm[k][2]];
+    let mid = |a: usize, b: usize| {
+        let (x, y) = (p(a), p(b));
+        [(x[0] + y[0]) / 2.0, (x[1] + y[1]) / 2.0, (x[2] + y[2]) / 2.0]
+    };
+    let hip = mid(23, 24);
+    let sh = mid(11, 12);
+    let torso = sub(sh, hip);
+    let mut tlen = norm3(&torso);
+    if tlen < 1e-6 {
+        tlen = norm3(&sub(p(11), p(12))).max(1e-3);
+    }
+
+    let torso_inc = ang_to_vert(torso);
+    let thigh_l = ang_to_vert(sub(p(25), p(23)));
+    let thigh_r = ang_to_vert(sub(p(26), p(24)));
+    let shank_l = ang_to_vert(sub(p(27), p(25)));
+    let shank_r = ang_to_vert(sub(p(28), p(26)));
+    let knee_l = flex(p(23), p(25), p(27));
+    let knee_r = flex(p(24), p(26), p(28));
+    let hip_l = flex(p(11), p(23), p(25));
+    let hip_r = flex(p(12), p(24), p(26));
+    let elb_l = flex(p(11), p(13), p(15));
+    let elb_r = flex(p(12), p(14), p(16));
+
+    // cloud shape (azimuth-invariant): vertical extent vs horizontal radial extent
+    let mut ymin = f32::INFINITY;
+    let mut ymax = f32::NEG_INFINITY;
+    let mut rmax = 0f32;
+    for k in 0..33 {
+        let q = p(k);
+        ymin = ymin.min(q[1]);
+        ymax = ymax.max(q[1]);
+        let dx = q[0] - hip[0];
+        let dz = q[2] - hip[2];
+        rmax = rmax.max((dx * dx + dz * dz).sqrt());
+    }
+    let vext = (ymax - ymin) / tlen;
+    let hext = 2.0 * rmax / tlen;
+    let aspect = vext / (hext + 1e-6);
+
+    let nose_above = (hip[1] - p(0)[1]) / tlen;
+    let ank_below = ((p(27)[1] + p(28)[1]) / 2.0 - hip[1]) / tlen;
+    let kn_below = ((p(25)[1] + p(26)[1]) / 2.0 - hip[1]) / tlen;
+
+    [
+        torso_inc,
+        (thigh_l + thigh_r) / 2.0,
+        (thigh_l - thigh_r).abs(),
+        (shank_l + shank_r) / 2.0,
+        (knee_l + knee_r) / 2.0,
+        (knee_l - knee_r).abs(),
+        (hip_l + hip_r) / 2.0,
+        (elb_l + elb_r) / 2.0,
+        vext,
+        hext,
+        aspect,
+        nose_above,
+        ank_below,
+        kn_below,
+    ]
+}
+
+/// Port of `core/pose_encoder.normalize_landmarks` + flatten → [99] (for the VAE only).
 /// Translate to hip center → scale by torso length → rotate torso to vertical.
 pub fn normalize_landmarks(lm: &[[f32; 4]; 33]) -> [f32; 99] {
     let mut pts = [[0f32; 3]; 33];
@@ -314,26 +466,39 @@ mod tests {
 
     #[test]
     fn weights_load() {
-        let _ = PoseHead::load(); // asserts exact length consumed
+        let h = PoseHead::load(); // asserts exact VAE length + forest length consumed
+        assert!(!h.forest.trees.is_empty());
     }
 
-    // Fixed 33×4 landmark input (MediaPipe-normalized x/w,y/h,z/w,vis) from p_V_03.
-    const GOLDEN_INPUT: [[f32; 4]; 33] = include!("golden_input.in");
+    // Golden parity vectors from spike_pose/train_pose_p1.py (same RF that produced the .bin):
+    // (input_33x4, features[14], forest_probs[3], pred_label, vae_recon_mse, vae_logpz)
+    #[allow(clippy::type_complexity)]
+    const GOLDEN: &[([[f32; 4]; 33], [f32; 14], [f32; 3], &str, f32, f32)] =
+        include!("pose_p1_golden.in");
+
+    #[test]
+    fn features_match_python() {
+        for (input, feat_g, _, _, _, _) in GOLDEN {
+            let feat = compute_features(input);
+            for k in 0..N_FEAT {
+                assert!((feat[k] - feat_g[k]).abs() < 1e-2,
+                    "feat[{k}] {} vs golden {}", feat[k], feat_g[k]);
+            }
+        }
+    }
 
     #[test]
     fn classify_matches_python_oracle() {
-        // Golden from spike_pose/export_pose_weights.py on the fixed p_V_03 33×4 input:
-        // class=standing, probs[0]=0.848, recon_mse=0.009896, logpz=8.1492
         let head = PoseHead::load();
-        let r = head.classify(&GOLDEN_INPUT);
-
-        assert_eq!(r.label, "standing", "expected standing, got {}", r.label);
-        let probs_golden = [0.847909, 0.005945, 0.003319, 0.003328, 0.016686, 0.122813];
-        for k in 0..6 {
-            assert!((r.probs[k] - probs_golden[k]).abs() < 1e-3,
-                "prob[{k}] {} vs golden {}", r.probs[k], probs_golden[k]);
+        for (input, _, probs_g, pred, recon_g, logpz_g) in GOLDEN {
+            let r = head.classify(input);
+            assert_eq!(r.label, *pred, "label {} vs golden {}", r.label, pred);
+            for k in 0..N_CLASS {
+                assert!((r.probs[k] - probs_g[k]).abs() < 5e-3,
+                    "prob[{k}] {} vs golden {}", r.probs[k], probs_g[k]);
+            }
+            assert!((r.recon_error - recon_g).abs() < 1e-3, "recon {} vs {}", r.recon_error, recon_g);
+            assert!((r.plausibility - logpz_g).abs() < 1e-2, "logpz {} vs {}", r.plausibility, logpz_g);
         }
-        assert!((r.recon_error - 0.009896).abs() < 1e-4, "recon {} vs 0.009896", r.recon_error);
-        assert!((r.plausibility - 8.1492).abs() < 1e-2, "logpz {} vs 8.1492", r.plausibility);
     }
 }

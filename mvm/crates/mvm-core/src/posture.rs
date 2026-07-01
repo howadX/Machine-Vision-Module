@@ -1,12 +1,13 @@
 //! Posture temporal stabiliser (Tier 0.1) — **pure arithmetic, zero deps**.
 //!
-//! The posture classifier (`mvm-posture`: BlazePose → PoseVAE → 6-class head) is
-//! evaluated **per frame** and its argmax label was written straight onto the
-//! track (a passthrough "latest snapshot"). Unlike emotion — which is fused with
-//! a temporal Product-of-Experts — posture had **no temporal smoothing**, so a
-//! single bad frame (partial landmarks from a fragmented detection, a borderline
-//! pose the head is overconfident about) flipped the emitted label frame-to-frame
-//! (e.g. `standing` → `lying_side` → `standing`), even at high confidence.
+//! The posture classifier (`mvm-posture`: BlazePose → geometric features → 3-class
+//! RandomForest → standing/sitting/lying; VAE kept for OOD only) is evaluated
+//! **per frame** and its argmax label was written straight onto the track (a
+//! passthrough "latest snapshot"). Unlike emotion — which is fused with a temporal
+//! Product-of-Experts — posture had **no temporal smoothing**, so a single bad
+//! frame (partial landmarks from a fragmented detection, a borderline pose the head
+//! is overconfident about) flipped the emitted label frame-to-frame
+//! (e.g. `standing` → `lying` → `standing`), even at high confidence.
 //!
 //! This is the categorical analogue of [`crate::motion::MotionClassifier`]'s
 //! dwell + hysteresis state machine, adapted to a labelled class instead of a

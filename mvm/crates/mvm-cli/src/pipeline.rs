@@ -15,6 +15,23 @@ use crate::scene_debug;
 use crate::state;
 use mvm_core::Detection;
 
+/// Tier 0.2 OOD gate threshold on the pose VAE's `log_prob_z` surprise: a pose
+/// above this is flagged `"unusual"` so the `PostureStabilizer` won't commit it.
+/// Calibrated to the public-data VAE (`pose_vae_public.bin`): in-distribution
+/// `log_prob_z` is p50≈57, p95≈121, p99≈169 — so ~p99 flags only the most
+/// surprising poses (and true garbage: empty ROI / hallucinated landmarks).
+/// The retired 14.3 belonged to the old user-data VAE and gated *everything* here.
+const POSTURE_OOD_LOGPZ: f32 = 170.0;
+
+/// Tier 0.2 plausibility label from a pose's `log_prob_z`.
+fn plausibility_flag(logpz: f32) -> &'static str {
+    if logpz < POSTURE_OOD_LOGPZ {
+        "normal"
+    } else {
+        "unusual"
+    }
+}
+
 /// Per-body landmark data, kept grouped by body (not flattened) so the mesh can
 /// attach each person's wrists + hands to their track (phase 8.F interaction by
 /// landmarks). All coordinates normalised [0,1].
@@ -429,7 +446,7 @@ fn best_face_for_nose(faces: &[Detection], used: &[bool], nose: (f32, f32)) -> O
 #[allow(clippy::too_many_arguments)]
 fn build_body_primary(
     frame: &image::DynamicImage,
-    native_pose: Option<&mut mvm_posture::NativePose>,
+    mut native_pose: Option<&mut mvm_posture::NativePose>,
     detector: &mut mvm_detect::YunetDetector,
     mut emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
     mut identity_mod: Option<&mut mvm_identity::IdentityModule>,
@@ -450,6 +467,7 @@ fn build_body_primary(
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
     let body_dets = native_pose
+        .as_deref_mut()
         .map(|np| np.bodies_byte_recover(frame, predicted_rois).unwrap_or_default())
         .unwrap_or_default();
     let bodies = body_dets.bodies;
@@ -476,8 +494,7 @@ fn build_body_primary(
         det.posture = Some(body.posture.label.to_string());
         det.posture_confidence = Some(body.posture.confidence);
         det.recon_error = Some(body.posture.recon_error);
-        det.plausibility =
-            Some(if body.posture.plausibility < 14.3 { "normal" } else { "unusual" }.to_string());
+        det.plausibility = Some(plausibility_flag(body.posture.plausibility).to_string());
         // Torso-3D (anatomically stable; robust to head turn): shoulders 11/12, hips 23/24.
         // R (phantom filter, phase 8): only trust torso-3D when those landmarks are
         // actually visible. BlazePose visibility = sigmoid(logit) ∈ [0,1]; visible
@@ -556,6 +573,9 @@ fn build_body_primary(
     // or by an active track from LAST frame (the person-detector blinked — let
     // the body track bridge the gap via Kalman inertia instead of swapping in a
     // posture-less, face-3D entity that makes id 0 jump body↔face every blink).
+    // RGB frame for the face→ROI posture recovery below (materialised once, only
+    // when a pose model and at least one face are present).
+    let face_rgb = (native_pose.is_some() && !faces.is_empty()).then(|| frame.to_rgb8());
     for (fi, f) in faces.iter().enumerate() {
         if face_used[fi] {
             continue;
@@ -584,8 +604,26 @@ fn build_body_primary(
             emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), true, true,
             config, emotion_debug, idx, debug_out,
         );
+        // Detection fix: the person detector missed this body but the face is
+        // visible (desk/close view) — derive a body ROI below the face, pose it,
+        // and attach the posture (+ landmarks → motion ring) when the torso is
+        // actually visible. Stays a face-3D entity (A1); posture is just an added
+        // attribute, so this never fabricates a posture from an empty patch.
+        let mut face_lm = None;
+        if let (Some(np), Some(rgb)) = (native_pose.as_deref_mut(), face_rgb.as_ref()) {
+            if let Ok(Some((pose, lm))) =
+                np.pose_from_face(rgb, fw, fh, [fb.x1, fb.y1, fb.x2, fb.y2])
+            {
+                det.posture = Some(pose.label.to_string());
+                det.posture_confidence = Some(pose.confidence);
+                det.recon_error = Some(pose.recon_error);
+                det.plausibility = Some(plausibility_flag(pose.plausibility).to_string());
+                overlay.poses.push(lm);
+                face_lm = Some(lm);
+            }
+        }
         dets.push(det);
-        landmarks_out.push(None); // fallback face has no body landmarks
+        landmarks_out.push(face_lm); // Some when posture recovered from the face ROI
     }
 
     dets
