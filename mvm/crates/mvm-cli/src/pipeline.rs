@@ -349,7 +349,15 @@ fn anchor_objects_depth(
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
     for o in objects.iter_mut() {
-        match depth.median_in_bbox(&o.bbox) {
+        // Phase 10.4: read depth over the instance **mask** when one is attached
+        // (`--masks`), sampling only the object's silhouette — the bbox samples
+        // 20–50% background (spike §3.2), which drags the median toward the wall
+        // behind the object. Fall back to the bbox median with no mask.
+        let d_obj = match &o.mask {
+            Some(m) if !m.is_empty() => depth.median_at_points(m.set_points()),
+            _ => depth.median_in_bbox(&o.bbox),
+        };
+        match d_obj {
             Some(d) if d > 1e-3 => {
                 let z = (k / d).clamp(Z_MIN, Z_MAX);
                 let cx = (o.bbox.x1 + o.bbox.x2) * 0.5 * fw;
@@ -993,5 +1001,66 @@ mod tests {
         anchor_objects_depth(&mut objects, &depth, &tracker, &config, &frame);
         assert_eq!(objects[0].pos_3d, None);
         assert_eq!(objects[0].pos_conf, 0.0);
+    }
+
+    /// Phase 10.4: an object whose bbox straddles a near silhouette + far
+    /// background reads a **nearer** metric Z when depth is sampled over its
+    /// instance mask than over the whole bbox (which averages in the wall behind
+    /// it). Same object, same box — only the mask differs.
+    #[test]
+    fn anchor_depth_by_mask_beats_bbox_bleed() {
+        let mut config = mvm_core::Config::default();
+        config.torso_length_m = 0.5;
+        // Person anchor on the LEFT half (d=1.0), z=2.0 → k = z·d = 2.0.
+        let mut tracker = mvm_core::PersonTracker::with_config(&config);
+        tracker.pinhole = None; // body-primary: 3D from detection, not face pinhole
+        let mut pdet = Detection::bare(0.0, 0.0, 0.5, 1.0);
+        pdet.distance = Some(2.0); // gates the body-primary 3D passthrough
+        pdet.position_z = Some(2.0);
+        tracker.tick(&[pdet]);
+
+        // 8×8 inverse-depth grid (larger = nearer). Left half = person (d=1.0).
+        // Right half: top (y<0.5) is the object silhouette d=2.0 (near), bottom
+        // is background d=0.5 (far).
+        let mut data = vec![0.0f32; 64];
+        for iy in 0..8 {
+            for ix in 0..8 {
+                data[iy * 8 + ix] = if ix < 4 {
+                    1.0
+                } else if iy < 4 {
+                    2.0
+                } else {
+                    0.5
+                };
+            }
+        }
+        let depth = mvm_depth::DepthMap { data, w: 8, h: 8 };
+        let frame = image::DynamicImage::new_rgb8(64, 64);
+
+        // Object box = whole right half (straddles near object + far background).
+        let obj_bbox = mvm_core::BBox { x1: 0.5, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let mk = |mask: Option<mvm_scene::InstanceMask>| mvm_scene::TrackedObject {
+            id: 10000, class_name: "cup", bbox: obj_bbox, score: 0.9, age: 1,
+            missed: 0, pos_3d: None, pos_conf: 0.0, mask,
+        };
+        // Mask = the near silhouette only (top-right quadrant).
+        let r = mvm_scene::MASK_RES as u32;
+        let sil = mvm_core::BBox { x1: 0.5, y1: 0.0, x2: 1.0, y2: 0.5 };
+        let mask = mvm_scene::InstanceMask::assemble(
+            &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
+            &sil, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
+        );
+
+        let mut bbox_only = vec![mk(None)];
+        anchor_objects_depth(&mut bbox_only, &depth, &tracker, &config, &frame);
+        let mut with_mask = vec![mk(Some(mask))];
+        anchor_objects_depth(&mut with_mask, &depth, &tracker, &config, &frame);
+
+        let z_bbox = bbox_only[0].pos_3d.expect("bbox anchored")[2];
+        let z_mask = with_mask[0].pos_3d.expect("mask anchored")[2];
+        // k=2.0; bbox median d=0.5 → Z=4.0; mask median d=2.0 → Z=1.0.
+        assert!((z_bbox - 4.0).abs() < 0.2, "bbox bled to background Z, got {z_bbox}");
+        assert!((z_mask - 1.0).abs() < 0.2, "mask reads the near silhouette Z, got {z_mask}");
+        assert!(z_mask < z_bbox, "mask depth must be nearer than bbox bleed");
     }
 }
