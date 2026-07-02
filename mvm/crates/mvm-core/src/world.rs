@@ -34,10 +34,17 @@ pub struct Position3D {
 pub struct HandState {
     /// Normalised [x,y] landmarks (21 MediaPipe points when present).
     pub landmarks: Vec<[f32; 2]>,
-    /// Presence/confidence score [0,1] from the hand model.
+    /// Presence/confidence score [0,1] from the hand model (already downweighted
+    /// for a low-visibility wrist ROI, phase 10.2).
     pub presence: f32,
     /// "left"/"right" — which body wrist drove the ROI (authoritative side).
     pub side: &'static str,
+    /// Raw model handedness output ~[0,1] — emitted alongside `side` for
+    /// disambiguation (phase 10.2); `side` stays authoritative.
+    pub handedness: f32,
+    /// Static gesture ("fist"/"open"/"point"/"pinch") — pure arithmetic on the
+    /// 21 landmarks (phase 10.2). `None` when no clean match.
+    pub gesture: Option<&'static str>,
 }
 
 /// Outward projection of a tracked person (group G₁ Human).

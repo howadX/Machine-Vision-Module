@@ -415,6 +415,12 @@ fn enrich_face_crop(
     }
 }
 
+/// Wrist-visibility floor for hand ROIs (phase 10.2, relaxed from the classic
+/// 0.5): between the floor and 0.5 the hand is still detected but its emitted
+/// score is downweighted by `vis / 0.5` inside `mvm-hands` — recovers desk /
+/// frame-edge hands (#5) without presenting them as fully trusted.
+const HAND_WRIST_VIS_FLOOR: f32 = 0.2;
+
 /// Frames between forced SFace re-checks of an id-locked body (phase 9.6 cadence).
 /// Between these, a locked body skips SFace entirely; on a re-check frame every
 /// body is re-identified to defend against drift / a swapped face. 1 disables the
@@ -599,7 +605,10 @@ fn build_body_primary(
         // Keep them grouped per body (phase 8.F: per-person attachment).
         let mut body_hands: Vec<mvm_core::HandState> = Vec::new();
         if let (Some(hl), Some(rgb)) = (hand_landmarker.as_deref_mut(), hand_rgb.as_ref()) {
-            let rois = mvm_hands::hand_rois_from_pose(lm, 0.5);
+            // Phase 10.2 relaxation: the ROI floor drops 0.5 → 0.2 so desk /
+            // frame-edge wrists still produce a hand; the model presence gate is
+            // unchanged and the hand's score is downweighted by vis/0.5.
+            let rois = mvm_hands::hand_rois_from_pose(lm, HAND_WRIST_VIS_FLOOR);
             let hands = hl.infer_rois(rgb, &rois);
             for h in &hands {
                 body_hands.push(mvm_core::HandState {
@@ -609,6 +618,8 @@ fn build_body_primary(
                         mvm_hands::HandSide::Left => "left",
                         mvm_hands::HandSide::Right => "right",
                     },
+                    handedness: h.handedness,
+                    gesture: mvm_hands::classify_gesture(&h.landmarks_px).map(|g| g.as_str()),
                 });
             }
             overlay.hands.extend(hands); // flat list still feeds --scene-debug

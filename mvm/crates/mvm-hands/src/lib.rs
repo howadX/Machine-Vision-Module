@@ -73,6 +73,80 @@ pub struct HandRoi {
     pub cy: f32,
     pub side: f32,
     pub which: HandSide,
+    /// Wrist visibility that produced this ROI [0,1] (phase 10.2). Below the
+    /// classic 0.5 gate the resulting hand's score is downweighted by
+    /// `vis / 0.5` instead of the ROI being skipped outright — recovers desk /
+    /// frame-edge hands without fabricating confident ones.
+    pub vis: f32,
+}
+
+// ── Hand-gesture classification (phase 10.2, pure arithmetic) ────────────────
+
+/// A coarse static hand gesture from the 21 landmarks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandGesture {
+    /// All four fingers curled.
+    Fist,
+    /// Three or more fingers extended.
+    Open,
+    /// Only the index finger extended.
+    Point,
+    /// Thumb and index tips touching while the remaining fingers stay open.
+    Pinch,
+}
+
+impl HandGesture {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HandGesture::Fist => "fist",
+            HandGesture::Open => "open",
+            HandGesture::Point => "point",
+            HandGesture::Pinch => "pinch",
+        }
+    }
+}
+
+/// Classify a static gesture from the 21 hand landmarks (pixels; z ignored).
+///
+/// Scale-free: every threshold is relative to the palm length (wrist → middle
+/// MCP). A finger counts as *extended* when its tip sits farther from the wrist
+/// than its PIP by ≥15% — curled fingers fold the tip back toward the palm.
+/// Rules (checked in order, first match wins):
+/// - **pinch**: thumb-tip↔index-tip < 0.3·palm while ≥2 of middle/ring/pinky
+///   are extended (distinguishes it from a fist, where the thumb rests on the
+///   curled index);
+/// - **fist**: no finger extended;
+/// - **point**: index extended, middle/ring/pinky all curled;
+/// - **open**: ≥3 fingers extended.
+/// `None` when the shape matches nothing cleanly or the palm is degenerate.
+pub fn classify_gesture(lm: &[[f32; 3]; N_HAND_LM]) -> Option<HandGesture> {
+    let p = |i: usize| (lm[i][0], lm[i][1]);
+    let wrist = p(0);
+    let palm = dist(wrist, p(9));
+    if palm < 1e-3 {
+        return None;
+    }
+    // (PIP, TIP) per finger: index, middle, ring, pinky.
+    let extended =
+        |pip: usize, tip: usize| dist(wrist, p(tip)) > dist(wrist, p(pip)) * 1.15;
+    let index = extended(6, 8);
+    let rest = [extended(10, 12), extended(14, 16), extended(18, 20)];
+    let rest_ext = rest.iter().filter(|&&e| e).count();
+    let n_ext = rest_ext + index as usize;
+
+    if dist(p(4), p(8)) < palm * 0.3 && rest_ext >= 2 {
+        return Some(HandGesture::Pinch);
+    }
+    if n_ext == 0 {
+        return Some(HandGesture::Fist);
+    }
+    if index && rest_ext == 0 {
+        return Some(HandGesture::Point);
+    }
+    if n_ext >= 3 {
+        return Some(HandGesture::Open);
+    }
+    None
 }
 
 // BlazePose-33 indices for hands.
@@ -94,7 +168,10 @@ fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
 ///
 /// For each hand, the wrist + finger tips bound the hand; we centre a square just
 /// past the wrist toward the fingers and pad it (×2.4) so the whole hand fits.
-/// Hands whose wrist visibility is below `vis_min` are skipped (occluded / behind).
+/// Hands whose wrist visibility is below `vis_min` are skipped (occluded / behind);
+/// the ROI records the visibility so a low-vis hand (phase 10.2 relaxation:
+/// callers may pass a floor below the classic 0.5) gets its score downweighted
+/// downstream instead of silently looking fully trusted.
 pub fn hand_rois_from_pose(lm: &[[f32; 4]; 33], vis_min: f32) -> Vec<HandRoi> {
     let mut rois = Vec::new();
     for (wrist, pinky, index, thumb, which) in [
@@ -113,7 +190,7 @@ pub fn hand_rois_from_pose(lm: &[[f32; 4]; 33], vis_min: f32) -> Vec<HandRoi> {
         let center = (w.0 + (fc.0 - w.0) * 1.1, w.1 + (fc.1 - w.1) * 1.1);
         let span = dist(w, i).max(dist(w, p)).max(dist(w, t)).max(dist(w, fc));
         let side = (span * 2.4).max(24.0);
-        rois.push(HandRoi { cx: center.0, cy: center.1, side, which });
+        rois.push(HandRoi { cx: center.0, cy: center.1, side, which, vis: lm[wrist][3] });
     }
     rois
 }
@@ -210,6 +287,11 @@ impl HandLandmarker {
             landmarks_px[k][1] = y1 + lm[b + 1] * s;
             landmarks_px[k][2] = lm[b + 2] * s; // relative z
         }
+        // Phase 10.2 relaxation: a hand whose ROI came from a low-vis wrist keeps
+        // the model presence gate above, but its emitted score is honestly
+        // downweighted by vis/0.5 (1.0 at/above the classic gate).
+        let vis_weight = (roi.vis / 0.5).clamp(0.0, 1.0);
+        let score = score * vis_weight;
         Ok(Some(Hand { landmarks_px, handedness, score, side: roi.which }))
     }
 }
@@ -280,6 +362,101 @@ mod tests {
         assert_eq!(sample_bilinear(&img, 100.0, 100.0), [0.0, 0.0, 0.0]);
     }
 
+    // ── gesture classification (phase 10.2, pure) ──
+
+    /// A canonical upright hand: wrist at (100,200), palm length 40 px.
+    /// `ext[f]` extends finger f (index/middle/ring/pinky); curled tips fold
+    /// back toward the palm.
+    fn hand_lm(ext: [bool; 4], thumb_on_index: bool) -> [[f32; 3]; N_HAND_LM] {
+        let mut lm = [[0.0f32; 3]; N_HAND_LM];
+        lm[0] = [100.0, 200.0, 0.0]; // wrist
+        // Finger columns at x = 90/100/110/120, MCP y=160, PIP y=145.
+        for (f, &(mcp, pip, dip, tip)) in
+            [(5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20)]
+                .iter()
+                .enumerate()
+        {
+            let x = 90.0 + f as f32 * 10.0;
+            lm[mcp] = [x, 160.0, 0.0];
+            lm[pip] = [x, 145.0, 0.0];
+            if ext[f] {
+                lm[dip] = [x, 130.0, 0.0];
+                lm[tip] = [x, 115.0, 0.0]; // far above the PIP → extended
+            } else {
+                lm[dip] = [x, 150.0, 0.0];
+                lm[tip] = [x, 165.0, 0.0]; // folded back to the palm
+            }
+        }
+        // Thumb: 1-4 out to the left; tip either resting away or on the index tip.
+        lm[1] = [90.0, 190.0, 0.0];
+        lm[2] = [80.0, 180.0, 0.0];
+        lm[3] = [72.0, 172.0, 0.0];
+        lm[4] = if thumb_on_index {
+            [lm[8][0] - 2.0, lm[8][1] + 2.0, 0.0]
+        } else {
+            [60.0, 165.0, 0.0]
+        };
+        lm
+    }
+
+    #[test]
+    fn gesture_open_hand() {
+        let lm = hand_lm([true; 4], false);
+        assert_eq!(classify_gesture(&lm), Some(HandGesture::Open));
+    }
+
+    #[test]
+    fn gesture_fist() {
+        let lm = hand_lm([false; 4], false);
+        assert_eq!(classify_gesture(&lm), Some(HandGesture::Fist));
+    }
+
+    #[test]
+    fn gesture_point_index_only() {
+        let lm = hand_lm([true, false, false, false], false);
+        assert_eq!(classify_gesture(&lm), Some(HandGesture::Point));
+    }
+
+    #[test]
+    fn gesture_pinch_thumb_on_index_others_open() {
+        // The "OK" shape: thumb tip on the index tip, middle/ring/pinky open.
+        let lm = hand_lm([true, true, true, true], true);
+        assert_eq!(classify_gesture(&lm), Some(HandGesture::Pinch));
+    }
+
+    #[test]
+    fn gesture_fist_with_thumb_on_curled_index_is_not_pinch() {
+        // In a fist the thumb rests on the curled index — must stay a fist.
+        let lm = hand_lm([false; 4], true);
+        assert_eq!(classify_gesture(&lm), Some(HandGesture::Fist));
+    }
+
+    #[test]
+    fn gesture_degenerate_palm_is_none() {
+        let lm = [[5.0f32, 5.0, 0.0]; N_HAND_LM];
+        assert_eq!(classify_gesture(&lm), None);
+    }
+
+    #[test]
+    fn gesture_labels() {
+        assert_eq!(HandGesture::Fist.as_str(), "fist");
+        assert_eq!(HandGesture::Open.as_str(), "open");
+        assert_eq!(HandGesture::Point.as_str(), "point");
+        assert_eq!(HandGesture::Pinch.as_str(), "pinch");
+    }
+
+    // ── vis relaxation (phase 10.2) ──
+
+    #[test]
+    fn low_vis_wrist_yields_roi_with_recorded_vis() {
+        let mut lm = pose_with_left_hand();
+        lm[L_WRIST][3] = 0.3; // below the classic 0.5 gate
+        assert!(hand_rois_from_pose(&lm, 0.5).is_empty(), "0.5 floor still skips");
+        let rois = hand_rois_from_pose(&lm, 0.2);
+        assert_eq!(rois.len(), 1, "relaxed floor recovers the hand");
+        assert!((rois[0].vis - 0.3).abs() < 1e-6, "ROI records the wrist vis");
+    }
+
     // model-gated end-to-end load
     #[test]
     fn model_loads_when_present() {
@@ -294,7 +471,7 @@ mod tests {
         let mut hl = HandLandmarker::from_path(&p).unwrap();
         let img = RgbImage::new(640, 480);
         // Black ROI → low presence → None (must not panic).
-        let r = hl.infer_square(&img, &HandRoi { cx: 320.0, cy: 240.0, side: 200.0, which: HandSide::Left }).unwrap();
+        let r = hl.infer_square(&img, &HandRoi { cx: 320.0, cy: 240.0, side: 200.0, which: HandSide::Left, vis: 0.9 }).unwrap();
         eprintln!("black ROI hand = {:?}", r.map(|h| h.score));
     }
 }

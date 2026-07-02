@@ -134,13 +134,18 @@ struct JsonFace {
     plausibility: Option<String>,
 }
 
-/// One hand in the Scene JSON (phase 10.0).
+/// One hand in the Scene JSON (phase 10.0/10.2).
 #[derive(Serialize)]
 struct JsonHand {
-    /// "left"/"right" — the body wrist that drove the ROI.
+    /// "left"/"right" — the body wrist that drove the ROI (authoritative).
     side: &'static str,
-    /// Hand-model presence score [0,1].
+    /// Hand-model presence score [0,1] (vis-downweighted, phase 10.2).
     presence: f32,
+    /// Raw model handedness ~[0,1] — disambiguation next to `side` (phase 10.2).
+    handedness: f32,
+    /// Static gesture ("fist"/"open"/"point"/"pinch"), absent when unclear.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gesture: Option<&'static str>,
     /// Normalised 21-point landmarks; present only under `--dump-landmarks`.
     #[serde(skip_serializing_if = "Option::is_none")]
     landmarks: Option<Vec<[f32; 2]>>,
@@ -266,6 +271,8 @@ fn hand_to_json(h: &mvm_core::HandState, dump_landmarks: bool) -> JsonHand {
     JsonHand {
         side: h.side,
         presence: h.presence,
+        handedness: h.handedness,
+        gesture: h.gesture,
         landmarks: dump_landmarks.then(|| h.landmarks.clone()),
     }
 }
@@ -1376,6 +1383,8 @@ mod tests {
             landmarks: vec![[0.41, 0.61]; 21],
             presence: 0.87,
             side: "left",
+            handedness: 0.12,
+            gesture: Some("open"),
         }];
         p.recon_error = Some(0.031);
         p.plausibility = Some("ok".into());
@@ -1388,6 +1397,8 @@ mod tests {
         assert_eq!(f["wrists"][0][0].as_f64().unwrap(), 0.4);
         assert_eq!(f["hands"][0]["side"], "left");
         assert!((f["hands"][0]["presence"].as_f64().unwrap() - 0.87).abs() < 0.01);
+        assert!((f["hands"][0]["handedness"].as_f64().unwrap() - 0.12).abs() < 0.01);
+        assert_eq!(f["hands"][0]["gesture"], "open");
         assert!(f["hands"][0].get("landmarks").is_none(), "landmarks opt-in only");
         assert!((f["recon_error"].as_f64().unwrap() - 0.031).abs() < 1e-6);
         assert_eq!(f["plausibility"], "ok");
@@ -1403,6 +1414,8 @@ mod tests {
             landmarks: vec![[0.5, 0.5]; 21],
             presence: 0.9,
             side: "right",
+            handedness: 0.9,
+            gesture: None,
         }];
         world.people.push(p);
         let line = sf.to_json_line_world(&world, 30.0);

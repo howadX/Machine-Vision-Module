@@ -411,6 +411,8 @@ mod tests {
             landmarks: vec![[0.33, 0.57], [0.34, 0.56]],
             presence: 0.9,
             side: "right",
+            handedness: 0.9,
+            gesture: None,
         }];
         let mouse = obj_class(10001, "mouse", BBox { x1: 0.31, y1: 0.54, x2: 0.36, y2: 0.60 });
         let acts = infer_activities(&[p], &[mouse]);
