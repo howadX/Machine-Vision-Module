@@ -151,6 +151,11 @@ struct Args {
     /// numbers) to /tmp/mvm_scene.jpg each dump and print a class/colour legend.
     /// Lets you SEE which objects the scene detector finds on real frames.
     scene_debug: bool,
+    /// --masks: run the YOLO-seg expert (phase 10.4, +1 ONNX) *in addition* to
+    /// YOLO26n on the object cadence, attaching instance masks to tracked objects
+    /// (→ mask-median depth, mask contact). Opt-in / default off — zero perf hit
+    /// unless requested (spike §3.3: owner A/Bs the ~+47ms cadence cost live).
+    masks: bool,
 }
 
 fn parse_args() -> Args {
@@ -167,6 +172,7 @@ fn parse_args() -> Args {
         detect_ab: false,
         native_camera: false,
         scene_debug: false,
+        masks: false,
     };
 
     let mut i = 1;
@@ -181,6 +187,7 @@ fn parse_args() -> Args {
             "--detect-ab"     => args.detect_ab = true,
             "--native-camera" => { args.native_camera = true; args.native = true; }
             "--scene-debug"   => args.scene_debug = true,
+            "--masks"         => args.masks = true,
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -574,6 +581,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
         Some(identity),
         hands,
         None,
+        None, // seg_detector — mesh path masks are a follow-up (phase 10.4)
         mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
         None,
     );
@@ -763,6 +771,34 @@ fn main() -> Result<()> {
         }
     }
 
+    // YOLO-seg instance masks (phase 10.4, +1 ONNX) — opt-in via --masks, an
+    // *additional* cadenced expert over YOLO26n (not a drop-in; spike §3.2). Its
+    // masks are attached onto the tracked objects for mask-median depth + contact.
+    // Gated on both the flag and the model file (absent → masks silently off).
+    let mut seg_detector: Option<mvm_scene::YoloSegDetector> = None;
+    if args.native_camera && args.masks {
+        let model_path = config.models_path.join("yolo_seg.onnx");
+        if model_path.exists() {
+            match mvm_scene::YoloSegDetector::from_path(&model_path) {
+                Ok(mut s) => {
+                    s.set_score_threshold(config.object_score_thresh);
+                    eprintln!(
+                        "  seg: loading YOLO-seg masks ({}), cadence every {} frames (over YOLO26n)",
+                        model_path.display(),
+                        config.object_cadence
+                    );
+                    seg_detector = Some(s);
+                }
+                Err(e) => eprintln!("  seg: YOLO-seg load failed: {e} (masks disabled)"),
+            }
+        } else {
+            eprintln!(
+                "  seg: --masks set but no model at {} — masks disabled (see phase-10 recipe)",
+                model_path.display()
+            );
+        }
+    }
+
     // Monocular depth (phase 8.E.2, G₄ Environment) — heavy (~230ms), low cadence.
     // Gives objects metric 3D by anchoring the relative depth map to a person's
     // torso-Z. Gated on the model file like the scene detector.
@@ -860,6 +896,7 @@ fn main() -> Result<()> {
                 identity_mod,
                 hand_landmarker,
                 scene_detector,
+                seg_detector,
                 object_tracker,
                 depth_estimator,
             );

@@ -29,6 +29,12 @@ const POSTURE_OOD_LOGPZ: f32 = 170.0;
 /// bodies sit ≥0.35; 0.15 cleanly separates fragments without touching real bodies.
 const POSTURE_MIN_BBOX_H: f32 = 0.15;
 
+/// Min bbox-IoU for a YOLO-seg detection's mask to attach onto a tracked object
+/// (phase 10.4). Both models see the identical letterboxed frame, so the same
+/// physical instance's boxes overlap heavily; 0.5 rejects a mask landing on the
+/// wrong (adjacent) object while tolerating YOLO26n↔YOLO-seg box disagreement.
+const SEG_ATTACH_IOU: f32 = 0.5;
+
 /// Tier 0.2 plausibility label from a pose's `log_prob_z`.
 fn plausibility_flag(logpz: f32) -> &'static str {
     if logpz < POSTURE_OOD_LOGPZ {
@@ -129,6 +135,10 @@ pub(crate) struct BodyPrimaryPipeline {
     identity_mod: Option<mvm_identity::IdentityModule>,
     hand_landmarker: Option<mvm_hands::HandLandmarker>,
     scene_detector: Option<mvm_scene::YoloDetector>,
+    /// YOLO-seg mask expert (phase 10.4, `--masks`) — runs *over* YOLO26n on the
+    /// object cadence; its masks are attached to the tracked objects. `None` when
+    /// masks are disabled → zero cost.
+    seg_detector: Option<mvm_scene::YoloSegDetector>,
     object_tracker: mvm_scene::ObjectTracker,
     depth_estimator: Option<mvm_depth::DepthEstimator>,
     /// Latest object detections (persist between cadence runs).
@@ -148,6 +158,7 @@ impl BodyPrimaryPipeline {
         identity_mod: Option<mvm_identity::IdentityModule>,
         hand_landmarker: Option<mvm_hands::HandLandmarker>,
         scene_detector: Option<mvm_scene::YoloDetector>,
+        seg_detector: Option<mvm_scene::YoloSegDetector>,
         object_tracker: mvm_scene::ObjectTracker,
         depth_estimator: Option<mvm_depth::DepthEstimator>,
     ) -> Self {
@@ -160,6 +171,7 @@ impl BodyPrimaryPipeline {
             identity_mod,
             hand_landmarker,
             scene_detector,
+            seg_detector,
             object_tracker,
             depth_estimator,
             latest_objects: Vec::new(),
@@ -236,6 +248,26 @@ impl BodyPrimaryPipeline {
                             })
                             .collect();
                         self.latest_objects = self.object_tracker.update(&filtered);
+
+                        // Phase 10.4: the YOLO-seg expert (opt-in) runs over the
+                        // same frame and its masks are attached onto the tracker's
+                        // objects — YOLO26n stays the detection/tracking authority.
+                        if let Some(seg) = &mut self.seg_detector {
+                            match seg.detect(frame) {
+                                Ok(segs) => {
+                                    let segs: Vec<_> = segs
+                                        .into_iter()
+                                        .filter(|s| mvm_scene::is_relevant(s.det.class_name))
+                                        .collect();
+                                    mvm_scene::attach_masks(
+                                        &mut self.latest_objects,
+                                        &segs,
+                                        SEG_ATTACH_IOU,
+                                    );
+                                }
+                                Err(e) => eprintln!("  seg: detect error: {e}"),
+                            }
+                        }
                     }
                     Err(e) => eprintln!("  scene: detect error: {e}"),
                 }
