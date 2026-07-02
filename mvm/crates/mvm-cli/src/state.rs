@@ -1155,6 +1155,7 @@ mod tests {
             missed: 0,
             pos_3d: None,
             pos_conf: 0.0,
+            mask: None,
         }
     }
 

@@ -955,6 +955,7 @@ mod tests {
             missed: 0,
             pos_3d: Some([1.0, 1.0, 1.0]),
             pos_conf: 0.4,
+            mask: None,
         }];
         let frame = image::DynamicImage::new_rgb8(64, 64);
         anchor_objects_depth(&mut objects, &depth, &tracker, &config, &frame);

@@ -114,6 +114,12 @@ pub struct TrackedObject {
     pub pos_3d: Option<[f32; 3]>,
     /// Confidence of `pos_3d` (0 = none → overlap-only in the scene-graph).
     pub pos_conf: f32,
+    /// Instance mask from the YOLO-seg expert (phase 10.4), attached by
+    /// [`attach_masks`] on the seg cadence and refreshed each tick — `None` when
+    /// masks are disabled (`--masks` off) or no seg detection matched this object.
+    /// The tracker never sets this (it has no seg model); it rides on the object
+    /// so depth-by-mask (`median_at_points`) and mask-contact fusion can read it.
+    pub mask: Option<InstanceMask>,
 }
 
 /// Lightweight greedy-IoU object tracker (phase 8.E filter B).
@@ -216,6 +222,7 @@ impl ObjectTracker {
                 missed: 0,
                 pos_3d: None,
                 pos_conf: 0.0,
+                mask: None,
             });
         }
 
@@ -251,6 +258,56 @@ fn ema_bbox(prev: &BBox, new: &BBox, alpha: f32) -> BBox {
         y1: f(prev.y1, new.y1),
         x2: f(prev.x2, new.x2),
         y2: f(prev.y2, new.y2),
+    }
+}
+
+/// Attach YOLO-seg instance masks onto the tracked objects (phase 10.4 / 10.5).
+///
+/// YOLO-seg runs as an **additional** cadenced expert over YOLO26n (which stays
+/// the tracking authority — spike §3.2: seg is not a drop-in, its small-object
+/// recall is weaker). Each tick this maps the seg detections' masks onto the
+/// objects the tracker already owns, so masks ride the stable track ids without
+/// changing who tracks what. Matching is greedy and class-aware by bbox-IoU, with
+/// the seg mask's IoU against the object's **previous** mask as a lexicographic
+/// tiebreak — the instance-separation signal (phase 10.5) that disambiguates two
+/// overlapping same-class objects whose bboxes match a seg equally well.
+///
+/// Every object's mask is reset first, so a stale mask never outlives the seg
+/// detection that produced it — a mask is only ever as fresh as this tick's seg.
+pub fn attach_masks(objects: &mut [TrackedObject], segs: &[SegDetection], iou_thresh: f32) {
+    // Candidates `(obj, seg, bbox_iou, mask_iou)`. mask_iou uses the object's
+    // *previous* mask (read before the reset below) as the tiebreak.
+    let mut cands: Vec<(usize, usize, f32, f32)> = Vec::new();
+    for (oi, o) in objects.iter().enumerate() {
+        for (si, s) in segs.iter().enumerate() {
+            if o.class_name != s.det.class_name {
+                continue;
+            }
+            let bi = o.bbox.iou(&s.det.bbox);
+            if bi < iou_thresh {
+                continue;
+            }
+            let mi = o.mask.as_ref().map_or(0.0, |m| m.iou(&s.mask));
+            cands.push((oi, si, bi, mi));
+        }
+    }
+    // A mask is only as fresh as this tick's seg — never carry a stale silhouette.
+    for o in objects.iter_mut() {
+        o.mask = None;
+    }
+    // Greedy: highest bbox-IoU first, mask-IoU breaks ties; one seg per object.
+    cands.sort_by(|a, b| {
+        b.2.partial_cmp(&a.2).unwrap().then(b.3.partial_cmp(&a.3).unwrap())
+    });
+    let mut obj_used = vec![false; objects.len()];
+    let mut seg_used = vec![false; segs.len()];
+    for (oi, si, _, _) in cands {
+        if obj_used[oi] || seg_used[si] {
+            continue;
+        }
+        obj_used[oi] = true;
+        seg_used[si] = true;
+        objects[oi].mask = Some(segs[si].mask.clone());
     }
 }
 
@@ -1044,6 +1101,116 @@ mod tests {
         let _ = t.update(&[]); // missed one frame (within timeout)
         let back = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
         assert_eq!(back[0].id, id1, "object reappearing within timeout keeps its id");
+    }
+
+    // ── attach_masks (phase 10.4 / 10.5, synthetic masks) ──────────────────
+
+    /// A full-frame proto-plane, all logits `v` (uniform "inside").
+    fn uniform_proto() -> Vec<f32> {
+        vec![10.0f32; MASK_RES * MASK_RES]
+    }
+    /// A proto whose left half is strongly inside, right half outside (coeff sign
+    /// then selects which half a mask covers).
+    fn left_half_proto() -> Vec<f32> {
+        let mut p = vec![0.0f32; MASK_RES * MASK_RES];
+        for y in 0..MASK_RES {
+            for x in 0..MASK_RES {
+                p[y * MASK_RES + x] = if x < MASK_RES / 2 { 10.0 } else { -10.0 };
+            }
+        }
+        p
+    }
+    fn id_lb() -> Letterbox {
+        Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }
+    }
+    fn mk_mask(proto: &[f32], coeff: f32, b: &BBox) -> InstanceMask {
+        let r = MASK_RES as u32;
+        InstanceMask::assemble(proto, 1, MASK_RES, MASK_RES, &[coeff], b, id_lb(), r, r, r)
+    }
+    /// A seg detection with a full-bbox uniform mask.
+    fn full_seg(class: &'static str, b: BBox) -> SegDetection {
+        SegDetection {
+            det: ObjectDetection { class_id: 0, class_name: class, bbox: b, score: 0.8 },
+            mask: mk_mask(&uniform_proto(), 1.0, &b),
+        }
+    }
+    fn trk(id: u32, class: &'static str, b: BBox) -> TrackedObject {
+        TrackedObject {
+            id, class_name: class, bbox: b, score: 0.8, age: 2, missed: 0,
+            pos_3d: None, pos_conf: 0.0, mask: None,
+        }
+    }
+
+    #[test]
+    fn attach_masks_matches_overlapping_same_class() {
+        let b = BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 };
+        let mut objs = vec![trk(10000, "cup", b)];
+        attach_masks(&mut objs, &[full_seg("cup", b)], 0.3);
+        assert!(objs[0].mask.as_ref().is_some_and(|m| !m.is_empty()), "cup got its mask");
+    }
+
+    #[test]
+    fn attach_masks_ignores_class_mismatch() {
+        let b = BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 };
+        let mut objs = vec![trk(10000, "cup", b)];
+        attach_masks(&mut objs, &[full_seg("laptop", b)], 0.3);
+        assert!(objs[0].mask.is_none(), "class mismatch → no mask");
+    }
+
+    #[test]
+    fn attach_masks_ignores_disjoint_boxes() {
+        let mut objs = vec![trk(10000, "cup", BBox { x1: 0.0, y1: 0.0, x2: 0.1, y2: 0.1 })];
+        let far = full_seg("cup", BBox { x1: 0.8, y1: 0.8, x2: 0.9, y2: 0.9 });
+        attach_masks(&mut objs, &[far], 0.3);
+        assert!(objs[0].mask.is_none(), "no bbox overlap → no attach");
+    }
+
+    #[test]
+    fn attach_masks_resets_stale_mask_when_no_seg() {
+        let b = BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 };
+        let mut objs = vec![trk(10000, "cup", b)];
+        objs[0].mask = Some(mk_mask(&uniform_proto(), 1.0, &b)); // stale mask
+        attach_masks(&mut objs, &[], 0.3); // no seg this tick
+        assert!(objs[0].mask.is_none(), "stale mask cleared when no seg supports it");
+    }
+
+    #[test]
+    fn attach_masks_one_seg_per_object_no_double_assign() {
+        // Two distinct cups, two segs → each cup gets its own seg's mask.
+        let ba = BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 };
+        let bb = BBox { x1: 0.7, y1: 0.7, x2: 0.8, y2: 0.8 };
+        let mut objs = vec![trk(10000, "cup", ba), trk(10001, "cup", bb)];
+        attach_masks(&mut objs, &[full_seg("cup", ba), full_seg("cup", bb)], 0.3);
+        assert!(objs[0].mask.is_some() && objs[1].mask.is_some(), "both cups masked");
+    }
+
+    #[test]
+    fn attach_masks_mask_iou_breaks_bbox_ties() {
+        // Two overlapping same-class objects with an *identical* bbox → equal
+        // bbox-IoU to both segs. Each carries a prior silhouette (obj A = left
+        // half, obj B = right half); two segs carry the matching halves. The
+        // mask-IoU tiebreak must route the left seg to A and the right seg to B
+        // (phase 10.5 instance separation).
+        let full = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let mut a = trk(10000, "book", full);
+        let mut b = trk(10001, "book", full);
+        a.mask = Some(mk_mask(&left_half_proto(), 1.0, &full)); // left silhouette
+        b.mask = Some(mk_mask(&left_half_proto(), -1.0, &full)); // right silhouette
+        let mut objs = vec![a, b];
+        let seg_left = SegDetection {
+            det: ObjectDetection { class_id: 0, class_name: "book", bbox: full, score: 0.8 },
+            mask: mk_mask(&left_half_proto(), 1.0, &full),
+        };
+        let seg_right = SegDetection {
+            det: ObjectDetection { class_id: 0, class_name: "book", bbox: full, score: 0.8 },
+            mask: mk_mask(&left_half_proto(), -1.0, &full),
+        };
+        attach_masks(&mut objs, &[seg_left, seg_right], 0.3);
+        // obj A should now carry a left-half mask (points all x<0.5).
+        let am = objs[0].mask.as_ref().expect("A masked");
+        assert!(am.set_points().all(|p| p[0] < 0.5), "A got the LEFT seg (mask-IoU tiebreak)");
+        let bm = objs[1].mask.as_ref().expect("B masked");
+        assert!(bm.set_points().all(|p| p[0] >= 0.5), "B got the RIGHT seg");
     }
 
     // ── coco table sanity ──────────────────────────────────────────────────

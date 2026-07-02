@@ -169,6 +169,7 @@ mod tests {
                 missed: 0,
                 pos_3d: Some([0.5, 0.1, 0.7]),
                 pos_conf: 0.4,
+                mask: None,
             },
             mvm_scene::TrackedObject {
                 id: 10001,
@@ -179,6 +180,7 @@ mod tests {
                 missed: 0,
                 pos_3d: None,
                 pos_conf: 0.0,
+                mask: None,
             },
         ];
         project_objects(&world, &objs, now);
