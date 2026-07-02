@@ -75,6 +75,20 @@ pub fn is_relevant(class_name: &str) -> bool {
     RELEVANT_CLASSES.contains(&class_name)
 }
 
+/// COCO animal classes. Not scene nodes (excluded from `RELEVANT_CLASSES`), but
+/// detected all the same so a body track overlapping one can be flagged as a
+/// likely animal — a **model-corroborated** anti-phantom gate (phase 10.x): an
+/// independent YOLO "dog"/"cat"/"bird" over the body box is strong evidence the
+/// body is the pet, and a fallen human never lands inside a "dog" detection.
+pub const ANIMAL_CLASSES: &[&str] = &[
+    "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe",
+];
+
+/// Whether a COCO class is an animal (see [`ANIMAL_CLASSES`]).
+pub fn is_animal(class_name: &str) -> bool {
+    ANIMAL_CLASSES.contains(&class_name)
+}
+
 /// Large, visually-similar furniture prone to low-confidence flicker
 /// (couch ↔ bed ↔ chair confusion). These need a higher score bar than small
 /// interaction objects, which a single global threshold can't express.
@@ -1017,6 +1031,14 @@ mod tests {
         assert!(is_relevant("cup") && is_relevant("laptop") && is_relevant("chair"));
         assert!(!is_relevant("person"), "person owned by body-primary tracker");
         assert!(!is_relevant("car") && !is_relevant("dog") && !is_relevant("banana"));
+    }
+
+    #[test]
+    fn is_animal_matches_pets_and_is_disjoint_from_relevant() {
+        assert!(is_animal("dog") && is_animal("cat") && is_animal("bird"));
+        assert!(!is_animal("person") && !is_animal("cup") && !is_animal("chair"));
+        // Animals must never also be scene-node objects (disjoint sets).
+        assert!(ANIMAL_CLASSES.iter().all(|c| !is_relevant(c)));
     }
 
     #[test]

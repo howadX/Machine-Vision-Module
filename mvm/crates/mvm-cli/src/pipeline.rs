@@ -143,6 +143,9 @@ pub(crate) struct BodyPrimaryPipeline {
     depth_estimator: Option<mvm_depth::DepthEstimator>,
     /// Latest object detections (persist between cadence runs).
     latest_objects: Vec<mvm_scene::TrackedObject>,
+    /// Latest animal detections (dog/cat/bird…) — NOT scene nodes; used to flag
+    /// body tracks that overlap them as likely-animals (persist between runs).
+    latest_animals: Vec<mvm_scene::ObjectDetection>,
     /// Latest relative depth map (persist between cadence runs).
     latest_depth: Option<mvm_depth::DepthMap>,
 }
@@ -175,6 +178,7 @@ impl BodyPrimaryPipeline {
             object_tracker,
             depth_estimator,
             latest_objects: Vec::new(),
+            latest_animals: Vec::new(),
             latest_depth: None,
         }
     }
@@ -232,6 +236,15 @@ impl BodyPrimaryPipeline {
             {
                 match det.detect(frame) {
                     Ok(objs) => {
+                        // Animals (dog/cat/bird…): not scene nodes, but kept so a
+                        // body track overlapping one is flagged likely-animal
+                        // (model-corroborated anti-phantom gate).
+                        self.latest_animals = objs
+                            .iter()
+                            .filter(|o| mvm_scene::is_animal(o.class_name))
+                            .filter(|o| o.score >= self.config.object_score_thresh)
+                            .cloned()
+                            .collect();
                         let filtered: Vec<_> = objs
                             .into_iter()
                             .filter(|o| mvm_scene::is_relevant(o.class_name))
@@ -312,6 +325,11 @@ impl BodyPrimaryPipeline {
     /// The latest tracked objects (for StateFile / JSON / scene-debug).
     pub(crate) fn objects(&self) -> &[mvm_scene::TrackedObject] {
         &self.latest_objects
+    }
+
+    /// The latest animal detections (for the likely-animal body gate).
+    pub(crate) fn animals(&self) -> &[mvm_scene::ObjectDetection] {
+        &self.latest_animals
     }
 }
 

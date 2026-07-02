@@ -22,7 +22,7 @@ mod statefile;
 
 pub(crate) use capture::CaptureAgent;
 pub(crate) use depth::{DepthAgent, DepthSlot};
-pub(crate) use fusion::FusionAgent;
+pub(crate) use fusion::{infer_activities, FusionAgent};
 pub(crate) use human::HumanAgent;
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::StateFileWriter;

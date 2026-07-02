@@ -352,7 +352,7 @@ fn run_native_loop(
                 let line = if args.emotion_debug {
                     state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
                 } else {
-                    state_file.to_json_line(&tracker, fps, pipeline.objects(), &bodies)
+                    state_file.to_json_line(&tracker, fps, pipeline.objects(), &bodies, pipeline.animals())
                 };
                 println!("{line}");
             }
@@ -1064,7 +1064,7 @@ fn main() -> Result<()> {
                 let line = if args.emotion_debug {
                     state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
                 } else {
-                    state_file.to_json_line(&tracker, fps, &latest_objects, &[])
+                    state_file.to_json_line(&tracker, fps, &latest_objects, &[], &[])
                 };
                 println!("{line}");
             }

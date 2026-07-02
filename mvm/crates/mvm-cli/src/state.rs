@@ -93,6 +93,13 @@ struct JsonFace {
     /// possible fallen human. (SUPREME 3-person+pets test: the dog surfaced as a
     /// faceless horizontal node with no way to tell it apart.)
     face_verified: bool,
+    /// Model-corroborated animal flag: this body's bbox overlaps a YOLO animal
+    /// detection (dog/cat/bird…) — strong evidence it is a pet, not a person (a
+    /// fallen human never lands inside a "dog" box). Such bodies are excluded
+    /// from person-relational fusion (no false `people_together`). Omitted when
+    /// false to keep the stream lean.
+    #[serde(skip_serializing_if = "is_false")]
+    likely_animal: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     posture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -272,6 +279,7 @@ fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool) -> JsonF
         emotion_distribution: p.emotion_distribution,
         bbox_h: p.bbox.y2 - p.bbox.y1,
         face_verified: p.identity.is_some() || p.emotion.is_some(),
+        likely_animal: false, // mesh path carries no animal detections (follow-up)
         posture: p.posture.as_ref().map(|(s, _)| s.clone()),
         posture_conf: p.posture.as_ref().map(|(_, c)| *c),
         body_coverage: p.body_coverage,
@@ -306,6 +314,17 @@ fn best_body_for_track<'a>(
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(b, _)| b)
 }
+
+/// `#[serde(skip_serializing_if)]` predicate: omit a `false` boolean flag.
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Min bbox-IoU for a body to count as overlapping an animal detection (the
+/// likely-animal gate). High enough that a person merely standing near a pet
+/// (tall body box vs low wide animal box → small IoU) is never flagged; only a
+/// body whose box ≈ the animal's box (i.e. the body *is* the animal) trips it.
+const ANIMAL_IOU: f32 = 0.4;
 
 fn hand_to_json(h: &mvm_core::HandState, dump_landmarks: bool) -> JsonHand {
     JsonHand {
@@ -529,6 +548,7 @@ impl StateFile {
         fps: f64,
         objects: &[TrackedObject],
         bodies: &[crate::pipeline::BodyData],
+        animals: &[mvm_scene::ObjectDetection],
     ) -> String {
         use mvm_core::types::{Entity, EntityKind};
 
@@ -585,6 +605,50 @@ impl StateFile {
             JsonRelation { a: r.a, b: r.b, dist_m: r.distance_m, overlap: r.overlap, kind }
         }).collect();
 
+        // ── Cross-group activities (phase 8.F) on the sync path too ─────────
+        // Build the fused inputs from tracks + IoU-matched bodies + tracked
+        // objects, exactly as the mesh FusionAgent does, so people_together /
+        // typing / holding_drink / seated_at_workstation fire on the PRIMARY
+        // path (previously mesh-only). A likely-animal body (its box overlaps a
+        // YOLO animal detection) is dropped from the relational inputs so a pet
+        // never becomes a `people_together` participant.
+        let now_i = std::time::Instant::now();
+        let fusion_people: Vec<mvm_core::PersonState> = active
+            .iter()
+            .filter(|t| !animals.iter().any(|a| t.bbox.iou(&a.bbox) > ANIMAL_IOU))
+            .map(|t| {
+                let mut p = mvm_core::PersonState::from_track(t, now_i);
+                if let Some(b) = best_body_for_track(&t.bbox, bodies) {
+                    p.wrists = b.wrists.clone();
+                    p.hands = b.hands.clone();
+                }
+                p
+            })
+            .collect();
+        let obj_states: Vec<mvm_core::ObjectState> = objects
+            .iter()
+            .map(|o| mvm_core::ObjectState {
+                id: o.id,
+                class: o.class_name.to_string(),
+                bbox: o.bbox,
+                confidence: o.score,
+                age: o.age,
+                position_3d: o
+                    .pos_3d
+                    .map(|[x, y, z]| mvm_core::Position3D { x, y, z, confidence: o.pos_conf }),
+                last_seen: now_i,
+            })
+            .collect();
+        let activities: Vec<JsonActivity> =
+            crate::agents::infer_activities(&fusion_people, &obj_states)
+                .into_iter()
+                .map(|a| JsonActivity {
+                    label: a.label,
+                    confidence: a.confidence,
+                    participants: a.participants,
+                })
+                .collect();
+
         let faces: Vec<JsonFace> = active.iter().map(|t| {
             let pos = match (t.position_x, t.position_y, t.position_z) {
                 (Some(x), Some(y), Some(z)) => Some([x, y, z]),
@@ -603,6 +667,7 @@ impl StateFile {
                 emotion_conf: t.emotion_confidence,
                 emotion_distribution: t.emotion_distribution,
                 face_verified: t.emotion.is_some() || t.shown_identity().is_some(),
+                likely_animal: animals.iter().any(|a| t.bbox.iou(&a.bbox) > ANIMAL_IOU),
                 posture: t.posture.clone(),
                 posture_conf: t.posture_confidence,
                 body_coverage: t.body_coverage,
@@ -643,7 +708,7 @@ impl StateFile {
 
         let frame = JsonFrame {
             ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
-            activities: Vec::new(), // sync path computes no activities
+            activities,
             anomaly_score: 0.0,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
@@ -1135,7 +1200,7 @@ mod tests {
     fn json_line_is_valid_json() {
         let sf = StateFile::open_at(temp_state_path("test_json.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).expect("must be valid JSON");
         assert!(v["ts"].is_string());
         assert!(v["fps"].is_number());
@@ -1168,7 +1233,7 @@ mod tests {
             emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
         }]);
-        let line = sf.to_json_line(&tracker, 29.9, &[], &[]);
+        let line = sf.to_json_line(&tracker, 29.9, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let face = &v["faces"][0];
         assert_eq!(face["identity"], "Вадим");
@@ -1186,7 +1251,7 @@ mod tests {
     fn json_line_empty_room() {
         let sf = StateFile::open_at(temp_state_path("test_json_empty.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 0.0, &[], &[]);
+        let line = sf.to_json_line(&tracker, 0.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["status"], "empty");
         assert_eq!(v["faces"].as_array().unwrap().len(), 0);
@@ -1213,7 +1278,7 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_json_obj.md")).unwrap();
         let tracker = PersonTracker::new();
         let objects = vec![obj(0, "cup", 0.4, 0.4, 0.5, 0.55, 0.81)];
-        let line = sf.to_json_line(&tracker, 30.0, &objects, &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &objects, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let objs = v["objects"].as_array().expect("objects array present");
         assert_eq!(objs.len(), 1);
@@ -1236,7 +1301,7 @@ mod tests {
         );
         let mut o = obj(0, "cup", 0.4, 0.4, 0.5, 0.55, 0.8);
         o.mask = Some(mask);
-        let line = sf.to_json_line(&tracker, 30.0, &[o], &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[o], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let cov = v["objects"][0]["mask_coverage"].as_f64().expect("mask_coverage present");
         assert!(cov > 0.9, "a full-frame mask → ~full coverage, got {cov}");
@@ -1263,7 +1328,7 @@ mod tests {
                 gesture: Some("point"),
             }],
         };
-        let line = sf.to_json_line(&tracker, 30.0, &[], &[body]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[body], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let f = &v["faces"][0];
         assert_eq!(f["wrists"].as_array().expect("wrists present").len(), 1);
@@ -1273,6 +1338,97 @@ mod tests {
         assert_eq!(h["gesture"], "point");
         // dump_landmarks defaults false → the 21-pt payload is omitted.
         assert!(h["landmarks"].is_null(), "landmarks only under --dump-landmarks");
+    }
+
+    /// A person + distance detection near another → `people_together`; a wrist on
+    /// a keyboard → `typing`. Both on the SYNC path (previously mesh-only).
+    #[test]
+    fn sync_activities_people_together_and_typing() {
+        let sf = StateFile::open_at(temp_state_path("test_sync_acts.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.pinhole = None;
+        let mk = |x1, x2, px: f32| {
+            let mut d = mvm_core::Detection::bare(x1, 0.2, x2, 0.6);
+            d.distance = Some(1.0);
+            d.position_x = Some(px);
+            d.position_y = Some(0.0);
+            d.position_z = Some(1.0);
+            d
+        };
+        tracker.tick(&[mk(0.1, 0.25, 0.0), mk(0.6, 0.75, 0.3)]); // ~0.3 m apart
+        let v: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line(&tracker, 30.0, &[], &[], &[])).unwrap();
+        let acts = v["activities"].as_array().expect("activities present");
+        assert!(
+            acts.iter().any(|a| a["label"] == "people_together"),
+            "two nearby people → people_together, got {acts:?}"
+        );
+
+        // typing: a wrist landing on a keyboard object.
+        let mut t2 = PersonTracker::new();
+        t2.pinhole = None;
+        let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
+        d.distance = Some(1.0);
+        t2.tick(&[d]);
+        let body = crate::pipeline::BodyData {
+            bbox: mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.7 },
+            wrists: vec![[0.6, 0.6]],
+            hands: vec![],
+        };
+        let kbd = obj(1, "keyboard", 0.55, 0.55, 0.65, 0.65, 0.8);
+        let v2: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[kbd], &[body], &[])).unwrap();
+        assert!(
+            v2["activities"].as_array().unwrap().iter().any(|a| a["label"] == "typing"),
+            "wrist on keyboard → typing"
+        );
+    }
+
+    /// A body whose box overlaps a YOLO animal detection is flagged `likely_animal`
+    /// AND excluded from person-relational fusion — the pet never pairs with a real
+    /// person as `people_together`.
+    #[test]
+    fn likely_animal_flag_and_fusion_exclusion() {
+        let sf = StateFile::open_at(temp_state_path("test_animal.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.pinhole = None;
+        let mk = |x1, x2, px: f32| {
+            let mut d = mvm_core::Detection::bare(x1, 0.2, x2, 0.6);
+            d.distance = Some(1.0);
+            d.position_x = Some(px);
+            d.position_y = Some(0.0);
+            d.position_z = Some(1.0);
+            d
+        };
+        tracker.tick(&[mk(0.1, 0.25, 0.0), mk(0.6, 0.9, 0.3)]);
+        let dog = mvm_scene::ObjectDetection {
+            class_id: 16,
+            class_name: "dog",
+            bbox: mvm_core::BBox { x1: 0.6, y1: 0.2, x2: 0.9, y2: 0.6 },
+            score: 0.8,
+        };
+        // Control (no dog): two nearby bodies → people_together fires.
+        let v0: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line(&tracker, 30.0, &[], &[], &[])).unwrap();
+        assert!(
+            v0["activities"].as_array().unwrap().iter().any(|a| a["label"] == "people_together"),
+            "control: both bodies present → people_together"
+        );
+        // With the dog: B flagged + dropped from fusion → no people_together.
+        let v: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line(&tracker, 30.0, &[], &[], &[dog])).unwrap();
+        let faces = v["faces"].as_array().unwrap();
+        assert_eq!(
+            faces.iter().filter(|f| f["likely_animal"] == true).count(),
+            1,
+            "exactly the dog-overlapping body is flagged"
+        );
+        // Only one real person remains → activities empty (field omitted).
+        let no_together = match v["activities"].as_array() {
+            Some(acts) => acts.iter().all(|a| a["label"] != "people_together"),
+            None => true,
+        };
+        assert!(no_together, "likely-animal body excluded from person-relational fusion");
     }
 
     #[test]
@@ -1286,7 +1442,7 @@ mod tests {
         t1.pinhole = None;
         t1.tick(&[mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7)]);
         let v1: serde_json::Value =
-            serde_json::from_str(&sf.to_json_line(&t1, 30.0, &[], &[])).unwrap();
+            serde_json::from_str(&sf.to_json_line(&t1, 30.0, &[], &[], &[])).unwrap();
         assert_eq!(v1["faces"][0]["face_verified"], false, "faceless body → unverified");
         // face-enriched track: a matched face gave it an emotion.
         let mut t2 = PersonTracker::new();
@@ -1296,7 +1452,7 @@ mod tests {
         d.emotion_confidence = Some(0.9);
         t2.tick(&[d]);
         let v2: serde_json::Value =
-            serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[], &[])).unwrap();
+            serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[], &[], &[])).unwrap();
         assert_eq!(v2["faces"][0]["face_verified"], true, "face-seen body → verified");
     }
 
@@ -1314,7 +1470,7 @@ mod tests {
             wrists: vec![[0.9, 0.9]],
             hands: vec![],
         };
-        let line = sf.to_json_line(&tracker, 30.0, &[], &[body]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[body], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!(v["faces"][0]["wrists"].is_null(), "no matched body → no wrists");
     }
@@ -1323,7 +1479,7 @@ mod tests {
     fn json_line_omits_objects_when_none() {
         let sf = StateFile::open_at(temp_state_path("test_json_noobj.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         // skip_serializing_if = empty → field omitted entirely.
         assert!(v["objects"].is_null());
@@ -1339,7 +1495,7 @@ mod tests {
         // A cup whose bbox overlaps the body bbox → "overlapping" edge (no 3D needed).
         let oid = mvm_scene::OBJECT_ID_BASE;
         let objects = vec![obj(0, "cup", 0.4, 0.4, 0.55, 0.6, 0.8)];
-        let line = sf.to_json_line(&tracker, 30.0, &objects, &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &objects, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let rels = v["relations"].as_array().unwrap();
         let edge = rels.iter().find(|r| {
@@ -1625,7 +1781,7 @@ mod tests {
         d.head_yaw = Some(5.0);
         d.head_facing = Some("camera");
         tracker.tick(&[d]);
-        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!((v["faces"][0]["head_yaw"].as_f64().unwrap() - 5.0).abs() < 1e-3);
         assert_eq!(v["faces"][0]["head_facing"], "camera");
@@ -1643,7 +1799,7 @@ mod tests {
         det.recon_error = Some(0.12);
         det.plausibility = Some("low".into());
         tracker.tick(&[det]);
-        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let f = &v["faces"][0];
         assert!(f["emotion_entropy"].as_f64().unwrap() < 1e-4, "one-hot → entropy 0");
