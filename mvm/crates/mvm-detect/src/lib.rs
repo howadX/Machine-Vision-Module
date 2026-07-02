@@ -19,11 +19,11 @@ pub struct YunetDetector {
 
 impl YunetDetector {
     const INPUT_NAME: &'static str = "input";
-    /// Strides for the three detection heads.
-    const STRIDES: &'static [(u32, &'static str, &'static str, &'static str)] = &[
-        (8, "cls_8", "obj_8", "bbox_8"),
-        (16, "cls_16", "obj_16", "bbox_16"),
-        (32, "cls_32", "obj_32", "bbox_32"),
+    /// Strides for the three detection heads (cls / obj / bbox / 5-point kps).
+    const STRIDES: &'static [(u32, &'static str, &'static str, &'static str, &'static str)] = &[
+        (8, "cls_8", "obj_8", "bbox_8", "kps_8"),
+        (16, "cls_16", "obj_16", "bbox_16", "kps_16"),
+        (32, "cls_32", "obj_32", "bbox_32", "kps_32"),
     ];
 
     /// Load from ONNX model bytes (embedded mode).
@@ -61,17 +61,33 @@ impl YunetDetector {
         self.score_threshold = t;
     }
 
-    /// Detect faces with full multi-stride NMS.
+    /// Detect faces with full multi-stride NMS — bbox-only [`Detection`] view.
+    /// Thin wrapper over [`detect_faces`](Self::detect_faces) for callers that
+    /// don't need landmarks (bridge A/B path, legacy tests).
     pub fn detect(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<Detection>> {
+        Ok(self
+            .detect_faces(image)?
+            .into_iter()
+            .map(|f| Detection::bare(f.bbox.x1, f.bbox.y1, f.bbox.x2, f.bbox.y2))
+            .collect())
+    }
+
+    /// Detect faces with the **full YuNet output**: bbox + score + the 5 facial
+    /// landmarks the ONNX already computes (phase 10.1 — previously the decoder
+    /// kept only the bbox). Landmark order (normalised [0,1], image coords):
+    /// image-left eye, image-right eye, nose tip, image-left mouth corner,
+    /// image-right mouth corner.
+    pub fn detect_faces(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<FaceDet>> {
         let input = self.preprocess(image)?;
         let outputs = self.session.run(ort::inputs![Self::INPUT_NAME => input])?;
 
-        let mut proposals: Vec<Proposal> = Vec::new();
+        let mut proposals: Vec<FaceDet> = Vec::new();
 
-        for &(stride, cls_name, obj_name, bbox_name) in Self::STRIDES {
+        for &(stride, cls_name, obj_name, bbox_name, kps_name) in Self::STRIDES {
             let cls: &[f32] = outputs[cls_name].try_extract_tensor::<f32>()?.1;
             let obj: &[f32] = outputs[obj_name].try_extract_tensor::<f32>()?.1;
             let bbox: &[f32] = outputs[bbox_name].try_extract_tensor::<f32>()?.1;
+            let kps: &[f32] = outputs[kps_name].try_extract_tensor::<f32>()?.1;
             let num = cls.len();
             let grid = (self.input_size / stride) as usize;
 
@@ -91,53 +107,36 @@ impl YunetDetector {
                 let bw = (bbox[base + 2].exp() * s) / isz;
                 let bh = (bbox[base + 3].exp() * s) / isz;
 
-                proposals.push(Proposal {
-                    x1: (cx - bw / 2.0).clamp(0.0, 1.0),
-                    y1: (cy - bh / 2.0).clamp(0.0, 1.0),
-                    x2: (cx + bw / 2.0).clamp(0.0, 1.0),
-                    y2: (cy + bh / 2.0).clamp(0.0, 1.0),
+                // Landmarks decode like the bbox centre: offset from the anchor
+                // cell in stride units (OpenCV FaceDetectorYN convention).
+                let mut landmarks = [[0.0f32; 2]; 5];
+                let kbase = i * 10;
+                for (k, lm) in landmarks.iter_mut().enumerate() {
+                    lm[0] = ((ax + kps[kbase + 2 * k]) * s / isz).clamp(0.0, 1.0);
+                    lm[1] = ((ay + kps[kbase + 2 * k + 1]) * s / isz).clamp(0.0, 1.0);
+                }
+
+                proposals.push(FaceDet {
+                    bbox: mvm_core::BBox {
+                        x1: (cx - bw / 2.0).clamp(0.0, 1.0),
+                        y1: (cy - bh / 2.0).clamp(0.0, 1.0),
+                        x2: (cx + bw / 2.0).clamp(0.0, 1.0),
+                        y2: (cy + bh / 2.0).clamp(0.0, 1.0),
+                    },
                     score,
+                    landmarks,
                 });
             }
         }
 
         // NMS: sort by score desc, suppress overlapping boxes
         proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        let mut kept: Vec<Detection> = Vec::new();
-
+        let mut kept: Vec<FaceDet> = Vec::new();
         for p in proposals {
-            let b = mvm_core::BBox { x1: p.x1, y1: p.y1, x2: p.x2, y2: p.y2 };
-            let mut suppressed = false;
-            for k in &kept {
-                if b.iou(&k.bbox) > self.nms_threshold {
-                    suppressed = true;
-                    break;
-                }
-            }
-            if !suppressed {
-                kept.push(Detection {
-                    bbox: b,
-                    identity: None,
-                    identity_confidence: None,
-                    emotion: None,
-                    emotion_confidence: None,
-                    posture: None,
-                    posture_confidence: None,
-                    distance: None,
-                    position_x: None,
-                    position_y: None,
-                    position_z: None,
-                    ws_confidence: None,
-                    recon_error: None,
-                    plausibility: None,
-                    body_coverage: None,
-                    torso_attitude: None,
-                    emotion_distribution: None,
-                    embedding: None,
-                });
+            if !kept.iter().any(|k| p.bbox.iou(&k.bbox) > self.nms_threshold) {
+                kept.push(p);
             }
         }
-
         Ok(kept)
     }
 
@@ -167,9 +166,14 @@ impl YunetDetector {
     }
 }
 
-struct Proposal {
-    x1: f32, y1: f32, x2: f32, y2: f32,
-    score: f32,
+/// A full YuNet face detection (phase 10.1): bbox + score + the 5 landmarks the
+/// model outputs anyway. Landmarks normalised [0,1], order: image-left eye,
+/// image-right eye, nose tip, image-left mouth corner, image-right mouth corner.
+#[derive(Debug, Clone, Copy)]
+pub struct FaceDet {
+    pub bbox: mvm_core::BBox,
+    pub score: f32,
+    pub landmarks: [[f32; 2]; 5],
 }
 
 /// A/B detector-coverage comparison (phase 7.1, gap G4).
@@ -329,6 +333,37 @@ mod tests {
         let img = DynamicImage::new_rgb8(640, 640);
         let result = det.process(&img).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn detect_faces_landmarks_have_face_geometry() {
+        // Phase 10.1: the 5 decoded landmarks must land inside (or near) the face
+        // bbox with eye-line above mouth-line — i.e. real facial geometry, not
+        // anchor garbage.
+        let mut det = YunetDetector::init(&test_config()).unwrap();
+        let ref_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("repos/Machine Vision Module/models/references/p_V.jpg");
+        if !ref_path.exists() {
+            eprintln!("Skipping: {} not found", ref_path.display());
+            return;
+        }
+        let img = image::open(&ref_path).unwrap();
+        det.set_score_threshold(0.3);
+        let faces = det.detect_faces(&img).unwrap();
+        assert!(!faces.is_empty(), "reference photo must yield a face");
+        let f = &faces[0];
+        let (bw, bh) = (f.bbox.x2 - f.bbox.x1, f.bbox.y2 - f.bbox.y1);
+        for lm in &f.landmarks {
+            assert!(
+                lm[0] >= f.bbox.x1 - 0.2 * bw && lm[0] <= f.bbox.x2 + 0.2 * bw
+                    && lm[1] >= f.bbox.y1 - 0.2 * bh && lm[1] <= f.bbox.y2 + 0.2 * bh,
+                "landmark {lm:?} far outside bbox {:?}", f.bbox
+            );
+        }
+        let eye_y = (f.landmarks[0][1] + f.landmarks[1][1]) * 0.5;
+        let mouth_y = (f.landmarks[3][1] + f.landmarks[4][1]) * 0.5;
+        assert!(eye_y < mouth_y, "eyes above mouth: eye_y={eye_y}, mouth_y={mouth_y}");
+        assert!(f.landmarks[0][0] < f.landmarks[1][0], "left eye left of right eye");
     }
 
     #[test]

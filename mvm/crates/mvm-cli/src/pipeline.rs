@@ -341,6 +341,7 @@ fn anchor_objects_depth(
 fn enrich_face_crop(
     frame: &image::DynamicImage,
     face_bbox: &mvm_core::BBox,
+    face_lm5_px: Option<&[[f32; 2]; 5]>,
     det: &mut Detection,
     emotion_mod: Option<&mut mvm_emotion::EmotionModule>,
     identity_mod: Option<&mut mvm_identity::IdentityModule>,
@@ -361,8 +362,16 @@ fn enrich_face_crop(
     // Emotion: keep higher calibrated-confidence prediction — **cadenced** (phase
     // 9.7). Skipped for a body whose track is still coasting on a fresh fused
     // label; the track keeps that label (frozen, no decay while matched).
+    //
+    // Phase 10.1: when YuNet landmarks are available, EmotiEffLib sees the
+    // canonically **aligned** face (eyes/mouth warped to the ArcFace template)
+    // instead of the raw bbox rectangle; head roll/offset no longer smears the
+    // distribution. Degenerate landmarks fall back to the raw crop.
     if let (true, Some(emo)) = (run_emotion, emotion_mod) {
-        if let Ok(result) = emo.classify(&face) {
+        let emotion_input = face_lm5_px
+            .and_then(|lm| mvm_emotion::align_face(frame, lm, 224))
+            .unwrap_or_else(|| face.clone());
+        if let Ok(result) = emo.classify(&emotion_input) {
             let py_emotion = det.emotion.clone();
             let py_conf = det.emotion_confidence;
             det.emotion_distribution = Some(result.distribution);
@@ -479,7 +488,7 @@ fn face_center_in_any(face: &mvm_core::BBox, regions: &[mvm_core::BBox]) -> bool
 /// bboxes — a coarse body-bbox-center match swaps identities when two people are
 /// close (their person boxes overlap); the nose is physically inside its own
 /// face, so it never crosses over.
-fn best_face_for_nose(faces: &[Detection], used: &[bool], nose: (f32, f32)) -> Option<usize> {
+fn best_face_for_nose(faces: &[mvm_detect::FaceDet], used: &[bool], nose: (f32, f32)) -> Option<usize> {
     let area = |b: &mvm_core::BBox| (b.x2 - b.x1) * (b.y2 - b.y1);
     faces
         .iter()
@@ -532,7 +541,9 @@ fn build_body_primary(
     // RGB frame for hand ROIs (only materialised when the hand model is loaded).
     let hand_rgb = hand_landmarker.as_ref().map(|_| frame.to_rgb8());
     let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();
-    let faces = detector.detect(frame).unwrap_or_default();
+    // Full YuNet output (phase 10.1): bbox + the 5 landmarks that drive face
+    // alignment (emotion input) and, later, head orientation (10.3).
+    let faces = detector.detect_faces(frame).unwrap_or_default();
     // Overlay (scene-debug): every detector's output, drawn per-agent. Faces =
     // all YuNet boxes; poses + hands collected per body below.
     overlay.faces.extend(faces.iter().map(|f| f.bbox));
@@ -616,8 +627,10 @@ fn build_body_primary(
             // a track still coasting on a fresh emotion label.
             let run_identity = id_flags[bi];
             let run_emotion = should_run_emotion(b, emotion_fresh_tracks);
+            // Landmarks arrive normalised — alignment samples the frame in pixels.
+            let lm5_px = faces[fi].landmarks.map(|p| [p[0] * fw, p[1] * fh]);
             enrich_face_crop(
-                frame, &fb, &mut det,
+                frame, &fb, Some(&lm5_px), &mut det,
                 emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
                 run_emotion, run_identity,
                 config, emotion_debug, idx, debug_out,
@@ -663,8 +676,9 @@ fn build_body_primary(
         let idx = dets.len();
         // Fallback faces are, by A1, not covered by any body/track this frame — a
         // genuinely uncovered face, so always enrich it fully (nothing to reuse).
+        let lm5_px = f.landmarks.map(|p| [p[0] * fw, p[1] * fh]);
         enrich_face_crop(
-            frame, &fb, &mut det,
+            frame, &fb, Some(&lm5_px), &mut det,
             emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), true, true,
             config, emotion_debug, idx, debug_out,
         );
@@ -694,8 +708,12 @@ fn build_body_primary(
 mod tests {
     use super::*;
 
-    fn face(x1: f32, y1: f32, x2: f32, y2: f32) -> Detection {
-        Detection::bare(x1, y1, x2, y2)
+    fn face(x1: f32, y1: f32, x2: f32, y2: f32) -> mvm_detect::FaceDet {
+        mvm_detect::FaceDet {
+            bbox: mvm_core::BBox { x1, y1, x2, y2 },
+            score: 0.9,
+            landmarks: [[(x1 + x2) * 0.5, (y1 + y2) * 0.5]; 5],
+        }
     }
 
     // ── body-primary face↔body matching (phase 8, FRONTIER) ──
