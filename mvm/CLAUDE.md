@@ -7,7 +7,19 @@
 
 ## Статус (2026-07-02)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 437 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Ветка:** `rust-core` (основная). **12 крейтов, 443 теста зелёных** (1 ignored — hardware live-camera), release чист.
+- **Data-collection ЗАКРЫТ (SUPREME-валидация 2026-07-02, 3 чел.+собака, 120с/116 тиков):** основной sync-путь
+  `--native-camera` собирает и парсит ВСЕ сигналы всех агентов (покрытие: id/face_verified 100%, поза/3D 98%,
+  motion 99%, эмоция+8dist+энтропия 88%, head 88%, **кисти/запястья 62/68%** — были 0%, дроп починен, hands
+  presence/side/handedness/gesture; объекты+маски). Правки сессии (SUPREME-driven, `+0 ONNX`):
+  (1) **sync дропал вычисленные wrists/hands** → прокинуто+IoU-матч (`11f2fe58`);
+  (2) **`face_verified`** — честный сигнал «тело подтверждено лицом» для неоднозначности животное/упавший (`c78b282e`);
+  (3) **fusion-активности на sync-пути** (`people_together`/`typing`/`holding_drink`/`seated_at_workstation` — было
+  mesh-only) + **model-corroborated анти-животное-гейт** (`is_animal`+`likely_animal`, тело поверх YOLO-`dog`
+  исключается из реляционного fusion) (`f4632b80`). SUPREME-вывод: сырые выходы агентов **точнее** осторожных
+  ручных трактовок (эмоция Anger, `bowl` — реальны). Остаточные баги — **не парсинг**: (a) fusion-мис-атрибуция
+  контакта при вытянутой руке (телефон→не тот человек), (b) собака-на-руках→YOLO `handbag`, (c) `cell phone`/`bowl`
+  пороги YOLO26n. Все три — fusion/детектор-уровень (next phase), не сбор данных.
 - **Фаза 10 — Full Data Collection: 10.0–10.3 ЗАКРЫТЫ** (`+0 ONNX`, чистая арифметика): 10.0 эмит
   вычисленного-но-выброшенного (жесты рук reaching/waving, hands[] c presence/side, emotion_entropy,
   recon_error/plausibility → Scene JSON; сырые 21-lm кистей за опт-ин `mesh --dump-landmarks`);
