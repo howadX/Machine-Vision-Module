@@ -105,18 +105,38 @@ GO** (плотность 0.5–0.8 = 20–50% фона в bbox сейчас); (2
   прото `[1,32,160,160]` → `SegDetection{det,mask}`. Model-gated live-тест на `docs/live0.jpg`:
   9 инстансов, person mask-cov 0.092 (плотнее bbox), совпало с Python-спайком.
 
-**Осталось для полной интеграции (следующая сессия — связный кусок + решение владельца):**
-1. **Решение стоимости (владелец):** YOLO-seg — второй cadenced-модель ПОВЕРХ YOLO26n (перф: +~47мс на
-   cadence-тик, но полный recall) ИЛИ замена (1 модель, но −recall мелких). Рекомендация: **opt-in флаг
-   `--masks`**, дефолт off → нулевой перф-хит, владелец A/B-ит вживую.
-2. **Слоистость:** `InstanceMask` в `mvm-scene`, но `ObjectState` (что fusion читает для depth) в
-   `mvm-core` (не может зависеть от `mvm-scene`). Протащить маску как **плоские данные** в `ObjectState`
-   (`mask_points: Vec<[f32;2]>` или low-res `Vec<u8>`+res) — тогда `median_at_points` и point-in-mask
-   контакт работают без нарушения слоёв. `TrackedObject.mask: Option<InstanceMask>` + attach по bbox-IoU.
-3. **10.4 depth:** в `agents/fusion.rs::anchor_objects` — `median_at_points(mask)` при наличии маски.
-4. **10.5 tracker:** mask-IoU тайбрейкер в `ObjectTracker` (переиспользует Hungarian 9.10).
-5. **10.6 fusion:** контакт рука↔объект через `contains_norm` (точнее landmark-в-bbox 8.F).
-6. **10.7 person-mask:** ждёт кадров с ≥2 людьми (риг одноместный).
+### 3.4 Sync-hot-path live-интеграция ✅ (2026-07-02, риг, 1 чел., `--native-camera --masks`)
+
+**Решение владельца (стоимость):** взят **opt-in `--masks`** (дефолт off) — YOLO-seg как **второй
+cadenced-эксперт ПОВЕРХ** YOLO26n. Нулевой перф-хит когда off; live со всеми моделями + seg ~12 fps.
+
+Реализовано и live-validated в **sync-пути** (`--native-camera`, основной hot-path):
+1. ✅ **`--masks` флаг** (`main.rs`): грузит `models/yolo_seg.onnx` только при `native_camera && masks`;
+   отсутствие модели/флага → тихо off.
+2. ✅ **Слоистость решена без правки `mvm-core`:** в sync-пути объекты — это `TrackedObject` (в `mvm-scene`),
+   маска живёт прямо на нём (`TrackedObject.mask: Option<InstanceMask>`). `ObjectState` (mvm-core) **не
+   тронут** — плоская прокладка нужна только для mesh-пути (отложено, см. ниже).
+3. ✅ **`attach_masks`** (`mvm-scene`): жадный class-aware bbox-IoU (порог `SEG_ATTACH_IOU=0.5`) +
+   **mask-IoU лексикографический тайбрейк** (vs предыдущий силуэт объекта = 10.5 instance-separation);
+   маска сбрасывается каждый seg-тик (силуэт не переживает свой seg). Навешивает поверх YOLO26n-треков.
+4. ✅ **10.4 depth-по-маске** (`pipeline.rs::anchor_objects_depth`): `median_at_points(mask.set_points())`
+   при наличии непустой маски, иначе fallback `median_in_bbox`.
+5. ✅ **`mask_coverage` в Scene JSON** (`state.rs`) — наблюдаемость силуэт-vs-bbox.
+
+**Live-замер (риг, 1 чел.):** seg 4–5 дет/тик, **3/5 объектов маскируются** (мелкие настольные cup seg
+иногда не берёт → честный fallback на bbox-depth, подтверждает §3.2); **каждая привязанная маска плотнее
+своего bbox** (chair cov 0.12 vs bbox-area 0.22 = 45% фона срезано; cup ~22%) ⇒ depth-bleed реально
+уменьшается. Env-гейт `MVM_SEG_DEBUG` печатает счётчик привязок (owner A/B).
+
+**Осталось (следующие сессии):**
+- **mesh-путь:** протащить маску **плоскими данными** в `ObjectState` (mvm-core, `Vec<[f32;2]>` set-points
+  или low-res `Vec<u8>`+res) → `agents/fusion.rs::anchor_objects` depth-по-маске + JSON coverage там же.
+- **10.6 fusion контакт:** рука↔объект через `contains_norm` (точнее landmark-в-bbox 8.F). В sync-пути
+  активности не считаются вовсе — контакт добавляется вместе с mesh-плумбингом или отдельным sync-шагом.
+- **10.5 tracker (полный):** mask-IoU в самой ассоциации `ObjectTracker` осмыслен только если трекер видит
+  маски; в архитектуре «seg-поверх-detect» трекер их не видит → mask-IoU реализован как **тайбрейк
+  привязки** (п.3), что и даёт instance-separation. Дальнейшее — если mesh-путь будет кормить seg в трекер.
+- **10.7 person-mask:** ждёт кадров с ≥2 людьми (риг одноместный).
 
 ---
 

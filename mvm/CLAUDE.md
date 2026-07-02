@@ -7,7 +7,7 @@
 
 ## Статус (2026-07-02)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 429 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Ветка:** `rust-core` (основная). **12 крейтов, 437 тестов зелёных** (1 ignored — hardware live-camera), release чист.
 - **Фаза 10 — Full Data Collection: 10.0–10.3 ЗАКРЫТЫ** (`+0 ONNX`, чистая арифметика): 10.0 эмит
   вычисленного-но-выброшенного (жесты рук reaching/waving, hands[] c presence/side, emotion_entropy,
   recon_error/plausibility → Scene JSON; сырые 21-lm кистей за опт-ин `mesh --dump-landmarks`);
@@ -28,9 +28,17 @@
   **поверх** для масок — не drop-in. **Ядро+детектор seg РЕАЛИЗОВАНЫ И ПРОВАЛИДИРОВАНЫ** (коммиты
   `f9c18a75`/`0275d970`): `InstanceMask` (assemble/iou/contains_norm/set_points), `median_at_points`
   (mask-aware depth), `YoloSegDetector` (+1 ONNX, model-gated live-тест: 9 инстансов, person mask-cov
-  0.092 плотнее bbox). Полная live-интеграция (прокладка маски плоскими данными через `ObjectState`
-  из-за слоистости mvm-core↮mvm-scene + opt-in `--masks` + depth-по-маске + mask-IoU трекер + контакт)
-  — следующая сессия, см. `docs/phase-10-plan.md` §3.3.
+  0.092 плотнее bbox). **Live-интеграция в sync-hot-path (`--native-camera`) ЗАКРЫТА И LIVE-ВАЛИДИРОВАНА**
+  (2026-07-02, риг, 1 чел.): `TrackedObject.mask` (маска живёт прямо на объекте — mvm-scene, без слоёв,
+  `ObjectState` не тронут), `attach_masks` (жадный class-aware bbox-IoU + mask-IoU тайбрейк = 10.5
+  instance-separation, маска сбрасывается каждый тик) навешивает YOLO-seg-маски **поверх** YOLO26n-треков;
+  **opt-in `--masks`** (дефолт off, нулевой перф-хит; live ~12 fps со всеми моделями + seg); **depth-по-маске**
+  (`median_at_points` по силуэту вместо `median_in_bbox` — sync `anchor_objects_depth`); `mask_coverage` в
+  Scene JSON. Live: seg даёт 4–5 дет/тик, 3/5 объектов маскируются (мелкие настольные cup seg иногда не
+  берёт → честный fallback на bbox-depth, §3.2), **каждая маска плотнее своего bbox** (chair 0.12 vs 0.22 =
+  45% фона срезано; cup ~22%) ⇒ depth-bleed реально уменьшается. Env-гейт `MVM_SEG_DEBUG` — live A/B счётчик.
+  **Осталось (§3.3):** mesh-путь (маска плоскими данными в `ObjectState`), mask-контакт fusion (10.6,
+  `contains_norm`), person-маски 10.7 (ждут ≥2 людей).
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
 - **Фаза 9 — Tracker: 9.1–9.10 ЗАКРЫТЫ** (`+0 ONNX`) — **фаза завершена**. Закрыто:
   кинематика B1 (motion ring + `MotionClassifier` + жесты) → OCM/OCR (9.2) → lifecycle FSM (9.3) →
@@ -254,7 +262,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **7.5** | ✅ | Нативная поза: BlazePose+PoseVAE порт (bit-close к Python), мульти-persona (#3 закрыт) |
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
 | **9** | ✅ | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery + Hungarian global assignment, **+0 ONNX** — закрыта |
-| **10** | 🟡 | **Full Data Collection**: 10.0 эмит вычисленного ✅, 10.1 эмоция (CHW-корень + YuNet-лендмарки + align) ✅ live, 10.2 кисти (жесты/handedness/vis-relax) ✅, 10.3 head-orientation ✅, 10.5 ledger ✅ — всё `+0 ONNX`; 10.4 Segmentation (**+1 ONNX**): спайк GO + ядро (`InstanceMask`/`median_at_points`) + `YoloSegDetector` ✅ провалидированы, live-интеграция (§3.3) — след. сессия |
+| **10** | 🟡 | **Full Data Collection**: 10.0 эмит вычисленного ✅, 10.1 эмоция (CHW-корень + YuNet-лендмарки + align) ✅ live, 10.2 кисти (жесты/handedness/vis-relax) ✅, 10.3 head-orientation ✅, 10.5 ledger ✅ — всё `+0 ONNX`; 10.4 Segmentation (**+1 ONNX**): спайк GO + ядро (`InstanceMask`/`median_at_points`) + `YoloSegDetector` ✅; **sync-hot-path live-интеграция ✅ live-validated** (`--masks` opt-in, `attach_masks`, depth-по-маске, `mask_coverage` JSON); осталось mesh-путь + mask-контакт 10.6 + person-маски 10.7 (§3.3) |
 | **11** | 🔜 | Продукт |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
