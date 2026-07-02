@@ -95,6 +95,29 @@ GO** (плотность 0.5–0.8 = 20–50% фона в bbox сейчас); (2
 добавляется **поверх** для масок крупных/средних инстансов, не заменяет; (3) **10.7 person-mask — GO
 по качеству силуэта**, но собственно реализация ждёт эмпирики с ≥2 людьми (сейчас риг одноместный).
 
+### 3.3 Реализовано (2026-07-02, коммиты `f9c18a75`, `0275d970`)
+
+**Ядро + детектор готовы и провалидированы против реальной модели:**
+- `InstanceMask` (`mvm-scene/mask.rs`): assemble прото×коэфф → sigmoid → crop-to-bbox → 64²-сетка над
+  оригинальным кадром; `iou()`, `contains_norm()`, `set_points()`, `frame_coverage()`. Синтетик-тесты.
+- `DepthMap::median_at_points` (`mvm-depth`): mask-aware медиана (только set-ячейки, без фон-bleed).
+- `YoloSegDetector` (`mvm-scene`, +1 ONNX `yolo_seg.onnx`, gitignored+рецепт): декод `[1,116,8400]`+
+  прото `[1,32,160,160]` → `SegDetection{det,mask}`. Model-gated live-тест на `docs/live0.jpg`:
+  9 инстансов, person mask-cov 0.092 (плотнее bbox), совпало с Python-спайком.
+
+**Осталось для полной интеграции (следующая сессия — связный кусок + решение владельца):**
+1. **Решение стоимости (владелец):** YOLO-seg — второй cadenced-модель ПОВЕРХ YOLO26n (перф: +~47мс на
+   cadence-тик, но полный recall) ИЛИ замена (1 модель, но −recall мелких). Рекомендация: **opt-in флаг
+   `--masks`**, дефолт off → нулевой перф-хит, владелец A/B-ит вживую.
+2. **Слоистость:** `InstanceMask` в `mvm-scene`, но `ObjectState` (что fusion читает для depth) в
+   `mvm-core` (не может зависеть от `mvm-scene`). Протащить маску как **плоские данные** в `ObjectState`
+   (`mask_points: Vec<[f32;2]>` или low-res `Vec<u8>`+res) — тогда `median_at_points` и point-in-mask
+   контакт работают без нарушения слоёв. `TrackedObject.mask: Option<InstanceMask>` + attach по bbox-IoU.
+3. **10.4 depth:** в `agents/fusion.rs::anchor_objects` — `median_at_points(mask)` при наличии маски.
+4. **10.5 tracker:** mask-IoU тайбрейкер в `ObjectTracker` (переиспользует Hungarian 9.10).
+5. **10.6 fusion:** контакт рука↔объект через `contains_norm` (точнее landmark-в-bbox 8.F).
+6. **10.7 person-mask:** ждёт кадров с ≥2 людьми (риг одноместный).
+
 ---
 
 ## 4. Трек A — object segmentation (ядро)
