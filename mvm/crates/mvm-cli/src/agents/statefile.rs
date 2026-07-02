@@ -128,6 +128,10 @@ mod tests {
             torso_attitude: None,
             motion_state: None,
             velocity: None,
+            left_gesture: None,
+            right_gesture: None,
+            recon_error: None,
+            plausibility: None,
             last_seen: now,
         });
         let ctx = MeshContext {

@@ -27,6 +27,19 @@ pub struct Position3D {
     pub confidence: f32,
 }
 
+/// One detected hand attached to a person (phase 10.0): the hand model's full
+/// output, not just the landmark points — presence score + body side survive to
+/// the Scene JSON so downstream can weigh the hand instead of re-deriving it.
+#[derive(Debug, Clone)]
+pub struct HandState {
+    /// Normalised [x,y] landmarks (21 MediaPipe points when present).
+    pub landmarks: Vec<[f32; 2]>,
+    /// Presence/confidence score [0,1] from the hand model.
+    pub presence: f32,
+    /// "left"/"right" — which body wrist drove the ROI (authoritative side).
+    pub side: &'static str,
+}
+
 /// Outward projection of a tracked person (group G₁ Human).
 #[derive(Debug, Clone)]
 pub struct PersonState {
@@ -45,10 +58,10 @@ pub struct PersonState {
     /// The always-available interaction anchor — on a ceiling cam the wrists reach
     /// the desk even when the body bbox (head/shoulders) does not.
     pub wrists: Vec<[f32; 2]>,
-    /// Normalised hand landmark sets attached to this person (one inner vec per
-    /// detected hand). Empty when the hand model found none. Filled by the agent
-    /// after tracking — `from_track` leaves it empty.
-    pub hands: Vec<Vec<[f32; 2]>>,
+    /// Hands attached to this person (landmarks + presence + side, phase 10.0).
+    /// Empty when the hand model found none. Filled by the agent after
+    /// tracking — `from_track` leaves it empty.
+    pub hands: Vec<HandState>,
     /// Body-visibility regime ("full"/"upper"/"head") — occlusion-aware posture.
     /// `upper`/`head` mean the lower body was not seen, so `posture` may honestly
     /// be `None`; fusion reads this (with `torso_attitude` + context) instead.
@@ -61,7 +74,25 @@ pub struct PersonState {
     pub motion_state: Option<&'static str>,
     /// Centroid speed in torso-lengths/sec (phase 9.8) — distance-invariant.
     pub velocity: Option<f32>,
+    /// Coarse left-arm gesture off the motion ring ("reaching"/"waving", phase
+    /// 10.0). `None` when the arm is resting or geometry is unavailable.
+    pub left_gesture: Option<&'static str>,
+    /// Right-arm twin of [`left_gesture`](Self::left_gesture).
+    pub right_gesture: Option<&'static str>,
+    /// Posture VAE reconstruction error — diagnostic quality signal (phase 10.0).
+    pub recon_error: Option<f32>,
+    /// Posture OOD plausibility flag ("ok"/"low", phase 10.0 diagnostic).
+    pub plausibility: Option<String>,
     pub last_seen: Instant,
+}
+
+/// An [`ArmGesture`](crate::motion::ArmGesture) as an emitted label: the resting
+/// `None` variant maps to Rust `None` so the JSON field is honestly absent.
+fn gesture_label(g: crate::motion::ArmGesture) -> Option<&'static str> {
+    match g {
+        crate::motion::ArmGesture::None => None,
+        g => Some(g.as_str()),
+    }
 }
 
 impl PersonState {
@@ -100,6 +131,10 @@ impl PersonState {
                 s => Some(s.as_str()),
             },
             velocity: if t.motion.is_empty() { None } else { Some(t.motion.speed()) },
+            left_gesture: gesture_label(t.motion.left_gesture()),
+            right_gesture: gesture_label(t.motion.right_gesture()),
+            recon_error: t.recon_error,
+            plausibility: t.plausibility.clone(),
             last_seen: now,
         }
     }
@@ -227,6 +262,28 @@ mod tests {
         assert_eq!(ps.emotion, Some(("Neutral".to_string(), 0.4)));
         let pos = ps.position_3d.expect("3D present");
         assert!((pos.z - 1.1).abs() < 1e-6 && (pos.confidence - 0.65).abs() < 1e-6);
+    }
+
+    #[test]
+    fn person_state_projects_posture_quality_and_resting_gestures() {
+        // Phase 10.0: recon_error/plausibility flow off the track; a resting arm
+        // (or empty motion ring) yields honestly-absent gestures.
+        let now = Instant::now();
+        let mut t = track(10);
+        t.recon_error = Some(0.042);
+        t.plausibility = Some("ok".into());
+        let ps = PersonState::from_track(&t, now);
+        assert_eq!(ps.recon_error, Some(0.042));
+        assert_eq!(ps.plausibility.as_deref(), Some("ok"));
+        assert!(ps.left_gesture.is_none() && ps.right_gesture.is_none());
+    }
+
+    #[test]
+    fn gesture_label_maps_none_variant_to_absent() {
+        use crate::motion::ArmGesture;
+        assert_eq!(gesture_label(ArmGesture::None), None);
+        assert_eq!(gesture_label(ArmGesture::Reaching), Some("reaching"));
+        assert_eq!(gesture_label(ArmGesture::Waving), Some("waving"));
     }
 
     #[test]

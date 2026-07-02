@@ -94,8 +94,8 @@ pub(crate) struct BodyData {
     pub bbox: mvm_core::BBox,
     /// Visible wrist points (BlazePose 15/16, visibility-gated).
     pub wrists: Vec<[f32; 2]>,
-    /// Hand landmark sets for this body (one per detected hand).
-    pub hands: Vec<Vec<[f32; 2]>>,
+    /// Hands for this body (landmarks + presence + side, one per detected hand).
+    pub hands: Vec<mvm_core::HandState>,
 }
 
 /// Per-frame output of [`BodyPrimaryPipeline::process`].
@@ -586,12 +586,19 @@ fn build_body_primary(
         // Hands (phase 8.E.4): ROIs from this body's wrists → handpose (presence-
         // gated). Body-primary — hands belong to the body whose wrist drove them.
         // Keep them grouped per body (phase 8.F: per-person attachment).
-        let mut body_hands: Vec<Vec<[f32; 2]>> = Vec::new();
+        let mut body_hands: Vec<mvm_core::HandState> = Vec::new();
         if let (Some(hl), Some(rgb)) = (hand_landmarker.as_deref_mut(), hand_rgb.as_ref()) {
             let rois = mvm_hands::hand_rois_from_pose(lm, 0.5);
             let hands = hl.infer_rois(rgb, &rois);
             for h in &hands {
-                body_hands.push(h.landmarks_px.iter().map(|p| [p[0] / fw, p[1] / fh]).collect());
+                body_hands.push(mvm_core::HandState {
+                    landmarks: h.landmarks_px.iter().map(|p| [p[0] / fw, p[1] / fh]).collect(),
+                    presence: h.score,
+                    side: match h.side {
+                        mvm_hands::HandSide::Left => "left",
+                        mvm_hands::HandSide::Right => "right",
+                    },
+                });
             }
             overlay.hands.extend(hands); // flat list still feeds --scene-debug
         }

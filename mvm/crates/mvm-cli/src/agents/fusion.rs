@@ -162,7 +162,7 @@ fn point_near_bbox(pt: [f32; 2], b: &BBox) -> bool {
 fn contact_points(p: &PersonState) -> Vec<[f32; 2]> {
     let mut pts = p.wrists.clone();
     for h in &p.hands {
-        pts.extend(h.iter().copied());
+        pts.extend(h.landmarks.iter().copied());
     }
     pts
 }
@@ -323,6 +323,10 @@ mod tests {
             torso_attitude: None,
             motion_state: None,
             velocity: None,
+            left_gesture: None,
+            right_gesture: None,
+            recon_error: None,
+            plausibility: None,
             last_seen: Instant::now(),
         }
     }
@@ -403,7 +407,11 @@ mod tests {
     fn hand_landmark_triggers_object_use() {
         // No wrists, but a detected hand landmark on the mouse → "using_mouse".
         let mut p = person(1.0);
-        p.hands = vec![vec![[0.33, 0.57], [0.34, 0.56]]];
+        p.hands = vec![mvm_core::HandState {
+            landmarks: vec![[0.33, 0.57], [0.34, 0.56]],
+            presence: 0.9,
+            side: "right",
+        }];
         let mouse = obj_class(10001, "mouse", BBox { x1: 0.31, y1: 0.54, x2: 0.36, y2: 0.60 });
         let acts = infer_activities(&[p], &[mouse]);
         assert!(acts.iter().any(|a| a.label == "using_mouse"), "got {acts:?}");

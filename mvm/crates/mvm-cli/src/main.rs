@@ -387,7 +387,7 @@ fn run_native_loop(
 
 // ── `mesh` subcommand (phase 8.D) ───────────────────────────────────────────
 
-/// Args for `mvm-cli mesh [--stub] [--max-frames N] [--dump-json] [--interval-ms N]`.
+/// Args for `mvm-cli mesh [--stub] [--max-frames N] [--dump-json] [--dump-landmarks] [--interval-ms N]`.
 struct MeshArgs {
     /// Build a model-free mesh (StubCapture + FrameCounter + StateFileWriter) —
     /// CI-safe smoke test of the threading + StateFile plumbing.
@@ -396,6 +396,9 @@ struct MeshArgs {
     max_frames: Option<u64>,
     dump_json: bool,
     emotion_debug: bool,
+    /// --dump-landmarks: include raw 21-point hand landmarks in the Scene JSON
+    /// (phase 10.0 opt-in — heavy payload).
+    dump_landmarks: bool,
     /// StateFileWriter snapshot interval (ms).
     interval_ms: u64,
 }
@@ -406,6 +409,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         max_frames: None,
         dump_json: false,
         emotion_debug: false,
+        dump_landmarks: false,
         interval_ms: 100,
     };
     let mut i = 2; // skip program name + "mesh"
@@ -414,6 +418,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             "--stub" => a.stub = true,
             "--dump-json" => a.dump_json = true,
             "--emotion-debug" => a.emotion_debug = true,
+            "--dump-landmarks" => a.dump_landmarks = true,
             "--max-frames" => {
                 if i + 1 < raw.len() {
                     a.max_frames = raw[i + 1].parse().ok();
@@ -515,7 +520,8 @@ fn load_hands(config: &mvm_core::Config) -> Option<mvm_hands::HandLandmarker> {
 /// loads every model + the native camera and assembles
 /// Capture → {Human, Scene, Depth} → Fusion → StateFileWriter on threads.
 fn run_mesh(args: MeshArgs) -> Result<()> {
-    let state_file = state::StateFile::open()?;
+    let mut state_file = state::StateFile::open()?;
+    state_file.dump_landmarks = args.dump_landmarks;
     let interval = Duration::from_millis(args.interval_ms);
 
     if args.stub {

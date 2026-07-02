@@ -108,6 +108,42 @@ struct JsonFace {
     /// Centroid speed in torso-lengths/sec (phase 9.8).
     #[serde(skip_serializing_if = "Option::is_none")]
     velocity: Option<f32>,
+    /// Coarse left-arm gesture off the motion ring ("reaching"/"waving", phase
+    /// 10.0). Absent when the arm is resting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    left_gesture: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    right_gesture: Option<&'static str>,
+    /// Visible wrist anchors, normalised [x,y] (BlazePose 15/16, phase 10.0).
+    /// Mesh path only — the sync tracker path carries no landmarks.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    wrists: Vec<[f32; 2]>,
+    /// Detected hands: presence + side always; 21 landmarks only under
+    /// `--dump-landmarks` (heavy payload, phase 10.0 opt-in).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    hands: Vec<JsonHand>,
+    /// Normalised Shannon entropy of the emotion distribution [0,1] — the
+    /// pre-baked "how reliable is `emotion`" signal (phase 10.0). 1 ≈ uniform.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    emotion_entropy: Option<f32>,
+    /// Posture VAE reconstruction error — diagnostic (phase 10.0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recon_error: Option<f32>,
+    /// Posture OOD plausibility flag — diagnostic (phase 10.0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    plausibility: Option<String>,
+}
+
+/// One hand in the Scene JSON (phase 10.0).
+#[derive(Serialize)]
+struct JsonHand {
+    /// "left"/"right" — the body wrist that drove the ROI.
+    side: &'static str,
+    /// Hand-model presence score [0,1].
+    presence: f32,
+    /// Normalised 21-point landmarks; present only under `--dump-landmarks`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    landmarks: Option<Vec<[f32; 2]>>,
 }
 
 #[derive(Serialize)]
@@ -199,7 +235,7 @@ fn object_entities(objects: &[TrackedObject]) -> Vec<mvm_core::types::Entity> {
 // PersonTracker, but must emit the *same* Scene JSON contract. These mirror the
 // tracker-keyed builders above.
 
-fn person_to_json_face(p: &mvm_core::PersonState) -> JsonFace {
+fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool) -> JsonFace {
     JsonFace {
         id: p.track_id,
         identity: p.identity.as_ref().map(|(n, _)| n.clone()),
@@ -216,6 +252,21 @@ fn person_to_json_face(p: &mvm_core::PersonState) -> JsonFace {
         pos: p.position_3d.map(|q| [q.x, q.y, q.z]),
         motion: p.motion_state,
         velocity: p.velocity,
+        left_gesture: p.left_gesture,
+        right_gesture: p.right_gesture,
+        wrists: p.wrists.clone(),
+        hands: p.hands.iter().map(|h| hand_to_json(h, dump_landmarks)).collect(),
+        emotion_entropy: p.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
+        recon_error: p.recon_error,
+        plausibility: p.plausibility.clone(),
+    }
+}
+
+fn hand_to_json(h: &mvm_core::HandState, dump_landmarks: bool) -> JsonHand {
+    JsonHand {
+        side: h.side,
+        presence: h.presence,
+        landmarks: dump_landmarks.then(|| h.landmarks.clone()),
     }
 }
 
@@ -271,6 +322,9 @@ fn object_state_to_json(o: &mvm_core::ObjectState) -> JsonObject {
 pub struct StateFile {
     path: PathBuf,
     tz: FixedOffset,
+    /// Include raw 21-point hand landmarks in the Scene JSON (`--dump-landmarks`,
+    /// phase 10.0 opt-in — heavy payload, off by default).
+    pub dump_landmarks: bool,
 }
 
 impl StateFile {
@@ -287,7 +341,7 @@ impl StateFile {
             fs::create_dir_all(parent)?;
         }
         let tz = FixedOffset::east_opt(3 * 3600).unwrap();
-        Ok(Self { path, tz })
+        Ok(Self { path, tz, dump_landmarks: false })
     }
 
     /// Write current state to file.
@@ -501,6 +555,22 @@ impl StateFile {
                     s => Some(s.as_str()),
                 },
                 velocity: if t.motion.is_empty() { None } else { Some(t.motion.speed()) },
+                // Phase 10.0: emit what the track already computes. A resting arm
+                // maps to an absent field, mirroring PersonState::from_track.
+                left_gesture: match t.motion.left_gesture() {
+                    mvm_core::motion::ArmGesture::None => None,
+                    g => Some(g.as_str()),
+                },
+                right_gesture: match t.motion.right_gesture() {
+                    mvm_core::motion::ArmGesture::None => None,
+                    g => Some(g.as_str()),
+                },
+                // Landmarks live on the mesh path only; the sync tracker has none.
+                wrists: Vec::new(),
+                hands: Vec::new(),
+                emotion_entropy: t.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
+                recon_error: t.recon_error,
+                plausibility: t.plausibility.clone(),
             }
         }).collect();
 
@@ -525,7 +595,11 @@ impl StateFile {
             world.people.iter().map(person_to_entity).collect();
         entities.extend(world.objects.iter().map(object_state_to_entity));
 
-        let faces: Vec<JsonFace> = world.people.iter().map(person_to_json_face).collect();
+        let faces: Vec<JsonFace> = world
+            .people
+            .iter()
+            .map(|p| person_to_json_face(p, self.dump_landmarks))
+            .collect();
         let json_objects: Vec<JsonObject> = world.objects.iter().map(object_state_to_json).collect();
 
         let scene = mvm_fusion::build_scene(entities);
@@ -1190,6 +1264,10 @@ mod tests {
             torso_attitude: None,
             motion_state: None,
             velocity: None,
+            left_gesture: None,
+            right_gesture: None,
+            recon_error: None,
+            plausibility: None,
             last_seen: std::time::Instant::now(),
         }
     }
@@ -1283,6 +1361,89 @@ mod tests {
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!(v["faces"][0].get("motion").is_none(), "motion omitted when absent");
+    }
+
+    // ── Phase 10.0: emit what we already compute ─────────────────────────────
+
+    #[test]
+    fn world_json_surfaces_gestures_hands_and_posture_quality() {
+        let sf = StateFile::open_at(temp_state_path("test_world_p10.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        p.left_gesture = Some("waving");
+        p.wrists = vec![[0.4, 0.6]];
+        p.hands = vec![mvm_core::HandState {
+            landmarks: vec![[0.41, 0.61]; 21],
+            presence: 0.87,
+            side: "left",
+        }];
+        p.recon_error = Some(0.031);
+        p.plausibility = Some("ok".into());
+        world.people.push(p);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let f = &v["faces"][0];
+        assert_eq!(f["left_gesture"], "waving");
+        assert!(f.get("right_gesture").is_none(), "resting arm omitted");
+        assert_eq!(f["wrists"][0][0].as_f64().unwrap(), 0.4);
+        assert_eq!(f["hands"][0]["side"], "left");
+        assert!((f["hands"][0]["presence"].as_f64().unwrap() - 0.87).abs() < 0.01);
+        assert!(f["hands"][0].get("landmarks").is_none(), "landmarks opt-in only");
+        assert!((f["recon_error"].as_f64().unwrap() - 0.031).abs() < 1e-6);
+        assert_eq!(f["plausibility"], "ok");
+    }
+
+    #[test]
+    fn world_json_dump_landmarks_includes_hand_points() {
+        let mut sf = StateFile::open_at(temp_state_path("test_world_lm.md")).unwrap();
+        sf.dump_landmarks = true;
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        p.hands = vec![mvm_core::HandState {
+            landmarks: vec![[0.5, 0.5]; 21],
+            presence: 0.9,
+            side: "right",
+        }];
+        world.people.push(p);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let lm = v["faces"][0]["hands"][0]["landmarks"].as_array().expect("landmarks dumped");
+        assert_eq!(lm.len(), 21);
+    }
+
+    #[test]
+    fn world_json_surfaces_emotion_entropy() {
+        // The distribution is on the person → its entropy is pre-baked into JSON.
+        let sf = StateFile::open_at(temp_state_path("test_world_ent.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        p.emotion_distribution = Some([0.125; 8]); // uniform → entropy 1.0
+        world.people.push(p);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!((v["faces"][0]["emotion_entropy"].as_f64().unwrap() - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn sync_json_surfaces_entropy_and_posture_quality() {
+        // The tracker path emits the same phase-10.0 fields off the track.
+        let sf = StateFile::open_at(temp_state_path("test_sync_p10.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        let mut one_hot = [0.0f32; 8];
+        one_hot[3] = 1.0;
+        let mut det = det(0.2, 0.3, 0.5, 0.7);
+        det.emotion_distribution = Some(one_hot);
+        det.recon_error = Some(0.12);
+        det.plausibility = Some("low".into());
+        tracker.tick(&[det]);
+        let line = sf.to_json_line(&tracker, 30.0, &[]);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let f = &v["faces"][0];
+        assert!(f["emotion_entropy"].as_f64().unwrap() < 1e-4, "one-hot → entropy 0");
+        assert!((f["recon_error"].as_f64().unwrap() - 0.12).abs() < 1e-6);
+        assert_eq!(f["plausibility"], "low");
+        assert!(f.get("left_gesture").is_none(), "no motion ring → no gesture");
+        assert!(f.get("hands").is_none(), "sync path carries no hands");
     }
 
     #[test]
