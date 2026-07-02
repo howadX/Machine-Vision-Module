@@ -12,7 +12,7 @@ Machine Vision Module/
 ├── models/         # Веса: PyTorch (.pth), ONNX, MediaPipe (.task), references/
 ├── venv/           # Python 3.11+ virtualenv
 ├── src/            # sightd (legacy Rust daemon, заменён на mvm/)
-└── mvm/            # Rust workspace (12 крейтов, 346 тестов, фаза 9 Tracker закрыта)
+└── mvm/            # Rust workspace (12 крейтов, 443 теста, фаза 10 Data-Collection закрыта)
     ├── crates/     # core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
     ├── docs/       # phase-* prompts/runbooks
     └── CLAUDE.md   # ← детальный контекст Rust-части (source of truth)

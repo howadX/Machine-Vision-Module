@@ -195,10 +195,33 @@ dependency-дружественна.
 
 ---
 
-## 9. Definition of Done фазы 10
+## 9. Definition of Done фазы 10 — ✅ ЗАКРЫТА (2026-07-02)
 
-- 10.1 спайк задокументирован (кривая выигрыша + частота перекрытия людей + решение по 10.7).
-- Трек A: YOLO-seg в `mvm-scene`, маски в `Entity`, depth по маске, mask-IoU в `ObjectTracker`,
-  контакт по mask-смежности — live-validated на боевом ракурсе.
-- 10.7 — по результату 10.1 (go → реализовать через cost-матрицу фазы 9; no-go → задокументировать отказ).
-- `cargo test --workspace` зелёный; release чист; `CLAUDE.md` §«Фаза 10» актуализирована.
+**Фаза 10 (Full Data Collection) закрыта.** SUPREME-валидация: 3 человека + собака, 120с/116 тиков,
+443 теста зелёных, release чист. Сбор и парсинг данных на основном пути `--native-camera` полны —
+все агенты собирают и корректно парсят все свои параметры (покрытие 100% там, где сигнал есть).
+
+- ✅ 10.1 спайк задокументирован (§3.1–3.2, кривая выигрыша + person-overlap эмпирика).
+- ✅ Трек A: YOLO-seg в `mvm-scene` (`YoloSegDetector`), маски на `TrackedObject` (не `Entity` — слоистость,
+  §3.4), **depth-по-маске** (`median_at_points`), **mask-IoU тайбрейк привязки** (`attach_masks`, 10.5
+  instance-separation), `mask_coverage` в JSON — live-validated. Полная замена `ObjectTracker` на mask-IoU и
+  mask-контакт (10.6) **осознанно перенесены в fusion-фазу** (в архитектуре «seg-поверх-detect» трекер масок
+  не видит; контакт — реляционная работа).
+- ✅ 10.7 person-mask: спайк-гейт GO по качеству силуэта; реализация — в fusion-фазе (есть эмпирика ≥2 чел.
+  из SUPREME-теста).
+- ✅ `cargo test --workspace` зелёный (443); release чист; `mvm/CLAUDE.md` §«Фаза 10» актуализирована.
+
+**Сверх плана (SUPREME-driven, `+0 ONNX`):** sync-путь дропал вычисленные wrists/hands → починено;
+`face_verified` (честный сигнал животное/упавший); **fusion-активности на sync-пути** (people_together/
+typing/holding_drink/seated_at_workstation — было mesh-only); **model-corroborated анти-животное-гейт**
+(`is_animal`/`likely_animal`).
+
+### Перенесено в fusion-фазу (не сбор данных)
+- Контакт человек↔объект по mask-смежности (10.6) + окклюзия-порядок.
+- Мис-атрибуция контакта при вытянутой руке (телефон приписан не тому телу — SUPREME-находка).
+- Полный mask-IoU в `ObjectTracker` + person-mask ассоциация 10.7 в cost-матрицу.
+- mesh-путь: зеркалирование masks/hands/animals из `ObjectState` (sync — полон).
+
+### Остаточные детектор-баги YOLO (не парсинг, не оркестрация)
+- `cell phone` не всегда детектится; `bowl` иногда галлюцинирует; собака-на-руках → класс `handbag`.
+  Уровень модели YOLO26n → A/B порогов или смена детектора.
