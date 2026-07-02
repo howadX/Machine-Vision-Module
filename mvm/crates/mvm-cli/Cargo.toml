@@ -1,0 +1,28 @@
+[package]
+name = "mvm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MVM CLI — binary entry point and state file writer"
+
+[features]
+default = []
+embed-models = ["mvm-detect/embed-model", "mvm-posture/embed-model"]
+
+[dependencies]
+mvm-core = { path = "../mvm-core" }
+mvm-detect = { path = "../mvm-detect" }
+mvm-emotion = { path = "../mvm-emotion" }
+mvm-identity = { path = "../mvm-identity" }
+mvm-posture = { path = "../mvm-posture" }
+mvm-scene = { path = "../mvm-scene" }
+mvm-depth = { path = "../mvm-depth" }
+mvm-hands = { path = "../mvm-hands" }
+mvm-pipeline = { path = "../mvm-pipeline" }
+mvm-fusion = { path = "../mvm-fusion" }
+mvm-mesh = { path = "../mvm-mesh" }
+anyhow = "1"
+chrono = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

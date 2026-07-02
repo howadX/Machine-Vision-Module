@@ -1,0 +1,9 @@
+[package]
+name = "mvm-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MVM core types, traits, and 3D workspace"
+
+[dependencies]
+anyhow = "1"

@@ -1,0 +1,20 @@
+# Phase 8.0.1 Agent Mesh prep — Spike A: ort thread contention (make-or-break).
+# Throwaway, detached from the 8-crate workspace (empty [workspace]).
+#
+# Question: do N detectors in N OS-threads actually parallelise across cores,
+# or do they contend on ort's per-session intra-op thread pool? Measures the
+# synchronous-pipeline baseline vs 3 agent-threads with default ort threads
+# vs tuned intra_op_num_threads. Decides whether Agent Mesh (parallelism) is
+# worth building, and how to configure ort sessions if so.
+[package]
+name = "mesh-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-22"] }
+ndarray = "0.17"
+anyhow = "1"

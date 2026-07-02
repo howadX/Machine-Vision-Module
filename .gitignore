@@ -1,0 +1,11 @@
+/target
+.local/
+/venv/
+/models/
+__pycache__/
+*.pyc
+mvm/target/
+mvm/dist/
+
+# runtime camera-test logs
+mvm/logs/

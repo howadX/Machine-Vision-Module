@@ -1,0 +1,13 @@
+# Regenerable capture data (personal full-body frames); reproduce via ceiling_capture_probe.py
+ceiling_test/
+
+# P1 pose-classifier spike: downloaded public data + generated artifacts.
+# Reproduce with: python spike_data.py && python train_pose_p1.py
+# (the crate keeps its own committed copies under mvm-posture/src/).
+data_probe/
+pose_p1_weights.bin
+pose_rf_forest.bin
+pose_vae_public.bin
+pose_p1_config.json
+pose_p1_golden.in
+golden_pose_p1.json

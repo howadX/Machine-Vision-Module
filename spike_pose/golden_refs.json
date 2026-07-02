@@ -1,0 +1,37 @@
+{
+ "p_V_01.jpg": {
+  "label": "sitting_at_desk",
+  "conf": 0.784,
+  "n_det": 1
+ },
+ "p_V_02.jpg": {
+  "label": "standing",
+  "conf": 0.66,
+  "n_det": 1
+ },
+ "p_V_03.jpg": {
+  "label": "standing",
+  "conf": 0.848,
+  "n_det": 1
+ },
+ "p_V_04.jpg": {
+  "label": "sitting_at_desk",
+  "conf": 0.809,
+  "n_det": 1
+ },
+ "p_V_05.jpg": {
+  "label": "standing",
+  "conf": 0.838,
+  "n_det": 1
+ },
+ "p_V_06.jpg": {
+  "label": "sitting_at_desk",
+  "conf": 0.558,
+  "n_det": 1
+ },
+ "p_V_07.jpg": {
+  "label": "sitting_at_desk",
+  "conf": 0.89,
+  "n_det": 1
+ }
+}

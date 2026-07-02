@@ -1,0 +1,10 @@
+[package]
+name = "mvm-fusion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MVM fusion — logical layer combining agent signals (Phase 3 stub)"
+
+[dependencies]
+mvm-core = { path = "../mvm-core" }
+anyhow = "1"

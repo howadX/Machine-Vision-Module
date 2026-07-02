@@ -1,0 +1,31 @@
+# Large ONNX models (download separately — see mvm/docs/phase-7.5-spike-findings.md)
+models/enet_b0_8_best_vgaf.onnx
+models/face_recognition_sface_2021dec.onnx
+# BlazePose pair (OpenCV Zoo, Apache-2.0) — Phase 7.5 native pose
+# https://github.com/opencv/opencv_zoo/raw/main/models/person_detection_mediapipe/person_detection_mediapipe_2023mar.onnx
+# https://github.com/opencv/opencv_zoo/raw/main/models/pose_estimation_mediapipe/pose_estimation_mediapipe_2023mar.onnx
+models/person_detection_mediapipe_2023mar.onnx
+models/pose_estimation_mediapipe_2023mar.onnx
+
+# Build artifacts
+/target/
+/dist/mvm
+
+# Python MVM (if symlinked)
+__pycache__/
+*.pyc
+
+# YOLO26n object detector (phase 8.E, ultralytics export, AGPL-3.0)
+# venv/bin/yolo export model=yolo26n.pt format=onnx imgsz=640 → rename to yolo_object_detect.onnx
+models/yolo_object_detect.onnx
+# YOLO-seg instance masks (phase 10.4, ultralytics export, AGPL-3.0)
+# python -c "from ultralytics import YOLO; YOLO('yolov8n-seg.pt').export(format='onnx',imgsz=640,opset=12)" → rename to yolo_seg.onnx
+models/yolo_seg.onnx
+
+# Depth-Anything-V2-Small (phase 8.E.2, onnx-community quantized, Apache-2.0)
+# https://huggingface.co/onnx-community/depth-anything-v2-small (onnx/model_quantized.onnx)
+models/depth_anything_v2_small.onnx
+
+# MediaPipe handpose (phase 8.E.4, OpenCV Zoo, Apache-2.0)
+# https://github.com/opencv/opencv_zoo/raw/main/models/handpose_estimation_mediapipe/handpose_estimation_mediapipe_2023feb.onnx
+models/handpose_estimation_mediapipe_2023feb.onnx

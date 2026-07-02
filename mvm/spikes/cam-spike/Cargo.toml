@@ -1,0 +1,17 @@
+# Phase 7.2 camera spike (G3) — throwaway, detached from the main workspace.
+# Purpose: prove (or disprove) that a pure-Rust v4l2 mmap-streaming capture
+# reads /dev/video0 under a live PipeWire session on this host.
+#
+# Detached via empty [workspace] so it does NOT touch the 8-crate workspace
+# Cargo.lock until 7.2 is committed for real.
+[package]
+name = "cam-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+# Pure-Rust v4l2 (direct ioctl, no bindgen/clang, no system dev libs).
+v4l = "0.14"
