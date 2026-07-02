@@ -110,29 +110,36 @@ impl EmotionModule {
 
     fn preprocess(&self, image: &DynamicImage) -> anyhow::Result<ort::value::Tensor<f32>> {
         let sz = Self::IMAGE_SIZE as usize;
-        let resized = image.resize_exact(
-            Self::IMAGE_SIZE,
-            Self::IMAGE_SIZE,
-            image::imageops::FilterType::Nearest,
-        );
-
-        // ImageNet normalisation + CHW
-        let mut flat = vec![0.0f32; 3 * sz * sz];
-        for y in 0..sz {
-            for x in 0..sz {
-                let px = resized.get_pixel(x as u32, y as u32);
-                let base = (y * sz + x) * 3;
-                flat[base]     = (px[0] as f32 / 255.0 - 0.485) / 0.229; // R
-                flat[base + 1] = (px[1] as f32 / 255.0 - 0.456) / 0.224; // G
-                flat[base + 2] = (px[2] as f32 / 255.0 - 0.406) / 0.225; // B
-            }
-        }
-
+        let flat = preprocess_chw(image, Self::IMAGE_SIZE);
         let shape = ndarray::IxDyn(&[1, 3, sz, sz]);
         let array = ndarray::Array::from_shape_vec(shape, flat)
             .context("Failed to create emotion input array")?;
         Tensor::from_array(array).context("Failed to create emotion tensor")
     }
+}
+
+/// Resize + ImageNet-normalise a crop into **planar CHW** (`[R-plane, G-plane,
+/// B-plane]`) — the layout the NCHW ONNX input actually reads.
+///
+/// Phase 10.1 root-#1 fix: this used to write interleaved HWC into the NCHW
+/// buffer, scrambling the channel planes the network saw — every face came out
+/// near-uniform (the live "emotion is near-chance" symptom). Kept as a free
+/// function so the layout is unit-testable without ONNX.
+pub fn preprocess_chw(image: &DynamicImage, size: u32) -> Vec<f32> {
+    let sz = size as usize;
+    let resized = image.resize_exact(size, size, image::imageops::FilterType::Nearest);
+    let mut flat = vec![0.0f32; 3 * sz * sz];
+    let plane = sz * sz;
+    for y in 0..sz {
+        for x in 0..sz {
+            let px = resized.get_pixel(x as u32, y as u32);
+            let idx = y * sz + x;
+            flat[idx]             = (px[0] as f32 / 255.0 - 0.485) / 0.229; // R
+            flat[plane + idx]     = (px[1] as f32 / 255.0 - 0.456) / 0.224; // G
+            flat[2 * plane + idx] = (px[2] as f32 / 255.0 - 0.406) / 0.225; // B
+        }
+    }
+    flat
 }
 
 impl Module for EmotionModule {
@@ -211,6 +218,24 @@ mod tests {
         let cal = p[0] * (1.0 - h);
         assert!(cal > 0.8, "calibrated_conf should be high when certain: {cal}");
         assert!(h < 0.2, "concentrated distribution should have low entropy: {h}");
+    }
+
+    /// Root-#1 regression guard: a solid-red image must produce a constant R
+    /// plane followed by constant G/B planes (planar CHW), not interleaved HWC.
+    #[test]
+    fn preprocess_layout_is_planar_chw() {
+        let mut img = image::RgbImage::new(8, 8);
+        for p in img.pixels_mut() {
+            *p = image::Rgb([255, 0, 0]);
+        }
+        let flat = preprocess_chw(&DynamicImage::ImageRgb8(img), 8);
+        let plane = 64;
+        let r = (1.0 - 0.485) / 0.229;
+        let g = (0.0 - 0.456) / 0.224;
+        let b = (0.0 - 0.406) / 0.225;
+        assert!(flat[..plane].iter().all(|&v| (v - r).abs() < 1e-5), "R plane first");
+        assert!(flat[plane..2 * plane].iter().all(|&v| (v - g).abs() < 1e-5), "G plane second");
+        assert!(flat[2 * plane..].iter().all(|&v| (v - b).abs() < 1e-5), "B plane third");
     }
 
     // ── ONNX tests ────────────────────────────────────────────────────────────
