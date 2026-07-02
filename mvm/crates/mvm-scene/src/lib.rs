@@ -23,6 +23,9 @@ use ort::{session::Session, value::Tensor};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+pub mod mask;
+pub use mask::{InstanceMask, MASK_RES};
+
 /// COCO 80-class names, in the canonical ultralytics order.
 pub const COCO_CLASSES: [&str; 80] = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",

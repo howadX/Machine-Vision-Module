@@ -62,6 +62,20 @@ impl DepthMap {
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
         Some(samples[samples.len() / 2])
     }
+
+    /// Robust depth over an arbitrary set of normalized sample points — the
+    /// mask-aware twin of [`median_in_bbox`](Self::median_in_bbox) (phase 10.4).
+    /// An instance mask supplies its set-cell centres, so background inside the
+    /// bbox (which `median_in_bbox` samples) is excluded → less depth bleed on
+    /// non-convex / partially-occluded objects. `None` when no points are given.
+    pub fn median_at_points(&self, points: impl Iterator<Item = [f32; 2]>) -> Option<f32> {
+        let mut samples: Vec<f32> = points.map(|p| self.at_normalized(p[0], p[1])).collect();
+        if samples.is_empty() {
+            return None;
+        }
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        Some(samples[samples.len() / 2])
+    }
 }
 
 /// Depth-Anything-V2-Small ONNX estimator.
@@ -174,6 +188,22 @@ mod tests {
         let left = m.median_in_bbox(&BBox { x1: 0.0, y1: 0.0, x2: 0.4, y2: 1.0 }).unwrap();
         let right = m.median_in_bbox(&BBox { x1: 0.6, y1: 0.0, x2: 1.0, y2: 1.0 }).unwrap();
         assert!(right > left, "right box (nearer) should have larger depth value");
+    }
+
+    #[test]
+    fn median_at_points_reads_the_sampled_cells() {
+        // grad_map depth = x-column value (0..3). Points on the right columns →
+        // larger median than points on the left, and it ignores everything else.
+        let m = grad_map();
+        let right = m.median_at_points([[0.9, 0.5], [0.85, 0.2], [0.95, 0.8]].into_iter()).unwrap();
+        let left = m.median_at_points([[0.1, 0.5], [0.05, 0.2], [0.15, 0.8]].into_iter()).unwrap();
+        assert!(right > left, "right points nearer: right={right} left={left}");
+    }
+
+    #[test]
+    fn median_at_points_empty_is_none() {
+        let m = grad_map();
+        assert!(m.median_at_points(std::iter::empty()).is_none());
     }
 
     // ── end-to-end model load (gated on file present) ──────────────────────
