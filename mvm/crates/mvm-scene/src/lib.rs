@@ -374,6 +374,77 @@ fn decode_end2end(raw: &[f32], score_thresh: f32, num_classes: usize) -> Vec<Raw
     out
 }
 
+/// Number of prototype masks / mask coefficients a YOLO-seg head emits.
+pub const N_PROTO: usize = 32;
+
+/// A raw seg detection: a decoded box plus its 32 mask coefficients (still in
+/// canvas space, pre-NMS). Kept next to [`RawBox`] so the seg NMS reuses the
+/// same suppression, carrying the coeffs of the survivors.
+#[derive(Debug, Clone)]
+struct RawSeg {
+    boxb: RawBox,
+    coeffs: [f32; N_PROTO],
+}
+
+/// Decode the YOLO-seg output `[1, 4+C+32, A]` (channel-major): boxes + class
+/// scores exactly like [`decode_yolo`], plus the trailing 32 mask coefficients
+/// per anchor. Same anchor/threshold logic; the coeffs ride along for the
+/// surviving boxes so the prototype combination can be assembled after NMS.
+fn decode_yolo_seg(raw: &[f32], num_classes: usize, score_thresh: f32) -> Vec<RawSeg> {
+    let num_attrs = num_classes + 4 + N_PROTO;
+    debug_assert_eq!(raw.len() % num_attrs, 0, "seg tensor length not divisible by attrs");
+    let num_anchors = raw.len() / num_attrs;
+    let coeff_base = 4 + num_classes;
+    let mut out = Vec::new();
+    for a in 0..num_anchors {
+        let mut best_score = score_thresh;
+        let mut best_class = None;
+        for k in 0..num_classes {
+            let s = raw[(4 + k) * num_anchors + a];
+            if s > best_score {
+                best_score = s;
+                best_class = Some(k);
+            }
+        }
+        let Some(class_id) = best_class else { continue };
+        let cx = raw[a];
+        let cy = raw[num_anchors + a];
+        let w = raw[2 * num_anchors + a];
+        let h = raw[3 * num_anchors + a];
+        let mut coeffs = [0.0f32; N_PROTO];
+        for (k, c) in coeffs.iter_mut().enumerate() {
+            *c = raw[(coeff_base + k) * num_anchors + a];
+        }
+        out.push(RawSeg {
+            boxb: RawBox { x1: cx - w * 0.5, y1: cy - h * 0.5, x2: cx + w * 0.5, y2: cy + h * 0.5, score: best_score, class_id },
+            coeffs,
+        });
+    }
+    out
+}
+
+/// Class-aware greedy NMS over seg detections (mirrors [`nms`], keeps coeffs).
+fn nms_seg(mut segs: Vec<RawSeg>, iou_thresh: f32) -> Vec<RawSeg> {
+    segs.sort_by(|a, b| b.boxb.score.partial_cmp(&a.boxb.score).unwrap());
+    let mut kept: Vec<RawSeg> = Vec::new();
+    for cand in segs {
+        let suppressed = kept.iter().any(|k| {
+            k.boxb.class_id == cand.boxb.class_id && iou_xyxy(&k.boxb, &cand.boxb) > iou_thresh
+        });
+        if !suppressed {
+            kept.push(cand);
+        }
+    }
+    kept
+}
+
+/// A seg detection surfaced to callers: the object box + its instance mask.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SegDetection {
+    pub det: ObjectDetection,
+    pub mask: InstanceMask,
+}
+
 /// Class-aware greedy NMS: sort by score desc, suppress same-class overlaps.
 fn nms(mut boxes: Vec<RawBox>, iou_thresh: f32) -> Vec<RawBox> {
     boxes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
@@ -516,9 +587,220 @@ impl YoloDetector {
     }
 }
 
+/// YOLO-seg ONNX detector (phase 10.4) — the sanctioned +1 ONNX expert.
+///
+/// Emits two tensors: `output0 [1, 4+80+32, A]` (boxes + class scores + mask
+/// coefficients) and `output1 [1, 32, ph, pw]` (the shared prototype bank). Per
+/// spike §3.2 this is an **additional** cadenced expert, not a replacement for
+/// the YOLO26n detector — its masks are matched onto tracked objects, its raw
+/// boxes are not the tracking authority. Reuses `YoloDetector`'s letterbox +
+/// preprocess so both models see an identical canvas.
+pub struct YoloSegDetector {
+    session: Session,
+    input_size: u32,
+    score_threshold: f32,
+    nms_threshold: f32,
+}
+
+impl YoloSegDetector {
+    const INPUT_NAME: &'static str = "images";
+
+    /// Load from a file path.
+    pub fn from_path(path: &std::path::Path) -> anyhow::Result<Self> {
+        let session = Session::builder()?
+            .commit_from_file(path)
+            .with_context(|| format!("Failed to load YOLO-seg from {}", path.display()))?;
+        Ok(Self { session, input_size: 640, score_threshold: 0.35, nms_threshold: 0.45 })
+    }
+
+    /// Load from ONNX model bytes (embedded mode).
+    #[cfg(feature = "embed-model")]
+    pub fn from_bytes(model_bytes: &[u8]) -> anyhow::Result<Self> {
+        let session = Session::builder()?
+            .commit_from_memory(model_bytes)
+            .context("Failed to load YOLO-seg from embedded bytes")?;
+        Ok(Self { session, input_size: 640, score_threshold: 0.35, nms_threshold: 0.45 })
+    }
+
+    pub fn set_score_threshold(&mut self, t: f32) {
+        self.score_threshold = t;
+    }
+
+    /// Detect objects **with instance masks**. Boxes are normalized [0,1] in the
+    /// original frame; each mask is a [`InstanceMask`] over the same frame.
+    pub fn detect(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<SegDetection>> {
+        let (orig_w, orig_h) = image.dimensions();
+        let lb = compute_letterbox(orig_w, orig_h, self.input_size);
+        // Reuse YoloDetector's identical preprocess by building a throwaway view is
+        // overkill; inline the same letterbox+NCHW here via a shared helper.
+        let input = preprocess_letterbox(image, &lb, self.input_size)?;
+        let outputs = self.session.run(ort::inputs![Self::INPUT_NAME => input])?;
+
+        // output0: boxes+scores+coeffs; output1: prototype bank.
+        let (s0, raw0) = outputs[0].try_extract_tensor::<f32>()?;
+        let (s1, proto) = outputs[1].try_extract_tensor::<f32>()?;
+        let d0: Vec<usize> = s0.iter().map(|&d| d as usize).collect();
+        let d1: Vec<usize> = s1.iter().map(|&d| d as usize).collect();
+        // proto dims [1, n_proto, ph, pw].
+        let (n_proto, ph, pw) = match d1.as_slice() {
+            [_, n, h, w] => (*n, *h, *w),
+            _ => anyhow::bail!("unexpected proto shape {d1:?}"),
+        };
+        anyhow::ensure!(n_proto == N_PROTO, "expected {N_PROTO} prototypes, got {n_proto}");
+        // output0 may be [1, attrs, A] or [1, A, attrs]; decode_yolo_seg wants
+        // channel-major [attrs, A]. Detect and transpose if needed.
+        let raw0 = to_channel_major(raw0, &d0, COCO_CLASSES.len() + 4 + N_PROTO);
+
+        let segs = nms_seg(
+            decode_yolo_seg(&raw0, COCO_CLASSES.len(), self.score_threshold),
+            self.nms_threshold,
+        );
+
+        Ok(segs
+            .into_iter()
+            .map(|s| {
+                let bbox = canvas_to_norm(&s.boxb, &lb, orig_w, orig_h);
+                let mask = InstanceMask::assemble(
+                    proto, n_proto, ph, pw, &s.coeffs, &bbox, lb, orig_w, orig_h, self.input_size,
+                );
+                SegDetection {
+                    det: ObjectDetection {
+                        class_id: s.boxb.class_id,
+                        class_name: COCO_CLASSES[s.boxb.class_id],
+                        bbox,
+                        score: s.boxb.score,
+                    },
+                    mask,
+                }
+            })
+            .collect())
+    }
+}
+
+/// Ensure a `[1, A, attrs]`-vs-`[1, attrs, A]` output is returned channel-major
+/// `[attrs, A]` (what `decode_yolo_seg` reads). ONNX exports differ; we pick the
+/// axis whose length equals `attrs`.
+fn to_channel_major(raw: &[f32], dims: &[usize], attrs: usize) -> Vec<f32> {
+    // dims == [1, d1, d2]. If d1==attrs it is already channel-major.
+    if dims.len() != 3 {
+        return raw.to_vec();
+    }
+    let (d1, d2) = (dims[1], dims[2]);
+    if d1 == attrs {
+        raw.to_vec()
+    } else {
+        // [1, A, attrs] → transpose to [attrs, A].
+        let (a, at) = (d1, d2);
+        let mut out = vec![0.0f32; a * at];
+        for i in 0..a {
+            for c in 0..at {
+                out[c * a + i] = raw[i * at + c];
+            }
+        }
+        out
+    }
+}
+
+/// Shared letterbox + RGB + NCHW + [0,1] preprocess (used by both YOLO detectors).
+fn preprocess_letterbox(image: &DynamicImage, lb: &Letterbox, input_size: u32) -> anyhow::Result<Tensor<f32>> {
+    let sz = input_size as usize;
+    let (orig_w, orig_h) = image.dimensions();
+    let new_w = (orig_w as f32 * lb.scale).round() as u32;
+    let new_h = (orig_h as f32 * lb.scale).round() as u32;
+    let resized = image
+        .resize_exact(new_w.max(1), new_h.max(1), image::imageops::FilterType::Triangle)
+        .to_rgb8();
+    let pad_val = 114.0f32 / 255.0;
+    let mut flat = vec![pad_val; 3 * sz * sz];
+    let off_x = lb.pad_x.round() as usize;
+    let off_y = lb.pad_y.round() as usize;
+    for y in 0..(new_h as usize).min(sz.saturating_sub(off_y)) {
+        for x in 0..(new_w as usize).min(sz.saturating_sub(off_x)) {
+            let px = resized.get_pixel(x as u32, y as u32);
+            let idx = (off_y + y) * sz + (off_x + x);
+            flat[idx] = px[0] as f32 / 255.0;
+            flat[sz * sz + idx] = px[1] as f32 / 255.0;
+            flat[2 * sz * sz + idx] = px[2] as f32 / 255.0;
+        }
+    }
+    let shape = ndarray::IxDyn(&[1, 3, sz, sz]);
+    let array = ndarray::Array::from_shape_vec(shape, flat).context("seg input array")?;
+    Tensor::from_array(array).context("seg tensor")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── seg decode (pure, synthetic tensor) ────────────────────────────────
+
+    #[test]
+    fn decode_yolo_seg_reads_box_class_and_coeffs() {
+        // 2 anchors, num_classes=2, 32 coeffs → attrs = 4+2+32 = 38, channel-major.
+        let nc = 2;
+        let attrs = 4 + nc + N_PROTO;
+        let anchors = 2;
+        let mut raw = vec![0.0f32; attrs * anchors];
+        let put = |raw: &mut [f32], c: usize, a: usize, v: f32| raw[c * anchors + a] = v;
+        // anchor 0: box (cx,cy,w,h)=(100,120,40,60), class 1 score 0.9, coeff[5]=2.0
+        put(&mut raw, 0, 0, 100.0); put(&mut raw, 1, 0, 120.0);
+        put(&mut raw, 2, 0, 40.0);  put(&mut raw, 3, 0, 60.0);
+        put(&mut raw, 4 + 1, 0, 0.9);
+        put(&mut raw, 4 + nc + 5, 0, 2.0);
+        // anchor 1: below threshold (max class score 0.1) → dropped.
+        put(&mut raw, 4 + 0, 1, 0.1);
+        let segs = decode_yolo_seg(&raw, nc, 0.35);
+        assert_eq!(segs.len(), 1, "only anchor 0 survives");
+        let s = &segs[0];
+        assert_eq!(s.boxb.class_id, 1);
+        assert!((s.boxb.x1 - 80.0).abs() < 1e-4 && (s.boxb.y2 - 150.0).abs() < 1e-4);
+        assert!((s.coeffs[5] - 2.0).abs() < 1e-6, "coeff 5 carried through");
+    }
+
+    #[test]
+    fn to_channel_major_transposes_anchor_last() {
+        // [1, A=2, attrs=3] row-major → channel-major [attrs, A].
+        let raw = vec![
+            1.0, 2.0, 3.0, // anchor 0: attrs
+            4.0, 5.0, 6.0, // anchor 1: attrs
+        ];
+        let cm = to_channel_major(&raw, &[1, 2, 3], 3);
+        // channel-major: c0=[1,4], c1=[2,5], c2=[3,6]
+        assert_eq!(cm, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn to_channel_major_passthrough_when_already_channel_major() {
+        // [1, attrs=3, A=2] already channel-major → unchanged.
+        let raw = vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0];
+        assert_eq!(to_channel_major(&raw, &[1, 3, 2], 3), raw);
+    }
+
+    /// Model-gated: run the real YOLO-seg on the live rig frame and assert a
+    /// person instance mask with a sensible silhouette coverage (phase 10.4).
+    #[test]
+    fn seg_model_finds_person_mask_on_live_frame() {
+        let model = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/yolo_seg.onnx"));
+        let frame = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/live0.jpg"));
+        if !model.exists() || !frame.exists() {
+            eprintln!("Skipping seg live test: model or frame absent");
+            return;
+        }
+        let mut seg = YoloSegDetector::from_path(&model).unwrap();
+        seg.set_score_threshold(0.25);
+        let img = image::open(&frame).unwrap();
+        let dets = seg.detect(&img).unwrap();
+        eprintln!("seg live: {} instances", dets.len());
+        for d in &dets {
+            eprintln!("  {} score={:.2} mask_cov={:.3}", d.det.class_name, d.det.score, d.mask.frame_coverage());
+        }
+        let person = dets.iter().find(|d| d.det.class_name == "person").expect("person detected");
+        assert!(!person.mask.is_empty(), "person mask non-empty");
+        // The mask must be tighter than its bbox (a real silhouette, not the box).
+        let b = &person.det.bbox;
+        let bbox_area = (b.x2 - b.x1) * (b.y2 - b.y1);
+        assert!(person.mask.frame_coverage() < bbox_area, "mask tighter than bbox");
+    }
 
     // ── letterbox (pure) ───────────────────────────────────────────────────
 

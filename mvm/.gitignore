@@ -18,6 +18,9 @@ __pycache__/
 # YOLO26n object detector (phase 8.E, ultralytics export, AGPL-3.0)
 # venv/bin/yolo export model=yolo26n.pt format=onnx imgsz=640 → rename to yolo_object_detect.onnx
 models/yolo_object_detect.onnx
+# YOLO-seg instance masks (phase 10.4, ultralytics export, AGPL-3.0)
+# python -c "from ultralytics import YOLO; YOLO('yolov8n-seg.pt').export(format='onnx',imgsz=640,opset=12)" → rename to yolo_seg.onnx
+models/yolo_seg.onnx
 
 # Depth-Anything-V2-Small (phase 8.E.2, onnx-community quantized, Apache-2.0)
 # https://huggingface.co/onnx-community/depth-anything-v2-small (onnx/model_quantized.onnx)
