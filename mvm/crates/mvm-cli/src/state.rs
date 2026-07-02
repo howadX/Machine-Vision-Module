@@ -84,6 +84,15 @@ struct JsonFace {
     emotion_distribution: Option<[f32; 8]>,
     /// Face bbox height (normalised 0..1) — diagnostic field for 3D calibration.
     bbox_h: f32,
+    /// Whether this body was ever corroborated by a matched face (identity or
+    /// emotion). A body-primary track facing away is legitimately `false` +
+    /// upright; a `false` + horizontal + near body is an **unverified** node —
+    /// could be an animal (a spurious BlazePose skeleton on a pet) OR a fallen
+    /// person face-down. Deliberately NOT a claim either way — the honest signal
+    /// that lets a consumer discount a likely-animal without the system hiding a
+    /// possible fallen human. (SUPREME 3-person+pets test: the dog surfaced as a
+    /// faceless horizontal node with no way to tell it apart.)
+    face_verified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     posture: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -262,6 +271,7 @@ fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool) -> JsonF
         emotion_conf: p.emotion.as_ref().map(|(_, c)| *c),
         emotion_distribution: p.emotion_distribution,
         bbox_h: p.bbox.y2 - p.bbox.y1,
+        face_verified: p.identity.is_some() || p.emotion.is_some(),
         posture: p.posture.as_ref().map(|(s, _)| s.clone()),
         posture_conf: p.posture.as_ref().map(|(_, c)| *c),
         body_coverage: p.body_coverage,
@@ -592,6 +602,7 @@ impl StateFile {
                 emotion: t.emotion.clone(),
                 emotion_conf: t.emotion_confidence,
                 emotion_distribution: t.emotion_distribution,
+                face_verified: t.emotion.is_some() || t.shown_identity().is_some(),
                 posture: t.posture.clone(),
                 posture_conf: t.posture_confidence,
                 body_coverage: t.body_coverage,
@@ -1262,6 +1273,31 @@ mod tests {
         assert_eq!(h["gesture"], "point");
         // dump_landmarks defaults false → the 21-pt payload is omitted.
         assert!(h["landmarks"].is_null(), "landmarks only under --dump-landmarks");
+    }
+
+    #[test]
+    fn face_verified_flags_faceless_body() {
+        // A face-enriched body → face_verified true; a faceless body (an animal's
+        // spurious skeleton, or a person face-down) → false. The honest signal a
+        // consumer uses to discount a likely-animal without hiding a fallen human.
+        let sf = StateFile::open_at(temp_state_path("test_faceverif.md")).unwrap();
+        // faceless track: no emotion, no identity.
+        let mut t1 = PersonTracker::new();
+        t1.pinhole = None;
+        t1.tick(&[mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7)]);
+        let v1: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line(&t1, 30.0, &[], &[])).unwrap();
+        assert_eq!(v1["faces"][0]["face_verified"], false, "faceless body → unverified");
+        // face-enriched track: a matched face gave it an emotion.
+        let mut t2 = PersonTracker::new();
+        t2.pinhole = None;
+        let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
+        d.emotion = Some("Neutral".to_string());
+        d.emotion_confidence = Some(0.9);
+        t2.tick(&[d]);
+        let v2: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[], &[])).unwrap();
+        assert_eq!(v2["faces"][0]["face_verified"], true, "face-seen body → verified");
     }
 
     #[test]
