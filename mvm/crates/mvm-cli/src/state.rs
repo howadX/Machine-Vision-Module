@@ -132,6 +132,13 @@ struct JsonFace {
     /// Posture OOD plausibility flag — diagnostic (phase 10.0).
     #[serde(skip_serializing_if = "Option::is_none")]
     plausibility: Option<String>,
+    /// Coarse head yaw, degrees (phase 10.3): 0 = frontal, − nose toward image
+    /// left, + toward image right. Latest face-matched snapshot.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head_yaw: Option<f32>,
+    /// Categorical head direction ("camera"/"left"/"right", phase 10.3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head_facing: Option<&'static str>,
 }
 
 /// One hand in the Scene JSON (phase 10.0/10.2).
@@ -264,6 +271,8 @@ fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool) -> JsonF
         emotion_entropy: p.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
         recon_error: p.recon_error,
         plausibility: p.plausibility.clone(),
+        head_yaw: p.head_yaw,
+        head_facing: p.head_facing,
     }
 }
 
@@ -578,6 +587,8 @@ impl StateFile {
                 emotion_entropy: t.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
                 recon_error: t.recon_error,
                 plausibility: t.plausibility.clone(),
+                head_yaw: t.head_yaw,
+                head_facing: t.head_facing,
             }
         }).collect();
 
@@ -918,6 +929,7 @@ mod tests {
             body_coverage: None,
             torso_attitude: None,
             emotion_distribution: None, embedding: None,
+ head_yaw: None, head_facing: None,
         }]);
 
         sf.write(&tracker, 25.5, &[]).unwrap();
@@ -981,6 +993,7 @@ mod tests {
                 body_coverage: None,
                 torso_attitude: None,
                 emotion_distribution: None, embedding: None,
+ head_yaw: None, head_facing: None,
             },
             Detection {
                 bbox: mvm_core::BBox {
@@ -1005,6 +1018,7 @@ mod tests {
                 body_coverage: None,
                 torso_attitude: None,
                 emotion_distribution: None, embedding: None,
+ head_yaw: None, head_facing: None,
             },
         ]);
 
@@ -1103,6 +1117,7 @@ mod tests {
             body_coverage: None,
             torso_attitude: None,
             emotion_distribution: None, embedding: None,
+ head_yaw: None, head_facing: None,
         }]);
         let line = sf.to_json_line(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -1215,6 +1230,7 @@ mod tests {
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
+ head_yaw: None, head_facing: None,
         }]);
         let debug = vec![EmotionDebugEntry {
             id: 0,
@@ -1248,6 +1264,7 @@ mod tests {
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
+ head_yaw: None, head_facing: None,
         }]);
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -1275,6 +1292,7 @@ mod tests {
             right_gesture: None,
             recon_error: None,
             plausibility: None,
+            head_yaw: None, head_facing: None,
             last_seen: std::time::Instant::now(),
         }
     }
@@ -1435,6 +1453,35 @@ mod tests {
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!((v["faces"][0]["emotion_entropy"].as_f64().unwrap() - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn world_json_surfaces_head_orientation() {
+        // Phase 10.3: head_yaw/head_facing flow from the person to the JSON.
+        let sf = StateFile::open_at(temp_state_path("test_world_head.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        p.head_yaw = Some(-32.5);
+        p.head_facing = Some("left");
+        world.people.push(p);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!((v["faces"][0]["head_yaw"].as_f64().unwrap() + 32.5).abs() < 1e-3);
+        assert_eq!(v["faces"][0]["head_facing"], "left");
+    }
+
+    #[test]
+    fn sync_json_surfaces_head_orientation_from_track() {
+        let sf = StateFile::open_at(temp_state_path("test_sync_head.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        let mut d = det(0.2, 0.3, 0.5, 0.7);
+        d.head_yaw = Some(5.0);
+        d.head_facing = Some("camera");
+        tracker.tick(&[d]);
+        let line = sf.to_json_line(&tracker, 30.0, &[]);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!((v["faces"][0]["head_yaw"].as_f64().unwrap() - 5.0).abs() < 1e-3);
+        assert_eq!(v["faces"][0]["head_facing"], "camera");
     }
 
     #[test]

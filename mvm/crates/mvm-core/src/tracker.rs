@@ -673,6 +673,11 @@ impl PersonTracker {
             if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
             if det.body_coverage.is_some() { t.body_coverage = det.body_coverage; }
             if det.torso_attitude.is_some() { t.torso_attitude = det.torso_attitude; }
+            // Head orientation (phase 10.3): latest snapshot, like body_coverage.
+            if det.head_yaw.is_some() {
+                t.head_yaw = det.head_yaw;
+                t.head_facing = det.head_facing;
+            }
         } // mutable borrow drops
 
         // ── Part B: native 3D (phase 6.2) — two-step borrow ────────────────
@@ -783,6 +788,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }]
     }
 
@@ -895,6 +901,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }];
         t.tick(&enriched);
         let active: Vec<_> = t.active().collect();
@@ -952,6 +959,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }]);
         t.tick(&[Detection {
             bbox: BBox { x1: 0.31, y1: 0.31, x2: 0.71, y2: 0.71 },
@@ -963,6 +971,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].identity.as_deref(), Some("Вадим"));
@@ -981,6 +990,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }]);
         t.tick(&[Detection {
             bbox: BBox { x1: 0.32, y1: 0.31, x2: 0.52, y2: 0.51 },
@@ -991,6 +1001,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].emotion.as_deref(), Some("Happiness"));
@@ -1199,6 +1210,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }]
     }
 
@@ -1589,6 +1601,7 @@ mod tests {
             distance: Some(1.5), position_x: Some(0.1), position_y: Some(0.2), position_z: Some(1.5),
             ws_confidence: Some(0.8), recon_error: Some(0.01), plausibility: Some("normal".into()),
             body_coverage: None, torso_attitude: None,
+            head_yaw: None, head_facing: None,
             emotion_distribution: None, embedding: Some(vec![1.0, 0.0, 0.0]),
         };
 

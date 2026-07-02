@@ -640,6 +640,11 @@ fn build_body_primary(
             let run_emotion = should_run_emotion(b, emotion_fresh_tracks);
             // Landmarks arrive normalised — alignment samples the frame in pixels.
             let lm5_px = faces[fi].landmarks.map(|p| [p[0] * fw, p[1] * fh]);
+            // Head orientation (phase 10.3): free reuse of the same 5 landmarks.
+            if let Some(h) = mvm_detect::head_orientation(&lm5_px) {
+                det.head_yaw = Some(h.yaw_deg);
+                det.head_facing = Some(h.facing);
+            }
             enrich_face_crop(
                 frame, &fb, Some(&lm5_px), &mut det,
                 emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
@@ -688,6 +693,10 @@ fn build_body_primary(
         // Fallback faces are, by A1, not covered by any body/track this frame — a
         // genuinely uncovered face, so always enrich it fully (nothing to reuse).
         let lm5_px = f.landmarks.map(|p| [p[0] * fw, p[1] * fh]);
+        if let Some(h) = mvm_detect::head_orientation(&lm5_px) {
+            det.head_yaw = Some(h.yaw_deg);
+            det.head_facing = Some(h.facing);
+        }
         enrich_face_crop(
             frame, &fb, Some(&lm5_px), &mut det,
             emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), true, true,

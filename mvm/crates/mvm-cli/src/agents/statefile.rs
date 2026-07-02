@@ -132,6 +132,7 @@ mod tests {
             right_gesture: None,
             recon_error: None,
             plausibility: None,
+            head_yaw: None, head_facing: None,
             last_seen: now,
         });
         let ctx = MeshContext {

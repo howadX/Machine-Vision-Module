@@ -90,6 +90,11 @@ pub struct PersonState {
     pub recon_error: Option<f32>,
     /// Posture OOD plausibility flag ("ok"/"low", phase 10.0 diagnostic).
     pub plausibility: Option<String>,
+    /// Coarse head yaw in degrees (phase 10.3): 0 = frontal, sign = image side
+    /// the nose points toward. Latest face-matched snapshot off the track.
+    pub head_yaw: Option<f32>,
+    /// Categorical head direction ("camera"/"left"/"right", phase 10.3).
+    pub head_facing: Option<&'static str>,
     pub last_seen: Instant,
 }
 
@@ -142,6 +147,8 @@ impl PersonState {
             right_gesture: gesture_label(t.motion.right_gesture()),
             recon_error: t.recon_error,
             plausibility: t.plausibility.clone(),
+            head_yaw: t.head_yaw,
+            head_facing: t.head_facing,
             last_seen: now,
         }
     }

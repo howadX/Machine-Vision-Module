@@ -61,6 +61,13 @@ pub struct Detection {
     /// occlusion-robust orientation signal that flows even when `posture` is
     /// withheld. None when not computed.
     pub torso_attitude: Option<&'static str>,
+    /// Coarse head yaw in degrees from the YuNet 5-point geometry (phase 10.3):
+    /// 0 = frontal; sign = the image side the nose points toward (− left, + right).
+    /// None when no face was matched this frame.
+    pub head_yaw: Option<f32>,
+    /// Categorical head direction ("camera"/"left"/"right") derived from
+    /// `head_yaw` — the fusion-friendly attention signal (phase 10.3).
+    pub head_facing: Option<&'static str>,
     /// Full softmax distribution over 8 emotion classes (from Rust ONNX model).
     /// None when coming from Python bridge (which only passes label+conf).
     pub emotion_distribution: Option<[f32; 8]>,
@@ -83,6 +90,7 @@ impl Detection {
             body_coverage: None, torso_attitude: None,
             emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
         }
     }
 }
@@ -210,6 +218,11 @@ pub struct PersonTrack {
     pub body_coverage: Option<&'static str>,
     /// Latest 2D torso attitude ("upright"/"inclined"/"horizontal").
     pub torso_attitude: Option<&'static str>,
+    /// Latest coarse head yaw in degrees (phase 10.3). Snapshot semantics like
+    /// `body_coverage` — survives frames where no face is matched.
+    pub head_yaw: Option<f32>,
+    /// Latest categorical head direction ("camera"/"left"/"right", phase 10.3).
+    pub head_facing: Option<&'static str>,
     /// EMA state for native depth smoothing (phase 6.2). None until first native 3D estimate.
     pub depth_ema: Option<crate::space::DepthEma>,
     /// Latest emotion distribution from Rust model (8 classes). Used by temporal PoE (6.4b).
@@ -282,6 +295,7 @@ impl PersonTrack {
             depth_ema: None,
             emotion_distribution: None,
             embedding: None,
+            head_yaw: None, head_facing: None,
             // Seed the observation anchor from the birth bbox; velocity is unknown
             // until a second observation establishes a direction.
             last_obs_center: Some([(bbox.x1 + bbox.x2) * 0.5, (bbox.y1 + bbox.y2) * 0.5]),

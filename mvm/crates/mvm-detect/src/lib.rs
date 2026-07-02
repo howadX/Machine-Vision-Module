@@ -176,6 +176,51 @@ pub struct FaceDet {
     pub landmarks: [[f32; 2]; 5],
 }
 
+// ── Head orientation (phase 10.3, pure arithmetic on the 5 landmarks) ────────
+
+/// Coarse head orientation from the YuNet 5-point geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HeadOrientation {
+    /// Yaw, degrees: 0 = frontal; sign = the image side the nose points toward
+    /// (− image-left, + image-right). Coarse (planar 5-point estimate).
+    pub yaw_deg: f32,
+    /// Roll, degrees: the eye-line angle to the image horizontal (+ = clockwise
+    /// in image coords).
+    pub roll_deg: f32,
+    /// "camera" (|yaw| < 20°), "left" or "right" — the fusion-friendly label.
+    pub facing: &'static str,
+}
+
+/// Estimate coarse head yaw/roll from the 5 landmarks (any consistent units).
+///
+/// Roll is the eye-line angle. Yaw reads the nose's position along the
+/// (roll-corrected) eye axis: centred → frontal; shifted toward one eye → the
+/// head is turned so the nose points at the *other* image side. Pure planar
+/// geometry — coarse by design (±10–15°), meant for attention/facing cues, not
+/// gaze. `None` when the eye span is degenerate.
+pub fn head_orientation(lm: &[[f32; 2]; 5]) -> Option<HeadOrientation> {
+    let (le, re, nose) = (lm[0], lm[1], lm[2]);
+    let (dx, dy) = (re[0] - le[0], re[1] - le[1]);
+    let span_sq = dx * dx + dy * dy;
+    if span_sq < 1e-9 {
+        return None;
+    }
+    let roll_deg = dy.atan2(dx).to_degrees();
+    // Nose projected onto the eye axis, 0 at the left eye, 1 at the right eye
+    // (roll drops out of the projection).
+    let t = ((nose[0] - le[0]) * dx + (nose[1] - le[1]) * dy) / span_sq;
+    // Centred nose → 0; at/beyond an eye → ±90° (asin of the offset ratio).
+    let yaw_deg = (2.0 * t - 1.0).clamp(-1.0, 1.0).asin().to_degrees();
+    let facing = if yaw_deg.abs() < 20.0 {
+        "camera"
+    } else if yaw_deg < 0.0 {
+        "left"
+    } else {
+        "right"
+    };
+    Some(HeadOrientation { yaw_deg, roll_deg, facing })
+}
+
 /// A/B detector-coverage comparison (phase 7.1, gap G4).
 ///
 /// Quantifies how the native YuNet detector compares to the Python SCRFD boxes
@@ -333,6 +378,61 @@ mod tests {
         let img = DynamicImage::new_rgb8(640, 640);
         let result = det.process(&img).unwrap();
         assert!(result.is_empty());
+    }
+
+    // ── head orientation (phase 10.3, pure) ──
+
+    /// Frontal template: eyes level, nose centred, mouth below.
+    fn frontal_lm5() -> [[f32; 2]; 5] {
+        [[40.0, 50.0], [80.0, 50.0], [60.0, 70.0], [45.0, 90.0], [75.0, 90.0]]
+    }
+
+    #[test]
+    fn head_frontal_faces_camera() {
+        let h = head_orientation(&frontal_lm5()).unwrap();
+        assert!(h.yaw_deg.abs() < 1.0, "centred nose → yaw≈0, got {}", h.yaw_deg);
+        assert!(h.roll_deg.abs() < 1.0, "level eyes → roll≈0, got {}", h.roll_deg);
+        assert_eq!(h.facing, "camera");
+    }
+
+    #[test]
+    fn head_turned_nose_toward_left_eye_faces_left() {
+        let mut lm = frontal_lm5();
+        lm[2][0] = 45.0; // nose shifted well toward the image-left eye
+        let h = head_orientation(&lm).unwrap();
+        assert!(h.yaw_deg < -20.0, "yaw strongly negative, got {}", h.yaw_deg);
+        assert_eq!(h.facing, "left");
+    }
+
+    #[test]
+    fn head_turned_nose_toward_right_eye_faces_right() {
+        let mut lm = frontal_lm5();
+        lm[2][0] = 75.0;
+        let h = head_orientation(&lm).unwrap();
+        assert!(h.yaw_deg > 20.0);
+        assert_eq!(h.facing, "right");
+    }
+
+    #[test]
+    fn head_roll_measured_and_yaw_roll_invariant() {
+        // Rotate the whole frontal template by 30°: roll reads 30, yaw stays ≈0.
+        let (s, c) = (30f32.to_radians().sin(), 30f32.to_radians().cos());
+        let mut lm = frontal_lm5();
+        for p in &mut lm {
+            let (x, y) = (p[0] - 60.0, p[1] - 70.0);
+            p[0] = c * x - s * y + 60.0;
+            p[1] = s * x + c * y + 70.0;
+        }
+        let h = head_orientation(&lm).unwrap();
+        assert!((h.roll_deg - 30.0).abs() < 1.0, "roll≈30, got {}", h.roll_deg);
+        assert!(h.yaw_deg.abs() < 1.0, "yaw roll-invariant, got {}", h.yaw_deg);
+        assert_eq!(h.facing, "camera");
+    }
+
+    #[test]
+    fn head_degenerate_eyes_none() {
+        let lm = [[60.0, 50.0]; 5];
+        assert!(head_orientation(&lm).is_none());
     }
 
     #[test]
