@@ -282,6 +282,21 @@ fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool) -> JsonF
     }
 }
 
+/// The body whose bbox overlaps `target` most (IoU > 0.1) — ties a sync track
+/// back to the per-body wrists/hands it was enriched from (phase 10.0). Mirrors
+/// the mesh path's `best_body_for_bbox` in `agents/mod.rs`.
+fn best_body_for_track<'a>(
+    target: &mvm_core::BBox,
+    bodies: &'a [crate::pipeline::BodyData],
+) -> Option<&'a crate::pipeline::BodyData> {
+    bodies
+        .iter()
+        .map(|b| (b, target.iou(&b.bbox)))
+        .filter(|(_, iou)| *iou > 0.1)
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(b, _)| b)
+}
+
 fn hand_to_json(h: &mvm_core::HandState, dump_landmarks: bool) -> JsonHand {
     JsonHand {
         side: h.side,
@@ -498,7 +513,13 @@ impl StateFile {
 
     /// Serialise current tracker state to a single JSON line.
     /// Includes relational scene-graph (zones + edges) from mvm-fusion (phase 6.4).
-    pub fn to_json_line(&self, tracker: &PersonTracker, fps: f64, objects: &[TrackedObject]) -> String {
+    pub fn to_json_line(
+        &self,
+        tracker: &PersonTracker,
+        fps: f64,
+        objects: &[TrackedObject],
+        bodies: &[crate::pipeline::BodyData],
+    ) -> String {
         use mvm_core::types::{Entity, EntityKind};
 
         let now = Local::now().with_timezone(&self.tz);
@@ -559,6 +580,11 @@ impl StateFile {
                 (Some(x), Some(y), Some(z)) => Some([x, y, z]),
                 _ => None,
             };
+            // Phase 10.0 fix: the sync hot-path computes per-body wrists + hands
+            // (hand agent) but had been dropping them. Match each track to its
+            // body by bbox-IoU (same association the mesh's project_people uses)
+            // so hand landmarks / handedness / hand-gestures reach the JSON.
+            let body = best_body_for_track(&t.bbox, bodies);
             JsonFace {
                 id: t.display_id,
                 identity: t.shown_identity().cloned(),
@@ -589,9 +615,13 @@ impl StateFile {
                     mvm_core::motion::ArmGesture::None => None,
                     g => Some(g.as_str()),
                 },
-                // Landmarks live on the mesh path only; the sync tracker has none.
-                wrists: Vec::new(),
-                hands: Vec::new(),
+                // Wrists + hands from the IoU-matched body (phase 10.0). 21-pt
+                // landmarks only under --dump-landmarks; presence/side/handedness/
+                // gesture always. Empty when no body matched this track.
+                wrists: body.map(|b| b.wrists.clone()).unwrap_or_default(),
+                hands: body
+                    .map(|b| b.hands.iter().map(|h| hand_to_json(h, self.dump_landmarks)).collect())
+                    .unwrap_or_default(),
                 emotion_entropy: t.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
                 recon_error: t.recon_error,
                 plausibility: t.plausibility.clone(),
@@ -1094,7 +1124,7 @@ mod tests {
     fn json_line_is_valid_json() {
         let sf = StateFile::open_at(temp_state_path("test_json.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 30.0, &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).expect("must be valid JSON");
         assert!(v["ts"].is_string());
         assert!(v["fps"].is_number());
@@ -1127,7 +1157,7 @@ mod tests {
             emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
         }]);
-        let line = sf.to_json_line(&tracker, 29.9, &[]);
+        let line = sf.to_json_line(&tracker, 29.9, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let face = &v["faces"][0];
         assert_eq!(face["identity"], "Вадим");
@@ -1145,7 +1175,7 @@ mod tests {
     fn json_line_empty_room() {
         let sf = StateFile::open_at(temp_state_path("test_json_empty.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 0.0, &[]);
+        let line = sf.to_json_line(&tracker, 0.0, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["status"], "empty");
         assert_eq!(v["faces"].as_array().unwrap().len(), 0);
@@ -1172,7 +1202,7 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_json_obj.md")).unwrap();
         let tracker = PersonTracker::new();
         let objects = vec![obj(0, "cup", 0.4, 0.4, 0.5, 0.55, 0.81)];
-        let line = sf.to_json_line(&tracker, 30.0, &objects);
+        let line = sf.to_json_line(&tracker, 30.0, &objects, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let objs = v["objects"].as_array().expect("objects array present");
         assert_eq!(objs.len(), 1);
@@ -1195,17 +1225,69 @@ mod tests {
         );
         let mut o = obj(0, "cup", 0.4, 0.4, 0.5, 0.55, 0.8);
         o.mask = Some(mask);
-        let line = sf.to_json_line(&tracker, 30.0, &[o]);
+        let line = sf.to_json_line(&tracker, 30.0, &[o], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let cov = v["objects"][0]["mask_coverage"].as_f64().expect("mask_coverage present");
         assert!(cov > 0.9, "a full-frame mask → ~full coverage, got {cov}");
     }
 
     #[test]
+    fn sync_json_emits_hands_and_wrists_from_matched_body() {
+        // Phase 10.0 fix: the sync path must surface the wrists/hands it computes.
+        let sf = StateFile::open_at(temp_state_path("test_json_hands.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.pinhole = None;
+        let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
+        d.distance = Some(1.0);
+        d.position_z = Some(1.0);
+        tracker.tick(&[d]);
+        let body = crate::pipeline::BodyData {
+            bbox: mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.7 },
+            wrists: vec![[0.4, 0.5]],
+            hands: vec![mvm_core::HandState {
+                landmarks: vec![[0.41, 0.5]],
+                presence: 0.8,
+                side: "right",
+                handedness: 0.9,
+                gesture: Some("point"),
+            }],
+        };
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[body]);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let f = &v["faces"][0];
+        assert_eq!(f["wrists"].as_array().expect("wrists present").len(), 1);
+        let h = &f["hands"][0];
+        assert_eq!(h["side"], "right");
+        assert!((h["presence"].as_f64().unwrap() - 0.8).abs() < 0.01);
+        assert_eq!(h["gesture"], "point");
+        // dump_landmarks defaults false → the 21-pt payload is omitted.
+        assert!(h["landmarks"].is_null(), "landmarks only under --dump-landmarks");
+    }
+
+    #[test]
+    fn sync_json_no_hands_when_no_body_matches() {
+        let sf = StateFile::open_at(temp_state_path("test_json_nohands.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.pinhole = None;
+        let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
+        d.distance = Some(1.0);
+        tracker.tick(&[d]);
+        // A body far from the track (no IoU) → its hands must NOT leak onto it.
+        let body = crate::pipeline::BodyData {
+            bbox: mvm_core::BBox { x1: 0.8, y1: 0.8, x2: 0.95, y2: 0.95 },
+            wrists: vec![[0.9, 0.9]],
+            hands: vec![],
+        };
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[body]);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!(v["faces"][0]["wrists"].is_null(), "no matched body → no wrists");
+    }
+
+    #[test]
     fn json_line_omits_objects_when_none() {
         let sf = StateFile::open_at(temp_state_path("test_json_noobj.md")).unwrap();
         let tracker = PersonTracker::new();
-        let line = sf.to_json_line(&tracker, 30.0, &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         // skip_serializing_if = empty → field omitted entirely.
         assert!(v["objects"].is_null());
@@ -1221,7 +1303,7 @@ mod tests {
         // A cup whose bbox overlaps the body bbox → "overlapping" edge (no 3D needed).
         let oid = mvm_scene::OBJECT_ID_BASE;
         let objects = vec![obj(0, "cup", 0.4, 0.4, 0.55, 0.6, 0.8)];
-        let line = sf.to_json_line(&tracker, 30.0, &objects);
+        let line = sf.to_json_line(&tracker, 30.0, &objects, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let rels = v["relations"].as_array().unwrap();
         let edge = rels.iter().find(|r| {
@@ -1507,7 +1589,7 @@ mod tests {
         d.head_yaw = Some(5.0);
         d.head_facing = Some("camera");
         tracker.tick(&[d]);
-        let line = sf.to_json_line(&tracker, 30.0, &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!((v["faces"][0]["head_yaw"].as_f64().unwrap() - 5.0).abs() < 1e-3);
         assert_eq!(v["faces"][0]["head_facing"], "camera");
@@ -1525,7 +1607,7 @@ mod tests {
         det.recon_error = Some(0.12);
         det.plausibility = Some("low".into());
         tracker.tick(&[det]);
-        let line = sf.to_json_line(&tracker, 30.0, &[]);
+        let line = sf.to_json_line(&tracker, 30.0, &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let f = &v["faces"][0];
         assert!(f["emotion_entropy"].as_f64().unwrap() < 1e-4, "one-hot → entropy 0");

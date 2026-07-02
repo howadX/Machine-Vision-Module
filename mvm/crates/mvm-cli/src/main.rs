@@ -324,7 +324,7 @@ fn run_native_loop(
         // them. Locked-only so an anon fragment isn't propped into a phantom.
         let predicted_rois: Vec<mvm_core::BBox> =
             tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
-        let pipeline::FrameResult { detections, low_conf, landmarks, overlay, emotion_debug_entries, .. } =
+        let pipeline::FrameResult { detections, low_conf, landmarks, bodies, overlay, emotion_debug_entries } =
             pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks, &emotion_fresh, &predicted_rois);
 
         frame_count += 1;
@@ -352,7 +352,7 @@ fn run_native_loop(
                 let line = if args.emotion_debug {
                     state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
                 } else {
-                    state_file.to_json_line(&tracker, fps, pipeline.objects())
+                    state_file.to_json_line(&tracker, fps, pipeline.objects(), &bodies)
                 };
                 println!("{line}");
             }
@@ -1064,7 +1064,7 @@ fn main() -> Result<()> {
                 let line = if args.emotion_debug {
                     state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
                 } else {
-                    state_file.to_json_line(&tracker, fps, &latest_objects)
+                    state_file.to_json_line(&tracker, fps, &latest_objects, &[])
                 };
                 println!("{line}");
             }
