@@ -182,6 +182,12 @@ struct JsonObject {
     pos: Option<[f32; 3]>,
     /// Normalised [x1,y1,x2,y2] in the original frame.
     bbox: [f32; 4],
+    /// Instance-mask silhouette coverage (set cells / whole frame, phase 10.4);
+    /// present only under `--masks` when a YOLO-seg mask is attached. A tighter
+    /// value than the bbox area means the mask carved the background off (the
+    /// depth-by-mask / contact signal).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mask_coverage: Option<f32>,
 }
 
 /// A cross-group activity in the JSON (phase 8.F).
@@ -332,6 +338,7 @@ fn object_state_to_json(o: &mvm_core::ObjectState) -> JsonObject {
         age: o.age,
         pos: o.position_3d.map(|q| [q.x, q.y, q.z]),
         bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
+        mask_coverage: None, // mesh path masks are a follow-up (phase 10.4)
     }
 }
 
@@ -532,6 +539,7 @@ impl StateFile {
             age: o.age,
             pos: o.pos_3d,
             bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
+            mask_coverage: o.mask.as_ref().map(|m| m.frame_coverage()),
         }).collect();
 
         let scene = mvm_fusion::build_scene(entities);
@@ -1171,6 +1179,26 @@ mod tests {
         assert_eq!(objs[0]["class"], "cup");
         assert_eq!(objs[0]["id"].as_u64().unwrap(), mvm_scene::OBJECT_ID_BASE as u64);
         assert!((objs[0]["score"].as_f64().unwrap() - 0.81).abs() < 0.01);
+        // No mask attached → field omitted (skip_serializing_if).
+        assert!(objs[0]["mask_coverage"].is_null(), "maskless object omits mask_coverage");
+    }
+
+    #[test]
+    fn json_object_emits_mask_coverage_when_attached() {
+        let sf = StateFile::open_at(temp_state_path("test_json_mask.md")).unwrap();
+        let tracker = PersonTracker::new();
+        let r = mvm_scene::MASK_RES as u32;
+        let full = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let mask = mvm_scene::InstanceMask::assemble(
+            &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
+            &full, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
+        );
+        let mut o = obj(0, "cup", 0.4, 0.4, 0.5, 0.55, 0.8);
+        o.mask = Some(mask);
+        let line = sf.to_json_line(&tracker, 30.0, &[o]);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let cov = v["objects"][0]["mask_coverage"].as_f64().expect("mask_coverage present");
+        assert!(cov > 0.9, "a full-frame mask → ~full coverage, got {cov}");
     }
 
     #[test]
