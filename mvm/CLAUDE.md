@@ -7,7 +7,22 @@
 
 ## Статус (2026-07-02)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 389 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Ветка:** `rust-core` (основная). **12 крейтов, 416 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 10 — Full Data Collection: 10.0–10.3 ЗАКРЫТЫ** (`+0 ONNX`, чистая арифметика): 10.0 эмит
+  вычисленного-но-выброшенного (жесты рук reaching/waving, hands[] c presence/side, emotion_entropy,
+  recon_error/plausibility → Scene JSON; сырые 21-lm кистей за опт-ин `mesh --dump-landmarks`);
+  **10.1 корень эмоции #1 НАЙДЕН И ЗАКРЫТ** — препроцесс EmotiEffLib писал HWC в NCHW-буфер
+  (скремблированные каналы → near-uniform на любом лице); planar-CHW фикс: на 6 референс-кропах
+  энтропия 0.88–0.91 → 0.48–0.66, константный ложный «Fear» → осмысленный «Neutral». Плюс декод
+  **5 лендмарков YuNet** (новый `FaceDet`/`detect_faces`) + `align_face` (Umeyama → ArcFace-шаблон)
+  перед эмоцией (спайк 10.1e: p50 H 0.549→0.536, все 8/8 кадров проходят гейт 0.90 — GO, свап модели
+  не нужен); 10.2 кисти: `classify_gesture` fist/open/point/pinch (чистая арифметика), handedness в
+  JSON, vis-гейт запястья 0.5→0.2 с честным downweight score·(vis/0.5) (#5 закрыт); 10.3 голова:
+  `head_orientation` (yaw/roll/facing camera-left-right) из 5 лендмарков → `head_yaw`/`head_facing`
+  в Scene JSON — вход для gaze-aware fusion. Сегментация (10.4): **спайк предварительно замерен,
+  conditional GO** — см. `docs/phase-10-plan.md` §3.1 (latency 38мс ок, mask-плотность ок, но recall
+  мелких объектов nano-seg хуже YOLO26n → drop-in отвергнут, seg = дополнительный эксперт; финальный
+  гейт ждёт чистого дневного кадра).
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
 - **Фаза 9 — Tracker: 9.1–9.10 ЗАКРЫТЫ** (`+0 ONNX`) — **фаза завершена**. Закрыто:
   кинематика B1 (motion ring + `MotionClassifier` + жесты) → OCM/OCR (9.2) → lifecycle FSM (9.3) →
@@ -192,13 +207,24 @@ Machine Vision Module/           ← корень (cwd при запуске)
 
 | # | Проблема | Статус |
 |---|----------|--------|
-| 1 | Эмоция near-chance: распределение почти равномерно (peak ≈0.16–0.22 vs uniform 0.125), метка слабоинформативна. **Причина НЕ в ракурсе** — камера eye-level (~175см, ~горизонтальна), лица фронтальны; под подозрением вход в EmotiEffLib (выравнивание/кроп/размер лица) или подлинная неоднозначность. Tier 0.3 **подавляет** near-chance метку (энтропия ≥0.90); downstream читает `emotion_conf`/entropy/распределение | 🟡 (симптом сглажен; корень открыт) |
+| 1 | Эмоция near-chance — **КОРЕНЬ НАЙДЕН И ЗАКРЫТ (10.1)**: препроцесс писал HWC-interleaved в NCHW-тензор → модель видела скремблированные каналы → near-uniform softmax на любом лице (жило с порта фазы 6). Фикс planar-CHW + regression-тест на layout; вдобавок кроп теперь выравнивается по 5 лендмаркам YuNet (Umeyama→ArcFace-шаблон). Замер: энтропия 0.88–0.91 → 0.48–0.66, ложный «Fear» → «Neutral». Tier 0.3 гейт оставлен (теперь режет редко). **Нужна live-ревалидация на риге при свете** | ✅ (корень; live-ревалидация 🔜) |
 | 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** (method C, `9308783c`). Остаточный desk-гэп (публичная модель читала desk-sitting как `lying`, ноги под столом) **закрыт архитектурно, occlusion-aware, БЕЗ файн-тюна**: `BodyCoverage`+2D-attitude → метка withheld в Upper-режиме, `lying`+upright отвергается, fusion даёт `seated_at_workstation` реляционно; оракул переписан и включён. | ✅ (occlusion-aware; файн-тюн отменён как ненужный) |
 | 3 | `torso_length_m=0.5` не откалиброван рулеткой (абсолют 3D приблизителен) | 🟡 |
 | 4 | `fps` в StateFile = темп доставки, не обработки | 🟡 (семантика) |
-| 5 | Hand-ROI из запястья требует чёткого жеста (vis-gate 0.5: нет руки → нет контакта, консервативно) | 🟡 |
+| 5 | Hand-ROI из запястья требует чёткого жеста — **закрыт (10.2)**: vis-floor 0.5→0.2, score честно downweight'ится ×(vis/0.5), presence-гейт модели сохранён; кисти за столом/у края кадра возвращаются в поток | ✅ |
 | 6 | Объекты видно с ракурса человеческого роста | 🟡 |
 | — | Ре-валидация стабилизации 8.0.4 на 3 людях; 8.E.3 audio (YAMNet) — новая dep против минимализма, вне ядра | 🔜 опц. |
+
+### Ledger отложенных сигналов (10.5 — явная диспозиция, чтобы «не забыли»)
+
+| Сигнал | Решение | Почему |
+|--------|---------|--------|
+| **Audio / YAMNet (G₄)** | **deferred** (Фаза 11+, опт-ин модуль) | новая capture-dep + микрофон ломают +0-dep/CPU/$0; ортогонально зрению. `AudioEvent` остаётся стабом контракта в `world.rs` |
+| **Age / gender / clothing** | **out** | каждый +1 ONNX без текущего use-case — минимализм |
+| **Temporal journal / event log** (длительности поз, start/stop активностей) | **Фаза 11** (продукт) | не producer-работа; строится над Scene JSON |
+| **Richer anomaly, зоны/комнаты** | **Fusion-polish фаза** (после 10) | реляционная работа, не producer |
+| **3D metric calibration** (`torso_length_m`, fx) | **Фаза 11 auto-calib** | ординал уже ок; абсолют — продуктовая калибровка |
+| **Сырые 33 body-lm в JSON** | опт-ин расширение `--dump-landmarks` при необходимости | лендмарки кистей уже за флагом; 33-lm тела на PersonState не хранятся — добавлять только под реальный use-case |
 
 ---
 
@@ -220,7 +246,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **7.5** | ✅ | Нативная поза: BlazePose+PoseVAE порт (bit-close к Python), мульти-persona (#3 закрыт) |
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
 | **9** | ✅ | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery + Hungarian global assignment, **+0 ONNX** — закрыта |
-| **10** | 🔜 | **Segmentation** — YOLO-seg инстанс-маски (взаимодействие), **+1 ONNX** (`docs/phase-10-plan.md`) |
+| **10** | 🟡 | **Full Data Collection**: 10.0 эмит вычисленного ✅, 10.1 эмоция (CHW-корень + YuNet-лендмарки + align) ✅, 10.2 кисти (жесты/handedness/vis-relax) ✅, 10.3 head-orientation ✅, 10.5 ledger ✅ — всё `+0 ONNX`; 10.4 Segmentation (**+1 ONNX**, `docs/phase-10-plan.md`) — спайк предварительный cond. GO, финальный гейт ждёт чистого замера |
 | **11** | 🔜 | Продукт |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
