@@ -264,6 +264,15 @@ impl BodyPrimaryPipeline {
                                         &segs,
                                         SEG_ATTACH_IOU,
                                     );
+                                    // Opt-in live A/B diagnostic (spike §3.3): how
+                                    // many seg masks landed on tracked objects.
+                                    if std::env::var("MVM_SEG_DEBUG").is_ok() {
+                                        let attached = self.latest_objects.iter().filter(|o| o.mask.is_some()).count();
+                                        eprintln!(
+                                            "  seg-dbg: {} seg dets → {}/{} objects masked",
+                                            segs.len(), attached, self.latest_objects.len()
+                                        );
+                                    }
                                 }
                                 Err(e) => eprintln!("  seg: detect error: {e}"),
                             }
