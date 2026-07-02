@@ -19,10 +19,13 @@
   не нужен); 10.2 кисти: `classify_gesture` fist/open/point/pinch (чистая арифметика), handedness в
   JSON, vis-гейт запястья 0.5→0.2 с честным downweight score·(vis/0.5) (#5 закрыт); 10.3 голова:
   `head_orientation` (yaw/roll/facing camera-left-right) из 5 лендмарков → `head_yaw`/`head_facing`
-  в Scene JSON — вход для gaze-aware fusion. Сегментация (10.4): **спайк предварительно замерен,
-  conditional GO** — см. `docs/phase-10-plan.md` §3.1 (latency 38мс ок, mask-плотность ок, но recall
-  мелких объектов nano-seg хуже YOLO26n → drop-in отвергнут, seg = дополнительный эксперт; финальный
-  гейт ждёт чистого дневного кадра).
+  в Scene JSON — вход для gaze-aware fusion. **Всё live-validated (mesh, свет, 1 чел., 2026-07-02):**
+  эмоция Neutral conf 0.82–0.93 / H=0.12–0.24 (гейт проходит), жесты рук reaching, hands presence
+  0.69–0.8 + vis-relax, head_yaw≈0 фронтально / до −61° при повороте головы. Сегментация (10.4):
+  **спайк замерен на чистом дневном кадре — conditional GO** (`docs/phase-10-plan.md` §3.1–3.2):
+  latency ~47мс ок, mask-плотность 0.5–0.8 (⇒ `median_in_mask` depth = однозначный GO), person-силуэт
+  чистый (⇒ 10.7 GO по качеству, ждёт ≥2 людей). YOLO26n остаётся детектором, YOLO-seg добавляется
+  **поверх** для масок — не drop-in. Реализация 10.2–10.6 seg НЕ начата (гейт-дисциплина).
 - **Фаза 8 ЯДРО ЗАКРЫТО** (body-primary + Agent-Mesh + fusion), live-validated на 0/1/2 людях.
 - **Фаза 9 — Tracker: 9.1–9.10 ЗАКРЫТЫ** (`+0 ONNX`) — **фаза завершена**. Закрыто:
   кинематика B1 (motion ring + `MotionClassifier` + жесты) → OCM/OCR (9.2) → lifecycle FSM (9.3) →
@@ -207,7 +210,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 
 | # | Проблема | Статус |
 |---|----------|--------|
-| 1 | Эмоция near-chance — **КОРЕНЬ НАЙДЕН И ЗАКРЫТ (10.1)**: препроцесс писал HWC-interleaved в NCHW-тензор → модель видела скремблированные каналы → near-uniform softmax на любом лице (жило с порта фазы 6). Фикс planar-CHW + regression-тест на layout; вдобавок кроп теперь выравнивается по 5 лендмаркам YuNet (Umeyama→ArcFace-шаблон). Замер: энтропия 0.88–0.91 → 0.48–0.66, ложный «Fear» → «Neutral». Tier 0.3 гейт оставлен (теперь режет редко). **Нужна live-ревалидация на риге при свете** | ✅ (корень; live-ревалидация 🔜) |
+| 1 | Эмоция near-chance — **КОРЕНЬ НАЙДЕН, ЗАКРЫТ И LIVE-ВАЛИДИРОВАН (10.1)**: препроцесс писал HWC-interleaved в NCHW-тензор → модель видела скремблированные каналы → near-uniform softmax на любом лице (жило с порта фазы 6). Фикс planar-CHW + regression-тест на layout; вдобавок кроп выравнивается по 5 лендмаркам YuNet (Umeyama→ArcFace-шаблон). **Live (mesh, свет, 1 чел., 2026-07-02): Neutral conf 0.82–0.93, энтропия H=0.12–0.24** (было ≈0.96, peak 0.16–0.22) — метка проходит гейт 0.90, distribution резко пиковое (0.93 на Neutral). Прежний симптом «47/48 подавлено» снят по корню | ✅ (live-validated) |
 | 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** (method C, `9308783c`). Остаточный desk-гэп (публичная модель читала desk-sitting как `lying`, ноги под столом) **закрыт архитектурно, occlusion-aware, БЕЗ файн-тюна**: `BodyCoverage`+2D-attitude → метка withheld в Upper-режиме, `lying`+upright отвергается, fusion даёт `seated_at_workstation` реляционно; оракул переписан и включён. | ✅ (occlusion-aware; файн-тюн отменён как ненужный) |
 | 3 | `torso_length_m=0.5` не откалиброван рулеткой (абсолют 3D приблизителен) | 🟡 |
 | 4 | `fps` в StateFile = темп доставки, не обработки | 🟡 (семантика) |
