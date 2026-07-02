@@ -4,18 +4,22 @@
 
 ## Структура
 
+> **После слияния `rust-core`→`master` (2026-07-02):** корень = **Rust-продакшн** + рабочий гибрид-bridge;
+> автономный **Python-прототип** вынесен в `prototype/`. Историю Python-линии см. на ветках
+> `python-prototype`/`3d-workspace` и теге `backup/master-pre-merge`.
+
 ```
 Machine Vision Module/
-├── core/           # Python модули: face_id, workspace_3d, pose_vae, emotion_hse
-├── tools/          # Python инструменты: sight.py, mvm_bridge.py (JSON-мост)
-├── pipeline/       # Обучение моделей
-├── models/         # Веса: PyTorch (.pth), ONNX, MediaPipe (.task), references/
-├── venv/           # Python 3.11+ virtualenv
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 443 теста, фаза 10 закрыта)
+│   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
+│   ├── docs/       #   phase-* prompts/runbooks
+│   └── CLAUDE.md   #   ← детальный контекст Rust-части (source of truth)
+├── core/           # Python гибрид-bridge: face_id, workspace_3d, … (нужен пути `--native`)
+├── tools/          # Python bridge-инструменты: mvm_bridge.py (JSON-мост), calib_3d.py
+├── models/         # Веса: ONNX/MediaPipe (.task), references/ (крупные gitignored)
 ├── src/            # sightd (legacy Rust daemon, заменён на mvm/)
-└── mvm/            # Rust workspace (12 крейтов, 443 теста, фаза 10 Data-Collection закрыта)
-    ├── crates/     # core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
-    ├── docs/       # phase-* prompts/runbooks
-    └── CLAUDE.md   # ← детальный контекст Rust-части (source of truth)
+├── spike_pose/     # Питон-спайки тренировки позы (method-C)
+└── prototype/      # ⚙ Python-ПРОТОТИП (архив): sight.py, pipeline/ (обучение), data/, legacy/, tests/, assets/
 ```
 
 ## Как работает
