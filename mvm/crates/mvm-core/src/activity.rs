@@ -32,6 +32,19 @@ pub const ACTIVITY_ENTER_DWELL: u32 = 3;
 /// `object_cadence` (3) so the inter-cadence YOLO flicker never ends an
 /// activity — sticky-to-persist.
 pub const ACTIVITY_EXIT_DWELL: u32 = 5;
+/// Exit dwell while the instance is younger than [`ACTIVITY_D_MIN_S`] — harder
+/// to exit young (θ_lo(d), poor man's HSMM): a just-confirmed activity is not
+/// chopped by a gap a mid-life one would survive anyway.
+pub const ACTIVITY_EXIT_DWELL_YOUNG: u32 = 8;
+/// Exit dwell once the instance outlives [`ACTIVITY_D_TYP_S`] — easier to exit
+/// past the typical duration. Still > `object_cadence` (3): the YOLO
+/// inter-cadence flicker must never end an activity.
+pub const ACTIVITY_EXIT_DWELL_OLD: u32 = 4;
+/// Below this observed duration an instance counts as "young" for θ_lo(d).
+pub const ACTIVITY_D_MIN_S: f64 = 2.0;
+/// Above this observed duration an instance counts as "past typical" for θ_lo(d).
+/// Data-informed placeholder — to be refined from event-journal histograms.
+pub const ACTIVITY_D_TYP_S: f64 = 600.0;
 /// Confidence EMA: `conf = λ·prev + (1−λ)·obs` — the emotion temporal-PoE λ family.
 pub const ACTIVITY_CONF_LAMBDA: f32 = 0.7;
 /// Hard cap on simultaneously tracked instances (bounded memory, the
@@ -56,6 +69,27 @@ impl ActivityKey {
         let mut participants = a.participants.clone();
         participants.sort_unstable();
         Self { label: a.label.clone(), participants }
+    }
+
+    /// Every participant is a durable id — gallery-reserved (0–9) or object
+    /// (≥10000). Ephemeral person ids (10..10000) are reused across track churn,
+    /// so an event keyed on one is not safely attributable over time.
+    pub fn stable_participants(&self) -> bool {
+        self.participants.iter().all(|&id| id < 10 || id >= 10000)
+    }
+}
+
+/// Bounded-duration cap per label (poor man's HSMM surrogate for a learned
+/// p(d)): a key that never goes absent still emits journal events no longer
+/// than this. Data-informed placeholders — to be refined from event-journal
+/// histograms once they exist.
+pub fn max_dwell_s(label: &str) -> f64 {
+    match label {
+        // Transient by nature: a drink in the hand / phone in the hand for an
+        // hour straight is two-or-more episodes, not one.
+        "holding_drink" => 900.0,
+        "using_phone" => 1800.0,
+        _ => 3600.0,
     }
 }
 
@@ -101,6 +135,22 @@ pub struct ActivityEvent {
     pub ended_at: f64,
     pub duration_s: f64,
     pub peak_confidence: f32,
+    /// All participants durable (reserved/object ids) — see
+    /// [`ActivityKey::stable_participants`].
+    pub stable_participants: bool,
+}
+
+/// The journal record for an instance ending now (exit dwell or duration cap).
+fn event_from(inst: &ActivityInstance) -> ActivityEvent {
+    ActivityEvent {
+        label: inst.key.label.clone(),
+        participants: inst.key.participants.clone(),
+        started_at: inst.started_at,
+        ended_at: inst.last_seen,
+        duration_s: inst.last_seen - inst.started_at,
+        peak_confidence: inst.peak_confidence,
+        stable_participants: inst.key.stable_participants(),
+    }
 }
 
 /// The temporal debounce + event journal over raw per-tick activities.
@@ -154,6 +204,15 @@ impl ActivityJournal {
                         ActivityPhase::Cooling => inst.phase = ActivityPhase::Active,
                         ActivityPhase::Active | ActivityPhase::Ended => {}
                     }
+                    // Bounded-duration cap (11.C2): a never-absent key still
+                    // journals in ≤ max_dwell episodes; it re-enters as a fresh
+                    // candidate on the next tick.
+                    if inst.phase == ActivityPhase::Active
+                        && inst.last_seen - inst.started_at >= max_dwell_s(&inst.key.label)
+                    {
+                        inst.phase = ActivityPhase::Ended;
+                        self.completed.push(event_from(inst));
+                    }
                 }
                 None => match inst.phase {
                     // An unconfirmed candidate dies on its first gap — the
@@ -162,16 +221,19 @@ impl ActivityJournal {
                     ActivityPhase::Active | ActivityPhase::Cooling => {
                         inst.phase = ActivityPhase::Cooling;
                         inst.absent_streak += 1;
-                        if inst.absent_streak >= ACTIVITY_EXIT_DWELL {
+                        // θ_lo(d) (11.C2): the exit dwell depends on the observed
+                        // duration — semi-Markov awareness as scalar arithmetic.
+                        let d = inst.last_seen - inst.started_at;
+                        let exit_dwell = if d < ACTIVITY_D_MIN_S {
+                            ACTIVITY_EXIT_DWELL_YOUNG
+                        } else if d > ACTIVITY_D_TYP_S {
+                            ACTIVITY_EXIT_DWELL_OLD
+                        } else {
+                            ACTIVITY_EXIT_DWELL
+                        };
+                        if inst.absent_streak >= exit_dwell {
                             inst.phase = ActivityPhase::Ended;
-                            self.completed.push(ActivityEvent {
-                                label: inst.key.label.clone(),
-                                participants: inst.key.participants.clone(),
-                                started_at: inst.started_at,
-                                ended_at: inst.last_seen,
-                                duration_s: inst.last_seen - inst.started_at,
-                                peak_confidence: inst.peak_confidence,
-                            });
+                            self.completed.push(event_from(inst));
                         }
                     }
                     ActivityPhase::Ended => {}
@@ -293,8 +355,8 @@ mod tests {
     #[test]
     fn exit_dwell_ends_with_honest_duration() {
         let mut j = ActivityJournal::new();
-        // Present for 10 ticks: t = 0.0 .. 0.9 (last_seen 0.9).
-        let (t, f) = drive(&mut j, &[typing()], 10, 0.0, 0);
+        // Present for 30 ticks: t = 0.0 .. 2.9 (past D_MIN → base exit dwell).
+        let (t, f) = drive(&mut j, &[typing()], 30, 0.0, 0);
         // Absent for EXIT_DWELL ticks → ends.
         drive(&mut j, &[], ACTIVITY_EXIT_DWELL, t, f);
         assert_eq!(j.active().count(), 0, "ended instance no longer emitted");
@@ -303,8 +365,8 @@ mod tests {
         assert_eq!(ev[0].label, "typing");
         assert_eq!(ev[0].participants, vec![0, 10001]);
         assert_eq!(ev[0].started_at, 0.0);
-        assert!((ev[0].ended_at - 0.9).abs() < 1e-9, "ended_at = last sighting, not + grace");
-        assert!((ev[0].duration_s - 0.9).abs() < 1e-9);
+        assert!((ev[0].ended_at - 2.9).abs() < 1e-6, "ended_at = last sighting, not + grace");
+        assert!((ev[0].duration_s - 2.9).abs() < 1e-6);
         assert!(j.drain_events().is_empty(), "drain empties the backlog");
     }
 
@@ -347,6 +409,89 @@ mod tests {
         let ka: Vec<_> = a.active().map(|i| i.key.clone()).collect();
         let kb: Vec<_> = b.active().map(|i| i.key.clone()).collect();
         assert_eq!(ka, kb, "raw order must not leak into emission order");
+    }
+
+    // ── 11.C2: keying/churn + poor-man's HSMM ──
+
+    #[test]
+    fn participant_churn_ends_and_restarts() {
+        // Track churn (walking fragmentation): person 10 → 11 mid-typing. The
+        // exact-set key honestly ends the old instance and births a new one —
+        // stitching two people into one event would be a lie.
+        let mut j = ActivityJournal::new();
+        let (t, f) = drive(&mut j, &[act("typing", vec![10, 10001], 0.8)], 6, 0.0, 0);
+        let (t, f) = drive(&mut j, &[act("typing", vec![11, 10001], 0.8)], 8, t, f);
+        let active: Vec<_> = j.active().collect();
+        assert_eq!(active.len(), 1, "new instance active, got {active:?}");
+        assert_eq!(active[0].key.participants, vec![11, 10001]);
+        let ev = j.drain_events();
+        assert_eq!(ev.len(), 1, "old instance ended, got {ev:?}");
+        assert_eq!(ev[0].participants, vec![10, 10001]);
+        drop((t, f));
+    }
+
+    #[test]
+    fn stable_participants_reflects_id_spaces() {
+        // reserved (0–9) + object (≥10000) → stable; ephemeral (10..10000) → not.
+        assert!(ActivityKey { label: "typing".into(), participants: vec![0, 10001] }.stable_participants());
+        assert!(!ActivityKey { label: "typing".into(), participants: vec![42, 10001] }.stable_participants());
+        let mut j = ActivityJournal::new();
+        let (t, f) = drive(&mut j, &[act("typing", vec![0, 10001], 0.8)], 3, 0.0, 0);
+        drive(&mut j, &[], ACTIVITY_EXIT_DWELL + 3, t, f);
+        let ev = j.drain_events();
+        assert_eq!(ev.len(), 1);
+        assert!(ev[0].stable_participants, "reserved+object event is stable");
+    }
+
+    #[test]
+    fn max_dwell_caps_duration_and_restarts() {
+        // A key that never goes absent must still emit bounded events — the
+        // bounded-duration cap (poor man's HSMM surrogate for p(d)).
+        let mut j = ActivityJournal::new();
+        let raw = [act("typing", vec![0, 10001], 0.8)];
+        let mut t = 0.0;
+        for f in 0..5000u64 {
+            j.update(&raw, t, f);
+            t += 1.0; // 1s ticks → crosses any sane cap well within the loop
+        }
+        let ev = j.drain_events();
+        assert!(!ev.is_empty(), "cap must have force-ended at least once");
+        for e in &ev {
+            assert!(e.duration_s <= max_dwell_s("typing") + 1.0, "duration {} > cap", e.duration_s);
+        }
+        assert_eq!(j.active().count(), 1, "activity restarts after the forced end");
+    }
+
+    #[test]
+    fn young_activity_survives_longer_gap() {
+        // θ_lo(d): while d < d_min the exit dwell is longer — a just-confirmed
+        // activity is not chopped by a gap that would end a mid-life one.
+        let mut j = ActivityJournal::new();
+        let (t, f) = drive(&mut j, &[typing()], 3, 0.0, 0); // duration 0.2s < D_MIN
+        let (t, f) = drive(&mut j, &[], ACTIVITY_EXIT_DWELL + 1, t, f); // > base dwell
+        assert_eq!(j.active().count(), 1, "young instance still cooling");
+        j.update(&[typing()], t, f);
+        let inst: Vec<_> = j.active().collect();
+        assert_eq!(inst[0].started_at, 0.0, "same instance survived the gap");
+        assert!(j.drain_events().is_empty());
+    }
+
+    #[test]
+    fn old_activity_exits_faster() {
+        // θ_lo(d): past d_typ the exit dwell shortens.
+        let mut j = ActivityJournal::new();
+        // Confirm, then age the instance beyond D_TYP with sparse 100s ticks.
+        let (_, f) = drive(&mut j, &[typing()], 3, 0.0, 0);
+        let mut t = 100.0;
+        let mut f = f;
+        while t < ACTIVITY_D_TYP_S + 200.0 {
+            j.update(&[typing()], t, f);
+            t += 100.0;
+            f += 1;
+        }
+        drive(&mut j, &[], ACTIVITY_EXIT_DWELL_OLD, t, f);
+        assert_eq!(j.active().count(), 0, "old instance ends after the short dwell");
+        assert_eq!(j.drain_events().len(), 1);
     }
 
     #[test]
