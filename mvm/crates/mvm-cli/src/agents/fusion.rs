@@ -172,14 +172,86 @@ fn point_touches_object(pt: [f32; 2], o: &ObjectState) -> bool {
     }
 }
 
-/// All interaction points of a person: every detected hand landmark plus the
-/// wrist anchors (always present, even when no hand model fired).
-fn contact_points(p: &PersonState) -> Vec<[f32; 2]> {
-    let mut pts = p.wrists.clone();
-    for h in &p.hands {
-        pts.extend(h.landmarks.iter().copied());
+/// Where a contact "belongs" on the object: the silhouette centroid when a mask
+/// exists, the bbox centre otherwise. The distance reference for contested
+/// attribution (phase 11.A2).
+fn contact_centre(o: &ObjectState) -> [f32; 2] {
+    if let Some(m) = &o.mask {
+        let (mut sx, mut sy, mut n) = (0.0f32, 0.0f32, 0u32);
+        for [x, y] in m.set_points() {
+            sx += x;
+            sy += y;
+            n += 1;
+        }
+        if n > 0 {
+            return [sx / n as f32, sy / n as f32];
+        }
     }
-    pts
+    [(o.bbox.x1 + o.bbox.x2) * 0.5, (o.bbox.y1 + o.bbox.y2) * 0.5]
+}
+
+/// One person's claim on a contested object (phase 11.A2): how they touch it
+/// and how close. Ordering (strongest first): hand-landmark contact beats
+/// wrist-only; a wrist-only touch while the arm is *reaching* loses to a plain
+/// wrist touch (an outstretched arm crossing an object is a reach-through, not
+/// a hold); then distance to the contact centre; then track id (determinism).
+struct ContactClaim {
+    track_id: u32,
+    hand_touch: bool,
+    reaching_wrist_only: bool,
+    dist2: f32,
+}
+
+impl ContactClaim {
+    /// `self` is a stronger claim than `other`.
+    fn beats(&self, other: &ContactClaim) -> bool {
+        if self.hand_touch != other.hand_touch {
+            return self.hand_touch;
+        }
+        if self.reaching_wrist_only != other.reaching_wrist_only {
+            return !self.reaching_wrist_only;
+        }
+        if self.dist2 != other.dist2 {
+            return self.dist2 < other.dist2;
+        }
+        self.track_id < other.track_id
+    }
+}
+
+/// This person's claim on the object, or `None` when nothing touches it.
+fn contact_claim(p: &PersonState, o: &ObjectState, centre: [f32; 2]) -> Option<ContactClaim> {
+    let mut hand_touch = false;
+    let mut wrist_touch = false;
+    let mut dist2 = f32::INFINITY;
+    let mut consider = |pt: [f32; 2], is_hand: bool| {
+        if point_touches_object(pt, o) {
+            if is_hand {
+                hand_touch = true;
+            } else {
+                wrist_touch = true;
+            }
+            let (dx, dy) = (pt[0] - centre[0], pt[1] - centre[1]);
+            dist2 = dist2.min(dx * dx + dy * dy);
+        }
+    };
+    for &pt in &p.wrists {
+        consider(pt, false);
+    }
+    for h in &p.hands {
+        for &pt in &h.landmarks {
+            consider(pt, true);
+        }
+    }
+    if !hand_touch && !wrist_touch {
+        return None;
+    }
+    let reaching = p.left_gesture == Some("reaching") || p.right_gesture == Some("reaching");
+    Some(ContactClaim {
+        track_id: p.track_id,
+        hand_touch,
+        reaching_wrist_only: !hand_touch && reaching,
+        dist2,
+    })
 }
 
 fn dist3(a: Position3D, b: Position3D) -> f32 {
@@ -236,22 +308,27 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
         }
     }
 
-    // person ↔ interactive object by hand/wrist contact.
-    for p in people {
-        let pts = contact_points(p);
-        if pts.is_empty() {
-            continue; // no landmarks → no contact claim
-        }
-        for o in objects {
-            if let Some(label) = interaction_label(&o.class) {
-                if pts.iter().any(|&pt| point_touches_object(pt, o)) {
-                    acts.push(Activity {
-                        label: label.into(),
-                        confidence: o.confidence.clamp(0.0, 1.0),
-                        participants: vec![p.track_id, o.id],
-                    });
+    // person ↔ interactive object by hand/wrist contact. Object-major (phase
+    // 11.A2): when points of several people land in one object (an outstretched
+    // arm crossing a neighbour's phone), the object is attributed to exactly
+    // one person — the strongest ContactClaim — instead of everyone touching.
+    for o in objects {
+        let Some(label) = interaction_label(&o.class) else { continue };
+        let centre = contact_centre(o);
+        let mut best: Option<ContactClaim> = None;
+        for p in people {
+            if let Some(claim) = contact_claim(p, o, centre) {
+                if best.as_ref().is_none_or(|b| claim.beats(b)) {
+                    best = Some(claim);
                 }
             }
+        }
+        if let Some(winner) = best {
+            acts.push(Activity {
+                label: label.into(),
+                confidence: o.confidence.clamp(0.0, 1.0),
+                participants: vec![winner.track_id, o.id],
+            });
         }
     }
 
@@ -467,6 +544,81 @@ mod tests {
             acts.iter().any(|a| a.label == "typing" && a.participants == vec![10, 10001]),
             "got {acts:?}"
         );
+    }
+
+    // ── contact attribution (phase 11.A2) ──
+
+    fn person_id(id: u32) -> PersonState {
+        let mut p = person(1.0);
+        p.track_id = id;
+        p.position_3d = None; // keep people_together out of these tests
+        p
+    }
+
+    fn hand_at(pt: [f32; 2]) -> mvm_core::HandState {
+        mvm_core::HandState {
+            landmarks: vec![pt],
+            presence: 0.9,
+            side: "right",
+            handedness: 0.9,
+            gesture: None,
+        }
+    }
+
+    #[test]
+    fn contested_object_goes_to_hand_not_reaching_wrist() {
+        // A's outstretched wrist crosses B's phone while B actually holds it
+        // (hand landmarks on the object) — the activity belongs to B, and only B.
+        let phone = obj_class(10001, "cell phone", BBox { x1: 0.5, y1: 0.5, x2: 0.6, y2: 0.6 });
+        let mut a = person_id(10);
+        a.wrists = vec![[0.51, 0.55]]; // even closer to the centre than B's hand
+        a.right_gesture = Some("reaching");
+        let mut b = person_id(11);
+        b.hands = vec![hand_at([0.58, 0.55])];
+        let acts = infer_activities(&[a, b], &[phone]);
+        let phone_acts: Vec<_> = acts.iter().filter(|x| x.label == "using_phone").collect();
+        assert_eq!(phone_acts.len(), 1, "one attribution per contested object, got {acts:?}");
+        assert_eq!(phone_acts[0].participants, vec![11, 10001], "holder wins over reacher");
+    }
+
+    #[test]
+    fn contested_object_goes_to_closest_wrist() {
+        // Both touch wrist-only, nobody reaching → the wrist nearest the object
+        // centre wins.
+        let cup = obj_class(10002, "cup", BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 });
+        let mut a = person_id(10);
+        a.wrists = vec![[0.41, 0.5]]; // at the edge
+        let mut b = person_id(11);
+        b.wrists = vec![[0.5, 0.5]]; // dead centre
+        let acts = infer_activities(&[a, b], &[cup]);
+        let cup_acts: Vec<_> = acts.iter().filter(|x| x.label == "holding_drink").collect();
+        assert_eq!(cup_acts.len(), 1, "got {acts:?}");
+        assert_eq!(cup_acts[0].participants, vec![11, 10002]);
+    }
+
+    #[test]
+    fn uncontested_contact_still_fires() {
+        // A single person touching stays attributed exactly as before 11.A2.
+        let cup = obj_class(10002, "cup", BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 });
+        let mut a = person_id(10);
+        a.wrists = vec![[0.41, 0.5]];
+        a.right_gesture = Some("reaching"); // reaching alone must not silence it
+        let acts = infer_activities(&[a], &[cup]);
+        assert!(acts.iter().any(|x| x.label == "holding_drink" && x.participants == vec![10, 10002]),
+            "got {acts:?}");
+    }
+
+    #[test]
+    fn two_objects_two_people_attribute_independently() {
+        let kb1 = obj_class(10001, "keyboard", BBox { x1: 0.1, y1: 0.5, x2: 0.3, y2: 0.6 });
+        let kb2 = obj_class(10002, "keyboard", BBox { x1: 0.6, y1: 0.5, x2: 0.8, y2: 0.6 });
+        let mut a = person_id(10);
+        a.wrists = vec![[0.2, 0.55]];
+        let mut b = person_id(11);
+        b.wrists = vec![[0.7, 0.55]];
+        let acts = infer_activities(&[a, b], &[kb1, kb2]);
+        assert!(acts.iter().any(|x| x.label == "typing" && x.participants == vec![10, 10001]));
+        assert!(acts.iter().any(|x| x.label == "typing" && x.participants == vec![11, 10002]));
     }
 
     #[test]
