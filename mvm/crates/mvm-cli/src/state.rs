@@ -225,6 +225,18 @@ struct JsonActivity {
     duration_s: Option<f64>,
 }
 
+/// A zone with persistent identity (phase 11.B1) — additive alongside the
+/// anonymous per-frame `zones` components.
+#[derive(Serialize)]
+struct JsonZone {
+    id: u32,
+    members: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<&'static str>,
+    /// Matched observations (emitted frames) so far.
+    age: u32,
+}
+
 /// A completed activity episode (phase 11.C5) — the event-journal record.
 #[derive(Serialize)]
 struct JsonEvent {
@@ -264,6 +276,10 @@ struct JsonFrame<'a> {
     objects: Vec<JsonObject>,
     /// Relational scene-graph: zones (connected components) and edges (phase 6.4).
     zones: Vec<Vec<u32>>,
+    /// Zones with stable ids + semantics over time (phase 11.B1); omitted when
+    /// the frame has none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    stable_zones: Vec<JsonZone>,
     relations: Vec<JsonRelation>,
     /// Cross-group activities (phase 8.F); omitted when empty (e.g. sync path).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -435,6 +451,9 @@ pub struct StateFile {
     /// Include raw 21-point hand landmarks in the Scene JSON (`--dump-landmarks`,
     /// phase 10.0 opt-in — heavy payload, off by default).
     pub dump_landmarks: bool,
+    /// Persistent zone identity over the per-frame connected components (phase
+    /// 11.B1). Advanced once per emitted JSON line (both paths take `&self`).
+    zone_tracker: std::sync::Mutex<mvm_fusion::ZoneTracker>,
 }
 
 impl StateFile {
@@ -451,7 +470,12 @@ impl StateFile {
             fs::create_dir_all(parent)?;
         }
         let tz = FixedOffset::east_opt(3 * 3600).unwrap();
-        Ok(Self { path, tz, dump_landmarks: false })
+        Ok(Self {
+            path,
+            tz,
+            dump_landmarks: false,
+            zone_tracker: std::sync::Mutex::new(mvm_fusion::ZoneTracker::new()),
+        })
     }
 
     /// Write current state to file.
@@ -755,13 +779,29 @@ impl StateFile {
             }
         }).collect();
 
+        let stable_zones = self.stable_zones(&scene);
         let frame = JsonFrame {
             ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
             activities,
             events: Vec::new(),
+            stable_zones,
             anomaly_score: 0.0,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Advance the persistent-zone tracker with this frame's components (phase
+    /// 11.B1) — one tick per emitted JSON line — and render the live zones.
+    fn stable_zones(&self, scene: &mvm_core::types::Scene) -> Vec<JsonZone> {
+        let mut tracker = match self.zone_tracker.lock() {
+            Ok(g) => g,
+            Err(_) => return Vec::new(),
+        };
+        tracker
+            .update(&scene.zones, &scene.entities)
+            .iter()
+            .map(|z| JsonZone { id: z.id, members: z.members.clone(), label: z.label, age: z.age })
+            .collect()
     }
 
     /// Serialise a `WorldState` snapshot to the Scene JSON line (phase 8.C.7).
@@ -826,10 +866,12 @@ impl StateFile {
         };
         let events: Vec<JsonEvent> = world.events.iter().map(JsonEvent::from).collect();
 
+        let stable_zones = self.stable_zones(&scene);
         let frame = JsonFrame {
             ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
             activities,
             events,
+            stable_zones,
             anomaly_score: world.anomaly_score,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
@@ -1913,6 +1955,35 @@ mod tests {
         sf.write_world(&world, 30.0).unwrap();
         let md = std::fs::read_to_string(&path).unwrap();
         assert!(md.contains("Events: typing ended (12.5s)"), "got:\n{md}");
+    }
+
+    #[test]
+    fn world_json_stable_zone_id_persists_across_lines() {
+        // Person overlapping a keyboard → one connected component; two emitted
+        // lines → the same stable zone id with age 2 and a workstation label.
+        let sf = StateFile::open_at(temp_state_path("test_world_zones.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        world.people.push(person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.objects.push(mvm_core::ObjectState {
+            id: 10001,
+            class: "keyboard".into(),
+            bbox: mvm_core::BBox { x1: 0.35, y1: 0.5, x2: 0.55, y2: 0.7 },
+            confidence: 0.8,
+            age: 3,
+            position_3d: None,
+            mask: None,
+            last_seen: std::time::Instant::now(),
+        });
+        let v1: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
+        let v2: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
+        let z1 = &v1["stable_zones"][0];
+        let z2 = &v2["stable_zones"][0];
+        assert_eq!(z1["id"], z2["id"], "zone id persists across lines");
+        assert_eq!(z2["age"], 2);
+        assert_eq!(z2["label"], "workstation");
+        assert!(v1["zones"].is_array(), "legacy zones stay untouched");
     }
 
     #[test]

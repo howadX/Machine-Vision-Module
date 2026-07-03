@@ -16,7 +16,7 @@
 //! mvm-fusion → mvm-core circular dependency. This module provides the pure `fuse()`
 //! primitive; callers compose the temporal recurrence.
 
-use mvm_core::types::{Entity, Relation, RelationKind, Scene};
+use mvm_core::types::{Entity, EntityKind, Relation, RelationKind, Scene};
 
 const K: usize = 8;
 
@@ -450,5 +450,247 @@ mod tests {
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(i, _)| i).unwrap();
         assert_eq!(argmax, 4, "dominant class should be class 4 (repeated observation)");
+    }
+}
+
+// ── Zone persistence (phase 11.B1) ────────────────────────────────────────────
+
+/// Ticks (emitted frames) a zone survives without its component reappearing.
+/// The zone twin of the activity exit dwell: brief graph flicker (a person
+/// stepping between two objects, an object dropping for one YOLO cadence) must
+/// not re-mint zone ids.
+pub const ZONE_MISS_CAP: u32 = 5;
+/// Bounded number of simultaneously tracked zones.
+pub const ZONE_CAP: usize = 32;
+
+/// Object classes whose presence labels a zone a *workstation* (mirrors the
+/// fusion `WORKSTATION_CLASSES` context).
+const ZONE_WORKSTATION: &[&str] = &["dining table", "laptop", "keyboard", "mouse", "tv", "book"];
+/// Object classes whose presence labels a zone *seating*.
+const ZONE_SEATING: &[&str] = &["chair", "couch", "bed"];
+
+/// A zone with a stable identity over time (phase 11.B1). Per-frame
+/// `Scene::zones` are anonymous connected components recomputed from scratch;
+/// the tracker matches them across frames by member overlap so downstream can
+/// say "zone 3, the workstation, for the last 40 frames".
+#[derive(Debug, Clone)]
+pub struct ZoneState {
+    /// Stable zone id (monotonic, never reused within a run).
+    pub id: u32,
+    /// Members from the latest matched component (sorted entity ids).
+    pub members: Vec<u32>,
+    /// Dominant semantic context ("workstation"/"seating") from member object
+    /// classes, `None` when neither applies.
+    pub label: Option<&'static str>,
+    /// Matched observations so far.
+    pub age: u32,
+    /// Consecutive ticks the component failed to reappear.
+    missed: u32,
+}
+
+/// Matches per-frame connected components to persistent zones. Pure arithmetic,
+/// deterministic: candidates ranked by shared-member count, then zone age
+/// (older wins), then zone id.
+#[derive(Debug, Default)]
+pub struct ZoneTracker {
+    zones: Vec<ZoneState>,
+    next_id: u32,
+}
+
+/// The semantic label for a component from its member object classes: any
+/// workstation-class object wins, else any seating-class object, else none.
+fn zone_label(members: &[u32], entities: &[Entity]) -> Option<&'static str> {
+    let mut seating = false;
+    for e in entities {
+        if !members.contains(&e.id) {
+            continue;
+        }
+        if let EntityKind::Object(class) = &e.kind {
+            if ZONE_WORKSTATION.contains(&class.as_str()) {
+                return Some("workstation");
+            }
+            if ZONE_SEATING.contains(&class.as_str()) {
+                seating = true;
+            }
+        }
+    }
+    seating.then_some("seating")
+}
+
+fn shared_members(a: &[u32], b: &[u32]) -> usize {
+    // Both sorted → linear merge count.
+    let (mut i, mut j, mut n) = (0usize, 0usize, 0usize);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                n += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    n
+}
+
+impl ZoneTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Advance one tick: match this frame's components (from `Scene::zones`,
+    /// members sorted) to the persistent zones, refresh members/labels, age the
+    /// unmatched, reap past [`ZONE_MISS_CAP`], mint ids for new components.
+    /// Returns the live zones sorted by id.
+    pub fn update(&mut self, components: &[Vec<u32>], entities: &[Entity]) -> &[ZoneState] {
+        // Rank all (component, zone) pairs by overlap; assign greedily so each
+        // zone and each component match at most once. Deterministic ordering:
+        // overlap desc, zone age desc, zone id asc, component index asc.
+        let mut pairs: Vec<(usize, usize, usize)> = Vec::new(); // (ci, zi, shared)
+        for (ci, comp) in components.iter().enumerate() {
+            for (zi, z) in self.zones.iter().enumerate() {
+                let shared = shared_members(comp, &z.members);
+                if shared > 0 {
+                    pairs.push((ci, zi, shared));
+                }
+            }
+        }
+        pairs.sort_by(|x, y| {
+            y.2.cmp(&x.2)
+                .then(self.zones[y.1].age.cmp(&self.zones[x.1].age))
+                .then(self.zones[x.1].id.cmp(&self.zones[y.1].id))
+                .then(x.0.cmp(&y.0))
+        });
+        let mut comp_taken = vec![false; components.len()];
+        let mut zone_taken = vec![false; self.zones.len()];
+        for (ci, zi, _) in pairs {
+            if comp_taken[ci] || zone_taken[zi] {
+                continue;
+            }
+            comp_taken[ci] = true;
+            zone_taken[zi] = true;
+            let z = &mut self.zones[zi];
+            z.members = components[ci].clone();
+            z.label = zone_label(&z.members, entities);
+            z.age += 1;
+            z.missed = 0;
+        }
+        // Unmatched zones age toward the reap.
+        for (zi, z) in self.zones.iter_mut().enumerate() {
+            if !zone_taken[zi] {
+                z.missed += 1;
+            }
+        }
+        self.zones.retain(|z| z.missed <= ZONE_MISS_CAP);
+        // Unmatched components become new zones (bounded).
+        for (ci, comp) in components.iter().enumerate() {
+            if comp_taken[ci] || self.zones.len() >= ZONE_CAP {
+                continue;
+            }
+            self.zones.push(ZoneState {
+                id: self.next_id,
+                members: comp.clone(),
+                label: zone_label(comp, entities),
+                age: 1,
+                missed: 0,
+            });
+            self.next_id += 1;
+        }
+        self.zones.sort_by_key(|z| z.id);
+        &self.zones
+    }
+
+    /// Live zones (sorted by id).
+    pub fn zones(&self) -> &[ZoneState] {
+        &self.zones
+    }
+}
+
+#[cfg(test)]
+mod zone_tests {
+    use super::*;
+    use mvm_core::BBox;
+
+    fn ent(id: u32, kind: EntityKind) -> Entity {
+        Entity {
+            id,
+            kind,
+            bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 },
+            pos_3d: [0.0, 0.0, 0.0],
+            radius_m: 0.1,
+            pos_conf: 0.0,
+            identity: None,
+            emotion: None,
+            emotion_distribution: None,
+        }
+    }
+
+    fn obj(id: u32, class: &str) -> Entity {
+        ent(id, EntityKind::Object(class.into()))
+    }
+
+    #[test]
+    fn zone_keeps_id_across_frames() {
+        let mut t = ZoneTracker::new();
+        let ents = [ent(0, EntityKind::Person), obj(10001, "keyboard")];
+        let id0 = t.update(&[vec![0, 10001]], &ents)[0].id;
+        let z = &t.update(&[vec![0, 10001]], &ents)[0];
+        assert_eq!(z.id, id0, "same component → same zone id");
+        assert_eq!(z.age, 2);
+    }
+
+    #[test]
+    fn zone_survives_brief_absence_then_reaps() {
+        let mut t = ZoneTracker::new();
+        let ents = [ent(0, EntityKind::Person), obj(10001, "keyboard")];
+        let id0 = t.update(&[vec![0, 10001]], &ents)[0].id;
+        for _ in 0..ZONE_MISS_CAP {
+            t.update(&[], &ents);
+        }
+        assert_eq!(t.zones().len(), 1, "still alive at the cap");
+        assert_eq!(t.update(&[vec![0, 10001]], &ents)[0].id, id0, "revived with the same id");
+        // Now exceed the cap.
+        for _ in 0..=ZONE_MISS_CAP {
+            t.update(&[], &ents);
+        }
+        assert!(t.zones().is_empty(), "reaped past the cap");
+        assert_ne!(t.update(&[vec![0, 10001]], &ents)[0].id, id0, "reborn under a new id");
+    }
+
+    #[test]
+    fn membership_drift_keeps_id() {
+        let mut t = ZoneTracker::new();
+        let ents = [ent(0, EntityKind::Person), ent(1, EntityKind::Person), obj(10001, "keyboard")];
+        let id0 = t.update(&[vec![0, 10001]], &ents)[0].id;
+        let z = &t.update(&[vec![0, 1, 10001]], &ents)[0];
+        assert_eq!(z.id, id0, "a person joining does not re-mint the zone");
+        assert_eq!(z.members, vec![0, 1, 10001]);
+    }
+
+    #[test]
+    fn split_keeps_id_on_larger_part() {
+        let mut t = ZoneTracker::new();
+        let ents = [ent(0, EntityKind::Person), ent(1, EntityKind::Person), obj(10001, "keyboard")];
+        let id0 = t.update(&[vec![0, 1, 10001]], &ents)[0].id;
+        let zones: Vec<(u32, Vec<u32>)> = t
+            .update(&[vec![0], vec![1, 10001]], &ents)
+            .iter()
+            .map(|z| (z.id, z.members.clone()))
+            .collect();
+        assert_eq!(zones.len(), 2);
+        let keeper = zones.iter().find(|(id, _)| *id == id0).expect("id survives the split");
+        assert_eq!(keeper.1, vec![1, 10001], "the larger fragment keeps the id");
+    }
+
+    #[test]
+    fn zone_labels_from_member_classes() {
+        let mut t = ZoneTracker::new();
+        let ents = [ent(0, EntityKind::Person), obj(10001, "keyboard"), obj(10002, "couch")];
+        let zones = t.update(&[vec![0, 10001], vec![10002]], &ents);
+        assert_eq!(zones[0].label, Some("workstation"));
+        assert_eq!(zones[1].label, Some("seating"));
+        let zones = t.update(&[vec![0]], &ents);
+        assert_eq!(zones[0].label, None, "keyboard left → label honestly drops");
     }
 }
