@@ -165,6 +165,82 @@ pub fn torso_to_3d(
     Some((pos, z, ws_confidence))
 }
 
+// ── Metric self-calibration (phase 11.D1) ─────────────────────────────────────
+
+/// Minimum observations before the calibrator yields an estimate.
+pub const CALIB_MIN_OBS: usize = 5;
+/// Bounded observation memory (latest-wins ring).
+const CALIB_CAP: usize = 128;
+
+/// Online estimator for the pinhole scale constant `K = fx · real_size` of a
+/// known-size class, from `(pixel_size, ground_truth_distance)` observations
+/// (phase 11.D1, pure arithmetic, +0 dep).
+///
+/// The depth model is `d = fx · real / pixel`, so each observation pins
+/// `K_i = d_i · pixel_i` — one scalar, independent of how `fx` and `real` split.
+/// The estimate is the **median** `K` (robust to the effective-size jitter that
+/// makes any single frame unreliable: a face/torso bbox is not a rigid ruler).
+/// From `K` either factor follows once the other is fixed:
+///   - `fx = K / real` — calibrate focal length against a size prior;
+///   - `real = K / fx` — calibrate an unmeasured size (e.g. `torso_length_m`)
+///     against a trusted `fx`, self-bootstrapped off the face-derived distance
+///     of the *same* stable observation.
+#[derive(Debug, Default, Clone)]
+pub struct ScaleCalibrator {
+    /// `K_i = pixel_i · distance_i`.
+    samples: Vec<f32>,
+}
+
+impl ScaleCalibrator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one `(pixel_size, ground-truth distance)` observation. Non-positive
+    /// inputs are ignored (no fabricated evidence); the ring is bounded.
+    pub fn observe(&mut self, pixel_size: f32, true_distance_m: f32) {
+        if pixel_size <= 0.0 || true_distance_m <= 0.0 {
+            return;
+        }
+        if self.samples.len() == CALIB_CAP {
+            self.samples.remove(0);
+        }
+        self.samples.push(pixel_size * true_distance_m);
+    }
+
+    pub fn observations(&self) -> usize {
+        self.samples.len()
+    }
+
+    /// Median scale constant `K`, or `None` below [`CALIB_MIN_OBS`].
+    pub fn scale(&self) -> Option<f32> {
+        if self.samples.len() < CALIB_MIN_OBS {
+            return None;
+        }
+        let mut s = self.samples.clone();
+        s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let n = s.len();
+        Some(if n % 2 == 1 { s[n / 2] } else { 0.5 * (s[n / 2 - 1] + s[n / 2]) })
+    }
+
+    /// Estimated focal length given a real-size prior (`fx = K / real`).
+    pub fn fx_given_real(&self, real_size_m: f32) -> Option<f32> {
+        if real_size_m <= 0.0 {
+            return None;
+        }
+        self.scale().map(|k| k / real_size_m)
+    }
+
+    /// Estimated real size given a trusted focal length (`real = K / fx`). The
+    /// `torso_length_m` self-calibration path.
+    pub fn real_given_fx(&self, fx: f32) -> Option<f32> {
+        if fx <= 0.0 {
+            return None;
+        }
+        self.scale().map(|k| k / fx)
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -284,5 +360,73 @@ mod tests {
         assert!((z_personal - z_pop).abs() > 0.05, "personal prior should yield different z");
         // Personal z should be proportionally larger
         assert!(z_personal > z_pop, "taller face → farther estimated depth");
+    }
+
+    // ── metric self-calibration (phase 11.D1) ──
+
+    #[test]
+    fn calibrator_below_min_obs_is_none() {
+        let mut c = ScaleCalibrator::new();
+        for _ in 0..CALIB_MIN_OBS - 1 {
+            c.observe(100.0, 1.0);
+        }
+        assert!(c.scale().is_none(), "needs ≥ CALIB_MIN_OBS observations");
+        c.observe(100.0, 1.0);
+        assert!(c.scale().is_some());
+    }
+
+    #[test]
+    fn calibrator_recovers_fx_exactly_from_synthetic_face() {
+        // Synthesize a rigid face (real 0.32 m) at several distances through a
+        // known fx=410; the calibrator must recover fx to the float.
+        let (fx_true, real) = (410.0f32, 0.32f32);
+        let mut c = ScaleCalibrator::new();
+        for &d in &[0.6f32, 0.9, 1.3, 1.8, 2.4, 3.0] {
+            let pixel = fx_true * real / d; // exact projection
+            c.observe(pixel, d);
+        }
+        let fx = c.fx_given_real(real).unwrap();
+        assert!((fx - fx_true).abs() < 1e-2, "recovered fx {fx} ≠ {fx_true}");
+    }
+
+    #[test]
+    fn calibrator_recovers_torso_length_given_fx() {
+        // The torso_length_m self-calibration: fx trusted, recover the real size.
+        let (fx, real_torso) = (410.0f32, 0.47f32);
+        let mut c = ScaleCalibrator::new();
+        for &d in &[0.8f32, 1.2, 1.6, 2.0, 2.5] {
+            let pixel = fx * real_torso / d;
+            c.observe(pixel, d);
+        }
+        let est = c.real_given_fx(fx).unwrap();
+        assert!((est - real_torso).abs() < 1e-3, "recovered torso {est} ≠ {real_torso}");
+    }
+
+    #[test]
+    fn calibrator_beats_wrong_fx_on_the_calib_sample() {
+        // The real 2.5 m YuNet calibration rows (models/calib_3d_yunet.csv):
+        // (ground-truth distance, face bbox height px). Face prior 0.32 m.
+        let rows: &[(f32, f32)] = &[
+            (0.5, 244.91), (1.0, 124.78), (1.5, 76.74), (2.0, 71.4),
+            (2.5, 58.82), (2.5, 57.27), (2.5, 59.84),
+        ];
+        let real = 0.32;
+        let mut c = ScaleCalibrator::new();
+        for &(d, px) in rows {
+            c.observe(px, d);
+        }
+        let fx_est = c.fx_given_real(real).unwrap();
+        let mean_err = |fx: f32| -> f32 {
+            let ph = Pinhole { fx, fy: fx, cx_px: 320.0, cy_px: 240.0, width: 640.0, height: 480.0 };
+            let s: f32 = rows
+                .iter()
+                .map(|&(d, px)| (ph.distance_from_size(px, real).unwrap_or(0.0) - d).abs())
+                .sum();
+            s / rows.len() as f32
+        };
+        let err_est = mean_err(fx_est);
+        let err_bad = mean_err(250.0); // a deliberately wrong focal length
+        assert!(err_est < 0.2, "estimated fx should be close to tape, err {err_est}");
+        assert!(err_est < err_bad, "estimated {err_est} must beat wrong-fx {err_bad}");
     }
 }

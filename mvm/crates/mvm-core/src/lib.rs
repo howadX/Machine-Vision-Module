@@ -27,6 +27,7 @@ pub use world::{WorldState, PersonState, ObjectState, Position3D, AudioEvent, Ac
 pub use mask::{InstanceMask, MASK_RES};
 pub use activity::{ActivityJournal, ActivityInstance, ActivityEvent, ActivityKey, ActivityPhase};
 pub use anomaly::AnomalyScorer;
+pub use space::ScaleCalibrator;
 pub use emotion::{EMOTION_LABELS, EMOTION_MAX_ENTROPY, emotion_entropy, emotion_label, emotion_label_gated, fuse_emotion_temporal};
 pub use tracker::PersonTracker;
 pub use module::{Module, ModuleMetadata};

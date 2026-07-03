@@ -77,6 +77,18 @@ impl ActivityKey {
     pub fn stable_participants(&self) -> bool {
         self.participants.iter().all(|&id| id < 10 || id >= 10000)
     }
+
+    /// Has at least one ephemeral person id (10..10000) — a churn-prone anon track.
+    fn has_ephemeral(&self) -> bool {
+        self.participants.iter().any(|&id| (10..10_000).contains(&id))
+    }
+
+    /// The durable-id subset (reserved persons + objects), sorted. Two keys
+    /// differing only in their ephemeral person share this — the anchor for
+    /// churn stitching (11.C6).
+    fn stable_subset(&self) -> Vec<u32> {
+        self.participants.iter().copied().filter(|&id| id < 10 || id >= 10_000).collect()
+    }
 }
 
 /// Bounded-duration cap per label (poor man's HSMM surrogate for a learned
@@ -171,11 +183,23 @@ pub struct ActivityJournal {
     /// Sorted by key — deterministic iteration/emission order.
     instances: Vec<ActivityInstance>,
     completed: Vec<ActivityEvent>,
+    /// Stitch an ephemeral person's churn (id 12→15) into one continuous
+    /// instance when it happens on the same stable object anchor within the
+    /// cooling window (phase 11.C6). Off by default — the honest behaviour is
+    /// churn = end + restart (11.C2); stitching is only safe once person masks
+    /// (10.7) make the "same person" claim, so it is opt-in and gated there.
+    stitch_ephemeral: bool,
 }
 
 impl ActivityJournal {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable ephemeral-churn stitching (phase 11.C6, gated behind 10.7).
+    pub fn with_stitching(mut self, on: bool) -> Self {
+        self.stitch_ephemeral = on;
+        self
     }
 
     /// Advance the FSM one tick. `raw` is this tick's `infer_activities`
@@ -260,16 +284,39 @@ impl ActivityJournal {
             if self.instances.len() >= ACTIVITY_INSTANCE_CAP {
                 break;
             }
-            let inst = ActivityInstance {
-                key,
-                phase: ActivityPhase::Candidate,
-                enter_streak: 1,
-                absent_streak: 0,
-                started_at: t_secs,
-                first_seen_frame: frame_id,
-                last_seen: t_secs,
-                confidence: conf,
-                peak_confidence: conf,
+            // 11.C6: if this newborn is an ephemeral track re-appearing on the
+            // same stable object anchor that a *cooling* instance just vacated,
+            // treat it as that instance continuing — adopt its start so the
+            // final event spans the whole episode, and drop the source silently
+            // (no split event). Gated by `stitch_ephemeral`.
+            let stitched = if self.stitch_ephemeral && key.has_ephemeral() {
+                self.take_stitch_source(&key)
+            } else {
+                None
+            };
+            let inst = match stitched {
+                Some(src) => ActivityInstance {
+                    key,
+                    phase: ActivityPhase::Active, // continuation of a confirmed activity
+                    enter_streak: ACTIVITY_ENTER_DWELL,
+                    absent_streak: 0,
+                    started_at: src.started_at,
+                    first_seen_frame: src.first_seen_frame,
+                    last_seen: t_secs,
+                    confidence: conf,
+                    peak_confidence: src.peak_confidence.max(conf),
+                },
+                None => ActivityInstance {
+                    key,
+                    phase: ActivityPhase::Candidate,
+                    enter_streak: 1,
+                    absent_streak: 0,
+                    started_at: t_secs,
+                    first_seen_frame: frame_id,
+                    last_seen: t_secs,
+                    confidence: conf,
+                    peak_confidence: conf,
+                },
             };
             let at = self
                 .instances
@@ -283,6 +330,25 @@ impl ActivityJournal {
             let drop = self.completed.len() - ACTIVITY_EVENT_CAP;
             self.completed.drain(..drop);
         }
+    }
+
+    /// Find and remove a cooling instance that this newborn ephemeral key is
+    /// the churned continuation of (11.C6): same label, same durable anchor,
+    /// currently absent (cooling), different ephemeral person. Returns its
+    /// timing metadata for adoption. Removing it silently means no split event.
+    fn take_stitch_source(&mut self, newborn: &ActivityKey) -> Option<ActivityInstance> {
+        let anchor = newborn.stable_subset();
+        if anchor.is_empty() {
+            return None; // nothing durable to pin the "same episode" claim on
+        }
+        let idx = self.instances.iter().position(|i| {
+            i.phase == ActivityPhase::Cooling
+                && i.key.label == newborn.label
+                && i.key != *newborn
+                && i.key.has_ephemeral()
+                && i.key.stable_subset() == anchor
+        })?;
+        Some(self.instances.remove(idx))
     }
 
     /// The stabilized activities to emit: Active plus Cooling (grace-bridged).
@@ -440,6 +506,47 @@ mod tests {
         assert_eq!(ev.len(), 1, "old instance ended, got {ev:?}");
         assert_eq!(ev[0].participants, vec![10, 10001]);
         let _ = (t, f);
+    }
+
+    #[test]
+    fn stitching_off_by_default_ends_and_restarts() {
+        // Sanity: without opt-in, churn is still end+restart (11.C2 preserved).
+        let mut j = ActivityJournal::new();
+        let (t, f) = drive(&mut j, &[act("typing", vec![12, 10001], 0.8)], 6, 0.0, 0);
+        drive(&mut j, &[act("typing", vec![15, 10001], 0.8)], 12, t, f);
+        assert!(!j.drain_events().is_empty(), "default: old episode ends on churn");
+    }
+
+    #[test]
+    fn stitching_bridges_ephemeral_churn_on_same_object() {
+        // 11.C6: with stitching on, an anon id 12→15 on the SAME keyboard is one
+        // continuous episode — no split event mid-churn, and the final event
+        // spans from the id=12 era.
+        let mut j = ActivityJournal::new().with_stitching(true);
+        let (t, f) = drive(&mut j, &[act("typing", vec![12, 10001], 0.8)], 30, 0.0, 0);
+        // id churns to 15 within the cooling window (immediate next frame).
+        let (t, f) = drive(&mut j, &[act("typing", vec![15, 10001], 0.8)], 8, t, f);
+        // No event emitted during the churn — it's one continuous episode.
+        assert!(j.drain_events().is_empty(), "churn must not split the episode");
+        let inst: Vec<_> = j.active().collect();
+        assert_eq!(inst.len(), 1, "one continuous instance, got {inst:?}");
+        assert_eq!(inst[0].key.participants, vec![15, 10001]);
+        assert_eq!(inst[0].started_at, 0.0, "adopted the id=12 start");
+        // End it → single event spanning the whole thing.
+        drive(&mut j, &[], ACTIVITY_EXIT_DWELL, t, f);
+        let ev = j.drain_events();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].started_at, 0.0, "event spans from the original start");
+        assert!(ev[0].duration_s > 3.0, "duration {}", ev[0].duration_s);
+    }
+
+    #[test]
+    fn stitching_does_not_bridge_across_different_objects() {
+        // A churn onto a DIFFERENT keyboard is a different anchor → not stitched.
+        let mut j = ActivityJournal::new().with_stitching(true);
+        let (t, f) = drive(&mut j, &[act("typing", vec![12, 10001], 0.8)], 6, 0.0, 0);
+        drive(&mut j, &[act("typing", vec![15, 10002], 0.8)], 8, t, f);
+        assert!(!j.drain_events().is_empty(), "different object → honest end+restart");
     }
 
     #[test]
