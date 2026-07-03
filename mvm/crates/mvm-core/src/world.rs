@@ -204,6 +204,10 @@ pub struct WorldState {
     pub objects: Vec<ObjectState>,
     pub audio_events: Vec<AudioEvent>,
     pub activities: Vec<Activity>,
+    /// Completed activity episodes (phase 11.C3) — appended by the fusion step
+    /// as the ActivityJournal ends instances, drained by the StateFile writer
+    /// so each event is emitted exactly once.
+    pub events: Vec<crate::activity::ActivityEvent>,
     pub anomaly_score: f32,
 }
 
@@ -217,6 +221,7 @@ impl WorldState {
             objects: Vec::new(),
             audio_events: Vec::new(),
             activities: Vec::new(),
+            events: Vec::new(),
             anomaly_score: 0.0,
         }
     }

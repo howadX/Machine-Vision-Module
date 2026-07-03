@@ -38,9 +38,15 @@ impl Agent for StateFileWriter {
         let mut writes = 0u64;
         let mut errors = 0u64;
         while ctx.running() {
-            // Snapshot under the lock, then release before doing IO.
-            let snapshot = match ctx.world.read() {
-                Ok(w) => w.clone(),
+            // Snapshot under the lock, then release before doing IO. A write
+            // lock because completed activity events (phase 11.C3) are consumed
+            // exclusively — each event belongs to exactly one written frame.
+            let snapshot = match ctx.world.write() {
+                Ok(mut w) => {
+                    let s = w.clone();
+                    w.events.clear();
+                    s
+                }
                 Err(_) => {
                     errors += 1;
                     break;

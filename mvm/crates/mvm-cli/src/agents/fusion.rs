@@ -10,17 +10,54 @@
 //! concurrent `SceneAgent` swap can't clobber the anchored positions.
 
 use crate::agents::DepthSlot;
-use mvm_core::{Activity, BBox, ObjectState, PersonState, Position3D, WorldState};
+use mvm_core::{Activity, ActivityJournal, BBox, ObjectState, PersonState, Position3D, WorldState};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 
 pub(crate) struct FusionAgent {
     config: mvm_core::Config,
     depth_slot: DepthSlot,
+    /// Temporal debounce + event journal over the raw activities (phase 11.C3).
+    journal: ActivityJournal,
+    /// Last frame the journal advanced on — the loop spins faster than frames
+    /// arrive, and FSM dwells must count *frames*, not loop iterations.
+    last_frame: Option<u64>,
+    /// Zero point for the journal's monotonic clock.
+    epoch: std::time::Instant,
 }
 
 impl FusionAgent {
     pub(crate) fn new(config: mvm_core::Config, depth_slot: DepthSlot) -> Self {
-        Self { config, depth_slot }
+        Self {
+            config,
+            depth_slot,
+            journal: ActivityJournal::new(),
+            last_frame: None,
+            epoch: std::time::Instant::now(),
+        }
+    }
+
+    /// Advance the activity journal for this world tick (phase 11.C3): re-derive
+    /// the raw activities, step the FSM once per *new* frame_id, publish the
+    /// stabilized set (Active+Cooling, EMA confidence) as `world.activities` and
+    /// append completed episodes to `world.events`.
+    fn advance_journal(&mut self, w: &mut WorldState) {
+        let raw = infer_activities(w.people.as_slice(), w.objects.as_slice());
+        if self.last_frame != Some(w.frame_id) {
+            self.last_frame = Some(w.frame_id);
+            let t = w.timestamp.saturating_duration_since(self.epoch).as_secs_f64();
+            self.journal.update(&raw, t, w.frame_id);
+            let ended = self.journal.drain_events();
+            w.events.extend(ended);
+        }
+        w.activities = self
+            .journal
+            .active()
+            .map(|i| Activity {
+                label: i.key.label.clone(),
+                confidence: i.confidence,
+                participants: i.key.participants.clone(),
+            })
+            .collect();
     }
 }
 
@@ -41,17 +78,20 @@ impl Agent for FusionAgent {
                 .latest()
                 .map(|f| (f.image.width() as f32, f.image.height() as f32));
             if let Ok(mut w) = ctx.world.write() {
-                let WorldState { people, objects, activities, anomaly_score, .. } = &mut *w;
-                // Anchor objects to metric 3D when a depth map is available (the
-                // person↔person activities below don't need it — people carry
-                // torso-3D directly).
-                if let (Some(d), Some((fw, fh))) = (depth.as_ref(), dims) {
-                    anchor_objects(people.as_slice(), objects.as_mut_slice(), d, &pinhole, fw, fh);
+                {
+                    let WorldState { people, objects, anomaly_score, .. } = &mut *w;
+                    // Anchor objects to metric 3D when a depth map is available
+                    // (the person↔person activities don't need it — people carry
+                    // torso-3D directly).
+                    if let (Some(d), Some((fw, fh))) = (depth.as_ref(), dims) {
+                        anchor_objects(people.as_slice(), objects.as_mut_slice(), d, &pinhole, fw, fh);
+                    }
+                    *anomaly_score = anomaly_from_objects(objects.as_slice());
                 }
-                // Cross-group inference (phase 8.F): pure arithmetic over the
-                // fused entities.
-                *activities = infer_activities(people.as_slice(), objects.as_slice());
-                *anomaly_score = anomaly_from_objects(objects.as_slice());
+                // Cross-group inference (phase 8.F) through the temporal
+                // journal (phase 11.C3): raw per-tick activities are debounced
+                // into stable instances + start/stop events.
+                self.advance_journal(&mut w);
                 ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(15));
@@ -440,6 +480,72 @@ mod tests {
     /// Uniform depth map → every `median_in_bbox` returns the same value.
     fn uniform_depth(v: f32) -> mvm_depth::DepthMap {
         mvm_depth::DepthMap { data: vec![v; 64], w: 8, h: 8 }
+    }
+
+    // ── mesh journal wiring (phase 11.C3) ──
+
+    fn fusion_agent() -> FusionAgent {
+        let slot: DepthSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        FusionAgent::new(Config::default(), slot)
+    }
+
+    /// A world whose raw inference yields "typing" (wrist on keyboard).
+    fn typing_world(now: Instant, frame_id: u64) -> mvm_core::WorldState {
+        let mut w = mvm_core::WorldState::new(now);
+        w.frame_id = frame_id;
+        let mut p = person(1.0);
+        p.position_3d = None;
+        p.wrists = vec![[0.40, 0.58]];
+        w.people.push(p);
+        w.objects.push(obj_class(10001, "keyboard", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.62 }));
+        w
+    }
+
+    #[test]
+    fn repeated_raw_debounces_then_journals_an_event() {
+        let mut agent = fusion_agent();
+        let t0 = Instant::now();
+        // Frames 0-1: raw "typing" present but below the enter dwell -> no claim.
+        for f in 0..2u64 {
+            let mut w = typing_world(t0 + std::time::Duration::from_millis(100 * f), f);
+            agent.advance_journal(&mut w);
+            assert!(w.activities.is_empty(), "frame {f}: still a candidate");
+        }
+        // Frame 2: third consecutive frame -> Active.
+        let mut w = typing_world(t0 + std::time::Duration::from_millis(200), 2);
+        agent.advance_journal(&mut w);
+        assert_eq!(w.activities.len(), 1, "debounced activity emitted");
+        assert_eq!(w.activities[0].label, "typing");
+        assert!(w.events.is_empty());
+        // Keep it alive past D_MIN so the base exit dwell applies, then vanish.
+        let mut f = 3u64;
+        while f < 33 {
+            let mut w = typing_world(t0 + std::time::Duration::from_millis(100 * f), f);
+            agent.advance_journal(&mut w);
+            f += 1;
+        }
+        let mut last_events = Vec::new();
+        for g in 0..mvm_core::activity::ACTIVITY_EXIT_DWELL as u64 {
+            let mut w = mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100 * (f + g)));
+            w.frame_id = f + g;
+            agent.advance_journal(&mut w);
+            last_events = w.events.clone();
+        }
+        assert_eq!(last_events.len(), 1, "end of contact journals one event");
+        assert_eq!(last_events[0].label, "typing");
+        assert!(last_events[0].duration_s > 2.0, "duration {}", last_events[0].duration_s);
+    }
+
+    #[test]
+    fn stale_frame_id_does_not_advance_dwell() {
+        // The fusion loop spins ~66Hz on the same frame; dwell counts frames.
+        let mut agent = fusion_agent();
+        let t0 = Instant::now();
+        for _ in 0..10 {
+            let mut w = typing_world(t0, 5);
+            agent.advance_journal(&mut w);
+            assert!(w.activities.is_empty(), "same frame repeated must not confirm");
+        }
     }
 
     #[test]
