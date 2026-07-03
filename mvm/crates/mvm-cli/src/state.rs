@@ -206,12 +206,51 @@ struct JsonObject {
     mask_coverage: Option<f32>,
 }
 
-/// A cross-group activity in the JSON (phase 8.F).
+/// A cross-group activity in the JSON (phase 8.F). The temporal fields
+/// (phase 11.C5) come from the ActivityJournal and are omitted where no journal
+/// runs — the pre-11 contract is a strict subset.
 #[derive(Serialize)]
 struct JsonActivity {
     label: String,
     confidence: f32,
     participants: Vec<u32>,
+    /// FSM phase: "active" | "cooling" (debounced emission, phase 11.C).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<&'static str>,
+    /// Journal clock (seconds, monotonic per process) of the first sighting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_at: Option<f64>,
+    /// Observed duration so far (last sighting − first sighting).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_s: Option<f64>,
+}
+
+/// A completed activity episode (phase 11.C5) — the event-journal record.
+#[derive(Serialize)]
+struct JsonEvent {
+    label: String,
+    participants: Vec<u32>,
+    /// Journal clock (seconds, monotonic per process).
+    started_at: f64,
+    ended_at: f64,
+    duration_s: f64,
+    peak_confidence: f32,
+    /// All participants durable (gallery-reserved / object ids).
+    stable_participants: bool,
+}
+
+impl From<&mvm_core::ActivityEvent> for JsonEvent {
+    fn from(e: &mvm_core::ActivityEvent) -> Self {
+        Self {
+            label: e.label.clone(),
+            participants: e.participants.clone(),
+            started_at: e.started_at,
+            ended_at: e.ended_at,
+            duration_s: e.duration_s,
+            peak_confidence: e.peak_confidence,
+            stable_participants: e.stable_participants,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -229,6 +268,10 @@ struct JsonFrame<'a> {
     /// Cross-group activities (phase 8.F); omitted when empty (e.g. sync path).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     activities: Vec<JsonActivity>,
+    /// Completed activity episodes since the previous write (phase 11.C5);
+    /// each event appears in exactly one frame.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    events: Vec<JsonEvent>,
     /// Scene anomaly score [0,1] (phase 8.F).
     anomaly_score: f32,
 }
@@ -647,6 +690,11 @@ impl StateFile {
                     label: a.label,
                     confidence: a.confidence,
                     participants: a.participants,
+                    // Sync path runs no journal yet (11.C4 deferred) — the
+                    // temporal fields are honestly absent.
+                    state: None,
+                    started_at: None,
+                    duration_s: None,
                 })
                 .collect();
 
@@ -710,6 +758,7 @@ impl StateFile {
         let frame = JsonFrame {
             ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
             activities,
+            events: Vec::new(),
             anomaly_score: 0.0,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
@@ -746,19 +795,41 @@ impl StateFile {
             JsonRelation { a: r.a, b: r.b, dist_m: r.distance_m, overlap: r.overlap, kind }
         }).collect();
 
-        let activities: Vec<JsonActivity> = world
-            .activities
-            .iter()
-            .map(|a| JsonActivity {
-                label: a.label.clone(),
-                confidence: a.confidence,
-                participants: a.participants.clone(),
-            })
-            .collect();
+        // Activities from the journal instances when the fusion step publishes
+        // them (temporal fields); fall back to the flat list otherwise.
+        let activities: Vec<JsonActivity> = if !world.activity_instances.is_empty() {
+            world
+                .activity_instances
+                .iter()
+                .map(|i| JsonActivity {
+                    label: i.key.label.clone(),
+                    confidence: i.confidence,
+                    participants: i.key.participants.clone(),
+                    state: Some(i.phase.as_str()),
+                    started_at: Some(i.started_at),
+                    duration_s: Some(i.last_seen - i.started_at),
+                })
+                .collect()
+        } else {
+            world
+                .activities
+                .iter()
+                .map(|a| JsonActivity {
+                    label: a.label.clone(),
+                    confidence: a.confidence,
+                    participants: a.participants.clone(),
+                    state: None,
+                    started_at: None,
+                    duration_s: None,
+                })
+                .collect()
+        };
+        let events: Vec<JsonEvent> = world.events.iter().map(JsonEvent::from).collect();
 
         let frame = JsonFrame {
             ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
             activities,
+            events,
             anomaly_score: world.anomaly_score,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
@@ -851,9 +922,17 @@ impl StateFile {
             }
         }
 
-        // Cross-group activities + anomaly (phase 8.F).
+        // Cross-group activities + anomaly (phase 8.F); durations from the
+        // journal instances when available (phase 11.C5).
         if world.activities.is_empty() {
             lines.push("- Activities: none".to_string());
+        } else if !world.activity_instances.is_empty() {
+            let summary: Vec<String> = world
+                .activity_instances
+                .iter()
+                .map(|i| format!("{} ({:.1}s)", i.key.label, i.last_seen - i.started_at))
+                .collect();
+            lines.push(format!("- Activities: {}", summary.join(", ")));
         } else {
             let summary: Vec<String> = world
                 .activities
@@ -861,6 +940,14 @@ impl StateFile {
                 .map(|a| format!("{} ({:.2})", a.label, a.confidence))
                 .collect();
             lines.push(format!("- Activities: {}", summary.join(", ")));
+        }
+        if !world.events.is_empty() {
+            let summary: Vec<String> = world
+                .events
+                .iter()
+                .map(|e| format!("{} ended ({:.1}s)", e.label, e.duration_s))
+                .collect();
+            lines.push(format!("- Events: {}", summary.join(", ")));
         }
         lines.push(format!("- Anomaly: {:.2}", world.anomaly_score));
 
@@ -1745,6 +1832,87 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let lm = v["faces"][0]["hands"][0]["landmarks"].as_array().expect("landmarks dumped");
         assert_eq!(lm.len(), 21);
+    }
+
+    // ── output contract, phase 11.C5 ──
+
+    /// A journal-produced instance for contract tests.
+    fn instance(label: &str, participants: Vec<u32>) -> mvm_core::ActivityInstance {
+        let mut j = mvm_core::ActivityJournal::new();
+        let raw = [mvm_core::Activity { label: label.into(), confidence: 0.8, participants }];
+        for f in 0..4u64 {
+            j.update(&raw, f as f64 * 0.1, f);
+        }
+        j.active().next().expect("confirmed").clone()
+    }
+
+    #[test]
+    fn world_json_activity_temporal_fields_from_instances() {
+        let sf = StateFile::open_at(temp_state_path("test_world_act_temporal.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let inst = instance("typing", vec![0, 10001]);
+        world.activities.push(mvm_core::Activity {
+            label: inst.key.label.clone(),
+            confidence: inst.confidence,
+            participants: inst.key.participants.clone(),
+        });
+        world.activity_instances.push(inst);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let a = &v["activities"][0];
+        // Pre-11 keys identical.
+        assert_eq!(a["label"], "typing");
+        assert!(a["confidence"].is_number());
+        assert_eq!(a["participants"][1], 10001);
+        // Additive temporal fields present.
+        assert_eq!(a["state"], "active");
+        assert_eq!(a["started_at"].as_f64().unwrap(), 0.0);
+        assert!((a["duration_s"].as_f64().unwrap() - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn world_json_omits_temporal_fields_without_journal() {
+        // Backward compatibility: no journal → the old contract, byte-level
+        // (new keys absent, not null).
+        let sf = StateFile::open_at(temp_state_path("test_world_act_compat.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        world.activities.push(mvm_core::Activity {
+            label: "typing".into(),
+            confidence: 0.8,
+            participants: vec![0, 10001],
+        });
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let a = v["activities"][0].as_object().unwrap();
+        assert!(!a.contains_key("state"));
+        assert!(!a.contains_key("started_at"));
+        assert!(!a.contains_key("duration_s"));
+        assert!(!v.as_object().unwrap().contains_key("events"), "no events key when empty");
+    }
+
+    #[test]
+    fn world_json_and_markdown_surface_events() {
+        let path = temp_state_path("test_world_events.md");
+        let sf = StateFile::open_at(path.clone()).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        world.events.push(mvm_core::ActivityEvent {
+            label: "typing".into(),
+            participants: vec![0, 10001],
+            started_at: 1.0,
+            ended_at: 13.5,
+            duration_s: 12.5,
+            peak_confidence: 0.9,
+            stable_participants: true,
+        });
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let e = &v["events"][0];
+        assert_eq!(e["label"], "typing");
+        assert!((e["duration_s"].as_f64().unwrap() - 12.5).abs() < 1e-9);
+        assert_eq!(e["stable_participants"], true);
+        sf.write_world(&world, 30.0).unwrap();
+        let md = std::fs::read_to_string(&path).unwrap();
+        assert!(md.contains("Events: typing ended (12.5s)"), "got:\n{md}");
     }
 
     #[test]

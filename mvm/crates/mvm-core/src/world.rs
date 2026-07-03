@@ -208,6 +208,10 @@ pub struct WorldState {
     /// as the ActivityJournal ends instances, drained by the StateFile writer
     /// so each event is emitted exactly once.
     pub events: Vec<crate::activity::ActivityEvent>,
+    /// The journal's live instances behind `activities` (phase 11.C5) — carries
+    /// phase/started_at for the temporal fields of the JSON contract.
+    /// `activities` stays the flat compat list.
+    pub activity_instances: Vec<crate::activity::ActivityInstance>,
     pub anomaly_score: f32,
 }
 
@@ -222,6 +226,7 @@ impl WorldState {
             audio_events: Vec::new(),
             activities: Vec::new(),
             events: Vec::new(),
+            activity_instances: Vec::new(),
             anomaly_score: 0.0,
         }
     }

@@ -49,9 +49,10 @@ impl FusionAgent {
             let ended = self.journal.drain_events();
             w.events.extend(ended);
         }
-        w.activities = self
-            .journal
-            .active()
+        w.activity_instances = self.journal.active().cloned().collect();
+        w.activities = w
+            .activity_instances
+            .iter()
             .map(|i| Activity {
                 label: i.key.label.clone(),
                 confidence: i.confidence,

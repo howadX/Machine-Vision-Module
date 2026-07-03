@@ -107,6 +107,18 @@ pub enum ActivityPhase {
     Ended,
 }
 
+impl ActivityPhase {
+    /// Stable lowercase name for the output contract (phase 11.C5).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ActivityPhase::Candidate => "candidate",
+            ActivityPhase::Active => "active",
+            ActivityPhase::Cooling => "cooling",
+            ActivityPhase::Ended => "ended",
+        }
+    }
+}
+
 /// One keyed activity being tracked through the FSM.
 #[derive(Debug, Clone)]
 pub struct ActivityInstance {
