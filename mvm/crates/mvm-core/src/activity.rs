@@ -439,7 +439,7 @@ mod tests {
         let ev = j.drain_events();
         assert_eq!(ev.len(), 1, "old instance ended, got {ev:?}");
         assert_eq!(ev[0].participants, vec![10, 10001]);
-        drop((t, f));
+        let _ = (t, f);
     }
 
     #[test]

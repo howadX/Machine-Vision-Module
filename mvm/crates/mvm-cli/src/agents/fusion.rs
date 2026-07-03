@@ -10,7 +10,7 @@
 //! concurrent `SceneAgent` swap can't clobber the anchored positions.
 
 use crate::agents::DepthSlot;
-use mvm_core::{Activity, ActivityJournal, BBox, ObjectState, PersonState, Position3D, WorldState};
+use mvm_core::{Activity, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState, Position3D, WorldState};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 
 pub(crate) struct FusionAgent {
@@ -18,6 +18,8 @@ pub(crate) struct FusionAgent {
     depth_slot: DepthSlot,
     /// Temporal debounce + event journal over the raw activities (phase 11.C3).
     journal: ActivityJournal,
+    /// Anomaly v2 scorer (phase 11.B2) — same frame-gated cadence as the journal.
+    anomaly: AnomalyScorer,
     /// Last frame the journal advanced on — the loop spins faster than frames
     /// arrive, and FSM dwells must count *frames*, not loop iterations.
     last_frame: Option<u64>,
@@ -31,6 +33,7 @@ impl FusionAgent {
             config,
             depth_slot,
             journal: ActivityJournal::new(),
+            anomaly: AnomalyScorer::new(),
             last_frame: None,
             epoch: std::time::Instant::now(),
         }
@@ -48,6 +51,9 @@ impl FusionAgent {
             self.journal.update(&raw, t, w.frame_id);
             let ended = self.journal.drain_events();
             w.events.extend(ended);
+            // Anomaly v2 (11.B2): decaying peak over noisy-OR'd signals —
+            // ticked once per frame so the decay rate means something.
+            w.anomaly_score = self.anomaly.update(&w.people, &w.objects, t);
         }
         w.activity_instances = self.journal.active().cloned().collect();
         w.activities = w
@@ -80,14 +86,13 @@ impl Agent for FusionAgent {
                 .map(|f| (f.image.width() as f32, f.image.height() as f32));
             if let Ok(mut w) = ctx.world.write() {
                 {
-                    let WorldState { people, objects, anomaly_score, .. } = &mut *w;
+                    let WorldState { people, objects, .. } = &mut *w;
                     // Anchor objects to metric 3D when a depth map is available
                     // (the person↔person activities don't need it — people carry
                     // torso-3D directly).
                     if let (Some(d), Some((fw, fh))) = (depth.as_ref(), dims) {
                         anchor_objects(people.as_slice(), objects.as_mut_slice(), d, &pinhole, fw, fh);
                     }
-                    *anomaly_score = anomaly_from_objects(objects.as_slice());
                 }
                 // Cross-group inference (phase 8.F) through the temporal
                 // journal (phase 11.C3): raw per-tick activities are debounced
@@ -408,27 +413,6 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
     }
 
     acts
-}
-
-/// Objects expected in a normal room/desk scene. Anything relevant-but-not-here
-/// (sharp items, personal effects appearing/leaving) nudges the anomaly score.
-const EXPECTED_OBJECTS: &[&str] = &[
-    "chair", "couch", "bed", "dining table", "tv", "laptop", "mouse", "remote",
-    "keyboard", "cell phone", "book", "clock", "vase", "potted plant", "cup",
-    "bottle", "bowl", "fork", "spoon", "microwave", "oven", "toaster", "sink",
-    "refrigerator",
-];
-
-/// A simple anomaly heuristic (phase 8.F, v1): the share of detected objects
-/// whose class is *not* part of the expected indoor inventory, scaled and
-/// clamped. A placeholder — to be enriched with audio events (8.E.3) and learned
-/// priors. Sound-driven anomalies are out of scope until YAMNet lands.
-pub(crate) fn anomaly_from_objects(objects: &[ObjectState]) -> f32 {
-    let unexpected = objects
-        .iter()
-        .filter(|o| !EXPECTED_OBJECTS.contains(&o.class.as_str()))
-        .count();
-    (unexpected as f32 * 0.25).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -872,9 +856,18 @@ mod tests {
 
     #[test]
     fn anomaly_rises_for_unexpected_object() {
-        let cup = obj_class(10001, "cup", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 });
-        let knife = obj_class(10002, "knife", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 });
-        assert_eq!(anomaly_from_objects(&[cup]), 0.0, "cup is expected → no anomaly");
-        assert!(anomaly_from_objects(&[knife]) > 0.0, "knife is unexpected → anomaly");
+        // v2 (11.B2): the scorer rides the same frame gate as the journal.
+        let mut agent = fusion_agent();
+        let t0 = Instant::now();
+        let mut calm = mvm_core::WorldState::new(t0);
+        calm.objects.push(obj_class(10001, "cup", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }));
+        agent.advance_journal(&mut calm);
+        assert_eq!(calm.anomaly_score, 0.0, "cup is expected → no anomaly");
+
+        let mut odd = mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100));
+        odd.frame_id = 1;
+        odd.objects.push(obj_class(10002, "knife", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }));
+        agent.advance_journal(&mut odd);
+        assert!(odd.anomaly_score > 0.0, "knife is unexpected → anomaly");
     }
 }

@@ -454,6 +454,10 @@ pub struct StateFile {
     /// Persistent zone identity over the per-frame connected components (phase
     /// 11.B1). Advanced once per emitted JSON line (both paths take `&self`).
     zone_tracker: std::sync::Mutex<mvm_fusion::ZoneTracker>,
+    /// Anomaly v2 scorer for the sync path (phase 11.B2; the mesh path scores
+    /// in FusionAgent) + the epoch of its monotonic clock.
+    anomaly: std::sync::Mutex<mvm_core::AnomalyScorer>,
+    epoch: std::time::Instant,
 }
 
 impl StateFile {
@@ -475,6 +479,8 @@ impl StateFile {
             tz,
             dump_landmarks: false,
             zone_tracker: std::sync::Mutex::new(mvm_fusion::ZoneTracker::new()),
+            anomaly: std::sync::Mutex::new(mvm_core::AnomalyScorer::new()),
+            epoch: std::time::Instant::now(),
         })
     }
 
@@ -780,12 +786,20 @@ impl StateFile {
         }).collect();
 
         let stable_zones = self.stable_zones(&scene);
+        // Anomaly v2 on the sync path (11.B2) — ticked once per emitted line.
+        let anomaly_score = self
+            .anomaly
+            .lock()
+            .map(|mut a| {
+                a.update(&fusion_people, &obj_states, self.epoch.elapsed().as_secs_f64())
+            })
+            .unwrap_or(0.0);
         let frame = JsonFrame {
             ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
             activities,
             events: Vec::new(),
             stable_zones,
-            anomaly_score: 0.0,
+            anomaly_score,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
     }
