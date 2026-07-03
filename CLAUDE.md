@@ -10,7 +10,7 @@
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 443 теста, фаза 10 закрыта)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 493 теста; фаза 11 Fusion в работе)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   └── CLAUDE.md   #   ← детальный контекст Rust-части (source of truth)
@@ -49,6 +49,13 @@ cd mvm && target/release/mvm-cli --native --once --dump-json
 ## Актуальная ветка
 
 `rust-core` — основная ветка разработки.
+
+## Текущая фаза
+
+**Фаза 11 — Fusion-полировка** (реляц.-темпоральная арифметика над Scene JSON, **+0 ONNX**): mask-контакт
+10.6 + person-маски 10.7 + фикс мис-атрибуции · зоны/anomaly v2 · **activity-FSM** (конечный автомат +
+event-journal start/stop/duration) · метрич. калибровка. Продукт (упаковка) — следующая, пока не
+определённая фаза. План — `mvm/docs/phase-11-plan.md`.
 
 ## Для Claude Code
 

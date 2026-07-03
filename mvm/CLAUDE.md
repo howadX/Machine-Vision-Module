@@ -5,9 +5,29 @@
 
 ---
 
-## Статус (2026-07-02)
+## Статус (2026-07-03)
 
-- **Ветка:** `rust-core` (основная). **12 крейтов, 443 теста зелёных** (1 ignored — hardware live-camera), release чист.
+- **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
+  493 теста зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 11 — Fusion-полировка (В РАБОТЕ, `+0 ONNX`, чистая арифметика, 2026-07-03):** реляц.-темпоральная
+  арифметика над Scene JSON. Закрыто: **11.A1** mask-контакт (`InstanceMask` → `mvm-core`, `ObjectState.mask`
+  плоско на обоих путях, контакт по силуэту с 2-cell дилатацией + честный bbox-fallback, `92e804aa`);
+  **11.A2** фикс мис-атрибуции (object-major: спорный объект → одному человеку по силе претензии
+  hand>wrist>reaching-wrist, затем близость к центру силуэта, затем id; `718cdd83`); **11.C1–C2** ядро
+  activity-FSM `Candidate→Active→Cooling→Ended` + event-journal (`mvm-core/src/activity.rs`, enter-dwell 3 /
+  exit-dwell 5, conf-EMA λ0.7, ключ=(label, sorted participants), poor-man's-HSMM: θ_lo(d)-exit + per-label
+  MAX_DWELL-cap + `stable_participants`; `627ba66a`/`638add4b`); **11.C3** проводка mesh (`FusionAgent` владеет
+  journal, frame_id-гейт, `WorldState.events`, writer дренирует эксклюзивно; `3aeeb1ca`); **11.C5** контракт
+  (`JsonActivity` +аддитивно `state`/`started_at`/`duration_s`, новый `events[]`, `stable_zones[]`;
+  обратная совместимость байт-в-байт; `9c9c4422`); **11.C6** опц. ephemeral-churn стичинг (за 10.7, off по
+  умолчанию; `b1eee6a7`); **11.B1** зоны с persistence (`ZoneTracker`: стабильные id над union-find,
+  workstation/seating-семантика, miss-cap 5; `c260b4cf`); **11.B2** anomaly v2 (noisy-OR: нежданный объект +
+  pose-OOD `plausibility` + падение standing→lying за 3с; затухающий пик λ0.9; `ee036bc5`); **11.D1** метрич.
+  self-calib `ScaleCalibrator` (`K=fx·real=d·pixel`, медиана; `fx_given_real`/`real_given_fx`; провалидирован
+  на 2.5м YuNet-сэмпле <0.2м; `b1eee6a7`). **Отложено/gated:** **11.C4** (sync-journal — sync-путь пока эмитит
+  сырые активности без temporal-полей); **11.A3** (person-маски в cost-матрицу трекера — ждёт live ≥2 людей);
+  auto-`fx` live-wiring (нужен метрич. референс в кадре → продуктовая фаза). **Live-валидация на риге —
+  предстоит** (A1/A2/B2 меняли горячие места sync-пути). План — `docs/phase-11-plan.md`.
 - **Data-collection ЗАКРЫТ (SUPREME-валидация 2026-07-02, 3 чел.+собака, 120с/116 тиков):** основной sync-путь
   `--native-camera` собирает и парсит ВСЕ сигналы всех агентов (покрытие: id/face_verified 100%, поза/3D 98%,
   motion 99%, эмоция+8dist+энтропия 88%, head 88%, **кисти/запястья 62/68%** — были 0%, дроп починен, hands
@@ -146,7 +166,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 ```bash
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm-cli (~26 МБ, модели embedded)
-cargo test --workspace         # 248 тестов
+cargo test --workspace         # 493 теста
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
@@ -168,12 +188,12 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 
 | Крейт | Содержимое |
 |-------|------------|
-| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space, EMOTION fuse (PoE), **WorldState** (блэкборд, 8.A/8.B), `assignment` (Hungarian/Kuhn–Munkres, 9.10) |
+| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator` 11.D1), EMOTION fuse (PoE), **WorldState** (блэкборд, 8.A/8.B), `assignment` (Hungarian/Kuhn–Munkres, 9.10), `activity` (FSM+journal 11.C), `anomaly` (v2 scorer 11.B2), `mask` (`InstanceMask` 11.A1) |
 | **mvm-detect** | YuNet ONNX (228KB, embed, multi-stride NMS) — лицо |
 | **mvm-identity** | SFace ONNX (37MB, 128d L2-эмбеддинг, gallery, `embed()`) |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |
 | **mvm-posture** | нативная BlazePose two-stage (детектор+поза) + **feature→RandomForest** классификатор (method C, 3 класса) + VAE (OOD-only); `compute_features`/`pose_from_face`, `NativePose` мульти-persona |
-| **mvm-fusion** | `build_scene` (union-find граф+зоны) + `fuse()` PoE; activities + anomaly_score (8.F) |
+| **mvm-fusion** | `build_scene` (union-find граф+зоны) + `fuse()` PoE; activities + anomaly_score (8.F); `ZoneTracker` (persistence+семантика зон, 11.B1) |
 | **mvm-scene** | YOLO26n ONNX (9.5МБ, end-to-end NMS-free), object-узлы (id≥10000) + `ObjectTracker` [8.E] |
 | **mvm-depth** | Depth-Anything-V2-Small ONNX (квант 27МБ, ~230мс CPU), depth-anchoring к торс-Z [8.E.2] |
 | **mvm-hands** | MediaPipe handpose ONNX (4МБ), 21 lm/рука, ROI из запястий BlazePose [8.E.4] |
@@ -275,7 +295,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
 | **9** | ✅ | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery + Hungarian global assignment, **+0 ONNX** — закрыта |
 | **10** | ✅ | **Full Data Collection — ЗАКРЫТА** (SUPREME-validated, 3 чел.+собака, 120с): 10.0 эмит вычисленного, 10.1 эмоция (CHW-корень + YuNet-лендмарки + align), 10.2 кисти (жесты/handedness/vis-relax), 10.3 head-orientation, 10.5 ledger — `+0 ONNX`; 10.4 Segmentation (**+1 ONNX**): спайк GO + ядро + `YoloSegDetector` + sync-live-интеграция (`--masks`, `attach_masks`, depth-по-маске, `mask_coverage`); **+ фиксы сессии:** sync-дроп кистей починен, `face_verified`, sync-fusion-активности, model-corroborated анти-животное-гейт. **Все агенты собирают+парсят все параметры на основном пути.** Осталось = fusion (реляц. атрибуция, next phase) + детектор-пороги YOLO (телефон/bowl/собака-как-handbag) + опц. mesh-зеркалирование. person-маски 10.7 — есть эмпирика ≥2 чел., реализация в fusion-фазе |
-| **11** | 🔜 | Продукт |
+| **11** | 🔨 в работе | **Fusion-полировка** (`+0 ONNX`) — реляц.-темпоральная арифметика над Scene JSON. **Закрыто:** A1 mask-контакт, A2 фикс мис-атрибуции, C1–C3+C5–C6 activity-FSM+event-journal+контракт (C4 sync-проводка отложена), B1 зоны-persistence, B2 anomaly v2, D1 метрич. self-calib. **Осталось:** A3 person-маски (gated ≥2 людей), C4 sync-journal, live-валидация. План — `mvm/docs/phase-11-plan.md`. Продукт — след. (пока не определённая) фаза |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
 
@@ -330,10 +350,36 @@ Machine Vision Module/           ← корень (cwd при запуске)
 > **❌ Отложено (фаза 11+):** ST-GCN/MPED-RNN/VideoMAE (нейро-действия). **Caveat:** nano-маски грубы на
 > мелких/дальних объектах → спайк-гейт 10.1 первый. SAM/Mask R-CNN отвергнуты ($0/CPU).
 
-### 🔜 Фаза 11 — Продукт
+### 🔜 Фаза 11 — Fusion-полировка
 
-Авто-калибровка fx (zero-config) · drag-and-drop галерея (фото в папку = новый человек) · one-click
-install (один бинарник, без pip/venv/Python) · systemd service + cron state dump.
+Данные готовы (фаза 10) → Фаза 11 работает **НАД Scene JSON**: реляц.-темпоральная арифметика,
+объединяющая покадровые сигналы в связки/обобщения/активности. **+0 ONNX** для всего ядра. Детальный
+план и research (FSM vs HMM/HSMM/CRF/GCN, «poor man's HSMM») — `mvm/docs/phase-11-plan.md`.
+
+- **A. Реляц./атрибуция:** ✅ A1 mask-контакт (`InstanceMask::contains_norm_within` вместо bbox под
+  `--masks`, силуэт срезает фон), ✅ A2 фикс мис-атрибуции (object-major, спорный объект → одному человеку);
+  🔜 A3 person-маски 10.7 (в cost-матрицу фазы 9, не узел — **gated ≥2 людей**).
+- **B. Зоны/anomaly v2:** ✅ B1 семантич. зоны с persistence над union-find (`ZoneTracker`: стабильные id,
+  workstation/seating-подпись, miss-cap); ✅ B2 anomaly v2 (`AnomalyScorer` noisy-OR: нежданный объект +
+  pose-OOD `plausibility` + падение standing→lying; затухающий пик).
+- **C. Activity-FSM (ядро):** ✅ конечный автомат `Candidate→Active→Cooling→Ended` (dwell+гистерезис, аналог
+  `MotionClassifier`/`PostureStabilizer`) → стабильные активности + **event-journal** (start/stop/duration),
+  `mvm-core/src/activity.rs`; `Activity` не тронут, `JsonActivity` аддитивно получил `state`/`started_at`/
+  `duration_s`, новый `events[]`. poor-man's-HSMM (θ_lo(d), MAX_DWELL-cap), C6 опц. churn-стичинг. **C4
+  (sync-проводка) отложена** — sync эмитит сырые активности без temporal-полей.
+- **D. 3D метрич. калибровка:** ✅ D1 `ScaleCalibrator` (`K=fx·real=d·pixel`, медиана; провалидирован на
+  2.5м-сэмпле). Live auto-`fx` (нужен метрич. референс) → продуктовая фаза.
+
+**Порядок (факт):** `A1 → A2 → C1–C2 → C3 → C5 → C6 → B1 → B2 → D1`; A3 (≥2 людей) и C4 (sync-journal) —
+осталось. Live-валидация на риге — предстоит.
+**Отложено за фазу** (обученные модели против +0-dep): predictive-state (SG-LKF/EDL/PDF), MLP-fusion
+(Level-2), LLM-рендер (Level-3), нейро-действия (ST-GCN/VideoMAE), audio/YAMNet.
+
+### 🔜 Следующая фаза (не определена) — Продукт
+
+Авто-калибровка fx (zero-config UX) · drag-and-drop галерея (фото в папку = новый человек) · one-click
+install (один бинарник, без pip/venv/Python) · systemd service + cron state dump. К упаковке рано —
+сначала fusion-ядро.
 
 ---
 

@@ -1,108 +1,64 @@
 # Machine Vision Module
 
-*Structured Decomposed Picture-to-Text — эталонная multi-agent система машинного зрения.*
+*Structured Decomposed Picture-to-Text — гибридный Python+Rust проект.*
 
-## Идентичность
+## Структура
 
-MVM — не монолитная PTT-модель. MVM — ансамбль независимых микро-агентов, каждый из которых обучен под одну задачу и отдаёт структурированный сигнал с confidence. Истина рождается не в генерации текста, а в **fusion-логике**, собирающей пазл из мнений агентов.
-
-### MVM vs Holistic PTT
-
-| | Holistic PTT (LLaVA, GPT-4V) | Structured Decomposed PTT (MVM) |
-|---|---|---|
-| Архитектура | Одна модель end-to-end | Ансамбль специалистов |
-| Обучение | Совместное | Независимое per-agent |
-| Вывод | Текст (неструктурированный) | Поля + confidence |
-| Заменимость | Переобучение всей модели | Замена одного агента |
-| Предел качества | Размер модели | Качество fusion-логики |
-| Интерпретируемость | Чёрный ящик | Каждый сигнал прослеживаем |
-
-## Архитектура
-
-### Слои
-
-| Слой | Роль | Статус |
-|------|------|--------|
-| **0 — Ядро** | Identity, Emotion, Posture, 3D-пространство | ✅ production |
-| **1 — Gaze + Hands** | Направление взгляда, жесты рук | Фаза 1 |
-| **2 — Objects** | Предметы в кадре (YOLO) | Фаза 2 |
-| **3 — Activity** | Fusion-правила: поза+объекты+руки→действие | Фаза 3 |
-| **4 — Scene** | Описание помещения (Places365) | Фаза 4 |
-
-### Микро-агенты (слой 0)
+> **После слияния `rust-core`→`master` (2026-07-02):** корень = **Rust-продакшн** + рабочий гибрид-bridge;
+> автономный **Python-прототип** вынесен в `prototype/`. Историю Python-линии см. на ветках
+> `python-prototype`/`3d-workspace` и теге `backup/master-pre-merge`.
 
 ```
-Кадр ──→ [PoseLandmarker]  ──→ 33 COCO landmarks ──→ 3D Workspace ──→ (x,y,z)м
-     ├─→ [FaceLandmarker]  ──→ 468 face landmarks ──→ MLP ──→ emotion
-     ├─→ [ArcFace]         ──→ 512d embedding ──→ identity + confidence
-     ├─→ [HSEmotion]       ──→ 8-class ──→ emotion (fallback)
-     └─→ [PoseVAE]         ──→ latent 32d ──→ posture + plausibility
+Machine Vision Module/
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 443 теста; фаза 10 закрыта → фаза 11 Fusion)
+│   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
+│   ├── docs/       #   phase-* prompts/runbooks
+│   └── CLAUDE.md   #   ← детальный контекст Rust-части (source of truth)
+├── core/           # Python гибрид-bridge: face_id, workspace_3d, … (нужен пути `--native`)
+├── tools/          # Python bridge-инструменты: mvm_bridge.py (JSON-мост), calib_3d.py
+├── models/         # Веса: ONNX/MediaPipe (.task), references/ (крупные gitignored)
+├── src/            # sightd (legacy Rust daemon, заменён на mvm/)
+├── spike_pose/     # Питон-спайки тренировки позы (method-C)
+└── prototype/      # ⚙ Python-ПРОТОТИП (архив): sight.py, pipeline/ (обучение), data/, legacy/, tests/, assets/
 ```
 
-Каждый агент:
-- Обучается независимо
-- Отдаёт confidence
-- Ничего не знает о других агентах
-- **Осознание за 1-6 мс** — в 20-500× быстрее человеческого зрительного восприятия (150-500ms; Thorpe 1996, Dehaene 2006)
+## Как работает
 
-### 3D Workspace
+Два пути захвата:
 
-Единое метрическое пространство в метрах. Камера = (0,0,0). Калибровка через pinhole-модель по известному размеру торса (0.5 м).
+- **`--native-camera`** (основной, фаза 7+): чистый Rust v4l2 MJPG → body-primary цепочка
+  (BlazePose-тело + YuNet-лицо + SFace + EmotiEffLib + YOLO26n-объекты + Depth-Anything + handpose)
+  → метрический 3D scene-graph. **Ноль Python.**
+- **`--native`** (bridge, для тестов/дебага): Python `tools/mvm_bridge.py` захватывает камеру и выдаёт
+  JSON lines, Rust обогащает нативными ONNX-моделями. venv остаётся для этого пути.
 
-### Ключевой принцип: Fusion Logic
+```bash
+# Основной путь — чистый Rust, всё нативно
+cd mvm && target/release/mvm-cli --native-camera --dump-interval 3 --dump-json
 
-Fusion — не ML-модель. Fusion — набор правил и геометрических операций:
+# Визуальный дебаг: все детекторы цветом своего агента → /tmp/mvm_scene.jpg
+cd mvm && target/release/mvm-cli --native-camera --dump-interval 3 --scene-debug
 
-- **Temporal Fusion** (PersonTracker): связывает identity между кадрами по bbox + 3D-близости
-- **Spatial Fusion** (World3D): связывает детекты с разных камер в единой системе координат
-- **Logical Fusion** (Activity): поза + руки + объекты → контекст
-
-**Главный вызов:** с ростом числа агентов сложность fusion-логики растёт экспоненциально. Архитектура должна быть устойчивой с самого начала — каждый слой изолирован, каждый fusion-оператор заменяем.
-
-### Архитектурные принципы (из нейронауки сознания)
-
-Проект опирается на пересечение нейронауки сознания и ML-архитектур. Полный анализ: `~/wiki/machine-vision/02-consciousness-ml-research.md` и `~/wiki/machine-vision/03-architecture-principles.md`.
-
-| Принцип | Нейронаучная основа | Реализация в MVM |
-|----------|-------------------|------------------|
-| **Feedforward = бессознательное** | Feedforward sweep (150ms) — классификация без осознания (Lamme 2000) | MLP-агенты: 1 проход, <1ms |
-| **Рекуррентность = осознание** | Recurrent loops (150-500ms) — conscious access (Dehaene 2006) | PersonTracker: связь кадров во времени |
-| **Global Workspace = StateFile** | GWT (Baars/Dehaene): broadcast информации | StateFile.write(): момент «осознания» |
-| **System 1 / System 2** | Kahneman + Bengio (NeurIPS 2019) | MLP=System 1, CoT/LLM=System 2 |
-| **Confidence-first** | Индикаторы сознания (Butlin/Bengio et al. 2023) | Каждый сигнал агента имеет confidence |
-| **Attention = conscious access** | Attention bottleneck (VanRullen & Kanai 2021) | Будущее: attention поверх MLP для селекции |
-| **Деградация без подтверждения** | Memory decay без recurrent reactivation | PersonTracker: −0.02/с decay confidence |
-
-**Ключевая мантра:** MVM-агент не «осознаёт» в нейронаучном смысле. И это правильно — его задача не требует осознания. Осознание происходит в fusion-слое, когда разрозненные сигналы собираются в целостную картину.
-
-## Проект
-
-```
-core/          # Модули: face_id, emotion, pose, workspace_3d
-tools/         # Продакшен: sight.py, whoishere.py
-pipeline/      # Обучение и сбор данных
-models/        # Веса: emotion/, mediapipe/, references/
-src/           # Rust-компоненты
+# Bridge-путь (Python мост, для дебага)
+cd mvm && target/release/mvm-cli --native --once --dump-json
 ```
 
-### Ключевые инструменты
+**Камера:** `--native-camera` использует прямой v4l2 MJPG mmap; bridge использует `cv2.CAP_FFMPEG`
+(не V4L2) — обход PipeWire на Ubuntu 24+.
 
-| Инструмент | Назначение | Время |
-|-----------|-----------|-------|
-| `sight.py` | Полный пайплайн (identity + emotion + posture + 3D) | ~15s |
-| `whoishere.py` | Лёгкий (только identity + сцена) | ~3s |
+## Актуальная ветка
 
-### Окружение
+`rust-core` — основная ветка разработки.
 
-- Python 3.11+ (venv)
-- GPU: onnxruntime-gpu (CUDA 12) + ctypes.CDLL preload
-- MediaPipe: CPU delegate (llvmpipe не держит GPU)
-- HSEmotion: PyTorch GPU (~7ms)
+## Текущая фаза
 
-## Терминология
+**Фаза 11 — Fusion-полировка** (реляц.-темпоральная арифметика над Scene JSON, **+0 ONNX**): mask-контакт
+10.6 + person-маски 10.7 + фикс мис-атрибуции · зоны/anomaly v2 · **activity-FSM** (конечный автомат +
+event-journal start/stop/duration) · метрич. калибровка. Продукт (упаковка) — следующая, пока не
+определённая фаза. План — `mvm/docs/phase-11-plan.md`.
 
-- **Micro-agent** — независимый детектор (PoseLM, FaceLM, ArcFace, etc.)
-- **Fusion** — логический слой, собирающий сигналы агентов в описание
-- **Structured Decomposed PTT** — архитектурная идентичность MVM
-- **3D Workspace** — метрическая система координат в метрах
-- **Confidence-first** — каждый сигнал имеет числовую уверенность
+## Для Agents
+
+При работе с Rust-кодом — читай `mvm/CLAUDE.md` (полный контекст: архитектура, крейты, фазы, TDD-паттерны).
+
+Python-модули доступны по путям: `core/face_id.py`, `tools/mvm_bridge.py`, `core/workspace_3d.py`.
