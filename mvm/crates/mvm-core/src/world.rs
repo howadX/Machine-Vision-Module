@@ -169,6 +169,10 @@ pub struct ObjectState {
     pub age: u32,
     /// Metric position from depth-anchoring; `None` when no depth anchor.
     pub position_3d: Option<Position3D>,
+    /// Instance silhouette from the YOLO-seg expert (phase 10.4/11.A1), flat on
+    /// the state so mask-contact fusion can read it; `None` when masks are off
+    /// or no seg detection matched this object.
+    pub mask: Option<crate::mask::InstanceMask>,
     pub last_seen: Instant,
 }
 
@@ -309,6 +313,7 @@ mod tests {
             confidence: 0.82,
             age: 5,
             position_3d: Some(Position3D { x: 0.18, y: 0.65, z: 0.68, confidence: 0.4 }),
+            mask: None,
             last_seen: Instant::now(),
         };
         assert_eq!(o.id, 10000);
@@ -359,6 +364,7 @@ mod tests {
             confidence: 0.8,
             age: 1,
             position_3d: None,
+            mask: None,
             last_seen: now - std::time::Duration::from_millis(age_ms),
         };
         w.objects.push(mk(10000, 500)); // stale

@@ -636,6 +636,7 @@ impl StateFile {
                 position_3d: o
                     .pos_3d
                     .map(|[x, y, z]| mvm_core::Position3D { x, y, z, confidence: o.pos_conf }),
+                mask: o.mask.clone(),
                 last_seen: now_i,
             })
             .collect();
@@ -1295,7 +1296,7 @@ mod tests {
         let tracker = PersonTracker::new();
         let r = mvm_scene::MASK_RES as u32;
         let full = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
-        let mask = mvm_scene::InstanceMask::assemble(
+        let mask = mvm_scene::mask::assemble_mask(
             &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
             &full, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
         );
@@ -1608,6 +1609,7 @@ mod tests {
             confidence: 0.8,
             age: 2,
             position_3d: None,
+            mask: None,
             last_seen: std::time::Instant::now(),
         }
     }

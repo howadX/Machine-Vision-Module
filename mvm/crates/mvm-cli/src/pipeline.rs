@@ -1073,7 +1073,7 @@ mod tests {
         // Mask = the near silhouette only (top-right quadrant).
         let r = mvm_scene::MASK_RES as u32;
         let sil = mvm_core::BBox { x1: 0.5, y1: 0.0, x2: 1.0, y2: 0.5 };
-        let mask = mvm_scene::InstanceMask::assemble(
+        let mask = mvm_scene::mask::assemble_mask(
             &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
             &sil, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
         );

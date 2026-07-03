@@ -157,6 +157,21 @@ fn point_near_bbox(pt: [f32; 2], b: &BBox) -> bool {
         && pt[1] <= b.y2 + CONTACT_MARGIN
 }
 
+/// Mask-contact dilation (phase 11.A1 / 10.6): grid cells of slack around the
+/// silhouette, the mask analogue of `CONTACT_MARGIN` (2 cells ≈ 0.03 at 64²).
+const MASK_CONTACT_CELLS: usize = 2;
+
+/// Hand/wrist ↔ object contact. With an instance silhouette on the object the
+/// test is mask-containment (background inside the bbox no longer counts —
+/// phase 10.6 mask-contact); without one (masks off, no seg match, or a
+/// degenerate empty mask) it falls back to the bbox test.
+fn point_touches_object(pt: [f32; 2], o: &ObjectState) -> bool {
+    match &o.mask {
+        Some(m) if !m.is_empty() => m.contains_norm_within(pt, MASK_CONTACT_CELLS),
+        _ => point_near_bbox(pt, &o.bbox),
+    }
+}
+
 /// All interaction points of a person: every detected hand landmark plus the
 /// wrist anchors (always present, even when no hand model fired).
 fn contact_points(p: &PersonState) -> Vec<[f32; 2]> {
@@ -229,7 +244,7 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
         }
         for o in objects {
             if let Some(label) = interaction_label(&o.class) {
-                if pts.iter().any(|&pt| point_near_bbox(pt, &o.bbox)) {
+                if pts.iter().any(|&pt| point_touches_object(pt, o)) {
                     acts.push(Activity {
                         label: label.into(),
                         confidence: o.confidence.clamp(0.0, 1.0),
@@ -340,6 +355,7 @@ mod tests {
             confidence: 0.8,
             age: 2,
             position_3d: Some(Position3D { x: 9.0, y: 9.0, z: 9.0, confidence: 0.4 }), // stale
+            mask: None,
             last_seen: Instant::now(),
         }
     }
@@ -386,6 +402,7 @@ mod tests {
             confidence: 0.8,
             age: 1,
             position_3d: None,
+            mask: None,
             last_seen: Instant::now(),
         }
     }
@@ -401,6 +418,69 @@ mod tests {
         assert!(
             acts.iter().any(|a| a.label == "typing" && a.participants == vec![10, 10001]),
             "got {acts:?}"
+        );
+    }
+
+    // ── mask-contact (phase 11.A1 / 10.6) ──
+
+    /// A mask whose set cells are exactly those with centres inside `r`.
+    fn region_mask(r: &BBox) -> mvm_core::InstanceMask {
+        use mvm_core::MASK_RES;
+        let mut bits = vec![0u8; MASK_RES * MASK_RES];
+        for gy in 0..MASK_RES {
+            for gx in 0..MASK_RES {
+                let nx = (gx as f32 + 0.5) / MASK_RES as f32;
+                let ny = (gy as f32 + 0.5) / MASK_RES as f32;
+                if nx >= r.x1 && nx <= r.x2 && ny >= r.y1 && ny <= r.y2 {
+                    bits[gy * MASK_RES + gx] = 1;
+                }
+            }
+        }
+        mvm_core::InstanceMask::from_bits(bits)
+    }
+
+    #[test]
+    fn mask_contact_cuts_bbox_background() {
+        // Wrist inside the object's *bbox* but far outside its *silhouette* —
+        // the background contact the bbox test wrongly accepted. With a mask
+        // attached, the claim must not fire.
+        let mut p = person(1.0);
+        let bbox = BBox { x1: 0.2, y1: 0.5, x2: 0.8, y2: 0.7 };
+        let mut kb = obj_class(10001, "keyboard", bbox);
+        kb.mask = Some(region_mask(&BBox { x1: 0.2, y1: 0.5, x2: 0.45, y2: 0.7 }));
+        p.wrists = vec![[0.7, 0.6]]; // in bbox, ~0.25 right of the silhouette
+        assert!(
+            infer_activities(&[p], &[kb]).iter().all(|a| a.label != "typing"),
+            "bbox-only background contact must be cut by the mask"
+        );
+    }
+
+    #[test]
+    fn mask_contact_fires_on_silhouette() {
+        let mut p = person(1.0);
+        let bbox = BBox { x1: 0.2, y1: 0.5, x2: 0.8, y2: 0.7 };
+        let mut kb = obj_class(10001, "keyboard", bbox);
+        kb.mask = Some(region_mask(&BBox { x1: 0.2, y1: 0.5, x2: 0.45, y2: 0.7 }));
+        p.wrists = vec![[0.3, 0.6]]; // on the silhouette
+        let acts = infer_activities(&[p], &[kb]);
+        assert!(
+            acts.iter().any(|a| a.label == "typing" && a.participants == vec![10, 10001]),
+            "got {acts:?}"
+        );
+    }
+
+    #[test]
+    fn empty_mask_falls_back_to_bbox_contact() {
+        // A degenerate (all-empty) mask must not silence the interaction — fall
+        // back to the bbox test rather than claim "no silhouette anywhere".
+        let mut p = person(1.0);
+        let kb = obj_class(10001, "keyboard", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.62 });
+        let mut kb = kb;
+        kb.mask = Some(mvm_core::InstanceMask::empty());
+        p.wrists = vec![[0.40, 0.58]];
+        assert!(
+            infer_activities(&[p], &[kb]).iter().any(|a| a.label == "typing"),
+            "empty mask → honest bbox fallback"
         );
     }
 

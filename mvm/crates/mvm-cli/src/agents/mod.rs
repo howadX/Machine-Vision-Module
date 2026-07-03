@@ -107,6 +107,7 @@ pub(crate) fn project_objects(
             position_3d: t
                 .pos_3d
                 .map(|[x, y, z]| Position3D { x, y, z, confidence: t.pos_conf }),
+            mask: t.mask.clone(),
             last_seen: now,
         })
         .collect();

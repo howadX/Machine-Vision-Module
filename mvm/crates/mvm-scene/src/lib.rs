@@ -24,7 +24,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 pub mod mask;
-pub use mask::{InstanceMask, MASK_RES};
+pub use mask::{assemble_mask, InstanceMask, MASK_RES};
 
 /// COCO 80-class names, in the canonical ultralytics order.
 pub const COCO_CLASSES: [&str; 80] = [
@@ -731,7 +731,7 @@ impl YoloSegDetector {
             .into_iter()
             .map(|s| {
                 let bbox = canvas_to_norm(&s.boxb, &lb, orig_w, orig_h);
-                let mask = InstanceMask::assemble(
+                let mask = assemble_mask(
                     proto, n_proto, ph, pw, &s.coeffs, &bbox, lb, orig_w, orig_h, self.input_size,
                 );
                 SegDetection {
@@ -1147,7 +1147,7 @@ mod tests {
     }
     fn mk_mask(proto: &[f32], coeff: f32, b: &BBox) -> InstanceMask {
         let r = MASK_RES as u32;
-        InstanceMask::assemble(proto, 1, MASK_RES, MASK_RES, &[coeff], b, id_lb(), r, r, r)
+        assemble_mask(proto, 1, MASK_RES, MASK_RES, &[coeff], b, id_lb(), r, r, r)
     }
     /// A seg detection with a full-bbox uniform mask.
     fn full_seg(class: &'static str, b: BBox) -> SegDetection {
