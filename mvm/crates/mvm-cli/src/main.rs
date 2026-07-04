@@ -638,7 +638,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     // Assemble the mesh: capture → {human, scene, depth} → fusion → statefile.
     let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
     mesh.add(Box::new(agents::CaptureAgent::new(Box::new(camera), args.max_frames)));
-    mesh.add(Box::new(agents::HumanAgent::new(pipeline, person_tracker)));
+    mesh.add(Box::new(agents::HumanAgent::new(pipeline, person_tracker, person_mask_slot.clone())));
     if let Some(yolo) = yolo {
         mesh.add(Box::new(agents::SceneAgent::new(
             yolo,
