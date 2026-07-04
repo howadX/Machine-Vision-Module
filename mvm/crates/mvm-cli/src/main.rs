@@ -629,6 +629,8 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
 
     // Shared depth slot: DepthAgent writes, FusionAgent reads.
     let depth_slot: agents::DepthSlot = Arc::new(Mutex::new(None));
+    // Shared person-mask slot (11.A3): SceneAgent writes, HumanAgent reads.
+    let person_mask_slot: agents::PersonMaskSlot = Arc::new(Mutex::new(None));
 
     eprintln!("  camera: opening native v4l2 MJPG");
     let camera = mvm_pipeline::native::NativeCamera::open("/dev/video0", 1280, 720, false)?;
@@ -641,6 +643,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
         mesh.add(Box::new(agents::SceneAgent::new(
             yolo,
             seg,
+            person_mask_slot.clone(),
             mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
             config.object_score_thresh,
             config.object_min_area,
