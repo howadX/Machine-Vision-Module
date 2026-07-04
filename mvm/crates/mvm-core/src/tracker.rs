@@ -71,6 +71,13 @@ const IOU_GATE: f32 = 0.3;
 /// during association (OC-SORT, phase 9.2). Small by design: it disambiguates
 /// near-ties (crossing bodies, weak frames) without overriding a clear IoU win.
 const W_OCM: f32 = 0.05;
+/// Weight of the person-silhouette (mask-IoU) term in the association cost
+/// (phase 11.A3). Only added when ≥2 established people are present (the
+/// walking-fragmentation regime); 2× `W_OCM` so a clear silhouette match
+/// disambiguates a near-tie crossing, yet well under a decisive IoU win so
+/// geometry still leads. Absent masks → the term is zero → the <2-person /
+/// no-seg path is byte-identical to pre-A3.
+const W_MASK: f32 = 0.10;
 /// EMA factor for the observation-centric velocity (phase 9.2). Responsive
 /// enough to follow real motion, smoothed enough to reject single-frame jitter.
 const OBS_VEL_EMA: f32 = 0.5;
@@ -328,6 +335,19 @@ impl PersonTracker {
             v.sort_unstable();
             v
         };
+        // Person-silhouette cue (phase 11.A3) is gated to the multi-person regime:
+        // only when ≥2 established tracks are live does mask-IoU enter the cost.
+        // On 0/1 person there is nothing to disambiguate and the term stays out,
+        // keeping the association byte-identical to pre-A3.
+        // NB: `missed` was just incremented by Step 2 for every track (it is the
+        // pre-match frame gap), so the gate keys off lifecycle only — an
+        // established (Confirmed/IdLocked) track is a person currently held.
+        let mask_cue_on = self
+            .tracks
+            .values()
+            .filter(|t| t.lifecycle.is_established())
+            .count()
+            >= 2;
         let primary_track: Vec<Option<u32>> = if high.is_empty() || cand_ids.is_empty() {
             vec![None; high.len()]
         } else {
@@ -355,7 +375,19 @@ impl PersonTracker {
                                 }
                                 _ => 0.0,
                             };
-                            -(iou + W_OCM * momentum) // minimise cost = maximise score
+                            // Mask-IoU (phase 11.A3): silhouette agreement between
+                            // this detection and the track's last observed mask —
+                            // gated, lagged (masks arrive on the seg cadence), and
+                            // zero whenever either side lacks a mask.
+                            let mask_iou = if mask_cue_on {
+                                match (&det.mask, &t.last_obs_mask) {
+                                    (Some(dm), Some(tm)) => dm.iou(tm),
+                                    _ => 0.0,
+                                }
+                            } else {
+                                0.0
+                            };
+                            -(iou + W_OCM * momentum + W_MASK * mask_iou) // minimise cost = maximise score
                         })
                         .collect()
                 })
@@ -1394,6 +1426,79 @@ mod tests {
         // Optimal (Hungarian): T0 follows D1 (0.43), T1 follows D0 (0.48).
         assert!((c0[0] - 0.43).abs() < 0.01, "T0 took the nearer detection D1, got {c0:?}");
         assert!((c1[0] - 0.48).abs() < 0.01, "T1 took D0, got {c1:?}");
+    }
+
+    /// Set up the near-tie crossing shared by the two 11.A3 mask tests: two tracks
+    /// predicted at 0.35..0.55 (T0) and 0.45..0.65 (T1), each pinned with a prior
+    /// silhouette (T0=top half, T1=bottom half). Detections centred ~0.50 make
+    /// bbox-IoU slightly favour the SWAP (D0→T1, D1→T0); each carries its true
+    /// silhouette. `t1_established` toggles the ≥2-people gate. Returns (tracker,
+    /// t0, t1, top, bottom).
+    fn crossing_with_masks(t1_established: bool)
+        -> (PersonTracker, u32, u32, crate::mask::InstanceMask, crate::mask::InstanceMask) {
+        let top = mask_rect(0.0, 0.0, 1.0, 0.5);
+        let bottom = mask_rect(0.0, 0.5, 1.0, 1.0);
+        let mut t = PersonTracker::new();
+        t.tick(&[
+            Detection::bare(0.35, 0.40, 0.55, 0.60),
+            Detection::bare(0.45, 0.40, 0.65, 0.60),
+        ]);
+        let mut ids: Vec<u32> = t.all().keys().copied().collect();
+        ids.sort_unstable();
+        let (t0, t1) = (ids[0], ids[1]);
+        let setup = [
+            (t0, 0.35_f32, 0.55_f32, top.clone(), LifecycleState::Confirmed),
+            (
+                t1,
+                0.45,
+                0.65,
+                bottom.clone(),
+                if t1_established { LifecycleState::Confirmed } else { LifecycleState::Tentative },
+            ),
+        ];
+        for (id, x1, x2, mask, life) in setup {
+            let b = BBox { x1, y1: 0.40, x2, y2: 0.60 };
+            let tr = t.tracks.get_mut(&id).unwrap();
+            tr.kalman = KalmanBBox::new(b);
+            tr.bbox = b;
+            tr.missed = 0;
+            tr.obs_velocity = None; // kill OCM → the cue under test is the mask
+            tr.lifecycle = life;
+            tr.last_obs_mask = Some(mask);
+        }
+        (t, t0, t1, top, bottom)
+    }
+
+    #[test]
+    fn mask_iou_disambiguates_crossing_with_two_people() {
+        // ≥2 established people: the gated mask-IoU term overcomes the small IoU
+        // swap-bias and routes each detection to its silhouette-matched track.
+        let (mut t, t0, t1, top, bottom) = crossing_with_masks(true);
+        let mut d0 = Detection::bare(0.405, 0.40, 0.605, 0.60); // centre 0.505, IoU-favours T1
+        d0.mask = Some(top.clone());
+        let mut d1 = Detection::bare(0.395, 0.40, 0.595, 0.60); // centre 0.495, IoU-favours T0
+        d1.mask = Some(bottom.clone());
+        t.tick(&[d0, d1]);
+        let m0 = t.tracks.get(&t0).unwrap().last_obs_mask.clone().unwrap();
+        let m1 = t.tracks.get(&t1).unwrap().last_obs_mask.clone().unwrap();
+        assert!(m0.iou(&top) > 0.9, "T0 followed its top-silhouette detection (no swap)");
+        assert!(m1.iou(&bottom) > 0.9, "T1 followed its bottom-silhouette detection");
+    }
+
+    #[test]
+    fn mask_cue_gated_off_below_two_people() {
+        // Only ONE established track → the cue is gated off and pure geometry wins:
+        // the IoU-preferred SWAP. Proves the mask term never perturbs the
+        // <2-person path (byte-identical to pre-A3), even with masks present.
+        let (mut t, t0, _t1, top, bottom) = crossing_with_masks(false);
+        let mut d0 = Detection::bare(0.405, 0.40, 0.605, 0.60);
+        d0.mask = Some(top.clone());
+        let mut d1 = Detection::bare(0.395, 0.40, 0.595, 0.60);
+        d1.mask = Some(bottom.clone());
+        t.tick(&[d0, d1]);
+        // Swap: T0 takes D1 (bottom silhouette).
+        let m0 = t.tracks.get(&t0).unwrap().last_obs_mask.clone().unwrap();
+        assert!(m0.iou(&bottom) > 0.9, "gate off → T0 took the IoU-preferred (swapped) detection");
     }
 
     #[test]
