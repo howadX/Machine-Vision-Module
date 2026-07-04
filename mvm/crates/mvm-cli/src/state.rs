@@ -204,6 +204,12 @@ struct JsonObject {
     /// depth-by-mask / contact signal).
     #[serde(skip_serializing_if = "Option::is_none")]
     mask_coverage: Option<f32>,
+    /// Object-permanence hold (phase 11): `true` when this is a *remembered*
+    /// static fixture (keyboard/mouse/…) currently occluded by the operating
+    /// hands rather than freshly detected — its box is held so hand-on-keyboard
+    /// `typing` stays attributable. Omitted (false) for freshly-seen objects.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    remembered: bool,
 }
 
 /// A cross-group activity in the JSON (phase 8.F). The temporal fields
@@ -442,6 +448,10 @@ fn object_state_to_json(o: &mvm_core::ObjectState) -> JsonObject {
         pos: o.position_3d.map(|q| [q.x, q.y, q.z]),
         bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
         mask_coverage: None, // mesh path masks are a follow-up (phase 10.4)
+        // ObjectState carries no missed-count; the mesh JSON can't flag
+        // remembered fixtures yet (the hold itself still works — held objects
+        // reach fusion). Surfacing the flag on mesh is a follow-up.
+        remembered: false,
     }
 }
 
@@ -664,6 +674,7 @@ impl StateFile {
             pos: o.pos_3d,
             bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
             mask_coverage: o.mask.as_ref().map(|m| m.frame_coverage()),
+            remembered: o.missed > 0,
         }).collect();
 
         let scene = mvm_fusion::build_scene(entities);

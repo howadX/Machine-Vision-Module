@@ -97,13 +97,36 @@ const HIGH_BAR_CLASSES: &[&str] = &[
     "refrigerator", "oven", "microwave", "sink", "toaster",
 ];
 
+/// Static desk fixtures that do not move during use and are routinely occluded
+/// by the user's own hands while in use (phase 11 object-permanence). Once
+/// confirmed, the tracker keeps emitting them across a long hand-occlusion so a
+/// keyboard doesn't vanish — and `typing` with it — the moment the hands land on
+/// it. Kept deliberately narrow: things a person operates in place, not
+/// furniture they sit on / carry.
+pub const STATIC_CLASSES: &[&str] =
+    &["keyboard", "mouse", "laptop", "tv", "dining table", "remote"];
+
+/// Whether a class is a static desk fixture eligible for object-permanence hold.
+pub fn is_static(class_name: &str) -> bool {
+    STATIC_CLASSES.contains(&class_name)
+}
+
+/// Static desk tools the user's hands routinely cover *while operating them*
+/// (phase 11): give them a slightly lower detection floor than the base so the
+/// partial, hand-occluded view that first seeds the permanence hold still clears
+/// the gate. Distinct from furniture, which needs a *higher* bar.
+const LOW_BAR_CLASSES: &[&str] = &["keyboard", "mouse"];
+
 /// Per-class minimum score (phase 8.E filter A, per-class). Small interaction
 /// objects (cup, keyboard, mouse, phone…) keep the low `base` floor so they
 /// survive a ceiling-angle / partial view; flicker-prone large furniture is held
-/// to a higher bar. `base` is `Config.object_score_thresh`.
+/// to a higher bar; hand-covered desk tools (keyboard/mouse) get a slightly
+/// lower floor to seed the permanence hold. `base` is `Config.object_score_thresh`.
 pub fn class_score_threshold(class_name: &str, base: f32) -> f32 {
     if HIGH_BAR_CLASSES.contains(&class_name) {
         base.max(0.50)
+    } else if LOW_BAR_CLASSES.contains(&class_name) {
+        (base - 0.08).max(0.20)
     } else {
         base
     }
@@ -150,7 +173,22 @@ pub struct ObjectTracker {
     iou_thresh: f32,
     timeout: u32,
     ema_alpha: f32,
+    /// Object-permanence hold for confirmed *static* fixtures (phase 11): missed
+    /// detection-frames a keyboard/mouse/… is still emitted (as `remembered`)
+    /// while occluded by the operating hands, far beyond `timeout`. A static
+    /// object doesn't walk away, so holding its last box is safe and keeps
+    /// hand-on-keyboard `typing` attributable.
+    static_hold: u32,
 }
+
+/// Confirmations (matched detection-frames) a static object needs before the
+/// permanence hold trusts it — one clean flicker must not mint a multi-second
+/// phantom keyboard.
+pub const STATIC_HOLD_MIN_AGE: u32 = 2;
+/// Default permanence hold in missed detection-frames. At `object_cadence=3` /
+/// ~15 fps this is ~15 s — long enough to survive a typing burst, short enough
+/// that a genuinely removed fixture clears within a sensible window.
+pub const DEFAULT_STATIC_HOLD: u32 = 75;
 
 impl Default for ObjectTracker {
     fn default() -> Self {
@@ -172,6 +210,24 @@ impl ObjectTracker {
             iou_thresh,
             timeout,
             ema_alpha,
+            static_hold: DEFAULT_STATIC_HOLD,
+        }
+    }
+
+    /// Override the static-object permanence hold (phase 11). `0` disables it
+    /// (pre-11 behaviour: static objects expire on `timeout` like everything else).
+    pub fn with_static_hold(mut self, static_hold: u32) -> Self {
+        self.static_hold = static_hold;
+        self
+    }
+
+    /// The retention/emission horizon for a track: the long permanence hold for a
+    /// confirmed static fixture, else the ordinary `timeout`.
+    fn hold_limit(&self, t: &TrackedObject) -> u32 {
+        if self.static_hold > 0 && is_static(t.class_name) && t.age >= STATIC_HOLD_MIN_AGE {
+            self.static_hold
+        } else {
+            self.timeout
         }
     }
 
@@ -246,21 +302,32 @@ impl ObjectTracker {
                 self.tracks[ti].missed += 1;
             }
         }
-        let timeout = self.timeout;
+        // Expiry: a confirmed static fixture rides the long permanence hold
+        // (phase 11); everything else the ordinary timeout.
+        let holds: Vec<u32> = self.tracks.iter().map(|t| self.hold_limit(t)).collect();
         let mut freed = Vec::new();
+        let mut i = 0;
         self.tracks.retain(|t| {
-            if t.missed > timeout {
+            let keep = t.missed <= holds[i];
+            if !keep {
                 freed.push(t.id);
-                false
-            } else {
-                true
             }
+            i += 1;
+            keep
         });
         for id in freed {
             self.free_ids.push(Reverse(id));
         }
 
-        self.tracks.iter().filter(|t| t.missed == 0).cloned().collect()
+        // Emit currently-seen tracks plus *remembered* static fixtures — a
+        // keyboard held under the operating hands still anchors `typing`
+        // (phase 11 object-permanence). `TrackedObject.missed > 0` marks the
+        // remembered ones so consumers can tell "held" from "seen".
+        self.tracks
+            .iter()
+            .filter(|t| t.missed == 0 || self.hold_limit(t) > self.timeout)
+            .cloned()
+            .collect()
     }
 }
 
@@ -1045,12 +1112,21 @@ mod tests {
     fn class_score_threshold_raises_bar_for_flicker_furniture() {
         // Small interaction objects keep the low base floor.
         assert!((class_score_threshold("cup", 0.35) - 0.35).abs() < 1e-6);
-        assert!((class_score_threshold("keyboard", 0.35) - 0.35).abs() < 1e-6);
         // Flicker-prone furniture is held to ≥0.50.
         assert!((class_score_threshold("couch", 0.35) - 0.50).abs() < 1e-6);
         assert!((class_score_threshold("bed", 0.35) - 0.50).abs() < 1e-6);
         // A base above the furniture bar wins (never lowers it).
         assert!((class_score_threshold("couch", 0.60) - 0.60).abs() < 1e-6);
+    }
+
+    #[test]
+    fn class_score_threshold_lowers_bar_for_hand_covered_desk_tools() {
+        // keyboard/mouse get a slightly lower floor (phase 11) so the partial,
+        // hand-occluded view that seeds object-permanence still clears the gate.
+        assert!((class_score_threshold("keyboard", 0.30) - 0.22).abs() < 1e-6);
+        assert!((class_score_threshold("mouse", 0.30) - 0.22).abs() < 1e-6);
+        // …but never below the 0.20 hard floor.
+        assert!((class_score_threshold("keyboard", 0.25) - 0.20).abs() < 1e-6);
     }
 
     // ── object tracker (filter B) ──────────────────────────────────────────
@@ -1114,6 +1190,70 @@ mod tests {
         // New object reuses the freed id.
         let id2 = t.update(&[od("bottle", 0.1, 0.1, 0.2, 0.3, 0.7)])[0].id;
         assert_eq!(id2, id1, "freed id should be reused");
+    }
+
+    // ── object-permanence for static fixtures (phase 11) ──────────────────
+
+    #[test]
+    fn static_fixture_held_under_hand_occlusion_then_resumes() {
+        // Confirm a keyboard (age≥2), then occlude it for many frames > timeout:
+        // it keeps being *emitted* (remembered), keeps its id, and resumes on
+        // re-detection — hand-on-keyboard `typing` stays attributable.
+        let mut t = ObjectTracker::with_params(0.3, 3, 0.5).with_static_hold(20);
+        t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
+        let id = t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)])[0].id; // age 2 → confirmed
+        for k in 0..10 {
+            // absent (hands cover it) — well past timeout=3.
+            let vis = t.update(&[]);
+            assert_eq!(vis.len(), 1, "held keyboard still emitted at miss {}", k + 1);
+            assert_eq!(vis[0].id, id, "same id");
+            assert!(vis[0].missed > 0, "flagged as remembered");
+        }
+        let back = t.update(&[od("keyboard", 0.41, 0.4, 0.61, 0.55, 0.6)]);
+        assert_eq!(back[0].id, id, "re-detection resumes the same track");
+        assert_eq!(back[0].missed, 0, "no longer remembered — seen again");
+    }
+
+    #[test]
+    fn static_fixture_needs_confirmation_before_hold() {
+        // A single-frame keyboard flicker (age 1) must NOT mint a held phantom.
+        let mut t = ObjectTracker::with_params(0.3, 2, 0.5).with_static_hold(20);
+        t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]); // age 1 only
+        for _ in 0..4 {
+            assert!(t.update(&[]).is_empty(), "unconfirmed static object is not held");
+        }
+    }
+
+    #[test]
+    fn static_hold_eventually_expires() {
+        let mut t = ObjectTracker::with_params(0.3, 2, 0.5).with_static_hold(5);
+        t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
+        t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]); // confirmed
+        for _ in 0..5 {
+            assert_eq!(t.update(&[]).len(), 1, "held within the window");
+        }
+        assert!(t.update(&[]).is_empty(), "expires past the static hold");
+    }
+
+    #[test]
+    fn non_static_object_is_not_held() {
+        // A cup is a moved-around object — it must expire on the ordinary
+        // timeout, never ride the permanence hold.
+        let mut t = ObjectTracker::with_params(0.3, 2, 0.5).with_static_hold(20);
+        t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
+        t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
+        for _ in 0..3 {
+            t.update(&[]);
+        }
+        assert!(t.update(&[]).is_empty(), "cup expires on timeout, not held");
+    }
+
+    #[test]
+    fn static_hold_zero_restores_pre11_behaviour() {
+        let mut t = ObjectTracker::with_params(0.3, 2, 0.5).with_static_hold(0);
+        t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
+        t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
+        assert!(t.update(&[]).is_empty(), "hold disabled → keyboard not emitted while absent");
     }
 
     #[test]
