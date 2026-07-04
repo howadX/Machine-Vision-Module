@@ -151,7 +151,15 @@ pub(crate) fn anchor_objects(
     let k = ks[ks.len() / 2];
 
     for o in objects.iter_mut() {
-        match depth.median_in_bbox(&o.bbox) {
+        // Mask-median depth (phase 11): when a YOLO-seg mask rides the object,
+        // sample depth over the silhouette (`median_at_points`) instead of the
+        // bbox — the bbox bleeds background/foreground depth. Mirrors the sync
+        // `anchor_objects_depth`; falls back to bbox-median when no mask.
+        let obj_depth = match &o.mask {
+            Some(m) if !m.is_empty() => depth.median_at_points(m.set_points()),
+            _ => depth.median_in_bbox(&o.bbox),
+        };
+        match obj_depth {
             Some(d) if d > 1e-3 => {
                 let z = (k / d).clamp(Z_MIN, Z_MAX);
                 let cx = (o.bbox.x1 + o.bbox.x2) * 0.5 * fw;
@@ -563,6 +571,48 @@ mod tests {
         let mut objs = vec![o];
         anchor_objects(&[person(2.0)], &mut objs, &uniform_depth(0.5), &pinhole(), 640.0, 480.0);
         assert!(objs[0].position_3d.is_none(), "degenerate bbox → None");
+    }
+
+    #[test]
+    fn mask_median_depth_beats_bbox_on_mesh() {
+        // Phase 11 mesh mask-aware depth: a two-region map (left half depth 1.0,
+        // right half 0.25). Person + object bbox sit in the LEFT region (bbox
+        // central-half samples 1.0). A silhouette mask whose set cells fall in the
+        // RIGHT region makes `anchor_objects` sample 0.25 via `median_at_points` —
+        // a different metric Z than the bbox path, proving the mask branch is live.
+        let mut data = vec![0.0f32; 64];
+        for gy in 0..8 {
+            for gx in 0..8 {
+                data[gy * 8 + gx] = if gx < 4 { 1.0 } else { 0.25 };
+            }
+        }
+        let depth = mvm_depth::DepthMap { data, w: 8, h: 8 };
+
+        // Mask cells in the right region (normalized x ≥ 0.5 → depth 0.25).
+        let mut bits = vec![0u8; mvm_core::mask::MASK_RES * mvm_core::mask::MASK_RES];
+        for gy in 32..40 {
+            for gx in 32..40 {
+                bits[gy * mvm_core::mask::MASK_RES + gx] = 1;
+            }
+        }
+        let mask = mvm_core::mask::InstanceMask::from_bits(bits);
+
+        let mut o = object();
+        o.bbox = BBox { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.4 }; // left region
+        let people = [person(1.0)]; // k = 1.0·1.0 = 1.0
+
+        // Bbox path: central-half samples 1.0 → Z = k/1.0 = 1.0.
+        let mut bbox_objs = vec![o.clone()];
+        anchor_objects(&people, &mut bbox_objs, &depth, &pinhole(), 1280.0, 720.0);
+        let z_bbox = bbox_objs[0].position_3d.expect("bbox anchored").z;
+        assert!((z_bbox - 1.0).abs() < 1e-3, "bbox-median Z, got {z_bbox}");
+
+        // Mask path: silhouette samples 0.25 → Z = k/0.25 = 4.0.
+        o.mask = Some(mask);
+        let mut mask_objs = vec![o];
+        anchor_objects(&people, &mut mask_objs, &depth, &pinhole(), 1280.0, 720.0);
+        let z_mask = mask_objs[0].position_3d.expect("mask anchored").z;
+        assert!((z_mask - 4.0).abs() < 1e-3, "mask-median Z, got {z_mask}");
     }
 
     // ── activities + anomaly (phase 8.F) ──
