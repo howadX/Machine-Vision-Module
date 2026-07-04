@@ -97,6 +97,13 @@ mod tests {
         assert_eq!(a.max_frames, None);
         assert_eq!(a.interval_ms, 100);
         assert!(!a.dump_json);
+        assert!(!a.masks, "masks opt-in — off by default on the production mesh path");
+    }
+
+    #[test]
+    fn mesh_parse_masks_flag() {
+        let raw: Vec<String> = ["mvm", "mesh", "--masks"].iter().map(|s| s.to_string()).collect();
+        assert!(parse_mesh_args(&raw).masks);
     }
 
     #[test]
@@ -408,6 +415,12 @@ struct MeshArgs {
     dump_landmarks: bool,
     /// StateFileWriter snapshot interval (ms).
     interval_ms: u64,
+    /// --masks: run the YOLO-seg expert (phase 10.4, +1 ONNX) in the SceneAgent,
+    /// attaching instance masks to tracked objects (mask-contact + mask-median
+    /// depth) and publishing person masks to the tracker (11.A3). The mesh path is
+    /// production — masks light up A1/A2 mask-contact that otherwise falls back to
+    /// bbox. Opt-in for now (seg is a real forward on the object cadence).
+    masks: bool,
 }
 
 fn parse_mesh_args(raw: &[String]) -> MeshArgs {
@@ -418,6 +431,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         emotion_debug: false,
         dump_landmarks: false,
         interval_ms: 100,
+        masks: false,
     };
     let mut i = 2; // skip program name + "mesh"
     while i < raw.len() {
@@ -426,6 +440,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             "--dump-json" => a.dump_json = true,
             "--emotion-debug" => a.emotion_debug = true,
             "--dump-landmarks" => a.dump_landmarks = true,
+            "--masks" => a.masks = true,
             "--max-frames" => {
                 if i + 1 < raw.len() {
                     a.max_frames = raw[i + 1].parse().ok();
@@ -506,6 +521,30 @@ fn load_depth(config: &mvm_core::Config) -> Option<mvm_depth::DepthEstimator> {
     }
 }
 
+/// YOLO-seg expert (phase 10.4, +1 ONNX). Gated on the model file like the other
+/// heavy detectors; the `--masks` flag gate is applied by the caller. On the mesh
+/// (production) path this rides inside the SceneAgent — one seg forward yields
+/// both object masks (→ mask-contact/mask-depth) and person masks (→ 11.A3 tracker
+/// cue). Absent model → `None`, masks silently off.
+fn load_seg(config: &mvm_core::Config) -> Option<mvm_scene::YoloSegDetector> {
+    let p = config.models_path.join("yolo_seg.onnx");
+    if !p.exists() {
+        eprintln!("  seg: --masks set but no model at {} — masks disabled", p.display());
+        return None;
+    }
+    match mvm_scene::YoloSegDetector::from_path(&p) {
+        Ok(mut s) => {
+            s.set_score_threshold(config.object_score_thresh);
+            eprintln!("  seg: YOLO-seg loaded ({}), cadence every {} frames", p.display(), config.object_cadence);
+            Some(s)
+        }
+        Err(e) => {
+            eprintln!("  seg: YOLO-seg load failed: {e} (masks disabled)");
+            None
+        }
+    }
+}
+
 fn load_hands(config: &mvm_core::Config) -> Option<mvm_hands::HandLandmarker> {
     let p = config.models_path.join("handpose_estimation_mediapipe_2023feb.onnx");
     if !p.exists() {
@@ -559,6 +598,8 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     // Optional heavy detectors (own agents).
     let yolo = load_yolo(&config);
     let depth = load_depth(&config);
+    // YOLO-seg masks (opt-in --masks) ride the SceneAgent on the production path.
+    let seg = if args.masks { load_seg(&config) } else { None };
 
     // Person tracker (body-primary: torso-3D from detections, no face pinhole).
     let mut person_tracker = mvm_core::PersonTracker::with_config(&config);
@@ -599,6 +640,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     if let Some(yolo) = yolo {
         mesh.add(Box::new(agents::SceneAgent::new(
             yolo,
+            seg,
             mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
             config.object_score_thresh,
             config.object_min_area,

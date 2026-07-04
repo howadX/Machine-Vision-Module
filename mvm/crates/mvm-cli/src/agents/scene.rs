@@ -6,8 +6,16 @@
 use crate::agents::{cadence_due, project_objects};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 
+/// Mask-IoU floor for greedily attaching a YOLO-seg mask onto a tracked object
+/// (mirrors `pipeline::SEG_ATTACH_IOU` on the sync path).
+const SEG_ATTACH_IOU: f32 = 0.5;
+
 pub(crate) struct SceneAgent {
     detector: mvm_scene::YoloDetector,
+    /// Optional YOLO-seg expert (phase 10.4, `--masks`). One forward yields both
+    /// object masks (attached to tracked objects → mask-contact / mask-depth) and,
+    /// in phase 11.A3, person masks published to the tracker.
+    seg_detector: Option<mvm_scene::YoloSegDetector>,
     tracker: mvm_scene::ObjectTracker,
     score_thresh: f32,
     min_area: f32,
@@ -17,12 +25,13 @@ pub(crate) struct SceneAgent {
 impl SceneAgent {
     pub(crate) fn new(
         detector: mvm_scene::YoloDetector,
+        seg_detector: Option<mvm_scene::YoloSegDetector>,
         tracker: mvm_scene::ObjectTracker,
         score_thresh: f32,
         min_area: f32,
         cadence: u32,
     ) -> Self {
-        Self { detector, tracker, score_thresh, min_area, cadence }
+        Self { detector, seg_detector, tracker, score_thresh, min_area, cadence }
     }
 }
 
@@ -58,7 +67,34 @@ impl Agent for SceneAgent {
                                     area >= self.min_area
                                 })
                                 .collect();
-                            let tracked = self.tracker.update(&filtered);
+                            let mut tracked = self.tracker.update(&filtered);
+
+                            // Phase 10.4/11: the YOLO-seg expert (opt-in `--masks`)
+                            // runs over the same frame; its object masks are attached
+                            // onto the tracked objects (YOLO26n stays the detection
+                            // authority) → mask-contact + mask-median depth on the
+                            // production mesh path. Person masks (11.A3) are handled
+                            // separately (published to the tracker, not attached).
+                            if let Some(seg) = &mut self.seg_detector {
+                                match seg.detect(frame.image.as_ref()) {
+                                    Ok(segs) => {
+                                        let obj_segs: Vec<_> = segs
+                                            .into_iter()
+                                            .filter(|s| mvm_scene::is_relevant(s.det.class_name))
+                                            .collect();
+                                        mvm_scene::attach_masks(&mut tracked, &obj_segs, SEG_ATTACH_IOU);
+                                        if std::env::var("MVM_SEG_DEBUG").is_ok() {
+                                            let attached = tracked.iter().filter(|o| o.mask.is_some()).count();
+                                            eprintln!(
+                                                "  seg-dbg: {} obj-seg dets → {}/{} objects masked",
+                                                obj_segs.len(), attached, tracked.len()
+                                            );
+                                        }
+                                    }
+                                    Err(e) => eprintln!("  seg: detect error: {e}"),
+                                }
+                            }
+
                             project_objects(&ctx.world, &tracked, frame.captured);
                             ticks += 1;
                         }
