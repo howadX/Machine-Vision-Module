@@ -18,11 +18,15 @@
   LIVE-ВАЛИДИРОВАН (2026-07-04, `mesh --masks`, 2 чел.):** person-маска в cost-матрицу трекера
   (`-(iou + W_OCM·momentum + W_MASK·mask_iou)`, `W_MASK=0.10`), gated ≥2 established-людей → лечит walking-
   фрагментацию. Терм = 0 при <2 людей / без масок → association **байт-идентична** pre-A3 (256 тестов трекера
-  целы). **Live (52 кадра, seg публикует 2 person-маски/каденс):** оба держат стабильный id весь сеанс —
-  **аноним id10 = 1 id в 50/50 кадрах** (headline-win: раньше анон-ходьба фрагментировала на 5–7 id); один
-  транзиентный фантом id12 в одном окне ~0.5с (кадры 6–19) → рассосался и не вернулся; **anomaly=0 весь сеанс
-  → сломанный fall-anomaly из pre-A3 НЕ воспроизвёлся**; реконструкция сцены когерентна (2 чел. с метрич. 3D
-  0.85/1.24м, identity/emotion/posture, зона-близости). **C4 sync-journal → dev-only** (sync не продакшн).
+  целы). **Live (~50с, 52 дампа @1с, seg публикует 2 person-маски/каденс):** оба держат стабильный id —
+  **аноним id10 = 1 id в 50/50 дампах** (раньше анон-ходьба фрагментировала на 5–7 id); **частично**: сустейнед-
+  фантом id12 ~13с в первой трети сеанса (17:51:23–36, near Вадим 0.25м) → дал 4 ложных `people_together`-эпизода
+  ([0,12]/[10,12], честно `stable_participants=false`), затем рассосался, ~34с чисто `[0,10]`. **anomaly=0 весь
+  сеанс** → сломанный fall-anomaly из pre-A3 НЕ воспроизвёлся. **Activity-journal работает на mesh:** объектные
+  активности Вадима атрибутированы `stable=true` (`seated_at_workstation` 12.6с conf0.91, `using_mouse` до 8с,
+  `holding_drink`, `reading`) — A1/A2 mask-контакт + FSM в продакшене; real `people_together(0,10)` непрерывен до
+  22.5с. **Nota:** `stable_participants=false` и для реальной пары (аноним не галерейный id) → это консерв.
+  маркер, не дискриминатор real-vs-фантом. **C4 sync-journal → dev-only** (sync не продакшн).
 - **Live-валидация на риге (2026-07-04, `--native-camera --masks`, Вадим, 1 чел.):** producer/fusion-ядро
   фазы 11 отработало вживую. **Подтверждено:** (1) **11.A1 mask-контакт** снял ложную атрибуцию —
   перекрывающиеся на столе bbox (телефон над клавиатурой) больше не крадут контакт: ложный `using_phone`
@@ -333,7 +337,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
 | **9** | ✅ | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery + Hungarian global assignment, **+0 ONNX** — закрыта |
 | **10** | ✅ | **Full Data Collection — ЗАКРЫТА** (SUPREME-validated, 3 чел.+собака, 120с): 10.0 эмит вычисленного, 10.1 эмоция (CHW-корень + YuNet-лендмарки + align), 10.2 кисти (жесты/handedness/vis-relax), 10.3 head-orientation, 10.5 ledger — `+0 ONNX`; 10.4 Segmentation (**+1 ONNX**): спайк GO + ядро + `YoloSegDetector` + sync-live-интеграция (`--masks`, `attach_masks`, depth-по-маске, `mask_coverage`); **+ фиксы сессии:** sync-дроп кистей починен, `face_verified`, sync-fusion-активности, model-corroborated анти-животное-гейт. **Все агенты собирают+парсят все параметры на основном пути.** Осталось = fusion (реляц. атрибуция, next phase) + детектор-пороги YOLO (телефон/bowl/собака-как-handbag) + опц. mesh-зеркалирование. person-маски 10.7 — есть эмпирика ≥2 чел., реализация в fusion-фазе |
-| **11** | 🔨 в работе | **Fusion-полировка** (`+0 ONNX` для fusion; seg-модель уже была) — реляц.-темпоральная арифметика над Scene JSON. **Закрыто+live-validated (2026-07-04, 1 чел.):** A1 mask-контакт, A2 фикс мис-атрибуции, C1–C3+C5–C6 activity-FSM+journal+контракт (C6 обобщён на object-churn, вкл. на mesh), B1 зоны-persistence, B2 anomaly v2, D1 метрич. self-calib, **object-permanence** статичных фикстур (клавиатура под руками → typing). **Mesh→продакшн + seg-в-mesh:** A1/A2 mask-контакт + mask-median depth теперь работают на mesh; **A3 person-маски ЗАКРЫТ И LIVE-ВАЛИДИРОВАН** (2 чел.: оба стабильный id весь сеанс, аноним 50/50 кадров, 1 транзиент-фантом ~0.5с, anomaly=0, fall-anomaly не воспроизвёлся). **Осталось:** C4 sync-journal → dev-only. План — `mvm/docs/phase-11-plan.md`. Продукт — след. фаза |
+| **11** | 🔨 в работе | **Fusion-полировка** (`+0 ONNX` для fusion; seg-модель уже была) — реляц.-темпоральная арифметика над Scene JSON. **Закрыто+live-validated (2026-07-04, 1 чел.):** A1 mask-контакт, A2 фикс мис-атрибуции, C1–C3+C5–C6 activity-FSM+journal+контракт (C6 обобщён на object-churn, вкл. на mesh), B1 зоны-persistence, B2 anomaly v2, D1 метрич. self-calib, **object-permanence** статичных фикстур (клавиатура под руками → typing). **Mesh→продакшн + seg-в-mesh:** A1/A2 mask-контакт + mask-median depth теперь работают на mesh; **A3 person-маски ЗАКРЫТ И LIVE-ВАЛИДИРОВАН** (2 чел.: оба стабильный id, аноним 50/50 дампов; **частично** — сустейнед-фантом ~13с в первой трети дал ложные people_together stable=false, затем чисто; anomaly=0, fall-anomaly не воспроизвёлся; объектные активности Вадима атрибутированы stable=true). **Осталось:** ужать остаточный фантом (гейт-хвост?); C4 sync-journal → dev-only. План — `mvm/docs/phase-11-plan.md` |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
 
