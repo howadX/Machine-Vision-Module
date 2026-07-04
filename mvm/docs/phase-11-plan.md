@@ -23,9 +23,13 @@
 > (`SceneAgent` один seg-forward: object-маски `attach_masks`, person-маски в `PersonMaskSlot`). **✅ A3
 > person-маски ЗАКРЫТ по коду** (mask-IoU-cue в cost-матрицу трекера, `W_MASK=0.10`, gated ≥2 established-людей;
 > `HumanAgent` матчит person-маски к телам bbox-IoU перед `tick_motion`; терм=0 при <2/без масок → байт-идентично
-> pre-A3; 256 тестов трекера целы). **Осталось:** **live ≥2 людей** (гейт владельца — падение фрагментации vs
-> baseline фазы 9) · **C4** sync-journal → **dev-only** (sync больше не продакшн, не блокер) · auto-`fx`
-> live-wiring (→ продукт). Detector-хвост: YOLO26n не берёт тёмную клавиатуру без hands-off seed (recall).
+> pre-A3; 256 тестов трекера целы). **✅ LIVE-ВАЛИДИРОВАН (2026-07-04, `mesh --masks`, 2 чел., 52 кадра):** seg
+> публикует 2 person-маски/каденс; оба человека держат стабильный id весь сеанс — **аноним id10 = 1 id в 50/50
+> кадрах** (раньше анон-ходьба → 5–7 id), 1 транзиент-фантом id12 в окне ~0.5с (кадры 6–19) рассосался и не
+> вернулся; **anomaly=0 весь сеанс → сломанный fall-anomaly из pre-A3 НЕ воспроизвёлся**; реконструкция сцены
+> когерентна (2 чел. с метрич. 3D, identity/emotion/posture, зона-близости). **Осталось:** **C4** sync-journal →
+> **dev-only** (sync не продакшн, не блокер) · auto-`fx` live-wiring (→ продукт). Detector-хвост: YOLO26n не
+> берёт тёмную клавиатуру без hands-off seed (recall).
 
 ---
 
@@ -192,7 +196,7 @@ started_at, ended_at, duration_s, peak_confidence, stable_participants}` — з�
 |-----|--------|------|
 | **11.A1** ✅ `92e804aa` | **mask-контакт 10.6:** `InstanceMask::contains_norm` вместо `point_near_bbox` в `infer_activities` (под `--masks`; иначе fallback bbox) | контакт по маске; фон срезан |
 | **11.A2** ✅ `718cdd83` | **фикс мис-атрибуции:** при попадании точек нескольких людей в один объект — атрибуция ближайшему к центру/маске; опц. не считать вытянутую руку без hand-лендмарка (`motion::arm_reach`) | 2 чел.: запястье A тянется к телефону B → атрибуция B |
-| **11.A3** ✅ по коду (live ≥2 предстоит) | **person-маски 10.7 (mesh-first):** seg-в-mesh (`SceneAgent`→`PersonMaskSlot`), `HumanAgent` матчит к телам bbox-IoU; `person`-маска **только в cost-матрицу трекера** (`-(iou+W_OCM·mom+W_MASK·mask_iou)`, `W_MASK=0.10`), не узел, gated ≥2 established-людей | unit: mask-IoU флипает near-tie crossing, что IoU свапает; <2 людей → cue инертен (байт-идентично). Live: 2 чел. → фрагментация падает vs baseline |
+| **11.A3** ✅ LIVE-ВАЛИДИРОВАН (2 чел.) | **person-маски 10.7 (mesh-first):** seg-в-mesh (`SceneAgent`→`PersonMaskSlot`), `HumanAgent` матчит к телам bbox-IoU; `person`-маска **только в cost-матрицу трекера** (`-(iou+W_OCM·mom+W_MASK·mask_iou)`, `W_MASK=0.10`), не узел, gated ≥2 established-людей | unit: mask-IoU флипает near-tie crossing, что IoU свапает; <2 людей → cue инертен (байт-идентично). **Live 2 чел.:** оба стабильный id весь сеанс, аноним 50/50 кадров, 1 транзиент-фантом ~0.5с, anomaly=0 |
 
 ### Трек C — temporal activity FSM (после 11.A2)
 
