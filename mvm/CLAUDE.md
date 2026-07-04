@@ -5,10 +5,33 @@
 
 ---
 
-## Статус (2026-07-03)
+## Статус (2026-07-04)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  493 теста зелёных** (1 ignored — hardware live-camera), release чист.
+  501 тест зелёный** (1 ignored — hardware live-camera), release чист.
+- **Live-валидация на риге (2026-07-04, `--native-camera --masks`, Вадим, 1 чел.):** producer/fusion-ядро
+  фазы 11 отработало вживую. **Подтверждено:** (1) **11.A1 mask-контакт** снял ложную атрибуцию —
+  перекрывающиеся на столе bbox (телефон над клавиатурой) больше не крадут контакт: ложный `using_phone`
+  упал с ~50с (bbox) до ~2с (маски). (2) **Activity-FSM+journal** дают стабильные эпизоды с
+  duration/events; стичинг (ниже) собрал непрерывные `reading`/`typing` вместо фрагментов. (3)
+  **Object-permanence** (ниже) провалидирован end-to-end на клавиатуре: seed (руки прочь ~3с → YOLO видит) →
+  hold под печатающими руками (`remembered` 17с) → `typing` атрибутирован **23с** (было 0 во всех прогонах
+  без permanence). (4) B1-зоны держат id весь сеанс (`workstation`), B2-anomaly=0 (спокойно). **Вскрытые
+  хвосты (не блокеры):** фантомная фрагментация одного человека в 7 track-id → ложные `people_together`
+  (честно `stable=False`) + сломанный fall-anomaly (standing на id0, lying на id11 — память не совпала) →
+  **корень = walking-fragmentation, лечится A3 person-масками**; YOLO26n не берёт конкретную клавиатуру без
+  hands-off seed (detector-recall, не permanence).
+- **Object-permanence для статичных фикстур (`20fb4037`, `+0 ONNX`):** `ObjectTracker` держал пропавший
+  объект внутри (`timeout=15`), но эмитил только `missed==0` → клавиатура под руками исчезала из графа, а с
+  ней `typing`. Фикс: `STATIC_CLASSES` (keyboard/mouse/laptop/tv/dining table/remote — оперируются на месте,
+  перекрываются руками) при `age≥2` едут на длинном hold (`DEFAULT_STATIC_HOLD=75` ≈15с) и **эмитятся под
+  окклюзией** с флагом `remembered` (sync-JSON); не-статичные истекают на timeout. + LOW_BAR-порог keyboard/
+  mouse (base−0.08, мин 0.20) для засева. Caveat: нужен ≥1 seed-детект (hands-off), иначе держать нечего.
+- **11.C6 обобщён на object-churn + включён на mesh (`252ff7ef`):** live-mesh показал спам журнала от churn
+  object-id (7 id на один стол → 91 событие). Стичинг обобщён с «эфемерный человек на стабильном объекте» до
+  «ровно один churn-участник в стороне» (`churn_class`: reserved 0–9 sticky, эфемерный человек и объект оба
+  churn'абельны) → сшивает и person-churn (12→15), и object-churn (10000→10007 под person 0), но **не сливает
+  двух gallery-людей**. Включён на mesh `FusionAgent` (`with_stitching(true)`).
 - **Фаза 11 — Fusion-полировка (В РАБОТЕ, `+0 ONNX`, чистая арифметика, 2026-07-03):** реляц.-темпоральная
   арифметика над Scene JSON. Закрыто: **11.A1** mask-контакт (`InstanceMask` → `mvm-core`, `ObjectState.mask`
   плоско на обоих путях, контакт по силуэту с 2-cell дилатацией + честный bbox-fallback, `92e804aa`);
@@ -26,8 +49,8 @@
   self-calib `ScaleCalibrator` (`K=fx·real=d·pixel`, медиана; `fx_given_real`/`real_given_fx`; провалидирован
   на 2.5м YuNet-сэмпле <0.2м; `b1eee6a7`). **Отложено/gated:** **11.C4** (sync-journal — sync-путь пока эмитит
   сырые активности без temporal-полей); **11.A3** (person-маски в cost-матрицу трекера — ждёт live ≥2 людей);
-  auto-`fx` live-wiring (нужен метрич. референс в кадре → продуктовая фаза). **Live-валидация на риге —
-  предстоит** (A1/A2/B2 меняли горячие места sync-пути). План — `docs/phase-11-plan.md`.
+  auto-`fx` live-wiring (нужен метрич. референс в кадре → продуктовая фаза). **Live-валидация на риге
+  выполнена** (см. выше). План — `docs/phase-11-plan.md`.
 - **Data-collection ЗАКРЫТ (SUPREME-валидация 2026-07-02, 3 чел.+собака, 120с/116 тиков):** основной sync-путь
   `--native-camera` собирает и парсит ВСЕ сигналы всех агентов (покрытие: id/face_verified 100%, поза/3D 98%,
   motion 99%, эмоция+8dist+энтропия 88%, head 88%, **кисти/запястья 62/68%** — были 0%, дроп починен, hands
@@ -166,7 +189,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 ```bash
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm-cli (~26 МБ, модели embedded)
-cargo test --workspace         # 493 теста
+cargo test --workspace         # 501 тест
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
@@ -194,7 +217,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |
 | **mvm-posture** | нативная BlazePose two-stage (детектор+поза) + **feature→RandomForest** классификатор (method C, 3 класса) + VAE (OOD-only); `compute_features`/`pose_from_face`, `NativePose` мульти-persona |
 | **mvm-fusion** | `build_scene` (union-find граф+зоны) + `fuse()` PoE; activities + anomaly_score (8.F); `ZoneTracker` (persistence+семантика зон, 11.B1) |
-| **mvm-scene** | YOLO26n ONNX (9.5МБ, end-to-end NMS-free), object-узлы (id≥10000) + `ObjectTracker` [8.E] |
+| **mvm-scene** | YOLO26n ONNX (9.5МБ, end-to-end NMS-free), object-узлы (id≥10000) + `ObjectTracker` [8.E] + YOLO-seg (`--masks`, 10.4) + **object-permanence** статичных фикстур под окклюзией руками (`STATIC_CLASSES`/`static_hold`, 11) |
 | **mvm-depth** | Depth-Anything-V2-Small ONNX (квант 27МБ, ~230мс CPU), depth-anchoring к торс-Z [8.E.2] |
 | **mvm-hands** | MediaPipe handpose ONNX (4МБ), 21 lm/рука, ROI из запястий BlazePose [8.E.4] |
 | **mvm-mesh** | Agent trait + `LatestFrame` (single-slot latest-wins) + `AgentMesh` оркестратор на std::thread [8.C] |
@@ -295,7 +318,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
 | **9** | ✅ | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery + Hungarian global assignment, **+0 ONNX** — закрыта |
 | **10** | ✅ | **Full Data Collection — ЗАКРЫТА** (SUPREME-validated, 3 чел.+собака, 120с): 10.0 эмит вычисленного, 10.1 эмоция (CHW-корень + YuNet-лендмарки + align), 10.2 кисти (жесты/handedness/vis-relax), 10.3 head-orientation, 10.5 ledger — `+0 ONNX`; 10.4 Segmentation (**+1 ONNX**): спайк GO + ядро + `YoloSegDetector` + sync-live-интеграция (`--masks`, `attach_masks`, depth-по-маске, `mask_coverage`); **+ фиксы сессии:** sync-дроп кистей починен, `face_verified`, sync-fusion-активности, model-corroborated анти-животное-гейт. **Все агенты собирают+парсят все параметры на основном пути.** Осталось = fusion (реляц. атрибуция, next phase) + детектор-пороги YOLO (телефон/bowl/собака-как-handbag) + опц. mesh-зеркалирование. person-маски 10.7 — есть эмпирика ≥2 чел., реализация в fusion-фазе |
-| **11** | 🔨 в работе | **Fusion-полировка** (`+0 ONNX`) — реляц.-темпоральная арифметика над Scene JSON. **Закрыто:** A1 mask-контакт, A2 фикс мис-атрибуции, C1–C3+C5–C6 activity-FSM+event-journal+контракт (C4 sync-проводка отложена), B1 зоны-persistence, B2 anomaly v2, D1 метрич. self-calib. **Осталось:** A3 person-маски (gated ≥2 людей), C4 sync-journal, live-валидация. План — `mvm/docs/phase-11-plan.md`. Продукт — след. (пока не определённая) фаза |
+| **11** | 🔨 в работе | **Fusion-полировка** (`+0 ONNX`) — реляц.-темпоральная арифметика над Scene JSON. **Закрыто+live-validated (2026-07-04):** A1 mask-контакт, A2 фикс мис-атрибуции, C1–C3+C5–C6 activity-FSM+journal+контракт (C6 обобщён на object-churn, вкл. на mesh), B1 зоны-persistence, B2 anomaly v2, D1 метрич. self-calib, **object-permanence** статичных фикстур (клавиатура под руками → typing). **Осталось:** A3 person-маски (gated ≥2 людей; корень фантом-фрагментации+fall-anomaly), C4 sync-journal. План — `mvm/docs/phase-11-plan.md`. Продукт — след. фаза |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
 

@@ -10,12 +10,16 @@
 
 Канон текущего состояния — `mvm/CLAUDE.md`. Здесь — *как делаем* фазу 11.
 
-> **Прогресс (2026-07-03, 493 теста зелёных):** ✅ **A1** mask-контакт · ✅ **A2** фикс мис-атрибуции ·
-> ✅ **C1–C3, C5, C6** activity-FSM + event-journal + контракт + опц. churn-стичинг · ✅ **B1** зоны-persistence ·
-> ✅ **B2** anomaly v2 · ✅ **D1** метрич. self-calib (провалидирован на 2.5м-сэмпле).
-> **Осталось:** **A3** person-маски (gated ≥2 людей) · **C4** sync-journal (⏸ отложено владельцем) ·
-> auto-`fx` live-wiring (нужен метрич. референс → продуктовая фаза) · **live-валидация на риге**
-> (A1/A2/B2 меняли горячие места sync-пути).
+> **Прогресс (2026-07-04, 501 тест зелёный, LIVE-VALIDATED на риге):** ✅ **A1** mask-контакт · ✅ **A2** фикс
+> мис-атрибуции · ✅ **C1–C3, C5, C6** activity-FSM + event-journal + контракт + churn-стичинг (**C6 обобщён на
+> object-churn, включён на mesh**) · ✅ **B1** зоны-persistence · ✅ **B2** anomaly v2 · ✅ **D1** метрич.
+> self-calib · ✅ **object-permanence** статичных фикстур (не в исходном плане; вскрыт live — клавиатура под
+> печатающими руками терялась → typing пропадал; `STATIC_CLASSES`+`static_hold`+`remembered`, `20fb4037`).
+> **Live-валидация (`--native-camera --masks`, Вадим):** mask-контакт снял ложный `using_phone` (~50с→2с);
+> object-permanence провалидирован end-to-end — seed→hold→`typing` 23с (было 0). **Осталось:** **A3**
+> person-маски (gated ≥2 людей — корень фантом-фрагментации: 1 чел.→7 track-id, ложный `people_together`,
+> сломанный fall-anomaly) · **C4** sync-journal (⏸ отложено владельцем) · auto-`fx` live-wiring (→ продукт).
+> Detector-хвост: YOLO26n не берёт конкретную тёмную клавиатуру без hands-off seed (recall, не permanence).
 
 ---
 

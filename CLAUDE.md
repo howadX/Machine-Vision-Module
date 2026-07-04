@@ -10,7 +10,7 @@
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 493 теста; фаза 11 Fusion в работе)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 501 тест; фаза 11 Fusion в работе)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   └── CLAUDE.md   #   ← детальный контекст Rust-части (source of truth)
