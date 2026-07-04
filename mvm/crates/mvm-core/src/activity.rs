@@ -78,17 +78,55 @@ impl ActivityKey {
         self.participants.iter().all(|&id| id < 10 || id >= 10000)
     }
 
-    /// Has at least one ephemeral person id (10..10000) — a churn-prone anon track.
-    fn has_ephemeral(&self) -> bool {
-        self.participants.iter().any(|&id| (10..10_000).contains(&id))
-    }
+}
 
-    /// The durable-id subset (reserved persons + objects), sorted. Two keys
-    /// differing only in their ephemeral person share this — the anchor for
-    /// churn stitching (11.C6).
-    fn stable_subset(&self) -> Vec<u32> {
-        self.participants.iter().copied().filter(|&id| id < 10 || id >= 10_000).collect()
+/// Churn class of an id (11.C6): `None` for reserved gallery ids (0–9 — sticky,
+/// never a churn); `Some(0)` for ephemeral persons (10–9999, reused across
+/// walking-fragmentation); `Some(1)` for objects (≥10000, reused across
+/// object-track fragmentation). Two instances stitch only across a differing id
+/// of the **same churnable class** — so an anon person's id churn and a
+/// keyboard's id churn each continue their episode, but two *different* gallery
+/// people never merge.
+fn churn_class(id: u32) -> Option<u8> {
+    if id < 10 {
+        None
+    } else if id < 10_000 {
+        Some(0)
+    } else {
+        Some(1)
     }
+}
+
+/// Whether two sorted participant sets differ in exactly one id on each side and
+/// those two ids share the same churnable class (the rest — the anchor — is
+/// identical). The stitch predicate (11.C6): person-churn (anon id 12→15 on the
+/// same keyboard) and object-churn (keyboard id 10000→10007 under the same
+/// person) are both "one churnable participant moved, anchor held".
+fn one_churn_apart(a: &[u32], b: &[u32]) -> bool {
+    let (mut i, mut j) = (0usize, 0usize);
+    let (mut a_only, mut b_only) = (Vec::new(), Vec::new());
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => {
+                a_only.push(a[i]);
+                i += 1;
+            }
+            std::cmp::Ordering::Greater => {
+                b_only.push(b[j]);
+                j += 1;
+            }
+            std::cmp::Ordering::Equal => {
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    a_only.extend_from_slice(&a[i..]);
+    b_only.extend_from_slice(&b[j..]);
+    a_only.len() == 1
+        && b_only.len() == 1
+        && churn_class(a_only[0]).is_some()
+        && churn_class(a_only[0]) == churn_class(b_only[0])
 }
 
 /// Bounded-duration cap per label (poor man's HSMM surrogate for a learned
@@ -183,12 +221,16 @@ pub struct ActivityJournal {
     /// Sorted by key — deterministic iteration/emission order.
     instances: Vec<ActivityInstance>,
     completed: Vec<ActivityEvent>,
-    /// Stitch an ephemeral person's churn (id 12→15) into one continuous
-    /// instance when it happens on the same stable object anchor within the
-    /// cooling window (phase 11.C6). Off by default — the honest behaviour is
-    /// churn = end + restart (11.C2); stitching is only safe once person masks
-    /// (10.7) make the "same person" claim, so it is opt-in and gated there.
-    stitch_ephemeral: bool,
+    /// Stitch a single participant's id-churn into one continuous instance when
+    /// it happens on a held anchor within the cooling window (phase 11.C6):
+    /// an anon person's id (12→15) on the same object, OR — the live-observed
+    /// case — an object's id (keyboard 10000→10007) under the same person, which
+    /// object-track fragmentation churns every few frames and would otherwise
+    /// spam the journal with dozens of ½-second typing fragments. Off by default
+    /// — the honest behaviour is churn = end + restart (11.C2); stitching is only
+    /// safe once masks make the "same entity" claim (person 10.7 / object 10.5),
+    /// so it is opt-in.
+    stitch_churn: bool,
 }
 
 impl ActivityJournal {
@@ -196,9 +238,10 @@ impl ActivityJournal {
         Self::default()
     }
 
-    /// Enable ephemeral-churn stitching (phase 11.C6, gated behind 10.7).
+    /// Enable single-participant churn stitching — person- and object-id churn
+    /// (phase 11.C6, gated behind masks 10.5/10.7).
     pub fn with_stitching(mut self, on: bool) -> Self {
-        self.stitch_ephemeral = on;
+        self.stitch_churn = on;
         self
     }
 
@@ -284,12 +327,12 @@ impl ActivityJournal {
             if self.instances.len() >= ACTIVITY_INSTANCE_CAP {
                 break;
             }
-            // 11.C6: if this newborn is an ephemeral track re-appearing on the
-            // same stable object anchor that a *cooling* instance just vacated,
-            // treat it as that instance continuing — adopt its start so the
-            // final event spans the whole episode, and drop the source silently
-            // (no split event). Gated by `stitch_ephemeral`.
-            let stitched = if self.stitch_ephemeral && key.has_ephemeral() {
+            // 11.C6: if this newborn is one churned participant away from a
+            // *cooling* instance (an anon person's id, or an object's id, moved
+            // while the anchor held), treat it as that instance continuing —
+            // adopt its start so the final event spans the whole episode, and
+            // drop the source silently (no split event). Gated by `stitch_churn`.
+            let stitched = if self.stitch_churn && key.participants.len() >= 2 {
                 self.take_stitch_source(&key)
             } else {
                 None
@@ -332,21 +375,17 @@ impl ActivityJournal {
         }
     }
 
-    /// Find and remove a cooling instance that this newborn ephemeral key is
-    /// the churned continuation of (11.C6): same label, same durable anchor,
-    /// currently absent (cooling), different ephemeral person. Returns its
-    /// timing metadata for adoption. Removing it silently means no split event.
+    /// Find and remove a cooling instance that this newborn key is the churned
+    /// continuation of (11.C6): same label, currently absent (cooling), and
+    /// exactly one churnable participant apart (anon person or object id moved,
+    /// anchor held). Returns its timing metadata for adoption. Removing it
+    /// silently means no split event.
     fn take_stitch_source(&mut self, newborn: &ActivityKey) -> Option<ActivityInstance> {
-        let anchor = newborn.stable_subset();
-        if anchor.is_empty() {
-            return None; // nothing durable to pin the "same episode" claim on
-        }
         let idx = self.instances.iter().position(|i| {
             i.phase == ActivityPhase::Cooling
                 && i.key.label == newborn.label
-                && i.key != *newborn
-                && i.key.has_ephemeral()
-                && i.key.stable_subset() == anchor
+                && i.key.participants.len() == newborn.participants.len()
+                && one_churn_apart(&i.key.participants, &newborn.participants)
         })?;
         Some(self.instances.remove(idx))
     }
@@ -542,11 +581,42 @@ mod tests {
 
     #[test]
     fn stitching_does_not_bridge_across_different_objects() {
-        // A churn onto a DIFFERENT keyboard is a different anchor → not stitched.
+        // A churn where BOTH participants differ (id 12→15 AND 10001→10002) is
+        // not a single-participant churn → honest end+restart.
         let mut j = ActivityJournal::new().with_stitching(true);
         let (t, f) = drive(&mut j, &[act("typing", vec![12, 10001], 0.8)], 6, 0.0, 0);
         drive(&mut j, &[act("typing", vec![15, 10002], 0.8)], 8, t, f);
-        assert!(!j.drain_events().is_empty(), "different object → honest end+restart");
+        assert!(!j.drain_events().is_empty(), "two-participant churn → end+restart");
+    }
+
+    #[test]
+    fn stitching_bridges_object_churn_under_stable_person() {
+        // The live-observed case (mesh 2026-07-03): a reserved person (id 0)
+        // typing while the keyboard's object-id churns 10000→10007 — one
+        // continuous typing episode, not two ½-second fragments.
+        let mut j = ActivityJournal::new().with_stitching(true);
+        let (t, f) = drive(&mut j, &[act("typing", vec![0, 10000], 0.8)], 30, 0.0, 0);
+        let (t, f) = drive(&mut j, &[act("typing", vec![0, 10007], 0.8)], 8, t, f);
+        assert!(j.drain_events().is_empty(), "object churn must not split the episode");
+        let inst: Vec<_> = j.active().collect();
+        assert_eq!(inst.len(), 1, "one continuous instance, got {inst:?}");
+        assert_eq!(inst[0].key.participants, vec![0, 10007]);
+        assert_eq!(inst[0].started_at, 0.0, "adopted the id=10000 start");
+        drive(&mut j, &[], ACTIVITY_EXIT_DWELL, t, f);
+        let ev = j.drain_events();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].started_at, 0.0);
+        assert!(ev[0].duration_s > 3.0, "duration {}", ev[0].duration_s);
+    }
+
+    #[test]
+    fn stitching_never_merges_two_gallery_people() {
+        // Two DIFFERENT reserved people on the same keyboard are genuinely
+        // distinct — reserved ids are sticky, not a churn class.
+        let mut j = ActivityJournal::new().with_stitching(true);
+        let (t, f) = drive(&mut j, &[act("typing", vec![0, 10001], 0.8)], 6, 0.0, 0);
+        drive(&mut j, &[act("typing", vec![5, 10001], 0.8)], 8, t, f);
+        assert!(!j.drain_events().is_empty(), "person 0 ≠ person 5 → honest end+restart");
     }
 
     #[test]

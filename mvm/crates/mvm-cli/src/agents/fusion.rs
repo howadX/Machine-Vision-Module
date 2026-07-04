@@ -32,7 +32,12 @@ impl FusionAgent {
         Self {
             config,
             depth_slot,
-            journal: ActivityJournal::new(),
+            // Churn stitching on (11.C6): the mesh live test (2026-07-03)
+            // showed object-track id churn spamming the journal with dozens of
+            // ½-second typing/holding_drink fragments for one physical desk —
+            // stitching collapses a churned object-id (or anon person-id) under
+            // a held anchor into one continuous episode.
+            journal: ActivityJournal::new().with_stitching(true),
             anomaly: AnomalyScorer::new(),
             last_frame: None,
             epoch: std::time::Instant::now(),
