@@ -8,7 +8,17 @@
 ## Статус (2026-07-04)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  501 тест зелёный** (1 ignored — hardware live-camera), release чист.
+  510 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Mesh = продакшн-путь; seg заведён в `AgentMesh` (2026-07-04, `--masks`):** решение владельца — `mesh` теперь
+  главный продакшн-путь (sync `--native-camera` остаётся для тестов/истории). YOLO-seg был подключён только на
+  sync → на mesh `ObjectState.mask` всегда `None`, и A1/A2 mask-контакт **молча падал в bbox**. Теперь
+  `SceneAgent` гоняет один seg-forward и разветвляет: object-маски → `attach_masks` (A1/A2 mask-контакт +
+  mask-median depth в `anchor_objects` работают в продакшене), person-маски → `PersonMaskSlot` (шаблон
+  `DepthSlot`) для трекера. `--masks` opt-in (seg — реальный forward на object-cadence). **11.A3 ЗАКРЫТ по коду
+  (unit + mesh-stub smoke; live ≥2 людей — гейт владельца, предстоит):** person-маска в cost-матрицу трекера
+  (`-(iou + W_OCM·momentum + W_MASK·mask_iou)`, `W_MASK=0.10`), gated ≥2 established-людей → лечит walking-
+  фрагментацию (1 чел.→7 track-id). Терм = 0 при <2 людей / без масок → association **байт-идентична** pre-A3
+  (256 тестов трекера целы). **C4 sync-journal → dev-only** (sync больше не продакшн, не блокер).
 - **Live-валидация на риге (2026-07-04, `--native-camera --masks`, Вадим, 1 чел.):** producer/fusion-ядро
   фазы 11 отработало вживую. **Подтверждено:** (1) **11.A1 mask-контакт** снял ложную атрибуцию —
   перекрывающиеся на столе bbox (телефон над клавиатурой) больше не крадут контакт: ложный `using_phone`
@@ -47,10 +57,11 @@
   workstation/seating-семантика, miss-cap 5; `c260b4cf`); **11.B2** anomaly v2 (noisy-OR: нежданный объект +
   pose-OOD `plausibility` + падение standing→lying за 3с; затухающий пик λ0.9; `ee036bc5`); **11.D1** метрич.
   self-calib `ScaleCalibrator` (`K=fx·real=d·pixel`, медиана; `fx_given_real`/`real_given_fx`; провалидирован
-  на 2.5м YuNet-сэмпле <0.2м; `b1eee6a7`). **Отложено/gated:** **11.C4** (sync-journal — sync-путь пока эмитит
-  сырые активности без temporal-полей); **11.A3** (person-маски в cost-матрицу трекера — ждёт live ≥2 людей);
-  auto-`fx` live-wiring (нужен метрич. референс в кадре → продуктовая фаза). **Live-валидация на риге
-  выполнена** (см. выше). План — `docs/phase-11-plan.md`.
+  на 2.5м YuNet-сэмпле <0.2м; `b1eee6a7`). **11.A3 person-маски — ЗАКРЫТ по коду** (mesh-first; см. блок про
+  seg-в-mesh выше): mask-IoU-cue в cost-матрицу трекера, gated ≥2 людей; live ≥2 людей предстоит.
+  **Отложено/gated:** **11.C4** (sync-journal → **dev-only**: sync больше не продакшн); auto-`fx` live-wiring
+  (нужен метрич. референс в кадре → продуктовая фаза). **Live-валидация на риге** (1 чел.) **выполнена**
+  (см. выше). План — `docs/phase-11-plan.md`.
 - **Data-collection ЗАКРЫТ (SUPREME-валидация 2026-07-02, 3 чел.+собака, 120с/116 тиков):** основной sync-путь
   `--native-camera` собирает и парсит ВСЕ сигналы всех агентов (покрытие: id/face_verified 100%, поза/3D 98%,
   motion 99%, эмоция+8dist+энтропия 88%, head 88%, **кисти/запястья 62/68%** — были 0%, дроп починен, hands
@@ -318,7 +329,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **8** | ✅ ядро | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly); G₁ Human полна (+scene/depth/hands) |
 | **9** | ✅ | **Tracker** — кинематика + ByteTrack/OCM/OCR + lifecycle + инверсия + cadenced SFace/emotion + motion-эмит + pose-ROI recovery + Hungarian global assignment, **+0 ONNX** — закрыта |
 | **10** | ✅ | **Full Data Collection — ЗАКРЫТА** (SUPREME-validated, 3 чел.+собака, 120с): 10.0 эмит вычисленного, 10.1 эмоция (CHW-корень + YuNet-лендмарки + align), 10.2 кисти (жесты/handedness/vis-relax), 10.3 head-orientation, 10.5 ledger — `+0 ONNX`; 10.4 Segmentation (**+1 ONNX**): спайк GO + ядро + `YoloSegDetector` + sync-live-интеграция (`--masks`, `attach_masks`, depth-по-маске, `mask_coverage`); **+ фиксы сессии:** sync-дроп кистей починен, `face_verified`, sync-fusion-активности, model-corroborated анти-животное-гейт. **Все агенты собирают+парсят все параметры на основном пути.** Осталось = fusion (реляц. атрибуция, next phase) + детектор-пороги YOLO (телефон/bowl/собака-как-handbag) + опц. mesh-зеркалирование. person-маски 10.7 — есть эмпирика ≥2 чел., реализация в fusion-фазе |
-| **11** | 🔨 в работе | **Fusion-полировка** (`+0 ONNX`) — реляц.-темпоральная арифметика над Scene JSON. **Закрыто+live-validated (2026-07-04):** A1 mask-контакт, A2 фикс мис-атрибуции, C1–C3+C5–C6 activity-FSM+journal+контракт (C6 обобщён на object-churn, вкл. на mesh), B1 зоны-persistence, B2 anomaly v2, D1 метрич. self-calib, **object-permanence** статичных фикстур (клавиатура под руками → typing). **Осталось:** A3 person-маски (gated ≥2 людей; корень фантом-фрагментации+fall-anomaly), C4 sync-journal. План — `mvm/docs/phase-11-plan.md`. Продукт — след. фаза |
+| **11** | 🔨 в работе | **Fusion-полировка** (`+0 ONNX` для fusion; seg-модель уже была) — реляц.-темпоральная арифметика над Scene JSON. **Закрыто+live-validated (2026-07-04, 1 чел.):** A1 mask-контакт, A2 фикс мис-атрибуции, C1–C3+C5–C6 activity-FSM+journal+контракт (C6 обобщён на object-churn, вкл. на mesh), B1 зоны-persistence, B2 anomaly v2, D1 метрич. self-calib, **object-permanence** статичных фикстур (клавиатура под руками → typing). **Mesh→продакшн + seg-в-mesh:** A1/A2 mask-контакт + mask-median depth теперь работают на mesh; **A3 person-маски ЗАКРЫТ по коду** (mask-IoU-cue в cost-матрицу, gated ≥2 людей; unit+stub-smoke, live ≥2 людей предстоит). **Осталось:** live-валидация A3 (2 чел.); C4 sync-journal → dev-only. План — `mvm/docs/phase-11-plan.md`. Продукт — след. фаза |
 
 Детали закрытых фаз: `mvm/docs/phase-7.5-plan.md`, `phase-8-plan.md`; `~/wiki/mvm/roadmap.md`.
 
@@ -381,7 +392,10 @@ Machine Vision Module/           ← корень (cwd при запуске)
 
 - **A. Реляц./атрибуция:** ✅ A1 mask-контакт (`InstanceMask::contains_norm_within` вместо bbox под
   `--masks`, силуэт срезает фон), ✅ A2 фикс мис-атрибуции (object-major, спорный объект → одному человеку);
-  🔜 A3 person-маски 10.7 (в cost-матрицу фазы 9, не узел — **gated ≥2 людей**).
+  ✅ A3 person-маски 10.7 (по коду; live ≥2 людей предстоит): mask-IoU-cue в cost-матрицу трекера
+  (`W_MASK=0.10`, gated ≥2 established-людей, не узел). Требовало **seg-в-mesh** (mesh=продакшн): `SceneAgent`
+  один seg-forward → object-маски `attach_masks` + person-маски в `PersonMaskSlot`; `HumanAgent` матчит их к
+  телам по bbox-IoU перед `tick_motion`. Терм = 0 при <2 людей / без масок → байт-идентично pre-A3.
 - **B. Зоны/anomaly v2:** ✅ B1 семантич. зоны с persistence над union-find (`ZoneTracker`: стабильные id,
   workstation/seating-подпись, miss-cap); ✅ B2 anomaly v2 (`AnomalyScorer` noisy-OR: нежданный объект +
   pose-OOD `plausibility` + падение standing→lying; затухающий пик).

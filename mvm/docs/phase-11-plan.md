@@ -16,10 +16,16 @@
 > self-calib · ✅ **object-permanence** статичных фикстур (не в исходном плане; вскрыт live — клавиатура под
 > печатающими руками терялась → typing пропадал; `STATIC_CLASSES`+`static_hold`+`remembered`, `20fb4037`).
 > **Live-валидация (`--native-camera --masks`, Вадим):** mask-контакт снял ложный `using_phone` (~50с→2с);
-> object-permanence провалидирован end-to-end — seed→hold→`typing` 23с (было 0). **Осталось:** **A3**
-> person-маски (gated ≥2 людей — корень фантом-фрагментации: 1 чел.→7 track-id, ложный `people_together`,
-> сломанный fall-anomaly) · **C4** sync-journal (⏸ отложено владельцем) · auto-`fx` live-wiring (→ продукт).
-> Detector-хвост: YOLO26n не берёт конкретную тёмную клавиатуру без hands-off seed (recall, не permanence).
+> object-permanence провалидирован end-to-end — seed→hold→`typing` 23с (было 0).
+>
+> **Разворот на mesh-first (2026-07-04):** владелец сделал **mesh главным продакшн-путём**. Seg заведён в
+> `AgentMesh` (был только на sync) → A1/A2 mask-контакт + mask-median depth теперь работают в продакшене
+> (`SceneAgent` один seg-forward: object-маски `attach_masks`, person-маски в `PersonMaskSlot`). **✅ A3
+> person-маски ЗАКРЫТ по коду** (mask-IoU-cue в cost-матрицу трекера, `W_MASK=0.10`, gated ≥2 established-людей;
+> `HumanAgent` матчит person-маски к телам bbox-IoU перед `tick_motion`; терм=0 при <2/без масок → байт-идентично
+> pre-A3; 256 тестов трекера целы). **Осталось:** **live ≥2 людей** (гейт владельца — падение фрагментации vs
+> baseline фазы 9) · **C4** sync-journal → **dev-only** (sync больше не продакшн, не блокер) · auto-`fx`
+> live-wiring (→ продукт). Detector-хвост: YOLO26n не берёт тёмную клавиатуру без hands-off seed (recall).
 
 ---
 
@@ -186,7 +192,7 @@ started_at, ended_at, duration_s, peak_confidence, stable_participants}` — з�
 |-----|--------|------|
 | **11.A1** ✅ `92e804aa` | **mask-контакт 10.6:** `InstanceMask::contains_norm` вместо `point_near_bbox` в `infer_activities` (под `--masks`; иначе fallback bbox) | контакт по маске; фон срезан |
 | **11.A2** ✅ `718cdd83` | **фикс мис-атрибуции:** при попадании точек нескольких людей в один объект — атрибуция ближайшему к центру/маске; опц. не считать вытянутую руку без hand-лендмарка (`motion::arm_reach`) | 2 чел.: запястье A тянется к телефону B → атрибуция B |
-| **11.A3** 🔜 gated ≥2 людей | **person-маски 10.7:** `person`-маска **только в cost-матрицу фазы 9** (не узел), gated ≥2 людей; Hungarian 9.10 | 2 чел. на перекрытии: фрагментация падает vs baseline |
+| **11.A3** ✅ по коду (live ≥2 предстоит) | **person-маски 10.7 (mesh-first):** seg-в-mesh (`SceneAgent`→`PersonMaskSlot`), `HumanAgent` матчит к телам bbox-IoU; `person`-маска **только в cost-матрицу трекера** (`-(iou+W_OCM·mom+W_MASK·mask_iou)`, `W_MASK=0.10`), не узел, gated ≥2 established-людей | unit: mask-IoU флипает near-tie crossing, что IoU свапает; <2 людей → cue инертен (байт-идентично). Live: 2 чел. → фрагментация падает vs baseline |
 
 ### Трек C — temporal activity FSM (после 11.A2)
 
@@ -195,7 +201,7 @@ started_at, ended_at, duration_s, peak_confidence, stable_participants}` — з�
 | **11.C1** ✅ `627ba66a` | **ядро FSM** `mvm-core/src/activity.rs`: Journal/Instance/Phase, enter/exit dwell, Candidate→Active→Cooling→Ended, duration, conf-EMA, bounded reaping. Синтетика | 1-спайк не входит; 3 подряд→Active; 1–2-провал переживается; ≥EXIT→Ended с duration; cap |
 | **11.C2** ✅ `638add4b` | **ключевание/матч** + poor-man's-HSMM: `ActivityKey`, exact-set, cooling-мост, churn ends+restart, `stable_participants`, `MAX_DWELL` + `θ_lo(d)` | churn завершает+рестартит; reserved-провал мостится; cap форсит Ended |
 | **11.C3** ✅ `3aeeb1ca` | **проводка mesh:** `journal` в `FusionAgent`, frame_id-gate, `events` в `WorldState` | mesh-stub: повторяющийся raw→дебаунс + event |
-| **11.C4** ⏸ отложено | **проводка sync:** journal в `main.rs`, драйв каждый кадр; вынести `build_fusion_inputs` | `to_json_line`: 1-кадровый typing не появляется; 3+ появляется со `state`/`duration` |
+| **11.C4** ⏸ dev-only | **проводка sync:** journal в `main.rs`, драйв каждый кадр; вынести `build_fusion_inputs`. **Пере-классифицирован**: sync больше не продакшн (mesh — главный путь), journal уже живёт на mesh → не блокер | `to_json_line`: 1-кадровый typing не появляется; 3+ появляется со `state`/`duration` |
 | **11.C5** ✅ `9c9c4422` | **контракт:** опц. поля `JsonActivity` + `events[]`; assert обратной совместимости | serde round-trip: старые поля идентичны; новые опускаются |
 | **11.C6** ✅ `b1eee6a7` (opt-in, off) | ephemeral-churn стичинг на стабильном object-участнике | churn в N кадров на том же object-id → продолжение |
 
