@@ -147,6 +147,7 @@ impl Camera {
             emotion_distribution: None, // Python bridge doesn't output distributions
             embedding: None,
             head_yaw: None, head_facing: None,            // native SFace embedding attached in mvm-cli enrichment
+            mask: None,                                    // bridge path has no seg masks
         }).collect())
     }
 

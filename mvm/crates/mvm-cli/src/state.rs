@@ -1199,6 +1199,7 @@ mod tests {
             torso_attitude: None,
             emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
+            mask: None,
         }]);
 
         sf.write(&tracker, 25.5, &[]).unwrap();
@@ -1263,6 +1264,7 @@ mod tests {
                 torso_attitude: None,
                 emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
+            mask: None,
             },
             Detection {
                 bbox: mvm_core::BBox {
@@ -1288,6 +1290,7 @@ mod tests {
                 torso_attitude: None,
                 emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
+            mask: None,
             },
         ]);
 
@@ -1387,6 +1390,7 @@ mod tests {
             torso_attitude: None,
             emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
+            mask: None,
         }]);
         let line = sf.to_json_line(&tracker, 29.9, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -1689,6 +1693,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
+            mask: None,
         }]);
         let debug = vec![EmotionDebugEntry {
             id: 0,
@@ -1723,6 +1728,7 @@ mod tests {
             ws_confidence: None, recon_error: None, plausibility: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
+            mask: None,
         }]);
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();

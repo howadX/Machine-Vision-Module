@@ -267,7 +267,11 @@ impl PersonTracker {
     pub fn associate(&mut self, high: &[BodyObservation], low: &[BBox]) -> Vec<u32> {
         let dets: Vec<Detection> = high
             .iter()
-            .map(|o| Detection::bare(o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2))
+            .map(|o| {
+                let mut d = Detection::bare(o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2);
+                d.mask = o.mask.clone(); // carry the person silhouette into the cost (11.A3)
+                d
+            })
             .collect();
         self.associate_core(&dets, low)
     }
@@ -578,6 +582,13 @@ impl PersonTracker {
                 };
                 t.embedding = Some(new_emb.clone());
             }
+            // Person silhouette (phase 11.A3): stash the latest observed mask so the
+            // NEXT tick's cost matrix can IoU an incoming detection against it. Only
+            // when present — masks arrive on the seg cadence, so a None must not
+            // clear a still-valid lagged silhouette.
+            if det.mask.is_some() {
+                t.last_obs_mask = det.mask.clone();
+            }
             // Propagate metadata: keep best identity, latest emotion/posture.
             if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
                 if t.identity_confidence.map_or(true, |c| conf > c) {
@@ -789,6 +800,7 @@ mod tests {
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }]
     }
 
@@ -902,6 +914,7 @@ mod tests {
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }];
         t.tick(&enriched);
         let active: Vec<_> = t.active().collect();
@@ -960,6 +973,7 @@ mod tests {
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }]);
         t.tick(&[Detection {
             bbox: BBox { x1: 0.31, y1: 0.31, x2: 0.71, y2: 0.71 },
@@ -972,6 +986,7 @@ mod tests {
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].identity.as_deref(), Some("Вадим"));
@@ -991,6 +1006,7 @@ mod tests {
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }]);
         t.tick(&[Detection {
             bbox: BBox { x1: 0.32, y1: 0.31, x2: 0.52, y2: 0.51 },
@@ -1002,6 +1018,7 @@ mod tests {
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }]);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active[0].emotion.as_deref(), Some("Happiness"));
@@ -1211,6 +1228,7 @@ mod tests {
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }]
     }
 
@@ -1534,6 +1552,54 @@ mod tests {
 
     // ── ByteTrack two-stage (phase 9.4) ─────────────────────────────────────
 
+    /// A rectangular instance mask (phase 11.A3 tests): every grid cell whose
+    /// centre falls in the normalized rect is set. Lets tests build silhouettes
+    /// with controllable IoU.
+    fn mask_rect(x1: f32, y1: f32, x2: f32, y2: f32) -> crate::mask::InstanceMask {
+        use crate::mask::MASK_RES;
+        let mut bits = vec![0u8; MASK_RES * MASK_RES];
+        for gy in 0..MASK_RES {
+            for gx in 0..MASK_RES {
+                let cx = (gx as f32 + 0.5) / MASK_RES as f32;
+                let cy = (gy as f32 + 0.5) / MASK_RES as f32;
+                if cx >= x1 && cx < x2 && cy >= y1 && cy < y2 {
+                    bits[gy * MASK_RES + gx] = 1;
+                }
+            }
+        }
+        crate::mask::InstanceMask::from_bits(bits)
+    }
+
+    #[test]
+    fn observation_mask_stored_on_track_after_apply() {
+        // 11.A3 plumbing: a mask on the observation must survive association and be
+        // stashed as the track's lagged silhouette for the NEXT tick's cost.
+        let mut t = PersonTracker::new();
+        let obs = BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50)).with_mask(mask_rect(0.30, 0.30, 0.50, 0.50));
+        let ids = t.associate(std::slice::from_ref(&obs), &[]);
+        // associate → apply_detection (the mesh path both feed a Detection carrying
+        // the mask through `associate`'s conversion, then enrichment stashes it).
+        let mut d = Detection::bare(0.30, 0.30, 0.50, 0.50);
+        d.mask = obs.mask.clone();
+        t.apply_detection(ids[0], &d);
+        t.finalize();
+        assert!(t.all().get(&ids[0]).unwrap().last_obs_mask.is_some(), "mask stashed on track");
+    }
+
+    #[test]
+    fn absent_mask_does_not_clear_stashed_silhouette() {
+        // A later maskless observation (off the seg cadence) must NOT wipe the
+        // lagged silhouette.
+        let mut t = PersonTracker::new();
+        let ids = t.associate(&[BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50))], &[]);
+        let mut d = Detection::bare(0.30, 0.30, 0.50, 0.50);
+        d.mask = Some(mask_rect(0.30, 0.30, 0.50, 0.50));
+        t.apply_detection(ids[0], &d);
+        // second apply with no mask
+        t.apply_detection(ids[0], &Detection::bare(0.31, 0.31, 0.51, 0.51));
+        assert!(t.all().get(&ids[0]).unwrap().last_obs_mask.is_some(), "None must not clear the mask");
+    }
+
     fn bbox(x1: f32, y1: f32, x2: f32, y2: f32) -> BBox {
         BBox { x1, y1, x2, y2 }
     }
@@ -1603,6 +1669,7 @@ mod tests {
             body_coverage: None, torso_attitude: None,
             head_yaw: None, head_facing: None,
             emotion_distribution: None, embedding: Some(vec![1.0, 0.0, 0.0]),
+            mask: None,
         };
 
         let mut integrated = PersonTracker::new();

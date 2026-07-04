@@ -75,6 +75,11 @@ pub struct Detection {
     /// the tracker for margin-identity (#5) and cosine re-link (#6). None when
     /// no native embedding was computed (e.g. Python-only path).
     pub embedding: Option<Vec<f32>>,
+    /// YOLO-seg person silhouette for this body (phase 11.A3). Fed into the
+    /// association cost as a mask-IoU cue (gated ≥2 people) to fight walking
+    /// fragmentation; NOT a scene node. `None` on the object cadence's off-frames
+    /// and on paths without seg — the cost term then degrades to zero.
+    pub mask: Option<crate::mask::InstanceMask>,
 }
 
 impl Detection {
@@ -91,6 +96,7 @@ impl Detection {
             emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
+            mask: None,
         }
     }
 }
@@ -113,12 +119,23 @@ pub struct BodyObservation {
     /// 33 raw landmarks `[x,y,z,visibility]`, if posed. `None` for a bbox-only
     /// (low-confidence) box. Persisted on the track in 9.8; unused by association.
     pub landmarks: Option<crate::motion::Landmarks33>,
+    /// YOLO-seg person silhouette (phase 11.A3), when the seg expert matched a
+    /// mask to this body. Threaded into the association cost as a mask-IoU cue
+    /// (see [`Detection::mask`]). `None` off the seg cadence.
+    pub mask: Option<crate::mask::InstanceMask>,
 }
 
 impl BodyObservation {
-    /// Bbox-only observation (high-confidence by default, no landmarks).
+    /// Bbox-only observation (high-confidence by default, no landmarks, no mask).
     pub fn bare(bbox: BBox) -> Self {
-        Self { bbox, score: 1.0, landmarks: None }
+        Self { bbox, score: 1.0, landmarks: None, mask: None }
+    }
+
+    /// Attach a person mask (phase 11.A3) — builder used by the mesh HumanAgent
+    /// after matching published seg masks to bodies, and by tracker tests.
+    pub fn with_mask(mut self, mask: crate::mask::InstanceMask) -> Self {
+        self.mask = Some(mask);
+        self
     }
 }
 
@@ -243,6 +260,12 @@ pub struct PersonTrack {
     /// term in association (OCM) and the virtual trajectory in recovery (OCR).
     /// `None` until two observations exist.
     pub obs_velocity: Option<[f32; 2]>,
+    /// Last **observed** person silhouette (phase 11.A3), stored only when a
+    /// matched detection carried a seg mask. Sits alongside `last_obs_center`/
+    /// `obs_velocity` as lagged observation state: the association cost IoUs the
+    /// incoming detection's mask against this to disambiguate crossing bodies.
+    /// Never overwritten with `None` (masks arrive only on the seg cadence).
+    pub last_obs_mask: Option<crate::mask::InstanceMask>,
     /// Explicit lifecycle state (phase 9.3). Recomputed each tick by the tracker
     /// from `age`/`missed` + identity lock. Born `Tentative`.
     pub lifecycle: LifecycleState,
@@ -300,6 +323,7 @@ impl PersonTrack {
             // until a second observation establishes a direction.
             last_obs_center: Some([(bbox.x1 + bbox.x2) * 0.5, (bbox.y1 + bbox.y2) * 0.5]),
             obs_velocity: None,
+            last_obs_mask: None,
             lifecycle: LifecycleState::Tentative,
             id_stable_count: 0,
             frames_since_emotion: u32::MAX, // never enriched → first sight needs emotion
