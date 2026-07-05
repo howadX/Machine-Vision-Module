@@ -8,6 +8,7 @@
 //!   mvm --native               use Rust-native emotion + identity (FFmpeg capture)
 
 mod state;
+mod render;
 mod scene_debug;
 mod pipeline;
 mod agents;

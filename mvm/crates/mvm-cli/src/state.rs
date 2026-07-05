@@ -482,7 +482,7 @@ fn hand_to_json(h: &mvm_core::HandState, dump_landmarks: bool) -> JsonHand {
     }
 }
 
-fn person_to_entity(p: &mvm_core::PersonState) -> mvm_core::types::Entity {
+pub(crate) fn person_to_entity(p: &mvm_core::PersonState) -> mvm_core::types::Entity {
     use mvm_core::types::{Entity, EntityKind};
     let (pos_3d, pos_conf) = match p.position_3d {
         Some(q) => ([q.x, q.y, q.z], q.confidence),
@@ -501,7 +501,7 @@ fn person_to_entity(p: &mvm_core::PersonState) -> mvm_core::types::Entity {
     }
 }
 
-fn object_state_to_entity(o: &mvm_core::ObjectState) -> mvm_core::types::Entity {
+pub(crate) fn object_state_to_entity(o: &mvm_core::ObjectState) -> mvm_core::types::Entity {
     use mvm_core::types::{Entity, EntityKind};
     let (pos_3d, pos_conf) = match o.position_3d {
         Some(q) => ([q.x, q.y, q.z], q.confidence),

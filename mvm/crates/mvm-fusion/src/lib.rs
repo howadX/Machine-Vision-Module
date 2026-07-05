@@ -499,7 +499,11 @@ pub struct ZoneTracker {
 
 /// The semantic label for a component from its member object classes: any
 /// workstation-class object wins, else any seating-class object, else none.
-fn zone_label(members: &[u32], entities: &[Entity]) -> Option<&'static str> {
+///
+/// Stateless (no persistent zone id) — the snapshot renderer (phase 12.B1)
+/// reuses it to label the current frame's zones without touching the
+/// [`ZoneTracker`]'s history.
+pub fn zone_label(members: &[u32], entities: &[Entity]) -> Option<&'static str> {
     let mut seating = false;
     for e in entities {
         if !members.contains(&e.id) {
