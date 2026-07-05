@@ -173,6 +173,11 @@ pub struct ObjectState {
     /// the state so mask-contact fusion can read it; `None` when masks are off
     /// or no seg detection matched this object.
     pub mask: Option<crate::mask::InstanceMask>,
+    /// Object-permanence hold (phase 11 / 12.B3): `true` when this static fixture
+    /// (keyboard/mouse/…) is currently *remembered* under hand occlusion rather
+    /// than freshly detected — mirrors `TrackedObject.missed > 0`. Lets the Scene
+    /// JSON / snapshot tell "held" from "seen" on the mesh path too.
+    pub remembered: bool,
     pub last_seen: Instant,
 }
 
@@ -202,6 +207,11 @@ pub struct WorldState {
     pub timestamp: Instant,
     pub people: Vec<PersonState>,
     pub objects: Vec<ObjectState>,
+    /// Animal-class YOLO detections this frame (bbox only) — NOT scene nodes, kept
+    /// so fusion can drop a body overlapping a pet from relational activities and
+    /// the JSON can flag it `likely_animal` (model-corroborated anti-pet gate,
+    /// phase 10.x). Mirrors the sync path's `animals` argument; empty otherwise.
+    pub animals: Vec<BBox>,
     pub audio_events: Vec<AudioEvent>,
     pub activities: Vec<Activity>,
     /// Completed activity episodes (phase 11.C3) — appended by the fusion step
@@ -223,6 +233,7 @@ impl WorldState {
             timestamp: now,
             people: Vec::new(),
             objects: Vec::new(),
+            animals: Vec::new(),
             audio_events: Vec::new(),
             activities: Vec::new(),
             events: Vec::new(),
@@ -324,6 +335,7 @@ mod tests {
             age: 5,
             position_3d: Some(Position3D { x: 0.18, y: 0.65, z: 0.68, confidence: 0.4 }),
             mask: None,
+            remembered: false,
             last_seen: Instant::now(),
         };
         assert_eq!(o.id, 10000);
@@ -375,6 +387,7 @@ mod tests {
             age: 1,
             position_3d: None,
             mask: None,
+            remembered: false,
             last_seen: now - std::time::Duration::from_millis(age_ms),
         };
         w.objects.push(mk(10000, 500)); // stale

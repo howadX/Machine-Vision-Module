@@ -94,6 +94,7 @@ fn bbox_iou(a: &BBox, b: &BBox) -> f32 {
 pub(crate) fn project_objects(
     world: &Arc<RwLock<WorldState>>,
     objects: &[mvm_scene::TrackedObject],
+    animals: &[mvm_core::BBox],
     now: Instant,
 ) {
     let objs: Vec<ObjectState> = objects
@@ -108,11 +109,15 @@ pub(crate) fn project_objects(
                 .pos_3d
                 .map(|[x, y, z]| Position3D { x, y, z, confidence: t.pos_conf }),
             mask: t.mask.clone(),
+            // Object-permanence: a held (occluded) static fixture has missed > 0
+            // but is still emitted (phase 11) — surface it on mesh (12.B3 parity).
+            remembered: t.missed > 0,
             last_seen: now,
         })
         .collect();
     if let Ok(mut w) = world.write() {
         w.objects = objs;
+        w.animals = animals.to_vec();
     }
 }
 
@@ -184,7 +189,7 @@ mod tests {
                 mask: None,
             },
         ];
-        project_objects(&world, &objs, now);
+        project_objects(&world, &objs, &[], now);
 
         let w = world.read().unwrap();
         assert_eq!(w.objects.len(), 2);

@@ -89,6 +89,11 @@ pub fn is_animal(class_name: &str) -> bool {
     ANIMAL_CLASSES.contains(&class_name)
 }
 
+/// Body↔animal-detection bbox-IoU above which a body is flagged `likely_animal`
+/// and dropped from relational fusion (phase 10.x anti-pet gate). Single source
+/// for both the sync and mesh paths.
+pub const ANIMAL_IOU: f32 = 0.4;
+
 /// Large, visually-similar furniture prone to low-confidence flicker
 /// (couch ↔ bed ↔ chair confusion). These need a higher score bar than small
 /// interaction objects, which a single global threshold can't express.

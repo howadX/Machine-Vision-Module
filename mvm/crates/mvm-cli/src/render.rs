@@ -279,6 +279,7 @@ mod tests {
             age: 5,
             position_3d: Some(Position3D { x: 0.2, y: 0.3, z: 0.9, confidence: 0.8 }),
             mask: None,
+            remembered: false,
             last_seen: Instant::now(),
         }
     }

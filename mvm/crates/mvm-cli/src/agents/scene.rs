@@ -64,6 +64,15 @@ impl Agent for SceneAgent {
                     last_id = Some(frame.id);
                     match self.detector.detect(frame.image.as_ref()) {
                         Ok(objs) => {
+                            // Animal-class detections (dog/cat/…) are NOT scene
+                            // nodes (dropped by `is_relevant`), but fusion needs
+                            // them to drop a pet-overlapping body from relational
+                            // activities (anti-pet gate) — capture before filtering.
+                            let animals: Vec<mvm_core::BBox> = objs
+                                .iter()
+                                .filter(|o| mvm_scene::is_animal(o.class_name))
+                                .map(|o| o.bbox)
+                                .collect();
                             // Filters A/C/D (mirror the synchronous loop): relevant
                             // classes, per-class score floor, minimum bbox area.
                             let filtered: Vec<_> = objs
@@ -121,7 +130,7 @@ impl Agent for SceneAgent {
                                 }
                             }
 
-                            project_objects(&ctx.world, &tracked, frame.captured);
+                            project_objects(&ctx.world, &tracked, &animals, frame.captured);
                             ticks += 1;
                         }
                         Err(e) => {

@@ -348,7 +348,7 @@ fn object_entities(objects: &[TrackedObject]) -> Vec<mvm_core::types::Entity> {
 // PersonTracker, but must emit the *same* Scene JSON contract. These mirror the
 // tracker-keyed builders above.
 
-fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool) -> JsonFace {
+fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool, likely_animal: bool) -> JsonFace {
     JsonFace {
         id: p.track_id,
         identity: p.identity.as_ref().map(|(n, _)| n.clone()),
@@ -358,7 +358,9 @@ fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool) -> JsonF
         emotion_distribution: p.emotion_distribution,
         bbox_h: p.bbox.y2 - p.bbox.y1,
         face_verified: p.identity.is_some() || p.emotion.is_some(),
-        likely_animal: false, // mesh path carries no animal detections (follow-up)
+        // Mesh parity (12.B3): the SceneAgent now publishes animal detections into
+        // `world.animals`; a body overlapping one is flagged (as on sync).
+        likely_animal,
         posture: p.posture.as_ref().map(|(s, _)| s.clone()),
         posture_conf: p.posture.as_ref().map(|(_, c)| *c),
         body_coverage: p.body_coverage,
@@ -467,10 +469,11 @@ fn ser_opt_vec2<S: serde::Serializer>(v: &Option<Vec<[f32; 2]>>, s: S) -> std::r
 }
 
 /// Min bbox-IoU for a body to count as overlapping an animal detection (the
-/// likely-animal gate). High enough that a person merely standing near a pet
-/// (tall body box vs low wide animal box → small IoU) is never flagged; only a
-/// body whose box ≈ the animal's box (i.e. the body *is* the animal) trips it.
-const ANIMAL_IOU: f32 = 0.4;
+/// likely-animal gate) — single source in `mvm_scene::ANIMAL_IOU`. High enough
+/// that a person merely standing near a pet (tall body box vs low wide animal box
+/// → small IoU) is never flagged; only a body whose box ≈ the animal's box (i.e.
+/// the body *is* the animal) trips it.
+use mvm_scene::ANIMAL_IOU;
 
 fn hand_to_json(h: &mvm_core::HandState, dump_landmarks: bool) -> JsonHand {
     JsonHand {
@@ -528,11 +531,10 @@ fn object_state_to_json(o: &mvm_core::ObjectState) -> JsonObject {
         age: o.age,
         pos: o.position_3d.map(|q| [q.x, q.y, q.z]),
         bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
-        mask_coverage: None, // mesh path masks are a follow-up (phase 10.4)
-        // ObjectState carries no missed-count; the mesh JSON can't flag
-        // remembered fixtures yet (the hold itself still works — held objects
-        // reach fusion). Surfacing the flag on mesh is a follow-up.
-        remembered: false,
+        // Mesh parity (12.B3): masks are attached on the mesh SceneAgent, and the
+        // permanence flag rides on ObjectState now — both surface here as on sync.
+        mask_coverage: o.mask.as_ref().map(|m| m.frame_coverage()),
+        remembered: o.remembered,
     }
 }
 
@@ -802,6 +804,7 @@ impl StateFile {
                     .pos_3d
                     .map(|[x, y, z]| mvm_core::Position3D { x, y, z, confidence: o.pos_conf }),
                 mask: o.mask.clone(),
+                remembered: o.missed > 0,
                 last_seen: now_i,
             })
             .collect();
@@ -926,7 +929,13 @@ impl StateFile {
         let faces: Vec<JsonFace> = world
             .people
             .iter()
-            .map(|p| person_to_json_face(p, self.dump_landmarks))
+            .map(|p| {
+                let likely_animal = world
+                    .animals
+                    .iter()
+                    .any(|a| p.bbox.iou(a) > mvm_scene::ANIMAL_IOU);
+                person_to_json_face(p, self.dump_landmarks, likely_animal)
+            })
             .collect();
         let json_objects: Vec<JsonObject> = world.objects.iter().map(object_state_to_json).collect();
 
@@ -1548,6 +1557,54 @@ mod tests {
     }
 
     #[test]
+    fn world_json_object_remembered_and_mask_coverage() {
+        // Mesh parity (12.B3): the object-permanence flag and mask coverage now
+        // surface on the mesh path exactly as on sync (previously hardcoded off).
+        let sf = StateFile::open_at(temp_state_path("test_world_obj_parity.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let r = mvm_scene::MASK_RES as u32;
+        let full = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let mask = mvm_scene::mask::assemble_mask(
+            &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
+            &full, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
+        );
+        let mut o = object_state(
+            mvm_scene::OBJECT_ID_BASE,
+            "keyboard",
+            mvm_core::BBox { x1: 0.35, y1: 0.5, x2: 0.55, y2: 0.7 },
+        );
+        o.remembered = true;
+        o.mask = Some(mask);
+        world.objects.push(o);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["objects"][0]["remembered"], true, "remembered surfaced on mesh");
+        let cov = v["objects"][0]["mask_coverage"].as_f64().expect("mask_coverage on mesh");
+        assert!(cov > 0.9, "full-frame mask → ~full coverage, got {cov}");
+    }
+
+    #[test]
+    fn world_json_flags_likely_animal_over_body() {
+        // Mesh parity (12.B3): a body whose box overlaps a published animal
+        // detection is flagged `likely_animal`; a body that doesn't is not.
+        let sf = StateFile::open_at(temp_state_path("test_world_animal.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let pet_box = mvm_core::BBox { x1: 0.6, y1: 0.5, x2: 0.9, y2: 0.9 };
+        world.people.push(person_state(10, pet_box)); // body ≈ the pet box
+        world
+            .people
+            .push(person_state(0, mvm_core::BBox { x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.9 }));
+        world.animals.push(pet_box);
+        let line = sf.to_json_line_world(&world, 30.0);
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let faces = v["faces"].as_array().unwrap();
+        let pet = faces.iter().find(|f| f["id"] == 10).unwrap();
+        let human = faces.iter().find(|f| f["id"] == 0).unwrap();
+        assert_eq!(pet["likely_animal"], true, "body over animal box flagged");
+        assert!(human.get("likely_animal").is_none(), "non-overlapping body not flagged");
+    }
+
+    #[test]
     fn sync_json_emits_hands_and_wrists_from_matched_body() {
         // Phase 10.0 fix: the sync path must surface the wrists/hands it computes.
         let sf = StateFile::open_at(temp_state_path("test_json_hands.md")).unwrap();
@@ -1851,6 +1908,7 @@ mod tests {
             age: 2,
             position_3d: None,
             mask: None,
+            remembered: false,
             last_seen: std::time::Instant::now(),
         }
     }
@@ -2108,6 +2166,7 @@ mod tests {
             age: 3,
             position_3d: None,
             mask: None,
+            remembered: false,
             last_seen: std::time::Instant::now(),
         });
         let v1: serde_json::Value =

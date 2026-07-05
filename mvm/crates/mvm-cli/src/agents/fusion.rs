@@ -49,7 +49,21 @@ impl FusionAgent {
     /// stabilized set (Active+Cooling, EMA confidence) as `world.activities` and
     /// append completed episodes to `world.events`.
     fn advance_journal(&mut self, w: &mut WorldState) {
-        let raw = infer_activities(w.people.as_slice(), w.objects.as_slice());
+        // Drop a body overlapping a YOLO animal detection from relational
+        // activities — a pet with a spurious BlazePose skeleton must never be a
+        // `people_together` participant (model-corroborated anti-pet gate;
+        // sync-path parity, phase 12.B3). No animals → no clone (hot path).
+        let raw = if w.animals.is_empty() {
+            infer_activities(w.people.as_slice(), w.objects.as_slice())
+        } else {
+            let people: Vec<PersonState> = w
+                .people
+                .iter()
+                .filter(|p| !w.animals.iter().any(|a| p.bbox.iou(a) > mvm_scene::ANIMAL_IOU))
+                .cloned()
+                .collect();
+            infer_activities(people.as_slice(), w.objects.as_slice())
+        };
         if self.last_frame != Some(w.frame_id) {
             self.last_frame = Some(w.frame_id);
             let t = w.timestamp.saturating_duration_since(self.epoch).as_secs_f64();
@@ -471,6 +485,7 @@ mod tests {
             age: 2,
             position_3d: Some(Position3D { x: 9.0, y: 9.0, z: 9.0, confidence: 0.4 }), // stale
             mask: None,
+            remembered: false,
             last_seen: Instant::now(),
         }
     }
@@ -626,6 +641,7 @@ mod tests {
             age: 1,
             position_3d: None,
             mask: None,
+            remembered: false,
             last_seen: Instant::now(),
         }
     }
@@ -833,6 +849,44 @@ mod tests {
         assert!(
             acts.iter().any(|x| x.label == "people_together" && x.participants == vec![10, 11]),
             "got {acts:?}"
+        );
+    }
+
+    #[test]
+    fn anti_pet_gate_drops_animal_body_from_people_together() {
+        // Mesh parity (12.B3): a body overlapping a YOLO animal detection (a pet
+        // with a spurious BlazePose skeleton) must never be a `people_together`
+        // participant. Control run (no animals) confirms the pair would fire.
+        let t0 = std::time::Instant::now();
+        let mut a = person(1.0);
+        a.track_id = 10;
+        a.bbox = BBox { x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.7 };
+        a.position_3d = Some(Position3D { x: 0.0, y: 0.0, z: 1.0, confidence: 0.5 });
+        let mut b = person(1.0);
+        b.track_id = 11;
+        b.bbox = BBox { x1: 0.6, y1: 0.5, x2: 0.95, y2: 0.9 }; // low-wide pet-shaped box
+        b.position_3d = Some(Position3D { x: 0.3, y: 0.0, z: 1.0, confidence: 0.5 });
+
+        let together_seen = |animals: Vec<BBox>| {
+            let mut agent = fusion_agent();
+            let mut seen = false;
+            for f in 0..5u64 {
+                let mut w = mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100 * f));
+                w.frame_id = f;
+                w.people = vec![a.clone(), b.clone()];
+                w.animals = animals.clone();
+                agent.advance_journal(&mut w);
+                if w.activities.iter().any(|x| x.label == "people_together") {
+                    seen = true;
+                }
+            }
+            seen
+        };
+
+        assert!(together_seen(vec![]), "control: the pair should fire without animals");
+        assert!(
+            !together_seen(vec![b.bbox]),
+            "gate: pet-overlapping body must not join people_together"
         );
     }
 

@@ -151,6 +151,7 @@ mod tests {
             age: 2,
             position_3d: None,
             mask: None,
+            remembered: false,
             last_seen: Instant::now(),
         }
     }
