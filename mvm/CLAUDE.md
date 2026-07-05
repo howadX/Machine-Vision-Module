@@ -5,10 +5,21 @@
 
 ---
 
-## Статус (2026-07-04)
+## Статус (2026-07-05)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  510 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+  540 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 12 — LLM-render ЗАКРЫТА (2026-07-05, `+0 ONNX/+0 deps`):** MVM вызывается LLM как модуль зрения.
+  Pull-модель трёх уровней: **snapshot** (`current_state.md` = markdown-таблица v2, `render.rs`, ⚠️ сменил
+  legacy `key:value` — sight-journal skill обновить), **recap** (`mvm-cli recap` / rolling `journal.md` /
+  `mvm-core/recap.rs`, схлопывает churn object-id; live ~170–192× сжатие), **inspect** (сырой срез по
+  ts/track-id). Producer: `--scene-log <dir>` → `scene-`/`events-YYYY-MM-DD.jsonl` (ротация по дате).
+  Токен-диета Scene JSON (округление f32 всегда; `--dump-distributions`/`--dump-full-graph` опт-ин; ≈24%).
+  **MCP stdio-сервер** `mvm-cli serve --mcp` (`mcp.rs`, hand-rolled JSON-RPC, инструменты
+  `mvm_snapshot`/`mvm_recap`/`mvm_inspect`, read-only над артефактами). **B0:** закрыт mesh↔sync JSON-parity
+  (`remembered`/`mask_coverage`/`likely_animal` + анти-pet-гейт на mesh). **Live-провалидировано** на
+  2-мин сессии (0 ошибок агентов). План — `docs/phase-12-llm-render-plan.md`. **Осталось (владелец, вне
+  репо):** регистрация MCP в Hermes/Claude Code; обновление sight-journal skill под новый формат.
 - **Mesh = продакшн-путь; seg заведён в `AgentMesh` (2026-07-04, `--masks`):** решение владельца — `mesh` теперь
   главный продакшн-путь (sync `--native-camera` остаётся для тестов/истории). YOLO-seg был подключён только на
   sync → на mesh `ObjectState.mask` всегда `None`, и A1/A2 mask-контакт **молча падал в bbox**. Теперь
