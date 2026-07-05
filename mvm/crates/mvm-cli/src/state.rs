@@ -357,14 +357,19 @@ fn object_entities(objects: &[TrackedObject]) -> Vec<mvm_core::types::Entity> {
 // PersonTracker, but must emit the *same* Scene JSON contract. These mirror the
 // tracker-keyed builders above.
 
-fn person_to_json_face(p: &mvm_core::PersonState, dump_landmarks: bool, likely_animal: bool) -> JsonFace {
+fn person_to_json_face(
+    p: &mvm_core::PersonState,
+    dump_landmarks: bool,
+    dump_distributions: bool,
+    likely_animal: bool,
+) -> JsonFace {
     JsonFace {
         id: p.track_id,
         identity: p.identity.as_ref().map(|(n, _)| n.clone()),
         identity_conf: p.identity.as_ref().map(|(_, c)| *c),
         emotion: p.emotion.as_ref().map(|(e, _)| e.clone()),
         emotion_conf: p.emotion.as_ref().map(|(_, c)| *c),
-        emotion_distribution: p.emotion_distribution,
+        emotion_distribution: dump_distributions.then_some(p.emotion_distribution).flatten(),
         bbox_h: p.bbox.y2 - p.bbox.y1,
         face_verified: p.identity.is_some() || p.emotion.is_some(),
         // Mesh parity (12.B3): the SceneAgent now publishes animal detections into
@@ -594,6 +599,11 @@ pub struct StateFile {
     /// Include raw 21-point hand landmarks in the Scene JSON (`--dump-landmarks`,
     /// phase 10.0 opt-in — heavy payload, off by default).
     pub dump_landmarks: bool,
+    /// Include the 8-class `emotion_distribution` in the Scene JSON
+    /// (`--dump-distributions`, phase 12.A2 opt-in). Off by default: the summary
+    /// `emotion`/`emotion_conf`/`emotion_entropy` already carry the decision, and
+    /// the 8 floats × person × frame are the stream's biggest repeating block.
+    pub dump_distributions: bool,
     /// Persistent zone identity over the per-frame connected components (phase
     /// 11.B1). Advanced once per emitted JSON line (both paths take `&self`).
     zone_tracker: std::sync::Mutex<mvm_fusion::ZoneTracker>,
@@ -621,6 +631,7 @@ impl StateFile {
             path,
             tz,
             dump_landmarks: false,
+            dump_distributions: false,
             zone_tracker: std::sync::Mutex::new(mvm_fusion::ZoneTracker::new()),
             anomaly: std::sync::Mutex::new(mvm_core::AnomalyScorer::new()),
             epoch: std::time::Instant::now(),
@@ -889,7 +900,7 @@ impl StateFile {
                 identity_conf: t.shown_identity().and(t.identity_confidence),
                 emotion: t.emotion.clone(),
                 emotion_conf: t.emotion_confidence,
-                emotion_distribution: t.emotion_distribution,
+                emotion_distribution: self.dump_distributions.then_some(t.emotion_distribution).flatten(),
                 face_verified: t.emotion.is_some() || t.shown_identity().is_some(),
                 likely_animal: animals.iter().any(|a| t.bbox.iou(&a.bbox) > ANIMAL_IOU),
                 posture: t.posture.clone(),
@@ -984,7 +995,7 @@ impl StateFile {
                     .animals
                     .iter()
                     .any(|a| p.bbox.iou(a) > mvm_scene::ANIMAL_IOU);
-                person_to_json_face(p, self.dump_landmarks, likely_animal)
+                person_to_json_face(p, self.dump_landmarks, self.dump_distributions, likely_animal)
             })
             .collect();
         let json_objects: Vec<JsonObject> = world.objects.iter().map(object_state_to_json).collect();
@@ -1980,6 +1991,31 @@ mod tests {
         assert_eq!(d1, "{\"a\":1}\n{\"a\":2}\n", "same-day append");
         assert_eq!(d2, "{\"a\":3}\n", "date roll → new file");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn emotion_distribution_is_opt_in() {
+        // Phase 12.A2: the 8-class distribution is off by default (summary stays);
+        // --dump-distributions brings it back byte-for-byte.
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        p.emotion = Some(("Neutral".into(), 0.8));
+        p.emotion_distribution = Some([0.02, 0.01, 0.0, 0.0, 0.05, 0.88, 0.02, 0.02]);
+        world.people.push(p);
+
+        let sf = StateFile::open_at(temp_state_path("test_dist_off.md")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
+        let f = &v["faces"][0];
+        assert!(f.get("emotion_distribution").is_none(), "distribution off by default");
+        assert_eq!(f["emotion"], "Neutral", "summary label stays");
+        assert!(f.get("emotion_entropy").is_some(), "entropy summary stays");
+
+        let mut sf2 = StateFile::open_at(temp_state_path("test_dist_on.md")).unwrap();
+        sf2.dump_distributions = true;
+        let v2: serde_json::Value =
+            serde_json::from_str(&sf2.to_json_line_world(&world, 30.0)).unwrap();
+        let arr = v2["faces"][0]["emotion_distribution"].as_array().expect("present with flag");
+        assert_eq!(arr.len(), 8);
     }
 
     #[test]

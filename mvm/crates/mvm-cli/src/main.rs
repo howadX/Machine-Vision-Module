@@ -170,6 +170,9 @@ struct Args {
     /// --scene-log <dir>: append each dumped frame to a per-day rotating
     /// `scene-YYYY-MM-DD.jsonl` in <dir> (phase 12.C0). Independent of --dump-json.
     scene_log: Option<PathBuf>,
+    /// --dump-distributions: include the 8-class `emotion_distribution` in the
+    /// Scene JSON (phase 12.A2 opt-in; off by default — summary is enough).
+    dump_distributions: bool,
 }
 
 fn parse_args() -> Args {
@@ -188,6 +191,7 @@ fn parse_args() -> Args {
         scene_debug: false,
         masks: false,
         scene_log: None,
+        dump_distributions: false,
     };
 
     let mut i = 1;
@@ -203,6 +207,7 @@ fn parse_args() -> Args {
             "--native-camera" => { args.native_camera = true; args.native = true; }
             "--scene-debug"   => args.scene_debug = true,
             "--masks"         => args.masks = true,
+            "--dump-distributions" => args.dump_distributions = true,
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -436,6 +441,8 @@ struct MeshArgs {
     /// --dump-landmarks: include raw 21-point hand landmarks in the Scene JSON
     /// (phase 10.0 opt-in — heavy payload).
     dump_landmarks: bool,
+    /// --dump-distributions: include the 8-class `emotion_distribution` (12.A2).
+    dump_distributions: bool,
     /// StateFileWriter snapshot interval (ms).
     interval_ms: u64,
     /// --masks: run the YOLO-seg expert (phase 10.4, +1 ONNX) in the SceneAgent,
@@ -457,6 +464,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         dump_json: false,
         emotion_debug: false,
         dump_landmarks: false,
+        dump_distributions: false,
         interval_ms: 100,
         masks: false,
         scene_log: None,
@@ -468,6 +476,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             "--dump-json" => a.dump_json = true,
             "--emotion-debug" => a.emotion_debug = true,
             "--dump-landmarks" => a.dump_landmarks = true,
+            "--dump-distributions" => a.dump_distributions = true,
             "--masks" => a.masks = true,
             "--scene-log" => {
                 if i + 1 < raw.len() {
@@ -606,6 +615,7 @@ fn load_hands(config: &mvm_core::Config) -> Option<mvm_hands::HandLandmarker> {
 fn run_mesh(args: MeshArgs) -> Result<()> {
     let mut state_file = state::StateFile::open()?;
     state_file.dump_landmarks = args.dump_landmarks;
+    state_file.dump_distributions = args.dump_distributions;
     let interval = Duration::from_millis(args.interval_ms);
     // Durable JSONL history (phase 12.C0/C1); reuses the StateFile timezone. Both
     // logs share the `--scene-log` dir (scene-*.jsonl frames, events-*.jsonl
@@ -961,7 +971,8 @@ fn main() -> Result<()> {
             eprintln!("  identity: user '{name}' → reserved id {uid}");
         }
     }
-    let state_file = state::StateFile::open()?;
+    let mut state_file = state::StateFile::open()?;
+    state_file.dump_distributions = args.dump_distributions;
     let mut last_dump = Instant::now();
     let dump_interval = Duration::from_secs(dump_secs);
 
