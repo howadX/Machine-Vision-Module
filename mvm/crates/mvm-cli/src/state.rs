@@ -72,17 +72,18 @@ struct JsonFace {
     id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     identity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     identity_conf: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     emotion: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     emotion_conf: Option<f32>,
     /// Full 8-class softmax distribution from Rust ONNX model (phase 6.4).
     /// Absent when only Python bridge prediction is available.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_arr8")]
     emotion_distribution: Option<[f32; 8]>,
     /// Face bbox height (normalised 0..1) — diagnostic field for 3D calibration.
+    #[serde(serialize_with = "ser_f32")]
     bbox_h: f32,
     /// Whether this body was ever corroborated by a matched face (identity or
     /// emotion). A body-primary track facing away is legitimately `false` +
@@ -102,7 +103,7 @@ struct JsonFace {
     likely_animal: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     posture: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     posture_conf: Option<f32>,
     /// Body-visibility regime ("full"/"upper"/"head") — occlusion-aware posture.
     /// With "upper"/"head" the lower body was NOT seen and `posture` is honestly
@@ -113,16 +114,16 @@ struct JsonFace {
     /// `posture` is withheld under occlusion.
     #[serde(skip_serializing_if = "Option::is_none")]
     torso_attitude: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     dist_m: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_arr3")]
     pos: Option<[f32; 3]>,
     /// Coarse locomotion state (phase 9.8): "idle" / "moving". Absent until the
     /// motion ring commits a state.
     #[serde(skip_serializing_if = "Option::is_none")]
     motion: Option<&'static str>,
     /// Centroid speed in torso-lengths/sec (phase 9.8).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     velocity: Option<f32>,
     /// Coarse left-arm gesture off the motion ring ("reaching"/"waving", phase
     /// 10.0). Absent when the arm is resting.
@@ -132,7 +133,7 @@ struct JsonFace {
     right_gesture: Option<&'static str>,
     /// Visible wrist anchors, normalised [x,y] (BlazePose 15/16, phase 10.0).
     /// Mesh path only — the sync tracker path carries no landmarks.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip_serializing_if = "Vec::is_empty", serialize_with = "ser_vec2")]
     wrists: Vec<[f32; 2]>,
     /// Detected hands: presence + side always; 21 landmarks only under
     /// `--dump-landmarks` (heavy payload, phase 10.0 opt-in).
@@ -140,17 +141,17 @@ struct JsonFace {
     hands: Vec<JsonHand>,
     /// Normalised Shannon entropy of the emotion distribution [0,1] — the
     /// pre-baked "how reliable is `emotion`" signal (phase 10.0). 1 ≈ uniform.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     emotion_entropy: Option<f32>,
     /// Posture VAE reconstruction error — diagnostic (phase 10.0).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     recon_error: Option<f32>,
     /// Posture OOD plausibility flag — diagnostic (phase 10.0).
     #[serde(skip_serializing_if = "Option::is_none")]
     plausibility: Option<String>,
     /// Coarse head yaw, degrees (phase 10.3): 0 = frontal, − nose toward image
     /// left, + toward image right. Latest face-matched snapshot.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     head_yaw: Option<f32>,
     /// Categorical head direction ("camera"/"left"/"right", phase 10.3).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -163,14 +164,16 @@ struct JsonHand {
     /// "left"/"right" — the body wrist that drove the ROI (authoritative).
     side: &'static str,
     /// Hand-model presence score [0,1] (vis-downweighted, phase 10.2).
+    #[serde(serialize_with = "ser_f32")]
     presence: f32,
     /// Raw model handedness ~[0,1] — disambiguation next to `side` (phase 10.2).
+    #[serde(serialize_with = "ser_f32")]
     handedness: f32,
     /// Static gesture ("fist"/"open"/"point"/"pinch"), absent when unclear.
     #[serde(skip_serializing_if = "Option::is_none")]
     gesture: Option<&'static str>,
     /// Normalised 21-point landmarks; present only under `--dump-landmarks`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_vec2")]
     landmarks: Option<Vec<[f32; 2]>>,
 }
 
@@ -178,7 +181,9 @@ struct JsonHand {
 struct JsonRelation {
     a: u32,
     b: u32,
+    #[serde(serialize_with = "ser_f32")]
     dist_m: f32,
+    #[serde(serialize_with = "ser_f32")]
     overlap: f32,
     kind: &'static str,
 }
@@ -190,19 +195,21 @@ struct JsonObject {
     /// is the same physical object across frames (phase 8.E filter B).
     id: u32,
     class: String,
+    #[serde(serialize_with = "ser_f32")]
     score: f32,
     /// Frames this object has been tracked (temporal persistence).
     age: u32,
     /// Metric 3D position from depth-anchoring (phase 8.E.2); absent without depth.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_arr3")]
     pos: Option<[f32; 3]>,
     /// Normalised [x1,y1,x2,y2] in the original frame.
+    #[serde(serialize_with = "ser_arr4")]
     bbox: [f32; 4],
     /// Instance-mask silhouette coverage (set cells / whole frame, phase 10.4);
     /// present only under `--masks` when a YOLO-seg mask is attached. A tighter
     /// value than the bbox area means the mask carved the background off (the
     /// depth-by-mask / contact signal).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     mask_coverage: Option<f32>,
     /// Object-permanence hold (phase 11): `true` when this is a *remembered*
     /// static fixture (keyboard/mouse/…) currently occluded by the operating
@@ -218,16 +225,17 @@ struct JsonObject {
 #[derive(Serialize)]
 struct JsonActivity {
     label: String,
+    #[serde(serialize_with = "ser_f32")]
     confidence: f32,
     participants: Vec<u32>,
     /// FSM phase: "active" | "cooling" (debounced emission, phase 11.C).
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<&'static str>,
     /// Journal clock (seconds, monotonic per process) of the first sighting.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f64")]
     started_at: Option<f64>,
     /// Observed duration so far (last sighting − first sighting).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f64")]
     duration_s: Option<f64>,
 }
 
@@ -249,9 +257,13 @@ struct JsonEvent {
     label: String,
     participants: Vec<u32>,
     /// Journal clock (seconds, monotonic per process).
+    #[serde(serialize_with = "ser_f64_3")]
     started_at: f64,
+    #[serde(serialize_with = "ser_f64_3")]
     ended_at: f64,
+    #[serde(serialize_with = "ser_f64_3")]
     duration_s: f64,
+    #[serde(serialize_with = "ser_f32")]
     peak_confidence: f32,
     /// All participants durable (gallery-reserved / object ids).
     stable_participants: bool,
@@ -274,6 +286,7 @@ impl From<&mvm_core::ActivityEvent> for JsonEvent {
 #[derive(Serialize)]
 struct JsonFrame<'a> {
     ts: String,
+    #[serde(serialize_with = "ser_fps")]
     fps: f64,
     status: &'a str,
     faces: Vec<JsonFace>,
@@ -295,6 +308,7 @@ struct JsonFrame<'a> {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     events: Vec<JsonEvent>,
     /// Scene anomaly score [0,1] (phase 8.F).
+    #[serde(serialize_with = "ser_f32")]
     anomaly_score: f32,
 }
 
@@ -383,6 +397,73 @@ fn best_body_for_track<'a>(
 /// `#[serde(skip_serializing_if)]` predicate: omit a `false` boolean flag.
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+// ── Phase 12.A1: compact float serialization ────────────────────────────────
+// Scene JSON carried full f32 precision (`"score":0.83020747`), and ~35–45 % of
+// the stream was trailing noise no consumer reads. These `serialize_with` helpers
+// round to 3 decimal places (mm / sub-pixel / 0.1 %-confidence resolution) — and
+// fps to 1 dp — **in the serializer only**: the struct fields keep full precision,
+// the JSON schema is unchanged (same keys, same array shapes), and values still
+// round-trip. Rounding is done in f64 so serde_json's shortest formatter emits the
+// short decimal (`0.83`) rather than an f32 artefact.
+fn r3(x: f32) -> f64 {
+    ((x as f64) * 1000.0).round() / 1000.0
+}
+fn r3_64(x: f64) -> f64 {
+    (x * 1000.0).round() / 1000.0
+}
+fn ser_f32<S: serde::Serializer>(x: &f32, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_f64(r3(*x))
+}
+fn ser_opt_f32<S: serde::Serializer>(x: &Option<f32>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    match x {
+        Some(v) => s.serialize_f64(r3(*v)),
+        None => s.serialize_none(),
+    }
+}
+fn ser_opt_f64<S: serde::Serializer>(x: &Option<f64>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    match x {
+        Some(v) => s.serialize_f64(r3_64(*v)),
+        None => s.serialize_none(),
+    }
+}
+fn ser_f64_3<S: serde::Serializer>(x: &f64, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_f64(r3_64(*x))
+}
+fn ser_fps<S: serde::Serializer>(x: &f64, s: S) -> std::result::Result<S::Ok, S::Error> {
+    s.serialize_f64((x * 10.0).round() / 10.0)
+}
+fn ser_arr3<S: serde::Serializer>(a: &[f32; 3], s: S) -> std::result::Result<S::Ok, S::Error> {
+    [r3(a[0]), r3(a[1]), r3(a[2])].serialize(s)
+}
+fn ser_opt_arr3<S: serde::Serializer>(a: &Option<[f32; 3]>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    match a {
+        Some(arr) => ser_arr3(arr, s),
+        None => s.serialize_none(),
+    }
+}
+fn ser_arr4<S: serde::Serializer>(a: &[f32; 4], s: S) -> std::result::Result<S::Ok, S::Error> {
+    [r3(a[0]), r3(a[1]), r3(a[2]), r3(a[3])].serialize(s)
+}
+fn ser_opt_arr8<S: serde::Serializer>(a: &Option<[f32; 8]>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    match a {
+        Some(arr) => {
+            let out: [f64; 8] = std::array::from_fn(|i| r3(arr[i]));
+            out.serialize(s)
+        }
+        None => s.serialize_none(),
+    }
+}
+fn ser_vec2<S: serde::Serializer>(v: &[[f32; 2]], s: S) -> std::result::Result<S::Ok, S::Error> {
+    let out: Vec<[f64; 2]> = v.iter().map(|p| [r3(p[0]), r3(p[1])]).collect();
+    out.serialize(s)
+}
+fn ser_opt_vec2<S: serde::Serializer>(v: &Option<Vec<[f32; 2]>>, s: S) -> std::result::Result<S::Ok, S::Error> {
+    match v {
+        Some(vv) => ser_vec2(vv, s),
+        None => s.serialize_none(),
+    }
 }
 
 /// Min bbox-IoU for a body to count as overlapping an animal detection (the
@@ -1840,6 +1921,30 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["faces"][0]["motion"], "moving");
         assert!((v["faces"][0]["velocity"].as_f64().unwrap() - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn json_rounds_floats_for_compact_stream() {
+        // Phase 12.A1: Scene JSON floats are rounded to 3 dp (fps to 1 dp) in the
+        // serializer only — compact stream, schema unchanged, values still parse.
+        let sf = StateFile::open_at(temp_state_path("test_round.md")).unwrap();
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        p.identity = Some(("Вадим".into(), 0.6279085));
+        p.velocity = Some(0.54991883);
+        p.recon_error = Some(0.058228653);
+        world.people.push(p);
+        let line = sf.to_json_line_world(&world, 17.99596292964407);
+        // The trailing-noise long forms are gone from the wire…
+        assert!(!line.contains("0.6279085"), "identity_conf not rounded:\n{line}");
+        assert!(!line.contains("17.99596"), "fps not rounded:\n{line}");
+        assert!(!line.contains("0.54991883"), "velocity not rounded:\n{line}");
+        // …but the values are still there, just rounded, and parse cleanly.
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert!((v["faces"][0]["identity_conf"].as_f64().unwrap() - 0.628).abs() < 1e-9);
+        assert!((v["faces"][0]["velocity"].as_f64().unwrap() - 0.55).abs() < 1e-9);
+        assert!((v["faces"][0]["recon_error"].as_f64().unwrap() - 0.058).abs() < 1e-9);
+        assert!((v["fps"].as_f64().unwrap() - 18.0).abs() < 1e-9);
     }
 
     #[test]
