@@ -182,8 +182,8 @@ wrists, bbox), JSON или markdown. Дорого, но редко и узко.
 
 | Шаг | Задача | Тест |
 |-----|--------|------|
-| **12.B1** | **`mvm-cli/src/render.rs` (новый)**: `render_snapshot(&WorldState, fps) -> String` — markdown по контракту §3.1; `conf_word()` тиры; таблица сущностей; зоны по `stable_zones`; активности с duration | golden-тесты на синтетическом `WorldState` (empty / 1 чел. / 2 чел.+объекты / withheld / remembered); бюджет: ≤300 ток. (≈ ≤1200 байт) на 2 чел. |
-| **12.B2** | **Ноты честности**: блок `⚠️` из `stable_participants=false`, `withheld`, `remembered`, `plausibility`, non-`face_verified` | каждый флаг рождает свою строку; чистая сцена → блока нет |
+| **12.B1** ✅ | **`mvm-cli/src/render.rs` (новый)**: `render_snapshot(&WorldState, fps, ts) -> String` — markdown по контракту §3.1; `conf_word()` тиры; таблица сущностей (только выводы, без сырых координат); зоны по `build_scene`+`zone_label`; активности с duration из journal | **Сделано:** 3 golden-теста (empty / 2 чел.+объект+зона / journal-driven duration); ts вынесен в параметр (детерминизм); переиспользует `fusion::zone_label` (→pub) + entity-билдеры (→pub(crate)); snapshot ≈350 байт vs ~2.8 КБ тик |
+| **12.B2** ✅ | **Ноты честности**: `⚠️`-строки из non-`face_verified`, withheld-позы (`body_coverage` upper/head + posture None), `plausibility=low`, `stable_participants=false` активностей. `remembered` на mesh недоступен (ObjectState без missed-count) — честно не рендерится | **Сделано:** 3 теста (unverified+withheld+OOD; unstable-activity; чистая сцена → блока нет); детерминир. порядок (люди по id, затем активности) |
 | **12.B3** | **Проводка**: `StateFile::write_world` пишет snapshot v2 (header `mvm v0.5`); старый `write()` (sync-путь) не трогаем | mesh-stub e2e: файл соответствует golden; sync-путь байт-идентичен прежнему |
 
 ### Трек C — persistence + recap (ядро фазы)

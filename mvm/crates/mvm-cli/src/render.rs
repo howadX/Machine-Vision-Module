@@ -108,7 +108,58 @@ pub fn render_snapshot(world: &WorldState, fps: f64, ts: &str) -> String {
         let _ = writeln!(out, "\nActive: {}", acts.join(" · "));
     }
 
+    // Honesty notes (phase 12.B2): make the frame's uncertainty explicit rather
+    // than silent — research §4.4 (LLMs calibrate on stated uncertainty, and the
+    // A3 session showed a silent unverified body reads as a confident person).
+    let notes = honesty_notes(world);
+    if !notes.is_empty() {
+        let _ = writeln!(out);
+        for n in notes {
+            let _ = writeln!(out, "⚠️ {n}");
+        }
+    }
+
     out
+}
+
+/// Per-frame uncertainty notes — the honest signals fusion already computes
+/// (withheld posture, unverified body, OOD pose, unstable activity participants).
+/// Deterministic order: people by id, then activities.
+fn honesty_notes(world: &WorldState) -> Vec<String> {
+    let mut notes = Vec::new();
+    let mut people: Vec<&mvm_core::PersonState> = world.people.iter().collect();
+    people.sort_by_key(|p| p.track_id);
+    for p in &people {
+        let face_verified = p.identity.is_some() || p.emotion.is_some();
+        if !face_verified {
+            notes.push(format!(
+                "id{}: тело не подтверждено лицом (животное или упавший — не различить)",
+                p.track_id
+            ));
+        }
+        if p.posture.is_none() && matches!(p.body_coverage, Some("upper") | Some("head")) {
+            notes.push(format!(
+                "id{}: поза withheld (видна только {})",
+                p.track_id,
+                p.body_coverage.unwrap_or("?")
+            ));
+        }
+        if p.plausibility.as_deref() == Some("low") {
+            notes.push(format!("id{}: поза OOD (plausibility low)", p.track_id));
+        }
+    }
+    for i in &world.activity_instances {
+        if !i.key.stable_participants() {
+            let names: Vec<String> =
+                i.key.participants.iter().map(|&id| entity_name(id, world)).collect();
+            notes.push(format!(
+                "{}({}): участники нестабильны (эфемерный id)",
+                i.key.label,
+                names.join(",")
+            ));
+        }
+    }
+    notes
 }
 
 fn who_cell(p: &mvm_core::PersonState) -> String {
@@ -308,5 +359,41 @@ mod tests {
             md.contains("Active: people_together(Вадим(0),anon(10)) — 22.5s ("),
             "got:\n{md}"
         );
+        // The pair keys on an ephemeral id (10) → honestly unstable.
+        assert!(
+            md.contains("⚠️ people_together(Вадим(0),anon(10)): участники нестабильны"),
+            "got:\n{md}"
+        );
+    }
+
+    #[test]
+    fn snapshot_honesty_notes_for_unverified_and_withheld() {
+        let mut world = WorldState::new(Instant::now());
+        // A body with neither identity nor emotion → unverified (animal / fallen?).
+        let mut ghost = person(12, BBox { x1: 0.5, y1: 0.4, x2: 0.7, y2: 0.9 });
+        ghost.position_3d = Some(Position3D { x: 0.9, y: 0.2, z: 0.8, confidence: 0.6 });
+        // Seated at desk: only the upper body is visible → posture withheld.
+        ghost.body_coverage = Some("upper");
+        ghost.plausibility = Some("low".into());
+        world.people.push(ghost);
+        let md = render_snapshot(&world, 18.0, "17:51:25");
+        assert!(md.contains("⚠️ id12: тело не подтверждено лицом"), "got:\n{md}");
+        assert!(md.contains("⚠️ id12: поза withheld (видна только upper)"), "got:\n{md}");
+        assert!(md.contains("⚠️ id12: поза OOD (plausibility low)"), "got:\n{md}");
+    }
+
+    #[test]
+    fn snapshot_clean_scene_has_no_notes() {
+        let mut world = WorldState::new(Instant::now());
+        let mut v = person(0, BBox { x1: 0.4, y1: 0.2, x2: 0.6, y2: 0.9 });
+        v.identity = Some(("Вадим".into(), 0.9));
+        v.emotion = Some(("Neutral".into(), 0.9));
+        v.posture = Some(("standing".into(), 0.9));
+        v.body_coverage = Some("full");
+        v.plausibility = Some("ok".into());
+        v.position_3d = Some(Position3D { x: 0.7, y: 0.2, z: 1.0, confidence: 0.8 });
+        world.people.push(v);
+        let md = render_snapshot(&world, 18.0, "17:51:19");
+        assert!(!md.contains("⚠️"), "clean scene should carry no notes:\n{md}");
     }
 }
