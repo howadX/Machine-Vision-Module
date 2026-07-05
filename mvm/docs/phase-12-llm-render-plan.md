@@ -207,7 +207,7 @@ wrists, bbox), JSON или markdown. Дорого, но редко и узко.
 
 | Шаг | Задача | Тест |
 |-----|--------|------|
-| **12.E1** | **`mvm-cli inspect`**: `--input scene.jsonl --around <ts> --window 5 [--id N] [--md]` — полноточный срез; `--md` = компактный markdown-рендер среза | срез содержит только тики окна; фильтр по id оставляет только его записи |
+| **12.E1** ✅ | **`mvm-cli inspect`** (`recap_cmd.rs`): `--input <dir\|file> [--around <ts> --window 5] [--id N] [--md]` — полноточный срез сырых scene-строк; raw JSONL по умолч., `--md` = компактная строка/кадр. `resolve_files` обобщён на inspect | **Сделано:** 3 теста ядра `inspect_select` (окно ±5s, фильтр по id, md-строка); **live** на реальных логах: `--around ±2s` и `--id 12` (история фантома) — raw даёт `posture_conf`/`torso_attitude`/coords для adjudication |
 
 **Глобальный порядок:** `12.A1 → 12.B1 → 12.B2 → 12.B3 → 12.C0 → 12.C1 → 12.C2 → 12.C3 → 12.D1 →
 12.E1 → 12.A2 → 12.A3 → 12.D2`. Логика: сначала дешёвый выигрыш (A1), затем ценность (snapshot,

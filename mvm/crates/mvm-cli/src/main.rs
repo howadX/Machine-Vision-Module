@@ -720,6 +720,9 @@ fn main() -> Result<()> {
     if raw.get(1).map(String::as_str) == Some("recap") {
         return recap_cmd::run_recap(recap_cmd::parse_recap_args(&raw));
     }
+    if raw.get(1).map(String::as_str) == Some("inspect") {
+        return recap_cmd::run_inspect(recap_cmd::parse_inspect_args(&raw));
+    }
 
     let args = parse_args();
     let dump_secs = args.dump_interval;

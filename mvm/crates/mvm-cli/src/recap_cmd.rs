@@ -110,27 +110,33 @@ fn render_recap_string(args: &RecapArgs) -> Result<String> {
 
 /// Resolve the scene/events files from `--input` (dir → glob; file → itself).
 fn resolve_files(args: &RecapArgs) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
-    if args.input.is_dir() {
+    resolve_files_at(&args.input, args.events.as_ref())
+}
+
+/// A dir → globbed `scene-*.jsonl` / `events-*.jsonl` (sorted); a file → itself
+/// (+ optional explicit events). Shared by `recap` and `inspect`.
+fn resolve_files_at(input: &Path, events: Option<&PathBuf>) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    if input.is_dir() {
         let mut scene = Vec::new();
-        let mut events = Vec::new();
-        for entry in std::fs::read_dir(&args.input)? {
+        let mut ev = Vec::new();
+        for entry in std::fs::read_dir(input)? {
             let p = entry?.path();
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if name.starts_with("scene-") && name.ends_with(".jsonl") {
                 scene.push(p.clone());
             } else if name.starts_with("events-") && name.ends_with(".jsonl") {
-                events.push(p.clone());
+                ev.push(p.clone());
             }
         }
         scene.sort();
-        events.sort();
+        ev.sort();
         if scene.is_empty() {
-            bail!("no scene-*.jsonl in {}", args.input.display());
+            bail!("no scene-*.jsonl in {}", input.display());
         }
-        Ok((scene, events))
+        Ok((scene, ev))
     } else {
-        let events = args.events.clone().into_iter().collect();
-        Ok((vec![args.input.clone()], events))
+        let ev = events.cloned().into_iter().collect();
+        Ok((vec![input.to_path_buf()], ev))
     }
 }
 
@@ -263,4 +269,173 @@ fn window_title(frames: &[(String, FrameObs)], w: &Window) -> String {
 /// The `HH:MM:SS` slice of an ISO ts (`2026-07-05T18:55:01+03:00` → `18:55:01`).
 fn hms(ts: &str) -> &str {
     ts.get(11..19).unwrap_or(ts)
+}
+
+// ── inspect subcommand (phase 12.E1) — the "show me the raw slice" zoom ──────
+// Level 3 of the pull model: when the recap/snapshot flags something, return the
+// exact logged frames for a narrow window (± seconds around a ts) and/or a single
+// track id — full logged precision, not aggregated. Raw JSONL by default; `--md`
+// renders a compact per-frame line.
+
+pub struct InspectArgs {
+    input: PathBuf,
+    around: Option<String>,
+    window_s: f64,
+    id: Option<u32>,
+    md: bool,
+}
+
+pub fn parse_inspect_args(raw: &[String]) -> InspectArgs {
+    let mut a = InspectArgs { input: PathBuf::from("."), around: None, window_s: 5.0, id: None, md: false };
+    let mut i = 2; // skip program name + "inspect"
+    while i < raw.len() {
+        match raw[i].as_str() {
+            "--input" => take(raw, &mut i, |v| a.input = PathBuf::from(v)),
+            "--around" => take(raw, &mut i, |v| a.around = Some(v.to_string())),
+            "--window" => take(raw, &mut i, |v| a.window_s = v.parse().unwrap_or(5.0)),
+            "--id" => take(raw, &mut i, |v| a.id = v.parse().ok()),
+            "--md" => a.md = true,
+            _ => {}
+        }
+        i += 1;
+    }
+    a
+}
+
+pub fn run_inspect(args: InspectArgs) -> Result<()> {
+    let (scene_files, _events) = resolve_files_at(&args.input, None)?;
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for f in &scene_files {
+        let text = std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            if let Some(ts) = serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v.get("ts").and_then(|x| x.as_str()).map(String::from))
+            {
+                lines.push((ts, line.to_string()));
+            }
+        }
+    }
+    lines.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let kept = inspect_select(&lines, args.around.as_deref(), args.window_s, args.id)?;
+    if kept.is_empty() {
+        bail!("no frames in the selected slice");
+    }
+    for raw in &kept {
+        if args.md {
+            println!("{}", inspect_md_line(raw));
+        } else {
+            println!("{raw}");
+        }
+    }
+    Ok(())
+}
+
+/// Pure selection core (testable): keep raw lines within `window_s` of `around`
+/// (if given) that contain face `id` (if given). Returns the raw lines in order.
+fn inspect_select(
+    lines: &[(String, String)],
+    around: Option<&str>,
+    window_s: f64,
+    id: Option<u32>,
+) -> Result<Vec<String>> {
+    let around_dt = around
+        .map(|a| DateTime::parse_from_rfc3339(a).with_context(|| format!("parse --around {a}")))
+        .transpose()?;
+    let mut out = Vec::new();
+    for (ts, raw) in lines {
+        if let Some(adt) = around_dt {
+            let dt = DateTime::parse_from_rfc3339(ts).with_context(|| format!("parse ts {ts}"))?;
+            let diff = (dt - adt).num_milliseconds().abs() as f64 / 1000.0;
+            if diff > window_s {
+                continue;
+            }
+        }
+        if let Some(want) = id {
+            let has = serde_json::from_str::<serde_json::Value>(raw)
+                .ok()
+                .and_then(|v| {
+                    v.get("faces").and_then(|f| f.as_array()).map(|arr| {
+                        arr.iter()
+                            .any(|f| f.get("id").and_then(|x| x.as_u64()) == Some(want as u64))
+                    })
+                })
+                .unwrap_or(false);
+            if !has {
+                continue;
+            }
+        }
+        out.push(raw.clone());
+    }
+    Ok(out)
+}
+
+/// A compact one-line-per-frame view of a raw scene line (`--md`).
+fn inspect_md_line(raw: &str) -> String {
+    let v: serde_json::Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return raw.to_string(),
+    };
+    let ts = v.get("ts").and_then(|x| x.as_str()).unwrap_or("?");
+    let people = v
+        .get("faces")
+        .and_then(|f| f.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|f| {
+                    let id = f.get("id").and_then(|x| x.as_u64()).unwrap_or(0);
+                    let who = f.get("identity").and_then(|x| x.as_str()).unwrap_or("anon");
+                    let dist = f
+                        .get("dist_m")
+                        .and_then(|x| x.as_f64())
+                        .map(|d| format!("{d:.1}m"))
+                        .unwrap_or_else(|| "—".into());
+                    let posture = f.get("posture").and_then(|x| x.as_str()).unwrap_or("—");
+                    let emo = f.get("emotion").and_then(|x| x.as_str()).unwrap_or("—");
+                    format!("id{id} {who} {dist} {posture} {emo}")
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        })
+        .unwrap_or_default();
+    format!("{} · {}", hms(ts), people)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(ts: &str, id: u32) -> (String, String) {
+        (ts.into(), format!(r#"{{"ts":"{ts}","faces":[{{"id":{id}}}]}}"#))
+    }
+
+    #[test]
+    fn inspect_window_around_ts() {
+        let lines = vec![
+            line("2026-07-05T18:55:00+03:00", 0),
+            line("2026-07-05T18:55:03+03:00", 0),
+            line("2026-07-05T18:55:10+03:00", 0),
+        ];
+        let kept = inspect_select(&lines, Some("2026-07-05T18:55:00+03:00"), 5.0, None).unwrap();
+        assert_eq!(kept.len(), 2, "±5s keeps t+0 and t+3, drops t+10");
+    }
+
+    #[test]
+    fn inspect_filters_by_track_id() {
+        let lines = vec![
+            line("2026-07-05T18:55:00+03:00", 0),
+            line("2026-07-05T18:55:01+03:00", 12),
+            line("2026-07-05T18:55:02+03:00", 0),
+        ];
+        let kept = inspect_select(&lines, None, 5.0, Some(12)).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0].contains("\"id\":12"));
+    }
+
+    #[test]
+    fn inspect_md_line_is_compact() {
+        let raw = r#"{"ts":"2026-07-05T18:55:19+03:00","faces":[{"id":0,"identity":"Вадим","dist_m":1.02,"posture":"standing","emotion":"Neutral"}]}"#;
+        assert_eq!(inspect_md_line(raw), "18:55:19 · id0 Вадим 1.0m standing Neutral");
+    }
 }
