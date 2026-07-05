@@ -1,0 +1,199 @@
+//! `--help` / `-h` / `--version` text (phase 13.B) — static, hand-rolled, +0-dep.
+//!
+//! One `const` per screen so the strings unit-test as goldens and can't silently
+//! drift from the real flags. `main()` intercepts help/version *before* the
+//! hand-rolled parsers (which otherwise ignore unknown flags, `-h` included).
+
+/// True if `--help` or `-h` appears anywhere in the args (subcommand help).
+pub fn wants_help(raw: &[String]) -> bool {
+    raw.iter().any(|a| a == "--help" || a == "-h")
+}
+
+/// True if `--version` or `-V` appears as the first argument (top-level only).
+pub fn wants_version(sub: Option<&str>) -> bool {
+    matches!(sub, Some("--version") | Some("-V"))
+}
+
+/// Help text for a subcommand, or `None` if the name has no dedicated screen.
+pub fn subcommand(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "run" | "mesh" => RUN,
+        "snapshot" => SNAPSHOT,
+        "recap" => RECAP,
+        "inspect" => INSPECT,
+        "serve" => SERVE,
+        _ => return None,
+    })
+}
+
+pub const MAIN: &str = "\
+mvm — Machine Vision Module: a local, $0/CPU vision module that emits facts, not pixels.
+
+USAGE:
+    mvm <command> [flags]
+
+COMMANDS:
+    run        Live vision mesh (production): camera + all models → scene graph
+    snapshot   Print the current scene (current_state.md) once and exit
+    recap      Summarise a period from the durable logs (presence, activities, zones)
+    inspect    Print raw per-frame slices at full precision (adjudicate a recap)
+    serve      MCP stdio server: expose snapshot/recap/inspect as LLM tools
+
+PULL MODEL (cheap → expensive):
+    snapshot  → what's happening now
+    recap     → what happened over a window
+    inspect   → the raw frames behind a claim
+
+FLAGS:
+    -h, --help       Show help (add to any command for its flags)
+    -V, --version    Print version
+
+Add --help to any command for its flags. See mvm/AGENT.md for how an LLM agent drives MVM.
+";
+
+pub const RUN: &str = "\
+mvm run — live vision mesh (production). Camera → {human, scene, depth} → fusion → StateFile.
+`mvm mesh` is a hidden alias of this command.
+
+USAGE:
+    mvm run [flags]
+
+FLAGS:
+    --scene-log <DIR>       Append rotating scene-/events-YYYY-MM-DD.jsonl to <DIR>
+                            (the durable history that `recap`/`inspect` read)
+    --dump-json             Print one Scene-JSON line per tick to stdout
+    --masks                 Run the YOLO-seg expert (+1 ONNX): instance masks →
+                            mask-contact + mask-median depth (opt-in)
+    --interval-ms <MS>      StateFile snapshot interval, milliseconds (default 100)
+    --max-frames <N>        Stop after N frames (default: run until Ctrl-C)
+    --stub                  Model-free stub mesh (CI smoke; no camera/models)
+    --emotion-debug         Show the emotion A/B table and add emotion_debug to JSON
+    --dump-distributions    Include the 8-class emotion_distribution in Scene JSON
+    --dump-full-graph       Include object↔object `near` edges in Scene JSON
+    --dump-landmarks        Include raw 21-point hand landmarks in Scene JSON (heavy)
+
+EXAMPLES:
+    mvm run --scene-log ~/vision/logs        # production: durable history for recap/inspect
+    mvm run --masks --dump-json              # live JSON with instance masks
+    mvm run --stub --max-frames 100          # CI smoke, no hardware
+";
+
+pub const SNAPSHOT: &str = "\
+mvm snapshot — print the current scene once (same markdown as the MCP `mvm_snapshot` tool).
+
+USAGE:
+    mvm snapshot [--state <PATH>]
+
+FLAGS:
+    --state <PATH>   StateFile to read
+                     (default: $HOME/.hermes/profiles/sight/workspace/current_state.md)
+
+Reads the file a running `mvm run` writes — start `mvm run` (or `mvm mesh`) first.
+";
+
+pub const RECAP: &str = "\
+mvm recap — summarise a period from the durable logs (scene-/events-*.jsonl).
+
+USAGE:
+    mvm recap [--input <PATH>] [--last <DUR> | --from <ISO> --to <ISO>]
+
+FLAGS:
+    --input <PATH>   Log directory (scene-*.jsonl/events-*.jsonl) or a single scene file
+                     (default: current directory)
+    --events <PATH>  Explicit events file (when --input is a single file)
+    --last <DUR>     Keep only the last window before the latest entry: 30s, 10m, 2h
+    --from <ISO>     Inclusive ISO8601 lower bound
+    --to <ISO>       Inclusive ISO8601 upper bound
+
+EXAMPLES:
+    mvm recap --input ~/vision/logs --last 10m
+    mvm recap --input ~/vision/logs --from 2026-07-05T17:00:00 --to 2026-07-05T17:30:00
+";
+
+pub const INSPECT: &str = "\
+mvm inspect — raw per-frame slices at full logged precision (level 3 of the pull model).
+
+USAGE:
+    mvm inspect [--input <PATH>] [--around <ISO>] [--window <SECS>] [--id <N>] [--raw]
+
+FLAGS:
+    --input <PATH>    Log directory or single scene file (default: current directory)
+    --around <ISO>    ISO8601 timestamp to centre the slice on
+    --window <SECS>   ± seconds around --around (default 5)
+    --id <N>          Keep only frames with this track id
+                      (0–9 gallery · ≥10 anon people · ≥10000 objects)
+    --raw             Raw JSONL instead of the default compact markdown lines (--md forces markdown)
+
+EXAMPLES:
+    mvm inspect --input ~/vision/logs --around 2026-07-05T17:51:23 --window 5
+    mvm inspect --input ~/vision/logs --id 12
+";
+
+pub const SERVE: &str = "\
+mvm serve --mcp — MCP stdio server exposing snapshot/recap/inspect as LLM tools (read-only).
+
+USAGE:
+    mvm serve --mcp [--state <PATH>] [--logs <DIR>]
+
+FLAGS:
+    --mcp            Select the MCP stdio transport (the only transport)
+    --state <PATH>   Snapshot source StateFile (default: production current_state.md)
+    --logs <DIR>     Recap/inspect log dir (default: the StateFile's directory)
+
+Reads the artifacts a running `mvm run --scene-log <DIR>` writes; producer and server stay decoupled.
+";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wants_help_detects_both_spellings() {
+        let long: Vec<String> = ["mvm", "run", "--help"].iter().map(|s| s.to_string()).collect();
+        let short: Vec<String> = ["mvm", "recap", "-h"].iter().map(|s| s.to_string()).collect();
+        let none: Vec<String> = ["mvm", "run", "--masks"].iter().map(|s| s.to_string()).collect();
+        assert!(wants_help(&long));
+        assert!(wants_help(&short));
+        assert!(!wants_help(&none));
+    }
+
+    #[test]
+    fn version_only_at_top_level() {
+        assert!(wants_version(Some("--version")));
+        assert!(wants_version(Some("-V")));
+        assert!(!wants_version(Some("run")));
+        assert!(!wants_version(None));
+    }
+
+    #[test]
+    fn mesh_is_a_hidden_alias_of_run_help() {
+        // `mvm mesh --help` and `mvm run --help` show the same screen.
+        assert_eq!(subcommand("mesh"), subcommand("run"));
+        assert_eq!(subcommand("run"), Some(RUN));
+    }
+
+    /// Every advertised subcommand has a help screen, and each screen names its
+    /// own command — a golden that breaks if a screen is dropped or mislabelled.
+    #[test]
+    fn every_subcommand_has_help() {
+        for (name, needle) in [
+            ("run", "mvm run"),
+            ("snapshot", "mvm snapshot"),
+            ("recap", "mvm recap"),
+            ("inspect", "mvm inspect"),
+            ("serve", "mvm serve"),
+        ] {
+            let text = subcommand(name).unwrap_or_else(|| panic!("no help for {name}"));
+            assert!(text.contains(needle), "{name} help must name `{needle}`");
+        }
+        assert!(subcommand("frobnicate").is_none());
+    }
+
+    /// The top-level screen must list every command so `mvm --help` is a complete map.
+    #[test]
+    fn main_help_lists_all_commands() {
+        for cmd in ["run", "snapshot", "recap", "inspect", "serve"] {
+            assert!(MAIN.contains(cmd), "top-level help must list `{cmd}`");
+        }
+    }
+}

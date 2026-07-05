@@ -118,33 +118,40 @@ pub(crate) fn handle(req: &Value, args: &ServeArgs) -> Option<Value> {
 }
 
 fn tool_defs() -> Value {
+    // These three tools are the pull model, cheap → expensive: snapshot (now) →
+    // recap (a window) → inspect (raw frames). The descriptions teach an agent
+    // when to reach for each and how to read the output; keep them in sync with
+    // mvm/AGENT.md (single source of truth, phase 13.C/D).
     json!([
         {
             "name": "mvm_snapshot",
-            "description": "Current scene: who is present, where, and what they're doing right now, as markdown (≈300 tokens). No arguments.",
+            "title": "Snapshot — current scene",
+            "description": "What's happening RIGHT NOW: who is present, where (metric 3D), and what each person is doing — a compact markdown table (~300 tokens). Start here; it's the cheapest call. Confidence is stated in words (low/medium/high), and ⚠️ flags phantom / withheld / low-plausibility notes — never trust a bare label under a ⚠️. Track ids: 0–9 = gallery (known people), ≥10 = anonymous people, ≥10000 = objects. No arguments.",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
             "name": "mvm_recap",
-            "description": "Session recap over the logs: per-person presence, activities rolled up across object-id churn, scene objects/zones, phantom notes. Cheap way to reconstruct a period.",
+            "title": "Recap — period summary",
+            "description": "What HAPPENED over a period, reconstructed from the durable logs: per-person presence spans, activities rolled up across object-id churn, scene objects/zones, and phantom notes. The middle tier — call after a snapshot to summarise a window without reading raw frames. With no arguments it covers the whole current day; narrow it with `last` or `from`/`to`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "last": { "type": "string", "description": "Window before the latest entry, e.g. '10m', '90s', '2h'." },
-                    "from": { "type": "string", "description": "ISO8601 lower bound (inclusive)." },
+                    "last": { "type": "string", "description": "Window before the latest entry, e.g. '30s', '10m', '2h'. Preferred for 'what just happened'." },
+                    "from": { "type": "string", "description": "ISO8601 lower bound (inclusive), e.g. '2026-07-05T17:00:00'." },
                     "to":   { "type": "string", "description": "ISO8601 upper bound (inclusive)." }
                 }
             }
         },
         {
             "name": "mvm_inspect",
-            "description": "Raw per-frame slice at full logged precision, around a timestamp and/or for one track id — the zoom to adjudicate something a recap flagged.",
+            "title": "Inspect — raw frames",
+            "description": "Raw per-frame slices at full logged precision, around a timestamp and/or for one track id — the expensive ZOOM to adjudicate something snapshot/recap flagged (a phantom, an unstable id, a brief event). Use only after a cheaper call points you at a moment; not for browsing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "around": { "type": "string", "description": "ISO8601 timestamp to centre on." },
+                    "around": { "type": "string", "description": "ISO8601 timestamp to centre the slice on, e.g. '2026-07-05T17:51:23'." },
                     "window": { "type": "number", "description": "± seconds around `around` (default 5)." },
-                    "id":     { "type": "integer", "description": "Keep only frames containing this track id." },
+                    "id":     { "type": "integer", "description": "Keep only frames with this track id (0–9 gallery · ≥10 anon · ≥10000 objects)." },
                     "md":     { "type": "boolean", "description": "Compact markdown lines (default true); false = raw JSON." }
                 }
             }
@@ -201,6 +208,38 @@ mod tests {
         assert!(names.contains(&"mvm_snapshot"));
         assert!(names.contains(&"mvm_recap"));
         assert!(names.contains(&"mvm_inspect"));
+    }
+
+    /// Phase 13.D: tool descriptions must stay self-teaching — each carries its
+    /// place in the pull model and every tool has a human title. A regression to
+    /// terse one-liners breaks this.
+    #[test]
+    fn tool_descriptions_teach_the_pull_model() {
+        let a = args_with_state(PathBuf::from("/tmp/nope.md"));
+        let req = json!({"jsonrpc":"2.0","id":9,"method":"tools/list"});
+        let resp = handle(&req, &a).unwrap();
+        let tools = resp["result"]["tools"].as_array().unwrap();
+        let tool = |name: &str| tools.iter().find(|t| t["name"] == name).cloned().unwrap();
+
+        for name in ["mvm_snapshot", "mvm_recap", "mvm_inspect"] {
+            assert!(tool(name)["title"].is_string(), "{name} needs a title");
+        }
+        let snap = tool("mvm_snapshot");
+        let snap = snap["description"].as_str().unwrap();
+        assert!(snap.contains("NOW") && snap.contains("cheapest"), "snapshot frames itself as the cheap now-call");
+        assert!(snap.contains("0–9") && snap.contains("⚠️"), "snapshot explains id ranges + honesty notes");
+        let recap = tool("mvm_recap");
+        assert!(
+            recap["description"].as_str().unwrap().contains("HAPPENED")
+                && recap["description"].as_str().unwrap().contains("after a snapshot"),
+            "recap frames itself as the middle tier"
+        );
+        let insp = tool("mvm_inspect");
+        assert!(
+            insp["description"].as_str().unwrap().contains("ZOOM")
+                && insp["description"].as_str().unwrap().contains("adjudicate"),
+            "inspect frames itself as the expensive zoom"
+        );
     }
 
     #[test]

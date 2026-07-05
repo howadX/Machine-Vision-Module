@@ -279,8 +279,8 @@ fn hms(ts: &str) -> &str {
 // ── inspect subcommand (phase 12.E1) — the "show me the raw slice" zoom ──────
 // Level 3 of the pull model: when the recap/snapshot flags something, return the
 // exact logged frames for a narrow window (± seconds around a ts) and/or a single
-// track id — full logged precision, not aggregated. Raw JSONL by default; `--md`
-// renders a compact per-frame line.
+// track id — full logged precision, not aggregated. Compact markdown per-frame
+// lines by default (matches the MCP `mvm_inspect` tool); `--raw` emits raw JSONL.
 
 pub struct InspectArgs {
     input: PathBuf,
@@ -291,7 +291,9 @@ pub struct InspectArgs {
 }
 
 pub fn parse_inspect_args(raw: &[String]) -> InspectArgs {
-    let mut a = InspectArgs { input: PathBuf::from("."), around: None, window_s: 5.0, id: None, md: false };
+    // md defaults true — compact markdown, aligned with the MCP `mvm_inspect`
+    // tool (phase 13.A4). `--raw`/`--json` opts back into raw JSONL.
+    let mut a = InspectArgs { input: PathBuf::from("."), around: None, window_s: 5.0, id: None, md: true };
     let mut i = 2; // skip program name + "inspect"
     while i < raw.len() {
         match raw[i].as_str() {
@@ -300,6 +302,7 @@ pub fn parse_inspect_args(raw: &[String]) -> InspectArgs {
             "--window" => take(raw, &mut i, |v| a.window_s = v.parse().unwrap_or(5.0)),
             "--id" => take(raw, &mut i, |v| a.id = v.parse().ok()),
             "--md" => a.md = true,
+            "--raw" | "--json" => a.md = false,
             _ => {}
         }
         i += 1;
@@ -455,6 +458,18 @@ mod tests {
         let kept = inspect_select(&lines, None, 5.0, Some(12)).unwrap();
         assert_eq!(kept.len(), 1);
         assert!(kept[0].contains("\"id\":12"));
+    }
+
+    /// Phase 13.A4: `inspect` defaults to compact markdown (aligned with the MCP
+    /// `mvm_inspect` tool, whose `md` defaults true); `--raw`/`--json` opts out.
+    #[test]
+    fn inspect_md_defaults_true_and_raw_opts_out() {
+        let base: Vec<String> = ["mvm", "inspect"].iter().map(|s| s.to_string()).collect();
+        assert!(parse_inspect_args(&base).md, "markdown is the default");
+        let raw: Vec<String> = ["mvm", "inspect", "--raw"].iter().map(|s| s.to_string()).collect();
+        assert!(!parse_inspect_args(&raw).md, "--raw switches to raw JSONL");
+        let json: Vec<String> = ["mvm", "inspect", "--json"].iter().map(|s| s.to_string()).collect();
+        assert!(!parse_inspect_args(&json).md, "--json is an alias of --raw");
     }
 
     #[test]
