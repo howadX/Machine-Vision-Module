@@ -25,7 +25,7 @@ pub(crate) use depth::{DepthAgent, DepthSlot};
 pub(crate) use fusion::{infer_activities, FusionAgent};
 pub(crate) use human::HumanAgent;
 pub(crate) use scene::{PersonMaskSlot, SceneAgent};
-pub(crate) use statefile::StateFileWriter;
+pub(crate) use statefile::{JournalCfg, StateFileWriter};
 
 use crate::pipeline::BodyData;
 use mvm_core::{BBox, ObjectState, PersonState, PersonTracker, Position3D, WorldState};

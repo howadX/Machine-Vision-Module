@@ -1054,6 +1054,11 @@ impl StateFile {
         SceneLog::open(dir, self.tz, "events")
     }
 
+    /// Path of the rolling `journal.md` beside this StateFile (phase 12.D1).
+    pub fn journal_path(&self) -> PathBuf {
+        self.path.with_file_name("journal.md")
+    }
+
     /// Serialise completed activity episodes as one-per-line JSONL records for the
     /// events log (phase 12.C1) — each stamped with the current `ts` (same tz +
     /// float rounding as the Scene JSON `events[]`).

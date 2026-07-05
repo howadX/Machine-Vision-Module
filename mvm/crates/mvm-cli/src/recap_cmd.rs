@@ -9,7 +9,7 @@
 use anyhow::{bail, Context, Result};
 use chrono::DateTime;
 use mvm_core::recap::{EpisodeObs, FrameObs, PersonObs, Recap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct RecapArgs {
     /// A directory holding `scene-*.jsonl`/`events-*.jsonl`, or a single scene file.
@@ -48,7 +48,27 @@ fn take(raw: &[String], i: &mut usize, mut set: impl FnMut(&str)) {
 }
 
 pub fn run_recap(args: RecapArgs) -> Result<()> {
-    let (scene_files, events_files) = resolve_files(&args)?;
+    print!("{}", render_recap_string(&args)?);
+    Ok(())
+}
+
+/// Build + render the recap markdown for a whole log directory, no window — the
+/// rolling `journal.md` view of the current day (phase 12.D1).
+pub fn recap_markdown_from_dir(dir: &Path) -> Result<String> {
+    let args = RecapArgs {
+        input: dir.to_path_buf(),
+        events: None,
+        from: None,
+        to: None,
+        last: None,
+    };
+    render_recap_string(&args)
+}
+
+/// Parse the logs, window them, build the recap and render markdown (shared by
+/// the `recap` subcommand and the rolling journal).
+fn render_recap_string(args: &RecapArgs) -> Result<String> {
+    let (scene_files, events_files) = resolve_files(args)?;
 
     let mut frames: Vec<(String, FrameObs)> = Vec::new();
     for f in &scene_files {
@@ -73,7 +93,7 @@ pub fn run_recap(args: RecapArgs) -> Result<()> {
     frames.sort_by(|a, b| a.0.cmp(&b.0));
     episodes.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let window = resolve_window(&args, &frames)?;
+    let window = resolve_window(args, &frames)?;
     let kept_frames: Vec<FrameObs> =
         frames.iter().filter(|(ts, _)| in_window(ts, &window)).map(|(_, o)| o.clone()).collect();
     let kept_eps: Vec<EpisodeObs> =
@@ -85,8 +105,7 @@ pub fn run_recap(args: RecapArgs) -> Result<()> {
 
     let recap = Recap::build(&kept_frames, &kept_eps);
     let title = window_title(&frames, &window);
-    print!("{}", crate::render::render_recap(&recap, &title));
-    Ok(())
+    Ok(crate::render::render_recap(&recap, &title))
 }
 
 /// Resolve the scene/events files from `--input` (dir → glob; file → itself).

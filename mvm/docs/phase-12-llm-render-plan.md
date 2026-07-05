@@ -200,7 +200,7 @@ wrists, bbox), JSON или markdown. Дорого, но редко и узко.
 
 | Шаг | Задача | Тест |
 |-----|--------|------|
-| **12.D1** | **`journal.md` rolling-recap**: writer раз в N тиков (cadence ~60) перерендеривает recap текущего дня в Sight-workspace рядом с `current_state.md` | mesh-stub: файл появляется и растёт эпизодами; идемпотентная перезапись |
+| **12.D1** ✅ | **`journal.md` rolling-recap**: `StateFileWriter` раз в `cadence=60` записей перерендеривает recap дня (`recap_markdown_from_dir` над scene/events-логами) в `journal.md` рядом с `current_state.md` (Sight-workspace, `StateFile::journal_path`). Включается при `--scene-log`; `recap_cmd` отрефакторен (`render_recap_string` общий для CLI и journal) | **Сделано:** интеграц. тест `writer_renders_rolling_journal` (реальный агент → journal.md = «# Recap …**Вадим(0)**»); **live**: journal.md в Sight-workspace после 60 записей, валидный рекап |
 | **12.D2** | **MCP stdio-сервер** `mvm-cli serve --mcp`: hand-rolled JSON-RPC 2.0 (initialize, tools/list, tools/call; serde_json, +0 deps). Инструменты: `mvm_snapshot()` (читает StateFile), `mvm_recap({last?/from?/to?})`, `mvm_inspect({ts?/track_id?, window_s?})`. Read-only, камерой не владеет | интеграционный тест: скриптовый клиент шлёт initialize/tools-call в stdin, ответы валидны; реальная проверка — регистрация в `~/.hermes/config.yaml` и Claude Code `.mcp.json` |
 
 ### Трек E — inspect (после C0)

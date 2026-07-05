@@ -6,7 +6,17 @@
 
 use crate::state::{SceneLog, StateFile};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+/// Rolling-journal config (phase 12.D1): every `cadence` writes, re-render the
+/// current day's recap (from the logs in `log_dir`) to `path` (journal.md in the
+/// Sight workspace, beside current_state.md).
+pub(crate) struct JournalCfg {
+    pub path: PathBuf,
+    pub log_dir: PathBuf,
+    pub cadence: u64,
+}
 
 pub(crate) struct StateFileWriter {
     state_file: StateFile,
@@ -19,6 +29,8 @@ pub(crate) struct StateFileWriter {
     /// Optional durable completed-episode log (phase 12.C1) — same `--scene-log`
     /// dir, `events-DATE.jsonl`. One line per drained `WorldState::events` entry.
     events_log: Option<SceneLog>,
+    /// Optional rolling `journal.md` (phase 12.D1).
+    journal: Option<JournalCfg>,
     /// (frame_id, instant) of the previous write — for FPS.
     last: Option<(u64, Instant)>,
 }
@@ -31,8 +43,9 @@ impl StateFileWriter {
         max_writes: Option<u64>,
         scene_log: Option<SceneLog>,
         events_log: Option<SceneLog>,
+        journal: Option<JournalCfg>,
     ) -> Self {
-        Self { state_file, dump_json, interval, max_writes, scene_log, events_log, last: None }
+        Self { state_file, dump_json, interval, max_writes, scene_log, events_log, journal, last: None }
     }
 }
 
@@ -94,6 +107,22 @@ impl Agent for StateFileWriter {
                 }
             }
             writes += 1;
+
+            // Rolling journal.md (phase 12.D1): re-render the day's recap from the
+            // logs every `cadence` writes. Quietly skips while the logs are still
+            // empty (recap bails with no entries).
+            if let Some(j) = &self.journal {
+                if j.cadence > 0 && writes % j.cadence == 0 {
+                    match crate::recap_cmd::recap_markdown_from_dir(&j.log_dir) {
+                        Ok(md) => {
+                            if let Err(e) = std::fs::write(&j.path, md) {
+                                eprintln!("  journal: write error: {e}");
+                            }
+                        }
+                        Err(_) => { /* no entries yet — nothing to summarise */ }
+                    }
+                }
+            }
 
             if let Some(max) = self.max_writes {
                 if writes >= max {
@@ -179,7 +208,7 @@ mod tests {
         let path = std::env::temp_dir()
             .join(format!("mvm_sfw_{}.md", std::process::id()));
         let sf = StateFile::open_at(path.clone()).unwrap();
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, None);
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, None, None);
         let health = agent.run(&ctx);
 
         assert_eq!(health.ticks, 1, "exactly one write");
@@ -231,7 +260,7 @@ mod tests {
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let log = sf.open_scene_log(log_dir.clone());
         // dump_json = false → proves the log is fed independently of stdout.
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(log), None);
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(log), None, None);
         agent.run(&ctx);
 
         let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
@@ -272,7 +301,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&log_dir);
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let elog = sf.open_events_log(log_dir.clone());
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, Some(elog));
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, Some(elog), None);
         agent.run(&ctx);
 
         let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
@@ -287,6 +316,61 @@ mod tests {
         assert_eq!(v["stable_participants"], true);
         assert!(v["ts"].is_string(), "events log line carries a ts");
         let _ = std::fs::remove_file(&sf_path);
+        let _ = std::fs::remove_dir_all(&log_dir);
+    }
+
+    #[test]
+    fn writer_renders_rolling_journal() {
+        // Phase 12.D1: with a scene log + journal (cadence 1), each write re-renders
+        // journal.md as the recap of the logged frames.
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.frame_id = 4;
+        let mut p = PersonState {
+            track_id: 0,
+            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            identity: Some(("Вадим".into(), 0.9)),
+            emotion: None,
+            posture: Some(("sitting".into(), 0.8)),
+            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.0, confidence: 0.6 }),
+            emotion_distribution: None,
+            wrists: Vec::new(),
+            hands: Vec::new(),
+            body_coverage: None,
+            torso_attitude: None,
+            motion_state: None,
+            velocity: None,
+            left_gesture: None,
+            right_gesture: None,
+            recon_error: None,
+            plausibility: None,
+            head_yaw: None,
+            head_facing: None,
+            last_seen: now,
+        };
+        p.identity = Some(("Вадим".into(), 0.9));
+        world.people.push(p);
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::new(RwLock::new(world)),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        let sf_path = std::env::temp_dir().join(format!("mvm_jrnl_sf_{}.md", std::process::id()));
+        let jrnl_path = std::env::temp_dir().join(format!("mvm_jrnl_j_{}.md", std::process::id()));
+        let log_dir = std::env::temp_dir().join(format!("mvm_jrnl_dir_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&log_dir);
+        let sf = StateFile::open_at(sf_path.clone()).unwrap();
+        let scene = sf.open_scene_log(log_dir.clone());
+        let journal = JournalCfg { path: jrnl_path.clone(), log_dir: log_dir.clone(), cadence: 1 };
+        let mut agent =
+            StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(scene), None, Some(journal));
+        agent.run(&ctx);
+
+        let md = std::fs::read_to_string(&jrnl_path).expect("journal.md written");
+        assert!(md.starts_with("# Recap "), "recap header:\n{md}");
+        assert!(md.contains("**Вадим(0)**"), "person in journal:\n{md}");
+        let _ = std::fs::remove_file(&sf_path);
+        let _ = std::fs::remove_file(&jrnl_path);
         let _ = std::fs::remove_dir_all(&log_dir);
     }
 }
