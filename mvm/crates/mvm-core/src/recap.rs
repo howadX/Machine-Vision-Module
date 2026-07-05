@@ -29,6 +29,8 @@ pub struct PersonObs {
     pub id: u32,
     pub dist_m: Option<f32>,
     pub posture: Option<String>,
+    /// Gallery identity when the frame matched a face to a known user.
+    pub identity: Option<String>,
 }
 
 /// One completed activity episode (a `events-*.jsonl` line).
@@ -46,6 +48,8 @@ pub struct EpisodeObs {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PersonSummary {
     pub id: u32,
+    /// Gallery name if this track was ever recognised (first seen wins).
+    pub identity: Option<String>,
     pub frames_present: usize,
     pub first_frame: usize,
     pub last_frame: usize,
@@ -129,6 +133,7 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
         dist_min: Option<f32>,
         dist_max: Option<f32>,
         posture_counts: HashMap<String, usize>,
+        identity: Option<String>,
     }
     let mut accs: HashMap<u32, Acc> = HashMap::new();
     for (i, f) in frames.iter().enumerate() {
@@ -140,6 +145,7 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
                 dist_min: None,
                 dist_max: None,
                 posture_counts: HashMap::new(),
+                identity: None,
             });
             a.frames += 1;
             a.last = i;
@@ -149,6 +155,11 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
             }
             if let Some(post) = &p.posture {
                 *a.posture_counts.entry(post.clone()).or_insert(0) += 1;
+            }
+            if a.identity.is_none() {
+                if let Some(name) = &p.identity {
+                    a.identity = Some(name.clone());
+                }
             }
         }
     }
@@ -169,6 +180,7 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
                 .map(|(p, _)| p);
             PersonSummary {
                 id,
+                identity: a.identity,
                 frames_present: a.frames,
                 first_frame: a.first,
                 last_frame: a.last,
@@ -290,7 +302,7 @@ mod tests {
     use super::*;
 
     fn person(id: u32, dist: f32, posture: &str) -> PersonObs {
-        PersonObs { id, dist_m: Some(dist), posture: Some(posture.into()) }
+        PersonObs { id, dist_m: Some(dist), posture: Some(posture.into()), identity: None }
     }
     fn ep(label: &str, participants: Vec<u32>, dur: f64, peak: f32, stable: bool) -> EpisodeObs {
         EpisodeObs {

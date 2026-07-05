@@ -239,6 +239,118 @@ fn activity_lines(world: &WorldState) -> Vec<String> {
     }
 }
 
+// ── Recap renderer (phase 12.C3) — the "what happened over a period" view ────
+// Renders a [`mvm_core::recap::Recap`] (built from the scene + events logs) to
+// markdown: people presence, activities rolled up across object-id churn, scene
+// objects/zones. Phantom people surface as `⚠️` notes so a brief ephemeral track
+// is read as a suspicion, not a third person.
+
+use mvm_core::recap::{PersonSummary, Recap};
+
+/// Display name for a recap person: `Вадим(0)` when recognised, else `id10`.
+fn recap_person_name(p: &PersonSummary) -> String {
+    match &p.identity {
+        Some(name) => format!("{name}({})", p.id),
+        None => format!("id{}", p.id),
+    }
+}
+
+/// Render a session recap to markdown. `title` is a caller-supplied window label
+/// (e.g. the ts span) so the output stays deterministic.
+pub fn render_recap(recap: &Recap, title: &str) -> String {
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "# Recap {title} — {} frames · anomaly max {:.2}",
+        recap.frame_count, recap.anomaly_max
+    );
+
+    // People: real presences first, then phantom notes.
+    let (phantoms, real): (Vec<&PersonSummary>, Vec<&PersonSummary>) =
+        recap.people.iter().partition(|p| p.is_phantom);
+    if !real.is_empty() {
+        let _ = writeln!(out, "\n## People");
+        for p in &real {
+            let dist = match (p.dist_min, p.dist_max) {
+                (Some(a), Some(b)) if (a - b).abs() > 0.05 => format!(", {a:.1}–{b:.1}m"),
+                (Some(a), _) => format!(", {a:.1}m"),
+                _ => String::new(),
+            };
+            let posture = p
+                .dominant_posture
+                .as_deref()
+                .map(|s| format!(", mostly {s}"))
+                .unwrap_or_default();
+            let _ = writeln!(
+                out,
+                "- **{}** — {}/{} frames ({:.0}%){dist}{posture}",
+                recap_person_name(p),
+                p.frames_present,
+                recap.frame_count,
+                p.presence_pct,
+            );
+        }
+    }
+
+    // Activities, rolled up (object-id churn already collapsed in the recap).
+    if !recap.activities.is_empty() {
+        let _ = writeln!(out, "\n## Activities (rolled up)");
+        for a in &recap.activities {
+            let who = a
+                .humans
+                .iter()
+                .map(|&id| {
+                    recap
+                        .people
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(recap_person_name)
+                        .unwrap_or_else(|| format!("id{id}"))
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let eps = if a.episode_count > 1 {
+                format!(" across {} episodes", a.episode_count)
+            } else {
+                String::new()
+            };
+            let stable = if a.all_stable { "" } else { " ⚠unstable" };
+            let _ = writeln!(
+                out,
+                "- {}({}) — {:.1}s total{eps}, longest {:.1}s, conf {}{stable}",
+                a.label,
+                who,
+                a.total_s,
+                a.longest_s,
+                conf_word(a.peak_confidence),
+            );
+        }
+    }
+
+    // Scene: objects + zones (one line each).
+    if !recap.objects.is_empty() {
+        let classes: Vec<String> = recap.objects.iter().map(|o| o.class.clone()).collect();
+        let _ = writeln!(out, "\n## Scene\nObjects: {}", classes.join(", "));
+        if !recap.zones.is_empty() {
+            let _ = writeln!(out, "Zones: {}", recap.zones.join(", "));
+        }
+    }
+
+    // Phantom suspicions last, as explicit notes.
+    if !phantoms.is_empty() {
+        let _ = writeln!(out);
+        for p in &phantoms {
+            let _ = writeln!(
+                out,
+                "⚠️ id{} — вероятный фантом: {} кадра(ов), появился в середине (эфемерный id, нестабилен)",
+                p.id, p.frames_present
+            );
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +508,44 @@ mod tests {
         world.people.push(v);
         let md = render_snapshot(&world, 18.0, "17:51:19");
         assert!(!md.contains("⚠️"), "clean scene should carry no notes:\n{md}");
+    }
+
+    #[test]
+    fn render_recap_shape_and_phantom_note() {
+        use mvm_core::recap::{FrameObs, PersonObs, EpisodeObs, Recap};
+        // 40-frame session: Вадим(0) throughout, phantom id12 mid-session; a book
+        // re-ided across two object ids → one rolled-up `reading`.
+        let mut frames = vec![FrameObs::default(); 40];
+        for (i, f) in frames.iter_mut().enumerate() {
+            f.people.push(PersonObs {
+                id: 0,
+                dist_m: Some(0.8 + i as f32 * 0.01),
+                posture: Some("sitting".into()),
+                identity: Some("Вадим".into()),
+            });
+            f.object_classes.push("keyboard".into());
+            f.zone_labels.push("workstation".into());
+            if (20..24).contains(&i) {
+                f.people.push(PersonObs { id: 12, dist_m: Some(0.9), posture: Some("lying".into()), identity: None });
+            }
+        }
+        let eps = vec![
+            EpisodeObs { label: "reading".into(), participants: vec![0, 10002], duration_s: 2.0, peak_confidence: 0.4, stable_participants: true },
+            EpisodeObs { label: "reading".into(), participants: vec![0, 10003], duration_s: 3.0, peak_confidence: 0.6, stable_participants: true },
+            EpisodeObs { label: "typing".into(), participants: vec![0, 10004], duration_s: 10.0, peak_confidence: 0.5, stable_participants: true },
+        ];
+        let recap = Recap::build(&frames, &eps);
+        let md = render_recap(&recap, "18:55:01–18:57:39");
+
+        assert!(md.starts_with("# Recap 18:55:01–18:57:39 — 40 frames"), "got:\n{md}");
+        assert!(md.contains("**Вадим(0)** — 40/40 frames (100%)"), "got:\n{md}");
+        // typing (10s) leads reading (5s, rolled from 2 episodes).
+        let typing = md.find("typing").unwrap();
+        let reading = md.find("reading").unwrap();
+        assert!(typing < reading, "longer activity first:\n{md}");
+        assert!(md.contains("reading(Вадим(0)) — 5.0s total across 2 episodes"), "roll-up:\n{md}");
+        // Phantom surfaces as a note, not in the People list body.
+        assert!(md.contains("⚠️ id12 — вероятный фантом: 4 кадра"), "got:\n{md}");
+        assert!(md.contains("Objects: keyboard") && md.contains("Zones: workstation"), "scene:\n{md}");
     }
 }

@@ -9,6 +9,7 @@
 
 mod state;
 mod render;
+mod recap_cmd;
 mod scene_debug;
 mod pipeline;
 mod agents;
@@ -706,6 +707,9 @@ fn main() -> Result<()> {
     let raw: Vec<String> = std::env::args().collect();
     if raw.get(1).map(String::as_str) == Some("mesh") {
         return run_mesh(parse_mesh_args(&raw));
+    }
+    if raw.get(1).map(String::as_str) == Some("recap") {
+        return recap_cmd::run_recap(recap_cmd::parse_recap_args(&raw));
     }
 
     let args = parse_args();
