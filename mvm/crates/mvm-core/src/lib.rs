@@ -20,6 +20,7 @@ pub mod posture;
 pub mod mask;
 pub mod activity;
 pub mod anomaly;
+pub mod recap;
 
 pub use types::{BBox, Detection, PersonTrack, EntityKind, Entity, RelationKind, Relation, Scene};
 pub use motion::{Landmarks33, LandmarkHistory};
