@@ -176,7 +176,7 @@ wrists, bbox), JSON или markdown. Дорого, но редко и узко.
 |-----|--------|------|
 | **12.A1** ✅ | **Округление f32 в сериализации**: `serialize_with`-хелперы (3 dp для conf/score/pos/dist/bbox/wrists/distribution, 1 dp для fps) на всех `Json*`. Схема не меняется, только значения | serde round-trip валиден; прежние ключи на месте; A3-фикстура: **−15.1%** (замер); downstream-парсер тестов не падает. **Сделано:** `state.rs` хелперы `r3`/`ser_*`, тест `json_rounds_floats_for_compact_stream`, 118 тестов mvm-cli + весь воркспейс зелёные |
 | **12.A2** ✅ | **`emotion_distribution` → opt-in** `--dump-distributions` (default off; `StateFile.dump_distributions`, гейт в mesh `person_to_json_face` + sync JsonFace; сводка `emotion`/`conf`/`entropy` остаётся). Флаг в обоих Args, проведён на mesh+sync-native. ⚠️ контракт-изменение (Sight/Grafana наши) | **Сделано:** тест `emotion_distribution_is_opt_in` (off→нет ключа, entropy/label остаются; on→8-массив); **live A/B** подтвердил гейт |
-| **12.A3** | **Диета relations**: по умолчанию только рёбра с участием человека + все `overlapping`/`part_of`; полный граф (object↔object `near`) — за `--dump-full-graph` | 5 сущностей A3: 7 рёбер → 4; с флагом — прежние 7 |
+| **12.A3** ✅ | **Диета relations**: `relation_kept` дропает object↔object `near` (оба id ≥10000) по умолчанию; person-рёбра + все `overlapping`/`part_of` остаются; `--dump-full-graph` → всё. Флаг в обоих Args, гейт в обоих сайтах (sync+mesh) | **Сделано:** тест `relations_diet_drops_object_object_near` (off→нет obj-obj near, person-ребро есть; on→восстановлено); live A/B (near: 19 default vs 46 full-graph). **Трек A закрыт** (A1+A2+A3 ≈24% на A3-замере) |
 
 ### Трек B — snapshot v2 (рендерер)
 

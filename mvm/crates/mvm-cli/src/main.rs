@@ -173,6 +173,9 @@ struct Args {
     /// --dump-distributions: include the 8-class `emotion_distribution` in the
     /// Scene JSON (phase 12.A2 opt-in; off by default — summary is enough).
     dump_distributions: bool,
+    /// --dump-full-graph: include object↔object `near` edges (phase 12.A3 opt-in;
+    /// off by default — static desk geometry).
+    dump_full_graph: bool,
 }
 
 fn parse_args() -> Args {
@@ -192,6 +195,7 @@ fn parse_args() -> Args {
         masks: false,
         scene_log: None,
         dump_distributions: false,
+        dump_full_graph: false,
     };
 
     let mut i = 1;
@@ -208,6 +212,7 @@ fn parse_args() -> Args {
             "--scene-debug"   => args.scene_debug = true,
             "--masks"         => args.masks = true,
             "--dump-distributions" => args.dump_distributions = true,
+            "--dump-full-graph"    => args.dump_full_graph = true,
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -443,6 +448,8 @@ struct MeshArgs {
     dump_landmarks: bool,
     /// --dump-distributions: include the 8-class `emotion_distribution` (12.A2).
     dump_distributions: bool,
+    /// --dump-full-graph: include object↔object `near` edges (12.A3).
+    dump_full_graph: bool,
     /// StateFileWriter snapshot interval (ms).
     interval_ms: u64,
     /// --masks: run the YOLO-seg expert (phase 10.4, +1 ONNX) in the SceneAgent,
@@ -465,6 +472,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         emotion_debug: false,
         dump_landmarks: false,
         dump_distributions: false,
+        dump_full_graph: false,
         interval_ms: 100,
         masks: false,
         scene_log: None,
@@ -477,6 +485,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             "--emotion-debug" => a.emotion_debug = true,
             "--dump-landmarks" => a.dump_landmarks = true,
             "--dump-distributions" => a.dump_distributions = true,
+            "--dump-full-graph" => a.dump_full_graph = true,
             "--masks" => a.masks = true,
             "--scene-log" => {
                 if i + 1 < raw.len() {
@@ -616,6 +625,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     let mut state_file = state::StateFile::open()?;
     state_file.dump_landmarks = args.dump_landmarks;
     state_file.dump_distributions = args.dump_distributions;
+    state_file.dump_full_graph = args.dump_full_graph;
     let interval = Duration::from_millis(args.interval_ms);
     // Durable JSONL history (phase 12.C0/C1); reuses the StateFile timezone. Both
     // logs share the `--scene-log` dir (scene-*.jsonl frames, events-*.jsonl
@@ -973,6 +983,7 @@ fn main() -> Result<()> {
     }
     let mut state_file = state::StateFile::open()?;
     state_file.dump_distributions = args.dump_distributions;
+    state_file.dump_full_graph = args.dump_full_graph;
     let mut last_dump = Instant::now();
     let dump_interval = Duration::from_secs(dump_secs);
 

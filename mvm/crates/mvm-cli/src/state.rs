@@ -415,6 +415,18 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// Scene-JSON relation diet (phase 12.A3): keep an edge unless it is a static
+/// object↔object `near` (both ids ≥ OBJECT_ID_BASE) — repeated desk geometry
+/// ("mouse near book") no consumer reasons over. Person-involving edges and all
+/// overlap/part_of edges always stay. `--dump-full-graph` keeps everything.
+fn relation_kept(a: u32, b: u32, kind: &mvm_core::types::RelationKind, full_graph: bool) -> bool {
+    use mvm_core::types::RelationKind;
+    if full_graph || !matches!(kind, RelationKind::Near) {
+        return true;
+    }
+    a < mvm_scene::OBJECT_ID_BASE || b < mvm_scene::OBJECT_ID_BASE
+}
+
 // ── Phase 12.A1: compact float serialization ────────────────────────────────
 // Scene JSON carried full f32 precision (`"score":0.83020747`), and ~35–45 % of
 // the stream was trailing noise no consumer reads. These `serialize_with` helpers
@@ -604,6 +616,11 @@ pub struct StateFile {
     /// `emotion`/`emotion_conf`/`emotion_entropy` already carry the decision, and
     /// the 8 floats × person × frame are the stream's biggest repeating block.
     pub dump_distributions: bool,
+    /// Include object↔object `near` edges in the Scene JSON (`--dump-full-graph`,
+    /// phase 12.A3 opt-in). Off by default: those edges are static desk geometry
+    /// ("mouse near book", repeated every frame) that no consumer reasons over —
+    /// person-involving edges and all overlap/part_of edges always stay.
+    pub dump_full_graph: bool,
     /// Persistent zone identity over the per-frame connected components (phase
     /// 11.B1). Advanced once per emitted JSON line (both paths take `&self`).
     zone_tracker: std::sync::Mutex<mvm_fusion::ZoneTracker>,
@@ -632,6 +649,7 @@ impl StateFile {
             tz,
             dump_landmarks: false,
             dump_distributions: false,
+            dump_full_graph: false,
             zone_tracker: std::sync::Mutex::new(mvm_fusion::ZoneTracker::new()),
             anomaly: std::sync::Mutex::new(mvm_core::AnomalyScorer::new()),
             epoch: std::time::Instant::now(),
@@ -823,7 +841,9 @@ impl StateFile {
 
         let scene = mvm_fusion::build_scene(entities);
 
-        let relations: Vec<JsonRelation> = scene.relations.iter().map(|r| {
+        let relations: Vec<JsonRelation> = scene.relations.iter()
+            .filter(|r| relation_kept(r.a, r.b, &r.kind, self.dump_full_graph))
+            .map(|r| {
             use mvm_core::types::RelationKind;
             let kind = match r.kind {
                 RelationKind::Near        => "near",
@@ -1001,7 +1021,9 @@ impl StateFile {
         let json_objects: Vec<JsonObject> = world.objects.iter().map(object_state_to_json).collect();
 
         let scene = mvm_fusion::build_scene(entities);
-        let relations: Vec<JsonRelation> = scene.relations.iter().map(|r| {
+        let relations: Vec<JsonRelation> = scene.relations.iter()
+            .filter(|r| relation_kept(r.a, r.b, &r.kind, self.dump_full_graph))
+            .map(|r| {
             use mvm_core::types::RelationKind;
             let kind = match r.kind {
                 RelationKind::Near => "near",
@@ -1991,6 +2013,48 @@ mod tests {
         assert_eq!(d1, "{\"a\":1}\n{\"a\":2}\n", "same-day append");
         assert_eq!(d2, "{\"a\":3}\n", "date roll → new file");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn relations_diet_drops_object_object_near() {
+        // Phase 12.A3: object↔object `near` (both ids ≥ 10000) is dropped by
+        // default; a person↔object edge stays. --dump-full-graph keeps everything.
+        let mut world = mvm_core::WorldState::new(std::time::Instant::now());
+        // Person + two objects, all with 3D so build_scene forms metric near edges.
+        let mut p = person_state(0, mvm_core::BBox { x1: 0.30, y1: 0.30, x2: 0.45, y2: 0.80 });
+        p.position_3d = Some(mvm_core::Position3D { x: 0.0, y: 0.0, z: 1.0, confidence: 0.8 });
+        world.people.push(p);
+        let mut mk = |id: u32, class: &str, x: f32, bx: f32| {
+            let mut o = object_state(id, class, mvm_core::BBox { x1: bx, y1: 0.5, x2: bx + 0.08, y2: 0.6 });
+            o.position_3d = Some(mvm_core::Position3D { x, y: 0.0, z: 1.1, confidence: 0.8 });
+            world.objects.push(o);
+        };
+        mk(mvm_scene::OBJECT_ID_BASE, "mouse", 0.2, 0.50);
+        mk(mvm_scene::OBJECT_ID_BASE + 1, "book", 0.3, 0.62);
+
+        let sf = StateFile::open_at(temp_state_path("test_reldiet_off.md")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
+        let rels = v["relations"].as_array().unwrap();
+        let oid = mvm_scene::OBJECT_ID_BASE as u64;
+        let obj_obj_near = rels.iter().any(|r| {
+            r["a"].as_u64().unwrap() >= oid && r["b"].as_u64().unwrap() >= oid && r["kind"] == "near"
+        });
+        assert!(!obj_obj_near, "object↔object near dropped by default:\n{rels:#?}");
+        assert!(
+            rels.iter().any(|r| r["a"].as_u64().unwrap() < oid || r["b"].as_u64().unwrap() < oid),
+            "person-involving edge stays:\n{rels:#?}"
+        );
+
+        let mut sf2 = StateFile::open_at(temp_state_path("test_reldiet_on.md")).unwrap();
+        sf2.dump_full_graph = true;
+        let v2: serde_json::Value = serde_json::from_str(&sf2.to_json_line_world(&world, 30.0)).unwrap();
+        let rels2 = v2["relations"].as_array().unwrap();
+        assert!(
+            rels2.iter().any(|r| {
+                r["a"].as_u64().unwrap() >= oid && r["b"].as_u64().unwrap() >= oid && r["kind"] == "near"
+            }),
+            "--dump-full-graph restores object↔object near:\n{rels2:#?}"
+        );
     }
 
     #[test]
