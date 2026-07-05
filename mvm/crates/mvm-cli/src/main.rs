@@ -122,7 +122,7 @@ mod tests {
     fn mesh_stub_runs_and_writes_statefile() {
         let path = std::env::temp_dir().join(format!("mvm_mesh_stub_{}.md", std::process::id()));
         let sf = state::StateFile::open_at(path.clone()).unwrap();
-        let mesh = build_stub_mesh(sf, false, Duration::from_millis(1), 20, None);
+        let mesh = build_stub_mesh(sf, false, Duration::from_millis(1), 20, None, None);
         let health = mesh.run();
 
         let cap = health.iter().find(|h| h.name == "stub-capture").expect("capture present");
@@ -508,12 +508,13 @@ fn build_stub_mesh(
     interval: Duration,
     max_frames: u64,
     scene_log: Option<state::SceneLog>,
+    events_log: Option<state::SceneLog>,
 ) -> mvm_mesh::AgentMesh {
     let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
     mesh.add(Box::new(mvm_mesh::StubCaptureAgent::new(1000.0, max_frames)));
     mesh.add(Box::new(mvm_mesh::FrameCounterAgent::new()));
     mesh.add(Box::new(agents::StateFileWriter::new(
-        state_file, dump_json, interval, None, scene_log,
+        state_file, dump_json, interval, None, scene_log, events_log,
     )));
     mesh
 }
@@ -603,13 +604,15 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     let mut state_file = state::StateFile::open()?;
     state_file.dump_landmarks = args.dump_landmarks;
     let interval = Duration::from_millis(args.interval_ms);
-    // Durable JSONL history (phase 12.C0); reuses the StateFile timezone. Moved
-    // into whichever mesh branch runs (the stub branch diverges via `return`).
+    // Durable JSONL history (phase 12.C0/C1); reuses the StateFile timezone. Both
+    // logs share the `--scene-log` dir (scene-*.jsonl frames, events-*.jsonl
+    // episodes). Moved into whichever mesh branch runs (stub diverges via return).
     let scene_log = args.scene_log.as_ref().map(|d| state_file.open_scene_log(d.clone()));
+    let events_log = args.scene_log.as_ref().map(|d| state_file.open_events_log(d.clone()));
 
     if args.stub {
         eprintln!("mvm mesh — starting (stub, model-free)");
-        let mesh = build_stub_mesh(state_file, args.dump_json, interval, args.max_frames.unwrap_or(100), scene_log);
+        let mesh = build_stub_mesh(state_file, args.dump_json, interval, args.max_frames.unwrap_or(100), scene_log, events_log);
         let health = mesh.run();
         report_health(&health);
         return Ok(());
@@ -691,7 +694,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
         mesh.add(Box::new(agents::DepthAgent::new(depth, depth_slot.clone(), config.depth_cadence)));
     }
     mesh.add(Box::new(agents::FusionAgent::new(config.clone(), depth_slot.clone())));
-    mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.dump_json, interval, None, scene_log)));
+    mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.dump_json, interval, None, scene_log, events_log)));
 
     eprintln!("  mesh: running agents on threads (Ctrl-C or --max-frames to stop)");
     let health = mesh.run();

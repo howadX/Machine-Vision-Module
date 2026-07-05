@@ -14,8 +14,11 @@ pub(crate) struct StateFileWriter {
     interval: Duration,
     /// Stop after this many writes (tests / bounded runs). `None` = until stopped.
     max_writes: Option<u64>,
-    /// Optional durable JSONL history (phase 12.C0, `--scene-log`).
+    /// Optional durable JSONL frame history (phase 12.C0, `--scene-log`).
     scene_log: Option<SceneLog>,
+    /// Optional durable completed-episode log (phase 12.C1) — same `--scene-log`
+    /// dir, `events-DATE.jsonl`. One line per drained `WorldState::events` entry.
+    events_log: Option<SceneLog>,
     /// (frame_id, instant) of the previous write — for FPS.
     last: Option<(u64, Instant)>,
 }
@@ -27,8 +30,9 @@ impl StateFileWriter {
         interval: Duration,
         max_writes: Option<u64>,
         scene_log: Option<SceneLog>,
+        events_log: Option<SceneLog>,
     ) -> Self {
-        Self { state_file, dump_json, interval, max_writes, scene_log, last: None }
+        Self { state_file, dump_json, interval, max_writes, scene_log, events_log, last: None }
     }
 }
 
@@ -74,6 +78,18 @@ impl Agent for StateFileWriter {
                 if let Some(log) = self.scene_log.as_mut() {
                     if let Err(e) = log.append(&line) {
                         eprintln!("  scene-log: append error: {e}");
+                    }
+                }
+            }
+            // Drain completed episodes to the events log (phase 12.C1). The
+            // snapshot holds this write's events (cleared from the shared world
+            // above), so each episode is logged exactly once.
+            if let Some(elog) = self.events_log.as_mut() {
+                if !snapshot.events.is_empty() {
+                    for line in self.state_file.events_log_lines(&snapshot.events) {
+                        if let Err(e) = elog.append(&line) {
+                            eprintln!("  events-log: append error: {e}");
+                        }
                     }
                 }
             }
@@ -163,7 +179,7 @@ mod tests {
         let path = std::env::temp_dir()
             .join(format!("mvm_sfw_{}.md", std::process::id()));
         let sf = StateFile::open_at(path.clone()).unwrap();
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None);
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, None);
         let health = agent.run(&ctx);
 
         assert_eq!(health.ticks, 1, "exactly one write");
@@ -215,7 +231,7 @@ mod tests {
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let log = sf.open_scene_log(log_dir.clone());
         // dump_json = false → proves the log is fed independently of stdout.
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(log));
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(log), None);
         agent.run(&ctx);
 
         let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
@@ -226,6 +242,50 @@ mod tests {
         assert_eq!(content.lines().count(), 1, "one line per write");
         let v: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(v["faces"][0]["identity"], "Вадим");
+        let _ = std::fs::remove_file(&sf_path);
+        let _ = std::fs::remove_dir_all(&log_dir);
+    }
+
+    #[test]
+    fn writer_drains_events_to_events_log() {
+        // Phase 12.C1: a completed episode in world.events is written as one line
+        // to events-DATE.jsonl (stamped ts + the episode fields), exactly once.
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.frame_id = 9;
+        world.events.push(mvm_core::ActivityEvent {
+            label: "typing".into(),
+            participants: vec![0, 10001],
+            started_at: 1.0,
+            ended_at: 13.5,
+            duration_s: 12.5,
+            peak_confidence: 0.9,
+            stable_participants: true,
+        });
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::new(RwLock::new(world)),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        let sf_path = std::env::temp_dir().join(format!("mvm_evlog_sf_{}.md", std::process::id()));
+        let log_dir = std::env::temp_dir().join(format!("mvm_evlog_dir_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&log_dir);
+        let sf = StateFile::open_at(sf_path.clone()).unwrap();
+        let elog = sf.open_events_log(log_dir.clone());
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, Some(elog));
+        agent.run(&ctx);
+
+        let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
+        assert_eq!(files.len(), 1, "one day's events-*.jsonl");
+        let fname = files[0].file_name().into_string().unwrap();
+        assert!(fname.starts_with("events-") && fname.ends_with(".jsonl"), "got {fname}");
+        let content = std::fs::read_to_string(files[0].path()).unwrap();
+        assert_eq!(content.lines().count(), 1, "one line per episode");
+        let v: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(v["label"], "typing");
+        assert!((v["duration_s"].as_f64().unwrap() - 12.5).abs() < 1e-9);
+        assert_eq!(v["stable_participants"], true);
+        assert!(v["ts"].is_string(), "events log line carries a ts");
         let _ = std::fs::remove_file(&sf_path);
         let _ = std::fs::remove_dir_all(&log_dir);
     }

@@ -269,6 +269,15 @@ struct JsonEvent {
     stable_participants: bool,
 }
 
+/// One completed episode as a standalone events-log line (phase 12.C1): a
+/// timestamp plus the flattened [`JsonEvent`] fields (rounded floats preserved).
+#[derive(Serialize)]
+struct JsonEventLogged<'a> {
+    ts: &'a str,
+    #[serde(flatten)]
+    event: JsonEvent,
+}
+
 impl From<&mvm_core::ActivityEvent> for JsonEvent {
     fn from(e: &mvm_core::ActivityEvent) -> Self {
         Self {
@@ -483,13 +492,15 @@ use mvm_scene::ANIMAL_IOU;
 pub struct SceneLog {
     dir: PathBuf,
     tz: FixedOffset,
+    /// Filename stem: `scene` (frames) or `events` (episodes) → `<prefix>-DATE.jsonl`.
+    prefix: &'static str,
     current_date: Option<String>,
     file: Option<std::fs::File>,
 }
 
 impl SceneLog {
-    pub fn open(dir: PathBuf, tz: FixedOffset) -> Self {
-        Self { dir, tz, current_date: None, file: None }
+    pub fn open(dir: PathBuf, tz: FixedOffset, prefix: &'static str) -> Self {
+        Self { dir, tz, prefix, current_date: None, file: None }
     }
 
     /// Append one JSON line, rotating on the current local date.
@@ -503,7 +514,7 @@ impl SceneLog {
         use std::io::Write as _;
         if self.current_date.as_deref() != Some(date) {
             fs::create_dir_all(&self.dir)?;
-            let path = self.dir.join(format!("scene-{date}.jsonl"));
+            let path = self.dir.join(format!("{}-{date}.jsonl", self.prefix));
             self.file = Some(std::fs::OpenOptions::new().create(true).append(true).open(path)?);
             self.current_date = Some(date.to_string());
         }
@@ -1034,7 +1045,30 @@ impl StateFile {
     /// Open a per-day rotating scene log rooted at `dir` (phase 12.C0), reusing
     /// this StateFile's timezone so rotation matches the `ts` in the JSON lines.
     pub fn open_scene_log(&self, dir: PathBuf) -> SceneLog {
-        SceneLog::open(dir, self.tz)
+        SceneLog::open(dir, self.tz, "scene")
+    }
+
+    /// Open a per-day rotating **events** log in the same `dir` (phase 12.C1) —
+    /// one completed activity episode per line (`events-DATE.jsonl`).
+    pub fn open_events_log(&self, dir: PathBuf) -> SceneLog {
+        SceneLog::open(dir, self.tz, "events")
+    }
+
+    /// Serialise completed activity episodes as one-per-line JSONL records for the
+    /// events log (phase 12.C1) — each stamped with the current `ts` (same tz +
+    /// float rounding as the Scene JSON `events[]`).
+    pub fn events_log_lines(&self, events: &[mvm_core::ActivityEvent]) -> Vec<String> {
+        let ts = Local::now()
+            .with_timezone(&self.tz)
+            .format("%Y-%m-%dT%H:%M:%S%:z")
+            .to_string();
+        events
+            .iter()
+            .map(|e| {
+                let logged = JsonEventLogged { ts: &ts, event: JsonEvent::from(e) };
+                serde_json::to_string(&logged).unwrap_or_default()
+            })
+            .collect()
     }
 
     /// Write a `WorldState` snapshot to the Hermes StateFile (phase 8.C.7) — the
@@ -1932,7 +1966,7 @@ mod tests {
         // fresh scene-YYYY-MM-DD.jsonl without touching the previous day's.
         let dir = std::env::temp_dir().join(format!("mvm_scenelog_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut log = SceneLog::open(dir.clone(), FixedOffset::east_opt(3 * 3600).unwrap());
+        let mut log = SceneLog::open(dir.clone(), FixedOffset::east_opt(3 * 3600).unwrap(), "scene");
         log.append_at("{\"a\":1}", "2026-07-05").unwrap();
         log.append_at("{\"a\":2}", "2026-07-05").unwrap();
         log.append_at("{\"a\":3}", "2026-07-06").unwrap();
