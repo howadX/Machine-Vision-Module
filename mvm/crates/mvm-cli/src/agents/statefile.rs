@@ -155,7 +155,9 @@ mod tests {
 
         assert_eq!(health.ticks, 1, "exactly one write");
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("- Status: occupied"), "got:\n{content}");
+        // Snapshot v2 (phase 12.B3): markdown table, "· occupied ·" in the header.
+        assert!(content.starts_with("# Scene "), "v2 header:\n{content}");
+        assert!(content.contains("· occupied ·"), "got:\n{content}");
         assert!(content.contains("sitting"));
         let _ = std::fs::remove_file(&path);
     }

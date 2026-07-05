@@ -129,7 +129,9 @@ mod tests {
         assert_eq!(cap.ticks, 20, "stub capture produced its frame budget");
         assert!(path.exists(), "StateFile written");
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("# Camera State"), "valid StateFile, got:\n{content}");
+        // Snapshot v2 (phase 12.B3): empty stub world → the empty-scene header.
+        assert!(content.starts_with("# Scene ") && content.contains("· empty ·"),
+            "valid v2 StateFile, got:\n{content}");
         let _ = std::fs::remove_file(&path);
     }
 }

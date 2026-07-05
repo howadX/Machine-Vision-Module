@@ -994,123 +994,18 @@ impl StateFile {
 
     /// Write a `WorldState` snapshot to the Hermes StateFile (phase 8.C.7) — the
     /// markdown twin of [`write`](Self::write), sourced from the blackboard.
+    ///
+    /// **Phase 12.B3:** this now writes the **snapshot v2** ([`crate::render`]):
+    /// a compact, LLM-facing markdown table (conclusions + tiered confidence +
+    /// honesty `⚠️` notes) instead of the legacy `key: value` block. The mesh is
+    /// the production path, so `current_state.md` is the v2 snapshot; the sync
+    /// [`write`](Self::write) is unchanged (dev/test) — a Sight consumer reading
+    /// the file updates with this format (owner-approved contract change).
     pub fn write_world(&self, world: &mvm_core::WorldState, fps: f64) -> Result<()> {
         let now = Local::now().with_timezone(&self.tz);
-        let timestamp = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
-
-        let mut people: Vec<&mvm_core::PersonState> = world.people.iter().collect();
-        people.sort_by_key(|p| p.track_id);
-        let face_count = people.len();
-        let status = if face_count > 0 { "occupied" } else { "empty" };
-        let dominant_emotion = people
-            .iter()
-            .filter_map(|p| p.emotion.as_ref().map(|(e, _)| e.as_str()))
-            .next()
-            .unwrap_or("none");
-
-        let mut lines = vec![
-            "# Camera State (mvm v0.4)".to_string(),
-            format!("- Last checked: {timestamp}"),
-            "- Camera: /dev/video0".to_string(),
-            "- Uptime: —".to_string(),
-            format!("- FPS: {fps:.1}"),
-            format!("- Face count: {face_count}"),
-            format!("- Dominant emotion: {dominant_emotion}"),
-        ];
-
-        if face_count > 0 {
-            let names: Vec<String> = people
-                .iter()
-                .map(|p| p.identity.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| "unknown".into()))
-                .collect();
-            lines.push(format!("- Persons visible: {}", names.join(", ")));
-            for (i, p) in people.iter().enumerate() {
-                let identity = p.identity.as_ref().map(|(n, _)| n.as_str()).unwrap_or("unknown");
-                let id_conf = p.identity.as_ref().map(|(_, c)| format!(" ({c:.2})")).unwrap_or_default();
-                let emotion = p.emotion.as_ref().map(|(e, _)| e.as_str()).unwrap_or("none");
-                let emo_conf = p.emotion.as_ref().map(|(_, c)| format!(" ({c:.2})")).unwrap_or_default();
-                let posture = p.posture.as_ref().map(|(s, _)| s.as_str()).unwrap_or("—");
-                let pos_conf = p.posture.as_ref().map(|(_, c)| format!(" ({c:.2})")).unwrap_or_default();
-                lines.push(format!("- Person_{}:", i + 1));
-                lines.push(format!("  - id: {}", p.track_id));
-                lines.push(format!("  - identity: {identity}{id_conf}"));
-                lines.push(format!(
-                    "  - bbox: {:.2},{:.2},{:.2},{:.2}",
-                    p.bbox.x1, p.bbox.y1, p.bbox.x2, p.bbox.y2
-                ));
-                lines.push(format!("  - emotion: {emotion}{emo_conf}"));
-                lines.push(format!("  - posture: {posture}{pos_conf}"));
-                // Occlusion-aware regime (mirrors the sync-path StateFile).
-                if let Some(cov) = p.body_coverage {
-                    if cov != "full" {
-                        let att = p.torso_attitude.unwrap_or("?");
-                        lines.push(format!("  - body_coverage: {cov} (torso {att})"));
-                    }
-                }
-                if let Some(q) = p.position_3d {
-                    lines.push(format!("  - distance: {:.2}", q.z));
-                    lines.push(format!("  - position: ({:.2}, {:.2}, {:.2})m", q.x, q.y, q.z));
-                    lines.push(format!("  - ws_confidence: {:.2}", q.confidence));
-                }
-            }
-        } else {
-            lines.push("- Persons visible: none".to_string());
-        }
-
-        if world.objects.is_empty() {
-            lines.push("- Objects visible: none".to_string());
-        } else {
-            let summary: Vec<String> = world
-                .objects
-                .iter()
-                .map(|o| format!("{} ({:.2})", o.class, o.confidence))
-                .collect();
-            lines.push(format!("- Objects visible: {}", summary.join(", ")));
-            for (i, o) in world.objects.iter().enumerate() {
-                lines.push(format!("- Object_{}:", i + 1));
-                lines.push(format!("  - id: {}", o.id));
-                lines.push(format!("  - class: {}", o.class));
-                lines.push(format!("  - score: {:.2}", o.confidence));
-                lines.push(format!("  - age: {} frames", o.age));
-                lines.push(format!(
-                    "  - bbox: {:.2},{:.2},{:.2},{:.2}",
-                    o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2
-                ));
-            }
-        }
-
-        // Cross-group activities + anomaly (phase 8.F); durations from the
-        // journal instances when available (phase 11.C5).
-        if world.activities.is_empty() {
-            lines.push("- Activities: none".to_string());
-        } else if !world.activity_instances.is_empty() {
-            let summary: Vec<String> = world
-                .activity_instances
-                .iter()
-                .map(|i| format!("{} ({:.1}s)", i.key.label, i.last_seen - i.started_at))
-                .collect();
-            lines.push(format!("- Activities: {}", summary.join(", ")));
-        } else {
-            let summary: Vec<String> = world
-                .activities
-                .iter()
-                .map(|a| format!("{} ({:.2})", a.label, a.confidence))
-                .collect();
-            lines.push(format!("- Activities: {}", summary.join(", ")));
-        }
-        if !world.events.is_empty() {
-            let summary: Vec<String> = world
-                .events
-                .iter()
-                .map(|e| format!("{} ended ({:.1}s)", e.label, e.duration_s))
-                .collect();
-            lines.push(format!("- Events: {}", summary.join(", ")));
-        }
-        lines.push(format!("- Anomaly: {:.2}", world.anomaly_score));
-
-        lines.push(format!("- Status: {status}"));
-        lines.push(String::new());
-        fs::write(&self.path, lines.join("\n"))?;
+        let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
+        let md = crate::render::render_snapshot(world, fps, &ts);
+        fs::write(&self.path, md)?;
         Ok(())
     }
 
@@ -1949,7 +1844,9 @@ mod tests {
     }
 
     #[test]
-    fn world_md_lists_person_and_object() {
+    fn world_md_is_snapshot_v2() {
+        // Phase 12.B3: current_state.md is now the snapshot v2 (markdown table),
+        // not the legacy key:value block. Mesh is the production path.
         let sf = StateFile::open_at(temp_state_path("test_world_md.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
         world.people.push(person_state(10, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
@@ -1960,10 +1857,13 @@ mod tests {
         ));
         sf.write_world(&world, 25.0).unwrap();
         let content = read_state(&sf.path);
-        assert!(content.contains("- Status: occupied"), "got:\n{content}");
-        assert!(content.contains("Objects visible: chair"));
-        assert!(content.contains("  - id: 10"));
-        assert!(content.contains("class: chair"));
+        assert!(content.starts_with("# Scene "), "v2 header:\n{content}");
+        assert!(content.contains("· occupied ·"), "got:\n{content}");
+        // Seating zone (chair) + the anon body in the entity table.
+        assert!(content.contains("Zone «seating»:") && content.contains("chair"), "got:\n{content}");
+        assert!(content.contains("| 10 |"), "entity row:\n{content}");
+        // Legacy key:value markers are gone.
+        assert!(!content.contains("Camera State"), "legacy header leaked:\n{content}");
     }
 
     #[test]
@@ -2146,9 +2046,12 @@ mod tests {
         assert_eq!(e["label"], "typing");
         assert!((e["duration_s"].as_f64().unwrap() - 12.5).abs() < 1e-9);
         assert_eq!(e["stable_participants"], true);
+        // The completed event is in the JSON contract (above). The snapshot v2
+        // markdown is "what now" — ended episodes belong to recap (12.C), not the
+        // live snapshot — so write_world no longer lists them.
         sf.write_world(&world, 30.0).unwrap();
         let md = std::fs::read_to_string(&path).unwrap();
-        assert!(md.contains("Events: typing ended (12.5s)"), "got:\n{md}");
+        assert!(md.starts_with("# Scene "), "v2 snapshot header:\n{md}");
     }
 
     #[test]
