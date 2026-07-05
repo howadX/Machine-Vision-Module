@@ -55,13 +55,18 @@ pub fn run_recap(args: RecapArgs) -> Result<()> {
 /// Build + render the recap markdown for a whole log directory, no window — the
 /// rolling `journal.md` view of the current day (phase 12.D1).
 pub fn recap_markdown_from_dir(dir: &Path) -> Result<String> {
-    let args = RecapArgs {
-        input: dir.to_path_buf(),
-        events: None,
-        from: None,
-        to: None,
-        last: None,
-    };
+    recap_markdown(dir, None, None, None)
+}
+
+/// Programmatic recap entry (also used by the MCP `mvm_recap` tool, 12.D2):
+/// recap markdown for `dir` with an optional window.
+pub fn recap_markdown(
+    dir: &Path,
+    last: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+) -> Result<String> {
+    let args = RecapArgs { input: dir.to_path_buf(), events: None, from, to, last };
     render_recap_string(&args)
 }
 
@@ -303,6 +308,23 @@ pub fn parse_inspect_args(raw: &[String]) -> InspectArgs {
 }
 
 pub fn run_inspect(args: InspectArgs) -> Result<()> {
+    print!("{}", inspect_collect(&args)?);
+    Ok(())
+}
+
+/// Programmatic inspect entry (also the MCP `mvm_inspect` tool, 12.D2): the raw
+/// (or `--md`) slice as a single newline-joined string.
+pub fn inspect_output(
+    input: &Path,
+    around: Option<String>,
+    window_s: f64,
+    id: Option<u32>,
+    md: bool,
+) -> Result<String> {
+    inspect_collect(&InspectArgs { input: input.to_path_buf(), around, window_s, id, md })
+}
+
+fn inspect_collect(args: &InspectArgs) -> Result<String> {
     let (scene_files, _events) = resolve_files_at(&args.input, None)?;
     let mut lines: Vec<(String, String)> = Vec::new();
     for f in &scene_files {
@@ -322,14 +344,16 @@ pub fn run_inspect(args: InspectArgs) -> Result<()> {
     if kept.is_empty() {
         bail!("no frames in the selected slice");
     }
+    let mut out = String::new();
     for raw in &kept {
         if args.md {
-            println!("{}", inspect_md_line(raw));
+            out.push_str(&inspect_md_line(raw));
         } else {
-            println!("{raw}");
+            out.push_str(raw);
         }
+        out.push('\n');
     }
-    Ok(())
+    Ok(out)
 }
 
 /// Pure selection core (testable): keep raw lines within `window_s` of `around`

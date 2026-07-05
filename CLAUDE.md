@@ -55,8 +55,9 @@ cd mvm && target/release/mvm-cli --native --once --dump-json
 **Фаза 11 — Fusion-полировка** (реляц.-темпоральная арифметика над Scene JSON, **+0 ONNX**): mask-контакт
 10.6 + person-маски 10.7 + фикс мис-атрибуции · зоны/anomaly v2 · **activity-FSM** (конечный автомат +
 event-journal start/stop/duration) · метрич. калибровка. План — `mvm/docs/phase-11-plan.md`.
-Следующая — **фаза 12 LLM-render** (MVM как модуль зрения для LLM: snapshot/recap/inspect + MCP,
-план готов — `mvm/docs/phase-12-llm-render-plan.md`); продукт (упаковка) — после неё.
+**Фаза 12 — LLM-render ЗАКРЫТА** (MVM как модуль зрения для LLM: snapshot v2 + recap + inspect +
+токен-диета + scene/events-логи + rolling journal.md + MCP stdio-сервер `serve --mcp`;
+все шаги live-провалидированы — `mvm/docs/phase-12-llm-render-plan.md`). Продукт (упаковка) — следующая.
 
 ## Для Claude Code
 

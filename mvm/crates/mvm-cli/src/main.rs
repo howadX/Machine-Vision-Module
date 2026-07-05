@@ -10,6 +10,7 @@
 mod state;
 mod render;
 mod recap_cmd;
+mod mcp;
 mod scene_debug;
 mod pipeline;
 mod agents;
@@ -742,6 +743,9 @@ fn main() -> Result<()> {
     }
     if raw.get(1).map(String::as_str) == Some("inspect") {
         return recap_cmd::run_inspect(recap_cmd::parse_inspect_args(&raw));
+    }
+    if raw.get(1).map(String::as_str) == Some("serve") {
+        return mcp::run_serve(mcp::parse_serve_args(&raw));
     }
 
     let args = parse_args();

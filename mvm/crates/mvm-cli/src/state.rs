@@ -25,6 +25,13 @@ pub struct EmotionDebugEntry {
 /// Path to the Sight state file.
 const STATE_PATH: &str = ".hermes/profiles/sight/workspace/current_state.md";
 
+/// The production StateFile path (`$HOME/.hermes/.../current_state.md`) — the MCP
+/// server's default snapshot source (phase 12.D2).
+pub fn default_state_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home).join(STATE_PATH)
+}
+
 #[derive(Serialize)]
 struct JsonEmotionDebug {
     rust: String,
