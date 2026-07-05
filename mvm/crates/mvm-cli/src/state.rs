@@ -475,6 +475,45 @@ fn ser_opt_vec2<S: serde::Serializer>(v: &Option<Vec<[f32; 2]>>, s: S) -> std::r
 /// the body *is* the animal) trips it.
 use mvm_scene::ANIMAL_IOU;
 
+/// Append-only JSONL scene log with per-day rotation (phase 12.C0). One line per
+/// dumped frame → the durable history that `recap`/`inspect` read (the stdout
+/// dump is ephemeral). Rotates to a fresh `scene-YYYY-MM-DD.jsonl` in `dir` when
+/// the local date rolls over; opens files in append mode so a restart continues
+/// the same day's log.
+pub struct SceneLog {
+    dir: PathBuf,
+    tz: FixedOffset,
+    current_date: Option<String>,
+    file: Option<std::fs::File>,
+}
+
+impl SceneLog {
+    pub fn open(dir: PathBuf, tz: FixedOffset) -> Self {
+        Self { dir, tz, current_date: None, file: None }
+    }
+
+    /// Append one JSON line, rotating on the current local date.
+    pub fn append(&mut self, line: &str) -> Result<()> {
+        let date = Local::now().with_timezone(&self.tz).format("%Y-%m-%d").to_string();
+        self.append_at(line, &date)
+    }
+
+    /// Date-injected core so rotation is deterministic under test.
+    fn append_at(&mut self, line: &str, date: &str) -> Result<()> {
+        use std::io::Write as _;
+        if self.current_date.as_deref() != Some(date) {
+            fs::create_dir_all(&self.dir)?;
+            let path = self.dir.join(format!("scene-{date}.jsonl"));
+            self.file = Some(std::fs::OpenOptions::new().create(true).append(true).open(path)?);
+            self.current_date = Some(date.to_string());
+        }
+        if let Some(f) = self.file.as_mut() {
+            writeln!(f, "{line}")?;
+        }
+        Ok(())
+    }
+}
+
 fn hand_to_json(h: &mvm_core::HandState, dump_landmarks: bool) -> JsonHand {
     JsonHand {
         side: h.side,
@@ -990,6 +1029,12 @@ impl StateFile {
             anomaly_score: world.anomaly_score,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Open a per-day rotating scene log rooted at `dir` (phase 12.C0), reusing
+    /// this StateFile's timezone so rotation matches the `ts` in the JSON lines.
+    pub fn open_scene_log(&self, dir: PathBuf) -> SceneLog {
+        SceneLog::open(dir, self.tz)
     }
 
     /// Write a `WorldState` snapshot to the Hermes StateFile (phase 8.C.7) — the
@@ -1879,6 +1924,23 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["faces"][0]["motion"], "moving");
         assert!((v["faces"][0]["velocity"].as_f64().unwrap() - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scene_log_appends_and_rotates_by_date() {
+        // Phase 12.C0: same-day lines accumulate in one file; a date roll opens a
+        // fresh scene-YYYY-MM-DD.jsonl without touching the previous day's.
+        let dir = std::env::temp_dir().join(format!("mvm_scenelog_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut log = SceneLog::open(dir.clone(), FixedOffset::east_opt(3 * 3600).unwrap());
+        log.append_at("{\"a\":1}", "2026-07-05").unwrap();
+        log.append_at("{\"a\":2}", "2026-07-05").unwrap();
+        log.append_at("{\"a\":3}", "2026-07-06").unwrap();
+        let d1 = std::fs::read_to_string(dir.join("scene-2026-07-05.jsonl")).unwrap();
+        let d2 = std::fs::read_to_string(dir.join("scene-2026-07-06.jsonl")).unwrap();
+        assert_eq!(d1, "{\"a\":1}\n{\"a\":2}\n", "same-day append");
+        assert_eq!(d2, "{\"a\":3}\n", "date roll → new file");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

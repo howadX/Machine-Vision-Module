@@ -4,7 +4,7 @@
 //! it reads the blackboard the agents fill and computes FPS from the frame_id
 //! advance between writes.
 
-use crate::state::StateFile;
+use crate::state::{SceneLog, StateFile};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::time::{Duration, Instant};
 
@@ -14,6 +14,8 @@ pub(crate) struct StateFileWriter {
     interval: Duration,
     /// Stop after this many writes (tests / bounded runs). `None` = until stopped.
     max_writes: Option<u64>,
+    /// Optional durable JSONL history (phase 12.C0, `--scene-log`).
+    scene_log: Option<SceneLog>,
     /// (frame_id, instant) of the previous write — for FPS.
     last: Option<(u64, Instant)>,
 }
@@ -24,8 +26,9 @@ impl StateFileWriter {
         dump_json: bool,
         interval: Duration,
         max_writes: Option<u64>,
+        scene_log: Option<SceneLog>,
     ) -> Self {
-        Self { state_file, dump_json, interval, max_writes, last: None }
+        Self { state_file, dump_json, interval, max_writes, scene_log, last: None }
     }
 }
 
@@ -61,8 +64,18 @@ impl Agent for StateFileWriter {
                 eprintln!("  statefile: write error: {e}");
                 errors += 1;
             }
-            if self.dump_json {
-                println!("{}", self.state_file.to_json_line_world(&snapshot, fps));
+            // Build the JSON line once when either sink wants it (stdout dump
+            // and/or the durable scene log, phase 12.C0).
+            if self.dump_json || self.scene_log.is_some() {
+                let line = self.state_file.to_json_line_world(&snapshot, fps);
+                if self.dump_json {
+                    println!("{line}");
+                }
+                if let Some(log) = self.scene_log.as_mut() {
+                    if let Err(e) = log.append(&line) {
+                        eprintln!("  scene-log: append error: {e}");
+                    }
+                }
             }
             writes += 1;
 
@@ -150,7 +163,7 @@ mod tests {
         let path = std::env::temp_dir()
             .join(format!("mvm_sfw_{}.md", std::process::id()));
         let sf = StateFile::open_at(path.clone()).unwrap();
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1));
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None);
         let health = agent.run(&ctx);
 
         assert_eq!(health.ticks, 1, "exactly one write");
@@ -160,5 +173,60 @@ mod tests {
         assert!(content.contains("· occupied ·"), "got:\n{content}");
         assert!(content.contains("sitting"));
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn writer_appends_to_scene_log() {
+        // Phase 12.C0: a StateFileWriter with a scene log appends one valid JSON
+        // line per write to the day's rotating file (independent of --dump-json).
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.frame_id = 3;
+        world.people.push(PersonState {
+            track_id: 0,
+            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            identity: Some(("Вадим".into(), 0.9)),
+            emotion: None,
+            posture: None,
+            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.0, confidence: 0.6 }),
+            emotion_distribution: None,
+            wrists: Vec::new(),
+            hands: Vec::new(),
+            body_coverage: None,
+            torso_attitude: None,
+            motion_state: None,
+            velocity: None,
+            left_gesture: None,
+            right_gesture: None,
+            recon_error: None,
+            plausibility: None,
+            head_yaw: None,
+            head_facing: None,
+            last_seen: now,
+        });
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::new(RwLock::new(world)),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        let sf_path = std::env::temp_dir().join(format!("mvm_sflog_sf_{}.md", std::process::id()));
+        let log_dir = std::env::temp_dir().join(format!("mvm_sflog_dir_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&log_dir);
+        let sf = StateFile::open_at(sf_path.clone()).unwrap();
+        let log = sf.open_scene_log(log_dir.clone());
+        // dump_json = false → proves the log is fed independently of stdout.
+        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(log));
+        agent.run(&ctx);
+
+        let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
+        assert_eq!(files.len(), 1, "one day's scene-*.jsonl written");
+        let fname = files[0].file_name().into_string().unwrap();
+        assert!(fname.starts_with("scene-") && fname.ends_with(".jsonl"), "got {fname}");
+        let content = std::fs::read_to_string(files[0].path()).unwrap();
+        assert_eq!(content.lines().count(), 1, "one line per write");
+        let v: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(v["faces"][0]["identity"], "Вадим");
+        let _ = std::fs::remove_file(&sf_path);
+        let _ = std::fs::remove_dir_all(&log_dir);
     }
 }

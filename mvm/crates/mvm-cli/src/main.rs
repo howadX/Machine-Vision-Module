@@ -122,7 +122,7 @@ mod tests {
     fn mesh_stub_runs_and_writes_statefile() {
         let path = std::env::temp_dir().join(format!("mvm_mesh_stub_{}.md", std::process::id()));
         let sf = state::StateFile::open_at(path.clone()).unwrap();
-        let mesh = build_stub_mesh(sf, false, Duration::from_millis(1), 20);
+        let mesh = build_stub_mesh(sf, false, Duration::from_millis(1), 20, None);
         let health = mesh.run();
 
         let cap = health.iter().find(|h| h.name == "stub-capture").expect("capture present");
@@ -166,6 +166,9 @@ struct Args {
     /// (→ mask-median depth, mask contact). Opt-in / default off — zero perf hit
     /// unless requested (spike §3.3: owner A/Bs the ~+47ms cadence cost live).
     masks: bool,
+    /// --scene-log <dir>: append each dumped frame to a per-day rotating
+    /// `scene-YYYY-MM-DD.jsonl` in <dir> (phase 12.C0). Independent of --dump-json.
+    scene_log: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -183,6 +186,7 @@ fn parse_args() -> Args {
         native_camera: false,
         scene_debug: false,
         masks: false,
+        scene_log: None,
     };
 
     let mut i = 1;
@@ -207,6 +211,12 @@ fn parse_args() -> Args {
             "--dump-interval" => {
                 if i + 1 < raw.len() {
                     args.dump_interval = raw[i + 1].parse().unwrap_or(180);
+                    i += 1;
+                }
+            }
+            "--scene-log" => {
+                if i + 1 < raw.len() {
+                    args.scene_log = Some(PathBuf::from(&raw[i + 1]));
                     i += 1;
                 }
             }
@@ -312,6 +322,8 @@ fn run_native_loop(
     let mut last_dump = Instant::now();
     let mut frame_count: u64 = 0;
     let start = Instant::now();
+    // Durable JSONL history (phase 12.C0); reuses the StateFile timezone.
+    let mut scene_log = args.scene_log.as_ref().map(|d| state_file.open_scene_log(d.clone()));
 
     loop {
         let frame = match native_camera.read() {
@@ -358,13 +370,20 @@ fn run_native_loop(
             } else {
                 state_file.dump_table(&tracker, fps);
             }
-            if args.dump_json {
+            if args.dump_json || scene_log.is_some() {
                 let line = if args.emotion_debug {
                     state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
                 } else {
                     state_file.to_json_line(&tracker, fps, pipeline.objects(), &bodies, pipeline.animals())
                 };
-                println!("{line}");
+                if args.dump_json {
+                    println!("{line}");
+                }
+                if let Some(log) = scene_log.as_mut() {
+                    if let Err(e) = log.append(&line) {
+                        eprintln!("  scene-log: append error: {e}");
+                    }
+                }
             }
 
             // Scene visual debug (phase 8.E): annotated JPG + printed legend.
@@ -424,6 +443,10 @@ struct MeshArgs {
     /// production — masks light up A1/A2 mask-contact that otherwise falls back to
     /// bbox. Opt-in for now (seg is a real forward on the object cadence).
     masks: bool,
+    /// --scene-log <dir>: append each dumped frame to a per-day rotating
+    /// `scene-YYYY-MM-DD.jsonl` in <dir> (phase 12.C0) — the durable history
+    /// `recap`/`inspect` read. Independent of `--dump-json` (stdout).
+    scene_log: Option<PathBuf>,
 }
 
 fn parse_mesh_args(raw: &[String]) -> MeshArgs {
@@ -435,6 +458,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         dump_landmarks: false,
         interval_ms: 100,
         masks: false,
+        scene_log: None,
     };
     let mut i = 2; // skip program name + "mesh"
     while i < raw.len() {
@@ -444,6 +468,12 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             "--emotion-debug" => a.emotion_debug = true,
             "--dump-landmarks" => a.dump_landmarks = true,
             "--masks" => a.masks = true,
+            "--scene-log" => {
+                if i + 1 < raw.len() {
+                    a.scene_log = Some(PathBuf::from(&raw[i + 1]));
+                    i += 1;
+                }
+            }
             "--max-frames" => {
                 if i + 1 < raw.len() {
                     a.max_frames = raw[i + 1].parse().ok();
@@ -477,12 +507,13 @@ fn build_stub_mesh(
     dump_json: bool,
     interval: Duration,
     max_frames: u64,
+    scene_log: Option<state::SceneLog>,
 ) -> mvm_mesh::AgentMesh {
     let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
     mesh.add(Box::new(mvm_mesh::StubCaptureAgent::new(1000.0, max_frames)));
     mesh.add(Box::new(mvm_mesh::FrameCounterAgent::new()));
     mesh.add(Box::new(agents::StateFileWriter::new(
-        state_file, dump_json, interval, None,
+        state_file, dump_json, interval, None, scene_log,
     )));
     mesh
 }
@@ -572,10 +603,13 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     let mut state_file = state::StateFile::open()?;
     state_file.dump_landmarks = args.dump_landmarks;
     let interval = Duration::from_millis(args.interval_ms);
+    // Durable JSONL history (phase 12.C0); reuses the StateFile timezone. Moved
+    // into whichever mesh branch runs (the stub branch diverges via `return`).
+    let scene_log = args.scene_log.as_ref().map(|d| state_file.open_scene_log(d.clone()));
 
     if args.stub {
         eprintln!("mvm mesh — starting (stub, model-free)");
-        let mesh = build_stub_mesh(state_file, args.dump_json, interval, args.max_frames.unwrap_or(100));
+        let mesh = build_stub_mesh(state_file, args.dump_json, interval, args.max_frames.unwrap_or(100), scene_log);
         let health = mesh.run();
         report_health(&health);
         return Ok(());
@@ -657,7 +691,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
         mesh.add(Box::new(agents::DepthAgent::new(depth, depth_slot.clone(), config.depth_cadence)));
     }
     mesh.add(Box::new(agents::FusionAgent::new(config.clone(), depth_slot.clone())));
-    mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.dump_json, interval, None)));
+    mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.dump_json, interval, None, scene_log)));
 
     eprintln!("  mesh: running agents on threads (Ctrl-C or --max-frames to stop)");
     let health = mesh.run();

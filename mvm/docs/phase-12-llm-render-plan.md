@@ -191,7 +191,7 @@ wrists, bbox), JSON или markdown. Дорого, но редко и узко.
 
 | Шаг | Задача | Тест |
 |-----|--------|------|
-| **12.C0** | **Scene-log**: `--scene-log <path>` — append тех же JSON-строк в файл (сегодня дамп живёт только в stdout-редиректе); ротация по дате (`scene-YYYY-MM-DD.jsonl`) | строки в файле == stdout; смена даты → новый файл |
+| **12.C0** ✅ | **Scene-log**: `--scene-log <dir>` — append JSON-строк в `scene-YYYY-MM-DD.jsonl` с ротацией по локальной дате, независимо от `--dump-json`; проведён в mesh (`StateFileWriter`) и sync (`run_native_loop`) | **Сделано:** `SceneLog` (`append_at` date-injected → детерм. тест ротации); mesh-интеграция (`writer_appends_to_scene_log`, dump_json=off); **live-прогон** (`mesh --scene-log`, 4 строки, валидный JSON с A1-округлением); 25 крейтов зелёные |
 | **12.C1** | **Events-log**: `StateFileWriter` дренирует `world.events` → append `events.jsonl` (одно событие = одна строка: ts, label, participants, started_at/ended_at, duration_s, peak_confidence, stable_participants) | событие пишется ровно один раз (дрен эксклюзивен — инвариант 11.C3 сохранён) |
 | **12.C2** | **Агрегаты recap** (`mvm-core/src/recap.rs`, новый — чистая арифметика, зеркало `activity.rs`): presence-RLE per id, сводка эпизодов, дельты объектов/зон, пики anomaly, фантом-эвристика §3.2 | синтетика: RLE корректен на дырах; фантом-эвристика ловит профиль id12 (короткая жизнь + born-lying + near) и НЕ флажит реального анонима id10 |
 | **12.C3** | **`mvm-cli recap`** подкоманда: `--input scene.jsonl [--events events.jsonl] [--from ts --to ts \| --last 10m]` → markdown §3.2 | golden на закоммиченной A3-фикстуре (подрезанной, ~15–20 тиков): вывод стабилен байт-в-байт; полный A3-дамп → recap ≤800 ток. |
