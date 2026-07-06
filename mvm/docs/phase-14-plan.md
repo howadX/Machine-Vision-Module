@@ -1,6 +1,6 @@
 # Фаза 14 — Продукт: нативная установка и использование
 
-> **Версия:** 1.0 (2026-07-06). Детальный план **14.0 (фундамент)** + roadmap последующих шагов.
+> **Версия:** 1.1 (2026-07-06, после код-ревизии). Детальный план **14.0 (фундамент)** + roadmap последующих шагов.
 > **Цель фазы:** «поставил → само нашлось и заработало → пользуешься, не думая о путях, venv и JSON-RPC».
 > Ядро зрения готово (фазы 8–13); фаза 14 строит **оболочку продукта**, не трогая зрение.
 
@@ -33,11 +33,13 @@
 ## 14.0 — Фундамент (детально)
 
 ### 14.0.1 — Модуль `paths` (XDG-шов)
-Единая точка правды по путям. Hand-rolled XDG (`+0 dep`): `$XDG_DATA_HOME`/`$XDG_CONFIG_HOME`/
-`$XDG_CACHE_HOME` с фолбэками `~/.local/share`, `~/.config`, `~/.cache`.
+Единая точка правды по путям. Hand-rolled XDG (`+0 dep`): `$XDG_DATA_HOME`/`$XDG_CONFIG_HOME`
+с фолбэками `~/.local/share`, `~/.config`.
 - `data_dir()` → `~/.local/share/mvm/` — **state + scene/events-логи + journal в одном месте**.
+  Создаётся с правами **0700** (журнал содержит идентичности и распорядок — приватные данные).
 - `config_dir()` → `~/.config/mvm/`.
-- `cache_dir()` → `~/.local/share/mvm/models/` (сюда потом `mvm setup`).
+- `models_dir()` → `~/.local/share/mvm/models/` (сюда потом `mvm setup`). Модели ре-фетчабельны,
+  но живут под data (не `$XDG_CACHE_HOME`): кэш ОС вправе чистить, а без моделей продукт мёртв.
 
 **Шов под кросс:** позже здесь ветка macOS (`~/Library/…`) / Windows (`%APPDATA%`) — вызовы не меняются.
 Новый файл: `crates/mvm-cli/src/paths.rs`.
@@ -70,10 +72,18 @@ snapshot_ms = 1000
 - `run`/`snapshot`/`serve` без флагов читают конфиг; существующие флаги (`--scene-log`, `--interval-ms`,
   `--state`, `--logs`, `--masks`, …) **переопределяют** соответствующие поля (не ломаем текущий CLI).
 - Новый файл: `crates/mvm-cli/src/config_file.rs` (не путать с рантайм-`mvm_core::Config` — это CLI-слой).
+- **⚠️ Резолв втекает в существующие поля рантайм-конфига, не параллельно им** (код-ревизия):
+  в `mvm_core::Config` **уже есть** `camera_path` (дефолт `/dev/video0`, CLI его игнорирует) и
+  `models_path` (дефолт `./models` — **cwd-относительный!** SFace/EmotiEffLib/YOLO/seg/depth/handpose
+  всегда грузятся с диска; embed покрывает только YuNet+BlazePose+RF/VAE). `Config::default()`
+  конструируется в **трёх** местах `main.rs` (~672/~843/~898) — все три должны получать
+  `models_path`/`camera_path` из резолва `FileConfig`. Без этого `mvm run` из произвольного cwd
+  сломан даже со скачанными моделями — это ключевой расхардкод шага, не деталь.
 
 ### 14.0.3 — Авто-детект камеры + шов `CameraSource`
 Убрать хардкод `NativeCamera::open("/dev/video0", 1280, 720, false)` — он в **двух** местах
-(`main.rs::run_mesh` и sync-путь ~`main.rs:796`).
+(`main.rs::run_mesh` ~726 и sync-путь ~861). Sweep заодно: легаси sync-`write()` пишет литерал
+`"- Camera: /dev/video0"` в StateFile (`state.rs:~690`) — подставить реальное устройство.
 - `device = "auto"` → перебрать `/dev/video*`, взять первую живую MJPG; иначе — устройство из конфига.
 - Ввести **шов** в `mvm-pipeline`: трейт/enum `CameraSource` (open/dimensions/next-frame). Единственный
   бэкенд сейчас — `V4l2Source` (нынешний `NativeCamera`). Сюда потом сядут `AvFoundationSource`/
@@ -85,15 +95,18 @@ snapshot_ms = 1000
 (`STATE_PATH` const). Развязка:
 - Дефолт = **XDG `data_dir`**: `current_state.md` + `scene-/events-*.jsonl` + `journal.md` **в одной папке**
   → **ловушка `--logs` исчезает** (`serve` по умолчанию читает ту же `data_dir`, что пишет `run`).
-- Убрать Hermes-хардкод целиком; `output.state_path` — опциональный override.
+- Убрать Hermes-хардкод целиком; `output.state_path` — опциональный override. Sweep: `help.rs:~89`
+  и AGENT.md упоминают Hermes-путь как дефолт — обновить на XDG.
 - **Hermes** репойнтится на новый XDG-путь на своей стороне (owner, вне репо) — dual-write и авто-детекта
   старого пути **нет** (решение владельца: чистый переезд).
 - Одна `data_dir` кормит и `run`, и `serve` → подготовка к единому `serve --with-camera` (14.3).
 
 ### 14.0.5 — Команда называется `mvm`
 `Cargo.toml` крейта `mvm-cli`: `[[bin]] name = "mvm"`. Пользователь пишет `mvm run`, не `mvm-cli run`.
-`--help`/`AGENT.md`/README уже говорят `mvm` — приводим реальность в соответствие. `cargo xtask bundle`
-и пути в доках сверить.
+`--help`/`AGENT.md` уже говорят `mvm`; README — **частично** (`./target/release/mvm-cli run` в
+примерах) — sweep. `cargo xtask bundle` копирует `target/release/mvm-cli` → путь обновить.
+Заодно поправить фразу «модели embedded» в README/CLAUDE.md: embed покрывает только
+YuNet+BlazePose+RF/VAE, крупные модели всегда с диска.
 
 ### 14.0.6 — `mvm doctor` (минимальный)
 Ответ на «почему не работает» + доказательство, что расхардкод резолвится верно:
@@ -114,9 +127,13 @@ mvm doctor
 ### Верификация 14.0
 - `cargo test --workspace` зелёный; новые тесты: приоритет конфига (CLI>env>file>default), XDG-фолбэки,
   `~`-раскрытие, авто-детект камеры (мок-перебор устройств), резолв `data_dir`→state/logs/journal в одной папке.
-- **Live (чистая машина, нет `~/.hermes`):** `mvm run` **без флагов** — сам находит камеру, создаёт
-  `~/.local/share/mvm`, пишет туда; `mvm snapshot` и `mvm serve --mcp` работают на дефолтах, **без ручного `--logs`**.
+- **Live (чистое окружение — нет `~/.hermes`, cwd произвольный, модели вручную лежат в `[models] dir`):**
+  `mvm run` **без флагов** — сам находит камеру, создаёт `~/.local/share/mvm`, пишет туда; `mvm snapshot`
+  и `mvm serve --mcp` работают на дефолтах, **без ручного `--logs`**.
+- Без моделей `mvm run` падает **понятно**: «models missing → run `mvm setup`» (не паника ONNX).
 - `mvm doctor` даёт корректный отчёт. Команда зовётся `mvm`.
+- **Честно:** «поставил → само заработало» целиком наступает только после **14.1** (fetch моделей);
+  14.0 гарантирует «правильно резолвится из любого cwd и понятно падает без моделей».
 
 ---
 
@@ -124,13 +141,13 @@ mvm doctor
 
 | Шаг | Что | Опирается на |
 |-----|-----|--------------|
-| **14.1** | `mvm setup` — fetch-on-setup моделей в `cache_dir` (checksum, resume); авто-триггер на первом `run` при отсутствии | `paths::cache_dir` + `[models]` |
+| **14.1** | `mvm setup` — fetch-on-setup моделей в `models_dir` (checksum, resume); авто-триггер на первом `run` при отсутствии | `paths::models_dir` + `[models]` |
 | **14.2** | Watched-галерея `gallery/<Имя>/*.jpg` + `mvm gallery add/list` — убрать hardcoded name-map/пути из `build_gallery` | `[gallery]` |
 | **14.3** | **`mvm serve --with-camera`** — единый процесс: продюсер (mesh) + MCP-сервер над своими свежими артефактами | единая `data_dir` (14.0.4) |
 | **14.4** | `mvm mcp install --host claude-desktop\|claude-code\|hermes` — пишет верный блок конфига (знает `data_dir`→`--logs`) | 14.0 + 14.3 |
 | **14.5** | `mvm service install` — systemd **user**-юнит (`~/.config/systemd/user/mvm.service`), без root | 14.3 |
 | **14.6** | Дистрибуция: GitHub Releases (linux x86_64/aarch64) + `curl … \| sh` installer | 14.1 |
-| **later** | Кросс-бэкенды камеры (macOS → Windows) в шов `CameraSource`; авто-`fx` (zero-config 3D) | швы `CameraSource`/`paths` |
+| **later** | Кросс-бэкенды камеры (macOS → Windows) в шов `CameraSource`; авто-`fx` (zero-config 3D); **retention** scene/events-логов (`data_dir` растёт бесконечно — политика хранения или `mvm doctor`-warning + `mvm clean`) | швы `CameraSource`/`paths` |
 
 Порядок: **фундамент → setup → галерея → единый демон → mcp-install → service → дистрибуция**;
 кросс-платформа доклеивается в швы на любом этапе.
