@@ -10,7 +10,7 @@
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 501 тест; фаза 11 Fusion в работе)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 596 тестов; фаза 14 Продукт в работе)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   └── CLAUDE.md   #   ← детальный контекст Rust-части (source of truth)
@@ -53,12 +53,21 @@ cd mvm && target/release/mvm --native --once --dump-json
 
 ## Текущая фаза
 
-**Фаза 11 — Fusion-полировка** (реляц.-темпоральная арифметика над Scene JSON, **+0 ONNX**): mask-контакт
-10.6 + person-маски 10.7 + фикс мис-атрибуции · зоны/anomaly v2 · **activity-FSM** (конечный автомат +
-event-journal start/stop/duration) · метрич. калибровка. План — `mvm/docs/phase-11-plan.md`.
-**Фаза 12 — LLM-render ЗАКРЫТА** (MVM как модуль зрения для LLM: snapshot v2 + recap + inspect +
-токен-диета + scene/events-логи + rolling journal.md + MCP stdio-сервер `serve --mcp`;
-все шаги live-провалидированы — `mvm/docs/phase-12-llm-render-plan.md`). Продукт (упаковка) — следующая.
+**Фаза 14 — Продукт (В РАБОТЕ):** оболочка «поставил → само нашлось и заработало». Закрыто и
+live-провалидировано (`mvm/docs/phase-14-plan.md`): **14.0** фундамент (XDG-пути `~/.local/share/mvm`,
+`config.toml` с приоритетом CLI>env>file>default, авто-детект камеры через шов `CameraSource`, бинарь
+называется `mvm`, `mvm doctor`), **14.1** `mvm setup` (fetch моделей с sha256-verify + HTTP range-resume,
+единый манифест, авто-триггер обязательных на первом `run`), **14.2** watched-галерея (`gallery/<Имя>/*.jpg`,
+`mvm gallery add/list` — убран hardcoded name-map), **14.3** `mvm serve --with-camera` (единый процесс:
+продюсер + MCP над своими свежими артефактами), **14.4** `mvm mcp install` (регистрация MCP-сервером у
+claude-desktop/claude-code/hermes; dry-run + безопасный `--write`), **14.5** `mvm service` (systemd
+user-юнит продюсера, без root). **Осталось:** 14.6 дистрибуция (GitHub Releases + `curl|sh`).
+12 крейтов, 596 тестов. **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь.
+
+Ранее закрыто: **Фаза 11 — Fusion-полировка** (activity-FSM + event-journal, зоны/anomaly v2,
+mask-контакт, object-permanence, self-calib; `+0 ONNX`). **Фаза 12 — LLM-render** (snapshot v2 + recap +
+inspect + токен-диета + scene/events-логи + rolling journal.md + MCP stdio-сервер). **Фаза 13 —
+Agent Tools/Skills Polishing** (когерентное CLI-дерево, `--help`, `AGENT.md`, само-документирующий MCP).
 
 ## Для Claude Code
 
