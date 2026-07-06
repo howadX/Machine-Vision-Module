@@ -22,6 +22,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
         "recap" => RECAP,
         "inspect" => INSPECT,
         "serve" => SERVE,
+        "doctor" => DOCTOR,
         _ => return None,
     })
 }
@@ -38,6 +39,7 @@ COMMANDS:
     recap      Summarise a period from the durable logs (presence, activities, zones)
     inspect    Print raw per-frame slices at full precision (adjudicate a recap)
     serve      MCP stdio server: expose snapshot/recap/inspect as LLM tools
+    doctor     Check the setup: camera, models, data dir, config
 
 PULL MODEL (cheap → expensive):
     snapshot  → what's happening now
@@ -146,6 +148,21 @@ FLAGS:
     --logs <DIR>     Recap/inspect log dir (default: ~/.local/share/mvm — same data_dir `mvm run` writes)
 
 Reads the artifacts a running `mvm run` writes; producer and server stay decoupled.
+";
+
+pub const DOCTOR: &str = "\
+mvm doctor — check the setup and show how everything resolves (why doesn't it work?).
+
+USAGE:
+    mvm doctor
+
+CHECKS:
+    camera     opens the configured device ([camera].device, \"auto\" scans /dev/video*)
+    models     required + optional ONNX models present in the models dir
+    data dir   ~/.local/share/mvm (or [output].data_dir) exists and is writable
+    config     which ~/.config/mvm/config.toml was read (or pure defaults)
+
+Every path/device shown is the value the other commands will actually use.
 ";
 
 #[cfg(test)]

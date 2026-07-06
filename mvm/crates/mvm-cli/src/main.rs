@@ -15,6 +15,7 @@
 
 mod paths;
 mod config_file;
+mod doctor;
 mod state;
 mod render;
 mod recap_cmd;
@@ -868,6 +869,11 @@ fn main() -> Result<()> {
     }
     if sub == Some("serve") {
         return mcp::run_serve(mcp::parse_serve_args(&raw)?);
+    }
+    if sub == Some("doctor") {
+        let product = config_file::load()?;
+        doctor::print_report(&product, REQUIRED_MODELS);
+        return Ok(());
     }
 
     let args = parse_args(&raw);
