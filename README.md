@@ -2,7 +2,7 @@
 
 # MVM — Machine Vision Module
 
-**Structured Decomposed Picture-to-Text** — локальный модуль зрения для LLM-агентов: камера →
+**Structured Decomposed  Agentic Vision** — локальный модуль зрения для LLM-агентов: камера →
 **метрический 3D scene-graph** каждый кадр (не VLM). Ансамбль независимых микро-агентов вместо
 одной end-to-end модели. CPU-first, $0, приватно, интерпретируемо.
 
