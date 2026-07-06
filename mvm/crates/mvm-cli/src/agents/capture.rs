@@ -19,6 +19,14 @@ impl FrameSource for mvm_pipeline::native::NativeCamera {
     }
 }
 
+/// The production camera arrives through the platform seam (phase 14.0.3) as a
+/// boxed [`CameraSource`](mvm_pipeline::source::CameraSource).
+impl FrameSource for Box<dyn mvm_pipeline::source::CameraSource> {
+    fn read(&mut self) -> anyhow::Result<image::DynamicImage> {
+        self.as_mut().read()
+    }
+}
+
 pub(crate) struct CaptureAgent {
     source: Box<dyn FrameSource>,
     /// Stop after this many frames (for `mesh --max-frames` / tests). `None` =

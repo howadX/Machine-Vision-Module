@@ -372,7 +372,7 @@ fn build_gallery(
 /// the `PersonTracker` and `StateFile` stay here. Behaviour matches the previous
 /// in-`main` native path exactly: process → track → depth-anchor → dump.
 fn run_native_loop(
-    mut native_camera: mvm_pipeline::native::NativeCamera,
+    mut native_camera: Box<dyn mvm_pipeline::source::CameraSource>,
     mut pipeline: pipeline::BodyPrimaryPipeline,
     mut tracker: mvm_core::PersonTracker,
     state_file: state::StateFile,
@@ -762,8 +762,19 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     // Shared person-mask slot (11.A3): SceneAgent writes, HumanAgent reads.
     let person_mask_slot: agents::PersonMaskSlot = Arc::new(Mutex::new(None));
 
-    eprintln!("  camera: opening native v4l2 MJPG");
-    let camera = mvm_pipeline::native::NativeCamera::open("/dev/video0", 1280, 720, false)?;
+    // Camera through the platform seam (14.0.3): "auto" scans /dev/video*,
+    // an explicit [camera].device is opened literally.
+    let camera = mvm_pipeline::source::open_source(
+        &product.camera_device,
+        product.camera_width,
+        product.camera_height,
+    )?;
+    let (cam_w, cam_h) = camera.dimensions();
+    eprintln!(
+        "▶ camera {} ({cam_w}×{cam_h} MJPG) · snapshot {}ms",
+        camera.device(),
+        interval.as_millis()
+    );
 
     // Assemble the mesh: capture → {human, scene, depth} → fusion → statefile.
     let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
@@ -895,16 +906,20 @@ fn main() -> Result<()> {
     //   --native-camera → pure-Rust v4l2 (phase 7.4-light, Variant A), ZERO Python.
     //   default         → Python bridge (full pipeline incl. pose).
     let mut camera: Option<mvm_pipeline::Camera> = None;
-    let mut native_camera: Option<mvm_pipeline::native::NativeCamera> = None;
+    let mut native_camera: Option<Box<dyn mvm_pipeline::source::CameraSource>> = None;
     if args.no_camera {
         eprintln!("  camera: disabled (--no-camera)");
     } else if args.native_camera {
-        // rotate_180 = false: camera is now mounted upright at eye level (was
-        // ceiling-mounted upside-down, which needed the cv2.ROTATE_180 mirror).
-        match mvm_pipeline::native::NativeCamera::open("/dev/video0", 1280, 720, false) {
+        // Platform seam (14.0.3). rotate_180 = false: camera is mounted upright
+        // at eye level (the ceiling mount that needed cv2.ROTATE_180 is gone).
+        match mvm_pipeline::source::open_source(
+            &product.camera_device,
+            product.camera_width,
+            product.camera_height,
+        ) {
             Ok(cam) => {
                 let (w, h) = cam.dimensions();
-                eprintln!("  camera: native v4l2 MJPG {w}x{h} (Python-light, no pose)");
+                eprintln!("  camera: native v4l2 MJPG {} {w}x{h} (Python-light, no pose)", cam.device());
                 native_camera = Some(cam);
             }
             Err(e) => {
@@ -1097,6 +1112,7 @@ fn main() -> Result<()> {
     let mut state_file = state::StateFile::open()?;
     state_file.dump_distributions = args.common.dump_distributions;
     state_file.dump_full_graph = args.common.dump_full_graph;
+    state_file.camera_device = native_camera.as_ref().map(|c| c.device().to_string());
     let mut last_dump = Instant::now();
     let dump_interval = Duration::from_secs(dump_secs);
 

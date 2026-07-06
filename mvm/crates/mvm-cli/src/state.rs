@@ -628,6 +628,9 @@ pub struct StateFile {
     /// ("mouse near book", repeated every frame) that no consumer reasons over —
     /// person-involving edges and all overlap/part_of edges always stay.
     pub dump_full_graph: bool,
+    /// The camera device actually opened (phase 14.0.3) — shown in the legacy
+    /// sync `write()` header. `None` until the caller sets it (stub/no-camera).
+    pub camera_device: Option<String>,
     /// Persistent zone identity over the per-frame connected components (phase
     /// 11.B1). Advanced once per emitted JSON line (both paths take `&self`).
     zone_tracker: std::sync::Mutex<mvm_fusion::ZoneTracker>,
@@ -657,6 +660,7 @@ impl StateFile {
             dump_landmarks: false,
             dump_distributions: false,
             dump_full_graph: false,
+            camera_device: None,
             zone_tracker: std::sync::Mutex::new(mvm_fusion::ZoneTracker::new()),
             anomaly: std::sync::Mutex::new(mvm_core::AnomalyScorer::new()),
             epoch: std::time::Instant::now(),
@@ -687,7 +691,7 @@ impl StateFile {
         let mut lines = vec![
             "# Camera State (mvm v0.4)".to_string(),
             format!("- Last checked: {timestamp}"),
-            "- Camera: /dev/video0".to_string(),
+            format!("- Camera: {}", self.camera_device.as_deref().unwrap_or("—")),
             "- Uptime: —".to_string(),
             format!("- FPS: {fps:.1}"),
             format!("- Face count: {face_count}"),
@@ -1455,12 +1459,14 @@ mod tests {
     #[test]
     fn state_header_present() {
         let path = temp_state_path("test_header.md");
-        let sf = StateFile::open_at(path.clone()).unwrap();
+        let mut sf = StateFile::open_at(path.clone()).unwrap();
+        sf.camera_device = Some("/dev/video2".into());
         let tracker = PersonTracker::new();
         sf.write(&tracker, 15.0, &[]).unwrap();
 
         let content = read_state(&path);
-        assert!(content.contains("Camera: /dev/video0"));
+        // The header reports the device actually opened (14.0.3), not a literal.
+        assert!(content.contains("Camera: /dev/video2"));
     }
 
     #[test]

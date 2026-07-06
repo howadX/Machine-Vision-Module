@@ -4,6 +4,7 @@
 //! Ported from sightd v0.3 `src/camera.rs`.
 
 pub mod native;
+pub mod source;
 
 use anyhow::{Context, Result};
 use mvm_core::Detection;
