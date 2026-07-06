@@ -10,7 +10,7 @@
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 596 тестов; фаза 14 Продукт в работе)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 597 тестов; фаза 14 Продукт закрыта по коду)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   └── CLAUDE.md   #   ← детальный контекст Rust-части (source of truth)
@@ -49,11 +49,12 @@ cd mvm && target/release/mvm --native --once --dump-json
 
 ## Актуальная ветка
 
-`rust-core` — основная ветка разработки.
+`master` — продакшн и основная ветка разработки (после слияния `rust-core`→`master` 2026-07-02;
+`rust-core` — предок слияния, отстал).
 
 ## Текущая фаза
 
-**Фаза 14 — Продукт (В РАБОТЕ):** оболочка «поставил → само нашлось и заработало». Закрыто и
+**Фаза 14 — Продукт (ЗАКРЫТА по коду 2026-07-06):** оболочка «поставил → само нашлось и заработало». Закрыто и
 live-провалидировано (`mvm/docs/phase-14-plan.md`): **14.0** фундамент (XDG-пути `~/.local/share/mvm`,
 `config.toml` с приоритетом CLI>env>file>default, авто-детект камеры через шов `CameraSource`, бинарь
 называется `mvm`, `mvm doctor`), **14.1** `mvm setup` (fetch моделей с sha256-verify + HTTP range-resume,
@@ -61,8 +62,10 @@ live-провалидировано (`mvm/docs/phase-14-plan.md`): **14.0** фу
 `mvm gallery add/list` — убран hardcoded name-map), **14.3** `mvm serve --with-camera` (единый процесс:
 продюсер + MCP над своими свежими артефактами), **14.4** `mvm mcp install` (регистрация MCP-сервером у
 claude-desktop/claude-code/hermes; dry-run + безопасный `--write`), **14.5** `mvm service` (systemd
-user-юнит продюсера, без root). **Осталось:** 14.6 дистрибуция (GitHub Releases + `curl|sh`).
-12 крейтов, 596 тестов. **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь.
+user-юнит продюсера, без root), **14.6** дистрибуция (GitHub Release `models-v1` для 2 project-hosted
+YOLO → `mvm setup` 9/9; release-workflow тег `v*` → бинарь x86_64/aarch64; `install.sh` = `curl|sh`).
+12 крейтов, 597 тестов. **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь; пуш
+master+тега `v0.1.0` (CI-релиз) и public-flip репо (анонимные `curl|sh`/fetch YOLO).
 
 Ранее закрыто: **Фаза 11 — Fusion-полировка** (activity-FSM + event-journal, зоны/anomaly v2,
 mask-контакт, object-permanence, self-calib; `+0 ONNX`). **Фаза 12 — LLM-render** (snapshot v2 + recap +

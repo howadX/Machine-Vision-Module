@@ -9,7 +9,17 @@
 ## Статус (2026-07-06)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  596 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+  597 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 14.6 — Дистрибуция ЗАКРЫТА по коду (2026-07-06):** GitHub Releases + `curl|sh`. Release
+  **`models-v1`** — 2 project-hosted YOLO (AGPL) опубликованы, `manifest.rs` → реальные URL (sha256
+  round-trip ✓; тег immutable, новые веса → `models-v2`) → `mvm setup` 9/9; на приватном репо — честный
+  404-скип (optional, нефатально). **`.github/workflows/release.yml`**: тег `v*`/dispatch →
+  `cargo xtask bundle` → `mvm-<target>.tar.gz`+`.sha256` → release-ассеты; x86_64 всегда, aarch64
+  (`ubuntu-24.04-arm`) за гейтом `!private`; имена ассетов без версии (`latest/download` стабилен).
+  **`install.sh`** (корень репо): детект ОС/арх → latest → `sha256sum -c` → установка в
+  `${MVM_INSTALL_DIR:-~/.local/bin}` + PATH-hint; на приватном — `gh`-фолбэк. Локальная валидация полного
+  конвейера ✓ (bundle 49.9МБ → tar 18МБ → verify → install → `mvm 0.1.0`). **Осталось (owner):** пуш
+  master + тега `v0.1.0` (CI-прогон) и **public-flip репо** (без него анонимные `curl|sh`/fetch YOLO — 404).
 - **Фаза 14.5 — `mvm service` ЗАКРЫТ (2026-07-06, live-провалидирован):** продюсер как systemd **user**-
   сервис (без root). `service.rs`: `install [--now]`/`uninstall`/`status`; юнит `~/.config/systemd/user/
   mvm.service` (ExecStart=**закавыченный** абс.путь mvm + `run` — путь репо содержит пробелы, live-баг
@@ -271,7 +281,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 596 тестов
+cargo test --workspace         # 597 тестов
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread

@@ -19,6 +19,10 @@
 ---
 
 ```bash
+# установка одной командой (GitHub Releases, linux x86_64/aarch64; 14.6)
+curl -fsSL https://raw.githubusercontent.com/howadX/Machine-Vision-Module/master/install.sh | sh
+
+# либо из исходников
 cd mvm && cargo build --release
 
 # продакшн: живой mesh (камера + все модели), авто-детект камеры,
@@ -227,7 +231,7 @@ mvm --version
 | **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
 | **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`, рендер snapshot/recap, MCP-сервер, StateFile |
 
-**596 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
+**597 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
 модели YuNet/BlazePose/RF, крупные ONNX грузятся из models-dir — см. «Сборка и запуск»).
 
 ### Микро-агенты и модели
@@ -250,10 +254,11 @@ mvm --version
 
 ```bash
 cargo build --release          # → target/release/mvm
-cargo test --workspace         # 596 тестов
+cargo test --workspace         # 597 тестов
 cargo xtask bundle             # → dist/mvm (embed мелких моделей: YuNet + BlazePose + RF/VAE)
 
-# Модели: sha256-проверенный fetch в models-dir (7/9 из публичных источников)
+# Модели: sha256-проверенный fetch в models-dir (9/9: 7 upstream-источников
+# + 2 YOLO с project-hosted GitHub Release models-v1)
 ./target/release/mvm setup
 
 # ОСНОВНОЙ путь — живой mesh, чистый Rust, ноль Python. Камера — авто-детект;
@@ -303,7 +308,7 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **11** | ✅ | Fusion-полировка — activity-FSM + journal, зоны-persistence, anomaly v2, mask-контакт, object-permanence, self-calib |
 | **12** | ✅ | **LLM-render** — pull-модель (snapshot / recap ~190× / inspect), токен-диета, MCP stdio-сервер |
 | **13** | ✅ | **Agent Tools/Skills Polishing** — когерентный CLI-дерево, `--help`, [`AGENT.md`](AGENT.md), самодокументирующие MCP-описания |
-| **14** | 🔨 | **Продукт** — ✅ 14.0 XDG-пути/config.toml/авто-детект камеры/бинарь `mvm`/doctor · ✅ 14.1 `mvm setup` (fetch+sha256+resume) · ✅ 14.2 watched-галерея (`gallery/<Имя>/`, drag-and-drop) · ✅ 14.3 `serve --with-camera` (единый демон) · ✅ 14.4 `mcp install` · ✅ 14.5 `service install` (systemd user) · 🔜 14.6 дистрибуция (GitHub Releases + `curl\|sh`) |
+| **14** | ✅ | **Продукт** — ✅ 14.0 XDG-пути/config.toml/авто-детект камеры/бинарь `mvm`/doctor · ✅ 14.1 `mvm setup` (fetch+sha256+resume) · ✅ 14.2 watched-галерея (`gallery/<Имя>/`, drag-and-drop) · ✅ 14.3 `serve --with-camera` (единый демон) · ✅ 14.4 `mcp install` · ✅ 14.5 `service install` (systemd user) · ✅ 14.6 дистрибуция (GitHub Releases + `curl\|sh`; анонимный `curl` — после public-flip репо) |
 
 ---
 
