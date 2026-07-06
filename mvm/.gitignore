@@ -1,4 +1,4 @@
-# Large ONNX models (download separately — see mvm/docs/phase-7.5-spike-findings.md)
+# Large ONNX models — fetched by `mvm setup` (URLs+sha256 in crates/mvm-cli/src/manifest.rs)
 models/enet_b0_8_best_vgaf.onnx
 models/face_recognition_sface_2021dec.onnx
 # BlazePose pair (OpenCV Zoo, Apache-2.0) — Phase 7.5 native pose

@@ -9,7 +9,15 @@
 ## Статус (2026-07-06)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  572 теста зелёных** (1 ignored — hardware live-camera), release чист.
+  580 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 14.1 — `mvm setup` ЗАКРЫТ (2026-07-06, live-провалидирован):** fetch-on-setup моделей.
+  Единый **манифест** (`manifest.rs`: URL+sha256+size на 9 моделей, все проверены 2026-07-06; `doctor` и
+  run-preflight выводятся из него). `mvm setup` (`setup.rs`, product-deps `ureq`+`sha2`): sha256-verify,
+  HTTP range-resume в `.part`→atomic rename, present-skip, `--force`. 7/9 моделей из публичных источников
+  (OpenCV Zoo/HuggingFace/av-savchenko), 2 YOLO — project-hosted (url=None, honest skip; ждут GH Releases
+  14.6). **`mvm run` авто-дотягивает обязательные модели на первом запуске.** Live ✓: полный fetch+verify,
+  идемпотентность, перекачка битого файла (sha-mismatch), range-resume из префикса, auto-trigger (снёс
+  SFace → run сам стянул). План — `docs/phase-14-plan.md`.
 - **Фаза 14.0 — Продукт-фундамент ЗАКРЫТ (2026-07-06, live-провалидирован):** расхардкод + конфиг.
   `paths.rs` (XDG-шов, data 0700) · `config_file.rs` (`~/.config/mvm/config.toml`, приоритет
   CLI>env(`MVM_*`)>file>default, `models_path`/`camera` втекают в `mvm_core::Config`; без моделей —
@@ -236,7 +244,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 501 тест
+cargo test --workspace         # 580 тестов
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
@@ -271,10 +279,14 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-hands** | MediaPipe handpose ONNX (4МБ), 21 lm/рука, ROI из запястий BlazePose [8.E.4] |
 | **mvm-mesh** | Agent trait + `LatestFrame` (single-slot latest-wins) + `AgentMesh` оркестратор на std::thread [8.C] |
 | **mvm-pipeline** | Camera (Python bridge subprocess) + NativeCamera (v4l2 MJPG) |
-| **mvm-cli** | main + `mesh`-подкоманда; `pipeline.rs` (BodyPrimaryPipeline), `agents/` (Capture/Human/Scene/Depth/Fusion/StateFileWriter), `state.rs`, `scene_debug.rs` |
+| **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`; `pipeline.rs` (BodyPrimaryPipeline), `agents/`, `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
 
-> Модели ONNX (YuNet/SFace/EmotiEffLib/BlazePose/YOLO26n/Depth-Anything/handpose) лежат в `mvm/models/`,
-> крупные — gitignored с URL (download-separately). `include_bytes!`-embed грузит их в release + bundle.
+> Модели ONNX (YuNet/SFace/EmotiEffLib/BlazePose/YOLO26n/Depth-Anything/handpose) — единый **манифест**
+> `mvm-cli/src/manifest.rs` (URL+sha256+size, проверены 2026-07-06). `mvm setup` тянет их в models-dir
+> с sha256-verify + HTTP range-resume (`setup.rs`, deps `ureq`+`sha2`, product-слой); 7/9 из публичных
+> источников (OpenCV Zoo/HuggingFace), 2 YOLO — project-hosted (без публичного URL, добавляются вручную).
+> `mvm run` дотягивает обязательные модели на первом запуске. `include_bytes!`-embed (bundle) — только
+> мелкие YuNet/BlazePose/RF.
 
 ---
 

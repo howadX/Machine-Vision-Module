@@ -65,10 +65,8 @@ pub fn run_setup(product: &ProductConfig, args: SetupArgs) -> Result<()> {
     Ok(())
 }
 
-/// Fetch just the named models (used by the first-run auto-trigger — required
-/// only). Returns Ok if every requested model ends up present+valid.
-// Wired into `run`'s first-launch auto-trigger in 14.1c (next commit).
-#[allow(dead_code)]
+/// Fetch just the named models (used by `run`'s first-launch auto-trigger —
+/// required only). Returns Ok if every requested model ends up present+valid.
 pub fn fetch_specific(dir: &Path, files: &[&str]) -> Result<()> {
     crate::paths::ensure_dir_private(dir)?;
     let mut failed = Vec::new();

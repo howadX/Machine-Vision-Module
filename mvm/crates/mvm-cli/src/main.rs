@@ -697,16 +697,22 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     config.models_path = product.models_dir.clone();
     config.face_height_m = config.face_height_m_yunet; // YuNet-calibrated 3D
 
-    // Fail friendly, not with an ONNX panic: the human chain can't start
-    // without its models (phase 14.0 — clean machine points at `mvm setup`).
+    // First-launch auto-setup (phase 14.1c): if required models are absent,
+    // fetch them once before starting — so "поставил → mvm run → работает"
+    // holds without a separate `mvm setup` step. Optional detectors stay lazy.
     let missing = missing_required_models(&config.models_path);
     if !missing.is_empty() {
-        anyhow::bail!(
-            "models missing in {} ({}) — run `mvm setup`, or point [models].dir \
-             in ~/.config/mvm/config.toml (or MVM_MODELS_DIR) at a populated dir",
-            config.models_path.display(),
-            missing.join(", ")
+        eprintln!(
+            "  setup: {} required model(s) missing — fetching once into {}",
+            missing.len(),
+            config.models_path.display()
         );
+        setup::fetch_specific(&config.models_path, &missing).with_context(|| {
+            format!(
+                "auto-setup failed — run `mvm setup` manually, or point [models].dir \
+                 in ~/.config/mvm/config.toml (or MVM_MODELS_DIR) at a populated dir"
+            )
+        })?;
     }
 
     // Required models (human chain).

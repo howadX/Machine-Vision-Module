@@ -226,7 +226,7 @@ mvm --version
 | **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
 | **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`, рендер snapshot/recap, MCP-сервер, StateFile |
 
-**548 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
+**580 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
 модели YuNet/BlazePose/RF, крупные ONNX грузятся из models-dir — см. «Сборка и запуск»).
 
 ### Микро-агенты и модели
@@ -249,11 +249,14 @@ mvm --version
 
 ```bash
 cargo build --release          # → target/release/mvm
-cargo test --workspace         # 548 тестов
+cargo test --workspace         # 580 тестов
 cargo xtask bundle             # → dist/mvm (embed мелких моделей: YuNet + BlazePose + RF/VAE)
 
-# ОСНОВНОЙ путь — живой mesh, чистый Rust, ноль Python.
-# Камера — авто-детект; state + логи + journal → ~/.local/share/mvm
+# Модели: sha256-проверенный fetch в models-dir (7/9 из публичных источников)
+./target/release/mvm setup
+
+# ОСНОВНОЙ путь — живой mesh, чистый Rust, ноль Python. Камера — авто-детект;
+# state + логи + journal → ~/.local/share/mvm. Обязательные модели дотянутся сами.
 ./target/release/mvm run
 
 # живой JSON с инстанс-масками
@@ -270,8 +273,9 @@ cargo xtask bundle             # → dist/mvm (embed мелких моделей
 `[cadence] snapshot_ms`) + env `MVM_*`; флаги CLI переопределяют (фаза 14.0).
 
 **Камера:** `run` использует прямой v4l2 MJPG mmap через шов `CameraSource` (`device = "auto"` —
-перебор `/dev/video*`). **Модели:** большие ONNX качаются отдельно (см. `.gitignore`) и грузятся из
-models-dir (`./models` в dev-чекауте, `~/.local/share/mvm/models` после `mvm setup` — фаза 14.1);
+перебор `/dev/video*`). **Модели:** `mvm setup` тянет их в models-dir с проверкой SHA-256 (7 из 9
+из публичных источников — OpenCV Zoo / HuggingFace; 2 YOLO пока project-hosted, добавляются вручную).
+`mvm run` при первом запуске сам дотягивает обязательные модели. Dev-чекаут читает `./models`;
 embed (`cargo xtask bundle`) покрывает только мелкие YuNet/BlazePose/RF.
 
 ---
