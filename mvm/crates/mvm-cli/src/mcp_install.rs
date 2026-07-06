@@ -262,13 +262,13 @@ mod tests {
     fn merge_preserves_other_keys_and_servers() {
         let mut root = json!({
             "numStartups": 42,
-            "mcpServers": { "gbrain": { "command": "gbrain" } }
+            "mcpServers": { "other": { "command": "other-server" } }
         });
         merge_entry(&mut root, "mvm", "/bin/mvm", &["serve".into()]).unwrap();
         // Unrelated top-level key untouched.
         assert_eq!(root["numStartups"], 42);
         // Existing server untouched, new one added.
-        assert_eq!(root["mcpServers"]["gbrain"]["command"], "gbrain");
+        assert_eq!(root["mcpServers"]["other"]["command"], "other-server");
         assert_eq!(root["mcpServers"]["mvm"]["command"], "/bin/mvm");
     }
 
