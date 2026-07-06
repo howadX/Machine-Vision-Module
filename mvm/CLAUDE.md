@@ -9,7 +9,14 @@
 ## Статус (2026-07-06)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  594 теста зелёных** (1 ignored — hardware live-camera), release чист.
+  596 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 14.5 — `mvm service` ЗАКРЫТ (2026-07-06, live-провалидирован):** продюсер как systemd **user**-
+  сервис (без root). `service.rs`: `install [--now]`/`uninstall`/`status`; юнит `~/.config/systemd/user/
+  mvm.service` (ExecStart=**закавыченный** абс.путь mvm + `run` — путь репо содержит пробелы, live-баг
+  203/EXEC пойман и починен), Restart=on-failure, WantedBy=default.target; systemctl отсутствует → пишет
+  файл + печатает ручные команды. **Live:** install→status→`install --now` (active; journal: сервис cwd=/
+  сам дотянул модели в XDG — авто-setup 14.1c валиден и в сервисе → камера → `snapshot` из сервиса)→
+  uninstall (машина чистая).
 - **Фаза 14.4 — `mvm mcp install` ЗАКРЫТ (2026-07-06, live-провалидирован):** регистрация MVM MCP-сервером
   у LLM-хоста. `mcp_install.rs`: реальные форматы/пути (проверены) — **hermes** `mcp_servers:` YAML
   (`~/.hermes/config.yaml`), **claude-code** `mcpServers` JSON (`~/.claude.json`), **claude-desktop** JSON
@@ -264,7 +271,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 594 теста
+cargo test --workspace         # 596 тестов
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread

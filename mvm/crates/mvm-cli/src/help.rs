@@ -26,6 +26,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
         "setup" => SETUP,
         "gallery" => GALLERY,
         "mcp" => MCP,
+        "service" => SERVICE,
         _ => return None,
     })
 }
@@ -45,6 +46,7 @@ COMMANDS:
     setup      Fetch the ONNX models into the models dir (checksum-verified)
     gallery    Manage the identity gallery (add a person's photos, list people)
     mcp        Register MVM as an MCP server with an LLM host (install)
+    service    Run the producer as a systemd user service (install/uninstall/status)
     doctor     Check the setup: camera, models, data dir, config
 
 PULL MODEL (cheap → expensive):
@@ -234,6 +236,28 @@ EXAMPLES:
     mvm mcp install --host claude-code                 # show the block + path
     mvm mcp install --host claude-code --write         # merge it in (with .bak)
     mvm mcp install --host hermes --with-camera        # print YAML to paste
+";
+
+pub const SERVICE: &str = "\
+mvm service — run the vision producer (`mvm run`) as a systemd user service (no root).
+
+USAGE:
+    mvm service install [--now]    Write ~/.config/systemd/user/mvm.service + daemon-reload
+    mvm service uninstall          Disable, stop, and remove the unit
+    mvm service status             Show whether the unit is present / enabled / active
+
+FLAGS:
+    --now    On install, also `enable --now` (start the producer immediately and
+             on every login). Without it, the unit is written but not started.
+
+The unit runs this machine's `mvm run`, writing state/logs/journal to the data dir
+so `mvm serve --mcp` (or a registered MCP host) reads fresh artifacts. Logs go to
+the journal: journalctl --user -u mvm.service -f
+
+EXAMPLES:
+    mvm service install --now      # install and start now (+ at login)
+    mvm service status
+    mvm service uninstall
 ";
 
 #[cfg(test)]

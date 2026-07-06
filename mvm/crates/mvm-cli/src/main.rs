@@ -19,6 +19,7 @@ mod manifest;
 mod setup;
 mod gallery;
 mod mcp_install;
+mod service;
 mod doctor;
 mod state;
 mod render;
@@ -858,6 +859,10 @@ fn main() -> Result<()> {
         }
         let product = config_file::load()?;
         return mcp_install::run_install(&product, mcp_install::parse_install_args(&raw)?);
+    }
+    if sub == Some("service") {
+        // `mvm service <install [--now]|uninstall|status>` (phase 14.5).
+        return service::run_service(&raw);
     }
 
     let args = parse_args(&raw);
