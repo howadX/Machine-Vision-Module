@@ -13,6 +13,7 @@
 //!   mvm --native               Python-bridge full pipeline (FFmpeg capture)
 //!   mvm --once / --cpu / --bridge-path <DIR> / --no-camera
 
+mod paths;
 mod state;
 mod render;
 mod recap_cmd;
