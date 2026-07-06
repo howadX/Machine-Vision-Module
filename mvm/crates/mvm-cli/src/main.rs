@@ -14,6 +14,7 @@
 //!   mvm --once / --cpu / --bridge-path <DIR> / --no-camera
 
 mod paths;
+mod config_file;
 mod state;
 mod render;
 mod recap_cmd;
@@ -106,7 +107,8 @@ mod tests {
         let a = parse_mesh_args(&raw);
         assert!(!a.stub);
         assert_eq!(a.max_frames, None);
-        assert_eq!(a.interval_ms, 100);
+        // No flag → resolved from the product config ([cadence] snapshot_ms).
+        assert_eq!(a.interval_ms, None);
         assert!(!a.common.dump_json);
         assert!(!a.common.masks, "masks opt-in — off by default on the production mesh path");
     }
@@ -143,7 +145,7 @@ mod tests {
             ["mvm", "mesh", "--dump-json", "--interval-ms", "50"].iter().map(|s| s.to_string()).collect();
         let a = parse_mesh_args(&raw);
         assert!(a.common.dump_json);
-        assert_eq!(a.interval_ms, 50);
+        assert_eq!(a.interval_ms, Some(50));
     }
 
     /// The model-free stub mesh actually runs on threads and writes a valid
@@ -491,8 +493,9 @@ struct MeshArgs {
     /// --dump-landmarks: include raw 21-point hand landmarks in the Scene JSON
     /// (phase 10.0 opt-in — heavy payload).
     dump_landmarks: bool,
-    /// StateFileWriter snapshot interval (ms).
-    interval_ms: u64,
+    /// StateFileWriter snapshot interval (ms). `None` = take it from the
+    /// product config (`[cadence] snapshot_ms`, default 1000) — CLI > config.
+    interval_ms: Option<u64>,
     /// Flags shared with the legacy sync root path (phase 13.A1).
     common: CommonFlags,
 }
@@ -502,7 +505,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         stub: false,
         max_frames: None,
         dump_landmarks: false,
-        interval_ms: 100,
+        interval_ms: None,
         common: CommonFlags::default(),
     };
     let mut i = 2; // skip program name + subcommand (`mesh` / `run`)
@@ -522,7 +525,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             }
             "--interval-ms" => {
                 if i + 1 < raw.len() {
-                    a.interval_ms = raw[i + 1].parse().unwrap_or(100);
+                    a.interval_ms = raw[i + 1].parse().ok();
                     i += 1;
                 }
             }
@@ -559,6 +562,34 @@ fn build_stub_mesh(
         state_file, dump_json, interval, None, scene_log, events_log, journal,
     )));
     mesh
+}
+
+/// Models the human chain cannot start without. The optional heavy detectors
+/// (YOLO/seg/depth/hands) degrade gracefully; these five do not.
+const REQUIRED_MODELS: &[&str] = &[
+    "face_detection_yunet_2023mar.onnx",
+    "face_recognition_sface_2021dec.onnx",
+    "enet_b0_8_best_vgaf.onnx",
+    "person_detection_mediapipe_2023mar.onnx",
+    "pose_estimation_mediapipe_2023mar.onnx",
+];
+
+/// Friendly pre-flight instead of an ONNX load panic deep in the chain.
+fn check_required_models(dir: &std::path::Path) -> Result<()> {
+    let missing: Vec<&str> = REQUIRED_MODELS
+        .iter()
+        .copied()
+        .filter(|f| !dir.join(f).exists())
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "models missing in {} ({}) — run `mvm setup`, or point [models].dir \
+         in ~/.config/mvm/config.toml (or MVM_MODELS_DIR) at a populated dir",
+        dir.display(),
+        missing.join(", ")
+    );
 }
 
 fn load_yolo(config: &mvm_core::Config) -> Option<mvm_scene::YoloDetector> {
@@ -643,11 +674,14 @@ fn load_hands(config: &mvm_core::Config) -> Option<mvm_hands::HandLandmarker> {
 /// loads every model + the native camera and assembles
 /// Capture → {Human, Scene, Depth} → Fusion → StateFileWriter on threads.
 fn run_mesh(args: MeshArgs) -> Result<()> {
+    // Product config (phase 14.0.2): file + env resolved once; CLI flags below
+    // override the resolved values.
+    let product = config_file::load()?;
     let mut state_file = state::StateFile::open()?;
     state_file.dump_landmarks = args.dump_landmarks;
     state_file.dump_distributions = args.common.dump_distributions;
     state_file.dump_full_graph = args.common.dump_full_graph;
-    let interval = Duration::from_millis(args.interval_ms);
+    let interval = Duration::from_millis(args.interval_ms.unwrap_or(product.snapshot_ms));
     // Durable JSONL history (phase 12.C0/C1); reuses the StateFile timezone. Both
     // logs share the `--scene-log` dir (scene-*.jsonl frames, events-*.jsonl
     // episodes). Moved into whichever mesh branch runs (stub diverges via return).
@@ -671,7 +705,12 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
 
     eprintln!("mvm mesh — starting (live)");
     let mut config = mvm_core::Config::default();
+    config.models_path = product.models_dir.clone();
     config.face_height_m = config.face_height_m_yunet; // YuNet-calibrated 3D
+
+    // Fail friendly, not with an ONNX panic: the human chain can't start
+    // without its models (phase 14.0 — clean machine points at `mvm setup`).
+    check_required_models(&config.models_path)?;
 
     // Required models (human chain).
     eprintln!("  detect: loading YuNet");
@@ -815,6 +854,8 @@ fn main() -> Result<()> {
     }
 
     let args = parse_args(&raw);
+    // Product config (phase 14.0.2) — models dir for the legacy sync path too.
+    let product = config_file::load()?;
     let dump_secs = args.dump_interval;
     let once = args.once;
     let native = args.native;
@@ -841,7 +882,8 @@ fn main() -> Result<()> {
 
     #[cfg(not(feature = "embed-models"))]
     let mut _detector = {
-        let config = mvm_core::Config::default();
+        let mut config = mvm_core::Config::default();
+        config.models_path = product.models_dir.clone();
         eprintln!(
             "  detect: loading YuNet from {}",
             config.models_path.display()
@@ -897,6 +939,7 @@ fn main() -> Result<()> {
 
     // Native inference modules
     let mut config = mvm_core::Config::default();
+    config.models_path = product.models_dir.clone();
     // Native (YuNet) capture uses YuNet-calibrated face height for 3D — the
     // SCRFD-tuned 0.44 would bias depth (phase 7.1 recalibration target).
     if args.native_camera {
