@@ -21,11 +21,12 @@
 ```bash
 cd mvm && cargo build --release
 
-# продакшн: живой mesh (камера + все модели) → durable-логи для recap/inspect
-./target/release/mvm-cli run --scene-log ~/vision/logs
+# продакшн: живой mesh (камера + все модели), авто-детект камеры,
+# state + durable-логи для recap/inspect → ~/.local/share/mvm
+./target/release/mvm run
 
 # что происходит прямо сейчас — одной командой
-./target/release/mvm-cli snapshot
+./target/release/mvm snapshot
 ```
 
 ```text
@@ -225,7 +226,8 @@ mvm --version
 | **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
 | **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`, рендер snapshot/recap, MCP-сервер, StateFile |
 
-**548 тестов, все зелёные.** Бинарник `target/release/mvm-cli` (~26 МБ, модели embedded).
+**548 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
+модели YuNet/BlazePose/RF, крупные ONNX грузятся из models-dir — см. «Сборка и запуск»).
 
 ### Микро-агенты и модели
 
@@ -246,24 +248,31 @@ mvm --version
 ## Сборка и запуск
 
 ```bash
-cargo build --release          # → target/release/mvm-cli
+cargo build --release          # → target/release/mvm
 cargo test --workspace         # 548 тестов
-cargo xtask bundle             # → dist/mvm (один бинарник, модели embedded)
+cargo xtask bundle             # → dist/mvm (embed мелких моделей: YuNet + BlazePose + RF/VAE)
 
-# ОСНОВНОЙ путь — живой mesh, чистый Rust, ноль Python
-./target/release/mvm-cli run --scene-log ~/vision/logs
+# ОСНОВНОЙ путь — живой mesh, чистый Rust, ноль Python.
+# Камера — авто-детект; state + логи + journal → ~/.local/share/mvm
+./target/release/mvm run
 
 # живой JSON с инстанс-масками
-./target/release/mvm-cli run --masks --dump-json
+./target/release/mvm run --masks --dump-json
 
 # model-free CI-smoke (без камеры/моделей)
-./target/release/mvm-cli run --stub --max-frames 100
+./target/release/mvm run --stub --max-frames 100
 
 # Python-bridge (для тестов/дебага)
-./target/release/mvm-cli --native --once --dump-json
+./target/release/mvm --native --once --dump-json
 ```
 
-**Камера:** `run` использует прямой v4l2 MJPG mmap. Большие ONNX-модели качаются отдельно (см. `.gitignore`); только мелкий YuNet (228 КБ) в репозитории. `include_bytes!`-embed грузит их в release + bundle.
+**Конфиг:** `~/.config/mvm/config.toml` (`[camera] device`, `[output] data_dir`, `[models] dir`,
+`[cadence] snapshot_ms`) + env `MVM_*`; флаги CLI переопределяют (фаза 14.0).
+
+**Камера:** `run` использует прямой v4l2 MJPG mmap через шов `CameraSource` (`device = "auto"` —
+перебор `/dev/video*`). **Модели:** большие ONNX качаются отдельно (см. `.gitignore`) и грузятся из
+models-dir (`./models` в dev-чекауте, `~/.local/share/mvm/models` после `mvm setup` — фаза 14.1);
+embed (`cargo xtask bundle`) покрывает только мелкие YuNet/BlazePose/RF.
 
 ---
 

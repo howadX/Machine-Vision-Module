@@ -46,7 +46,8 @@ fn bundle() {
     let dist_dir = workspace_root.join("dist");
     std::fs::create_dir_all(&dist_dir).unwrap();
 
-    let src = workspace_root.join("target/release/mvm-cli");
+    // The mvm-cli package builds a bin named `mvm` (phase 14.0.5).
+    let src = workspace_root.join("target/release/mvm");
     let dst = dist_dir.join("mvm");
     std::fs::copy(&src, &dst).unwrap();
 

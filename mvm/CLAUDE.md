@@ -12,11 +12,11 @@
   540 тестов зелёных** (1 ignored — hardware live-camera), release чист.
 - **Фаза 12 — LLM-render ЗАКРЫТА (2026-07-05, `+0 ONNX/+0 deps`):** MVM вызывается LLM как модуль зрения.
   Pull-модель трёх уровней: **snapshot** (`current_state.md` = markdown-таблица v2, `render.rs`, ⚠️ сменил
-  legacy `key:value` — sight-journal skill обновить), **recap** (`mvm-cli recap` / rolling `journal.md` /
+  legacy `key:value` — sight-journal skill обновить), **recap** (`mvm recap` / rolling `journal.md` /
   `mvm-core/recap.rs`, схлопывает churn object-id; live ~170–192× сжатие), **inspect** (сырой срез по
   ts/track-id). Producer: `--scene-log <dir>` → `scene-`/`events-YYYY-MM-DD.jsonl` (ротация по дате).
   Токен-диета Scene JSON (округление f32 всегда; `--dump-distributions`/`--dump-full-graph` опт-ин; ≈24%).
-  **MCP stdio-сервер** `mvm-cli serve --mcp` (`mcp.rs`, hand-rolled JSON-RPC, инструменты
+  **MCP stdio-сервер** `mvm serve --mcp` (`mcp.rs`, hand-rolled JSON-RPC, инструменты
   `mvm_snapshot`/`mvm_recap`/`mvm_inspect`, read-only над артефактами). **B0:** закрыт mesh↔sync JSON-parity
   (`remembered`/`mask_coverage`/`likely_animal` + анти-pet-гейт на mesh). **Live-провалидировано** на
   2-мин сессии (0 ошибок агентов). План — `docs/phase-12-llm-render-plan.md`. **Осталось (владелец, вне
@@ -223,13 +223,15 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 
 ```bash
 # Сборка / тесты / бандл
-cargo build --release          # → target/release/mvm-cli (~26 МБ, модели embedded)
+cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
+                               #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
 cargo test --workspace         # 501 тест
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
-cargo run --release -- mesh --dump-json --interval-ms 1000   # живой (камера + все модели)
-cargo run --release -- mesh --stub --max-frames 100          # model-free CI-smoke
+# Фаза 14.0: камера авто-детект, state+логи+journal → ~/.local/share/mvm (XDG), конфиг ~/.config/mvm/config.toml
+cargo run --release -- run --dump-json                       # живой (камера + все модели); `mesh` = алиас
+cargo run --release -- run --stub --max-frames 100           # model-free CI-smoke
 
 # Синхронные пути (живы)
 cargo run --release -- --native-camera --once --dump-interval 1   # pure-Rust hot-path (без mesh)
@@ -237,7 +239,8 @@ cargo run --release -- --native-camera --dump-interval 3 --scene-debug  # деб
 cargo run --release -- --native --once --dump-interval 1          # Python bridge (поза от MediaPipe)
 ```
 
-**Камера:** `--native-camera` = прямой v4l2 MJPG mmap; bridge = `cv2.CAP_FFMPEG` (обход PipeWire на Ubuntu 24+).
+**Камера:** `--native-camera`/`run` = прямой v4l2 MJPG mmap через шов `CameraSource` (фаза 14.0.3:
+`device="auto"` — перебор `/dev/video*`); bridge = `cv2.CAP_FFMPEG` (обход PipeWire на Ubuntu 24+).
 `fps` в StateFile = темп **доставки кадров** (прирост `frame_id`), **не** темп обработки человеко-цепочки.
 
 ---
@@ -266,7 +269,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 
 ## Agent Mesh (фаза 8.C–8.D)
 
-`mvm-cli mesh` гоняет цепочку на `std::thread` (ноль tokio — contention опровергнут спайком,
+`mvm run` (алиас `mesh`) гоняет цепочку на `std::thread` (ноль tokio — contention опровергнут спайком,
 эксперты ~12мс): `Capture → {Human, Scene, Depth} → Fusion → StateFileWriter`.
 
 - **HOL-блокинг снят:** depth (~230мс) и YOLO на своих cadence/потоках не стопорят человеко-цепочку.

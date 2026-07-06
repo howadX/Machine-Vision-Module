@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "MVM CLI — binary entry point and state file writer"
 
+# The user types `mvm run`, not `mvm-cli run` (phase 14.0.5).
+[[bin]]
+name = "mvm"
+path = "src/main.rs"
+
 [features]
 default = []
 embed-models = ["mvm-detect/embed-model", "mvm-posture/embed-model"]

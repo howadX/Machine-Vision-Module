@@ -33,14 +33,15 @@ Machine Vision Module/
   JSON lines, Rust обогащает нативными ONNX-моделями. venv остаётся для этого пути.
 
 ```bash
-# Основной путь — чистый Rust, всё нативно
-cd mvm && target/release/mvm-cli --native-camera --dump-interval 3 --dump-json
+# Основной путь — живой mesh, чистый Rust (фаза 14.0: бинарь называется `mvm`,
+# камера авто-детект, state+логи → ~/.local/share/mvm)
+cd mvm && target/release/mvm run --dump-json
 
-# Визуальный дебаг: все детекторы цветом своего агента → /tmp/mvm_scene.jpg
-cd mvm && target/release/mvm-cli --native-camera --dump-interval 3 --scene-debug
+# Sync-путь (legacy, скрытый) + визуальный дебаг: детекторы цветом → /tmp/mvm_scene.jpg
+cd mvm && target/release/mvm --native-camera --dump-interval 3 --scene-debug
 
 # Bridge-путь (Python мост, для дебага)
-cd mvm && target/release/mvm-cli --native --once --dump-json
+cd mvm && target/release/mvm --native --once --dump-json
 ```
 
 **Камера:** `--native-camera` использует прямой v4l2 MJPG mmap; bridge использует `cv2.CAP_FFMPEG`
