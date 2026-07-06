@@ -6,8 +6,8 @@
 
 Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо.
 
-![phase](https://img.shields.io/badge/phase-14.2%20product-8A2BE2)
-![tests](https://img.shields.io/badge/tests-586%20green-brightgreen)
+![phase](https://img.shields.io/badge/phase-14.4%20product-8A2BE2)
+![tests](https://img.shields.io/badge/tests-594%20green-brightgreen)
 ![crates](https://img.shields.io/badge/crates-12-informational)
 ![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
 ![fusion](https://img.shields.io/badge/fusion-%2B0%20deps-success)
@@ -227,7 +227,7 @@ mvm --version
 | **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
 | **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`, рендер snapshot/recap, MCP-сервер, StateFile |
 
-**586 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
+**594 теста, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
 модели YuNet/BlazePose/RF, крупные ONNX грузятся из models-dir — см. «Сборка и запуск»).
 
 ### Микро-агенты и модели
@@ -250,7 +250,7 @@ mvm --version
 
 ```bash
 cargo build --release          # → target/release/mvm
-cargo test --workspace         # 586 тестов
+cargo test --workspace         # 594 теста
 cargo xtask bundle             # → dist/mvm (embed мелких моделей: YuNet + BlazePose + RF/VAE)
 
 # Модели: sha256-проверенный fetch в models-dir (7/9 из публичных источников)

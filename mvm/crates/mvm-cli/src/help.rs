@@ -25,6 +25,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
         "doctor" => DOCTOR,
         "setup" => SETUP,
         "gallery" => GALLERY,
+        "mcp" => MCP,
         _ => return None,
     })
 }
@@ -43,6 +44,7 @@ COMMANDS:
     serve      MCP stdio server: expose snapshot/recap/inspect as LLM tools
     setup      Fetch the ONNX models into the models dir (checksum-verified)
     gallery    Manage the identity gallery (add a person's photos, list people)
+    mcp        Register MVM as an MCP server with an LLM host (install)
     doctor     Check the setup: camera, models, data dir, config
 
 PULL MODEL (cheap → expensive):
@@ -204,6 +206,34 @@ just drop photos into a `<gallery>/<Name>/` folder by hand — same effect.
 EXAMPLES:
     mvm gallery add Вадим ~/photos/me1.jpg ~/photos/me2.jpg
     mvm gallery list
+";
+
+pub const MCP: &str = "\
+mvm mcp install — register MVM as an MCP server with an LLM host.
+
+USAGE:
+    mvm mcp install --host <claude-desktop|claude-code|hermes> [--with-camera] [--write]
+
+FLAGS:
+    --host <HOST>    Which host to configure:
+                       claude-desktop  → ~/.config/Claude/claude_desktop_config.json (JSON)
+                       claude-code     → ~/.claude.json (JSON)
+                       hermes          → ~/.hermes/config.yaml (YAML)
+    --with-camera    Register `serve --mcp --with-camera` (self-contained: the
+                     server also runs the producer). Default assumes a separate
+                     `mvm run` / service produces the artifacts.
+    --write          Merge the block into the file (JSON hosts only; backs up to
+                     <file>.bak, preserves other keys). Hermes is YAML — printed
+                     for you to paste manually.
+
+Default is a dry run: prints the exact block and the file it belongs in. The
+block carries this machine's mvm path and data dir (→ --logs/--state), so the
+host launches a server that reads the same place `mvm run` writes.
+
+EXAMPLES:
+    mvm mcp install --host claude-code                 # show the block + path
+    mvm mcp install --host claude-code --write         # merge it in (with .bak)
+    mvm mcp install --host hermes --with-camera        # print YAML to paste
 ";
 
 #[cfg(test)]

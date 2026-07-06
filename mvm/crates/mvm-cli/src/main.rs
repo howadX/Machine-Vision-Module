@@ -18,6 +18,7 @@ mod config_file;
 mod manifest;
 mod setup;
 mod gallery;
+mod mcp_install;
 mod doctor;
 mod state;
 mod render;
@@ -848,6 +849,15 @@ fn main() -> Result<()> {
     if sub == Some("gallery") {
         let product = config_file::load()?;
         return gallery::run_gallery(&product.gallery_dir, &raw);
+    }
+    if sub == Some("mcp") {
+        // `mvm mcp install --host <host>` (phase 14.4). Only `install` today.
+        if raw.get(2).map(String::as_str) != Some("install") {
+            print!("{}", help::MCP);
+            return Ok(());
+        }
+        let product = config_file::load()?;
+        return mcp_install::run_install(&product, mcp_install::parse_install_args(&raw)?);
     }
 
     let args = parse_args(&raw);

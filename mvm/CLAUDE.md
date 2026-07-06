@@ -9,7 +9,16 @@
 ## Статус (2026-07-06)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  586 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+  594 теста зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 14.4 — `mvm mcp install` ЗАКРЫТ (2026-07-06, live-провалидирован):** регистрация MVM MCP-сервером
+  у LLM-хоста. `mcp_install.rs`: реальные форматы/пути (проверены) — **hermes** `mcp_servers:` YAML
+  (`~/.hermes/config.yaml`; ⚠️ в корневом CLAUDE.md был неверный `mcp.servers` — реальный `mcp_servers`),
+  **claude-code** `mcpServers` JSON (`~/.claude.json`), **claude-desktop** JSON
+  (`~/.config/Claude/claude_desktop_config.json`). Блок несёт абс.путь mvm + `data_dir`→`--logs/--state`,
+  опц. `--with-camera`. **Dry-run по умолчанию** (печать блока+путь); `--write` — безопасный merge JSON
+  (`.bak` бэкап через append-суффикс, сохраняет прочие ключи+серверы); hermes YAML — только печать (owner-
+  caveat «не трогать без подтверждения»). Live: dry-run 3 хостов + `--write` в temp `.claude.json`
+  (userID/gbrain целы, mvm добавлен, `.bak` сохранён).
 - **Фаза 14.3 — `serve --with-camera` ЗАКРЫТ (2026-07-06, live-провалидирован):** единый процесс —
   продюсер + MCP. Рефактор: `build_live_mesh` (сборка камеры+моделей+writer) общий для `run` и `serve`.
   `mvm serve --with-camera` (`ServeArgs.with_camera`, `run_serve_with_camera`): mesh в фоновом std::thread,
@@ -256,7 +265,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 586 тестов
+cargo test --workspace         # 594 теста
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
