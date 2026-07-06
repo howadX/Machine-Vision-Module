@@ -16,6 +16,9 @@ pub struct ServeArgs {
     state: PathBuf,
     /// Recap/inspect source — the `--scene-log` dir (scene-/events-*.jsonl).
     logs: PathBuf,
+    /// `--with-camera` (phase 14.3): run the producer mesh in-process, serving
+    /// MCP over its own fresh artifacts. Parsed here; acted on by `main`.
+    pub with_camera: bool,
 }
 
 pub fn parse_serve_args(raw: &[String]) -> anyhow::Result<ServeArgs> {
@@ -24,6 +27,7 @@ pub fn parse_serve_args(raw: &[String]) -> anyhow::Result<ServeArgs> {
     let product = crate::config_file::load()?;
     let mut state = product.state_path;
     let mut logs: Option<PathBuf> = None;
+    let mut with_camera = false;
     let mut i = 2; // skip program name + "serve"
     while i < raw.len() {
         match raw[i].as_str() {
@@ -35,12 +39,13 @@ pub fn parse_serve_args(raw: &[String]) -> anyhow::Result<ServeArgs> {
                 logs = Some(PathBuf::from(&raw[i + 1]));
                 i += 1;
             }
+            "--with-camera" => with_camera = true,
             _ => {} // `--mcp` (only transport) and unknown flags are ignored
         }
         i += 1;
     }
     let logs = logs.unwrap_or(product.data_dir);
-    Ok(ServeArgs { state, logs })
+    Ok(ServeArgs { state, logs, with_camera })
 }
 
 pub fn run_serve(args: ServeArgs) -> Result<()> {
@@ -186,7 +191,7 @@ mod tests {
 
     fn args_with_state(path: PathBuf) -> ServeArgs {
         let logs = path.parent().unwrap().to_path_buf();
-        ServeArgs { state: path, logs }
+        ServeArgs { state: path, logs, with_camera: false }
     }
 
     #[test]

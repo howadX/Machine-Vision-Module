@@ -78,7 +78,8 @@ mvm recap   --input ~/vision/logs --last 10m
 mvm inspect --input ~/vision/logs --around 2026-07-05T17:51:23 --window 5
 
 # как MCP-инструменты (stdio JSON-RPC, read-only, +0 deps)
-mvm serve --mcp        # → mvm_snapshot / mvm_recap / mvm_inspect
+mvm serve --mcp                # → mvm_snapshot / mvm_recap / mvm_inspect (над логами `mvm run`)
+mvm serve --mcp --with-camera  # единый процесс: продюсер + MCP над своими свежими артефактами
 ```
 
 Всё, что нужно агенту, чтобы пользоваться MVM без чтения исходников, лежит в **[`AGENT.md`](AGENT.md)**: pull-модель, как читать таблицу snapshot, семантика id, `⚠️`-ноты честности, каденс-нюансы и чего MVM **не** делает.

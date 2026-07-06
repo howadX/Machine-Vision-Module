@@ -10,6 +10,12 @@
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
   586 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 14.3 — `serve --with-camera` ЗАКРЫТ (2026-07-06, live-провалидирован):** единый процесс —
+  продюсер + MCP. Рефактор: `build_live_mesh` (сборка камеры+моделей+writer) общий для `run` и `serve`.
+  `mvm serve --with-camera` (`ServeArgs.with_camera`, `run_serve_with_camera`): mesh в фоновом std::thread,
+  MCP-сервер на главном потоке (stdin/stdout) читает ту же `data_dir`, что mesh пишет → инструменты отдают
+  **свежие** артефакты; EOF stdin → `stop_flag`+join. **Live:** `serve --with-camera` → `mvm_snapshot` вернул
+  живой срез (Вадим ✓, typing/reading) пока камера пишет; чистый shutdown.
 - **Фаза 14.2 — watched-галерея ЗАКРЫТА (2026-07-06, live-провалидирована):** `gallery/<Имя>/*.{jpg,png}`
   (папка = display-имя, Unicode — «Вадим» дословно). Новый `gallery.rs`: `load_into` (скан папок,
   YuNet-crop лица на загрузке → `add_reference`), `add`/`list`, подкоманда `mvm gallery add/list`. Убраны

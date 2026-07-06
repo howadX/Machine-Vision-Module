@@ -144,14 +144,18 @@ pub const SERVE: &str = "\
 mvm serve --mcp — MCP stdio server exposing snapshot/recap/inspect as LLM tools (read-only).
 
 USAGE:
-    mvm serve --mcp [--state <PATH>] [--logs <DIR>]
+    mvm serve --mcp [--with-camera] [--state <PATH>] [--logs <DIR>]
 
 FLAGS:
     --mcp            Select the MCP stdio transport (the only transport)
+    --with-camera    Also run the producer mesh in-process (camera + models),
+                     so the tools serve this server's OWN fresh artifacts —
+                     no separate `mvm run` needed (phase 14.3)
     --state <PATH>   Snapshot source StateFile (default: ~/.local/share/mvm/current_state.md)
     --logs <DIR>     Recap/inspect log dir (default: ~/.local/share/mvm — same data_dir `mvm run` writes)
 
-Reads the artifacts a running `mvm run` writes; producer and server stay decoupled.
+Without --with-camera: read-only over the artifacts a separate `mvm run` writes
+(producer and server decoupled). With --with-camera: one self-contained process.
 ";
 
 pub const DOCTOR: &str = "\

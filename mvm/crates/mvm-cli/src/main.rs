@@ -583,6 +583,37 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     // Product config (phase 14.0.2): file + env resolved once; CLI flags below
     // override the resolved values.
     let product = config_file::load()?;
+
+    if args.stub {
+        // One private (0700) data dir holds state + logs + journal (14.0.4).
+        paths::ensure_dir_private(&product.data_dir)?;
+        let mut state_file = state::StateFile::open_at(product.state_path.clone())?;
+        state_file.dump_landmarks = args.dump_landmarks;
+        state_file.dump_distributions = args.common.dump_distributions;
+        state_file.dump_full_graph = args.common.dump_full_graph;
+        let interval = Duration::from_millis(args.interval_ms.unwrap_or(product.snapshot_ms));
+        eprintln!("mvm mesh — starting (stub, model-free)");
+        let mesh = build_stub_mesh(state_file, args.common.dump_json, interval, args.max_frames.unwrap_or(100), None, None, None);
+        let health = mesh.run();
+        report_health(&health);
+        return Ok(());
+    }
+
+    let mesh = build_live_mesh(&product, &args)?;
+    eprintln!("  mesh: running agents on threads (Ctrl-C or --max-frames to stop)");
+    let health = mesh.run();
+    report_health(&health);
+    Ok(())
+}
+
+/// Assemble the full live production mesh (state/logs/journal + camera + every
+/// model + writer) from the resolved config. Shared by `run` and
+/// `serve --with-camera` (14.3), which spawns it in a background thread while it
+/// serves MCP over stdio.
+fn build_live_mesh(
+    product: &config_file::ProductConfig,
+    args: &MeshArgs,
+) -> Result<mvm_mesh::AgentMesh> {
     // One private (0700) data dir holds state + logs + journal (phase 14.0.4) —
     // `serve`/`snapshot`/`recap` read the same place `run` writes by default.
     paths::ensure_dir_private(&product.data_dir)?;
@@ -605,14 +636,6 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
         log_dir: log_dir.clone(),
         cadence: 60,
     });
-
-    if args.stub {
-        eprintln!("mvm mesh — starting (stub, model-free)");
-        let mesh = build_stub_mesh(state_file, args.common.dump_json, interval, args.max_frames.unwrap_or(100), scene_log, events_log, journal);
-        let health = mesh.run();
-        report_health(&health);
-        return Ok(());
-    }
 
     eprintln!("mvm mesh — starting (live)");
     let mut config = mvm_core::Config::default();
@@ -723,10 +746,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     mesh.add(Box::new(agents::FusionAgent::new(config.clone(), depth_slot.clone())));
     mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.common.dump_json, interval, None, scene_log, events_log, journal)));
 
-    eprintln!("  mesh: running agents on threads (Ctrl-C or --max-frames to stop)");
-    let health = mesh.run();
-    report_health(&health);
-    Ok(())
+    Ok(mesh)
 }
 
 /// `mvm snapshot [--state <PATH>]` (phase 13.A3) — print the current scene once,
@@ -746,6 +766,29 @@ fn run_snapshot(raw: &[String]) -> Result<()> {
         .with_context(|| format!("read snapshot {} (is `mvm run` running?)", state.display()))?;
     print!("{text}");
     Ok(())
+}
+
+/// `mvm serve --with-camera` (phase 14.3) — one process: the producer mesh runs
+/// on its own threads writing state/logs/journal to `data_dir`, while the MCP
+/// server runs on the main thread serving snapshot/recap/inspect over *those*
+/// fresh artifacts. No separate `mvm run` needed. The MCP defaults already point
+/// at `data_dir` (14.0.4), so producer and server line up automatically.
+fn run_serve_with_camera(serve_args: mcp::ServeArgs, raw: &[String]) -> Result<()> {
+    let product = config_file::load()?;
+    let mesh = build_live_mesh(&product, &parse_mesh_args(raw))?;
+    let stop = mesh.stop_flag();
+    // Producer on background threads; MCP owns the main thread (stdin/stdout).
+    let handle = std::thread::spawn(move || mesh.run());
+
+    eprintln!("mvm serve --with-camera — MCP over the live mesh's own artifacts");
+    let serve_result = mcp::run_serve(serve_args);
+
+    // stdin closed (client gone) → wind the mesh down and reap it.
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(health) = handle.join() {
+        report_health(&health);
+    }
+    serve_result
 }
 
 fn main() -> Result<()> {
@@ -787,7 +830,11 @@ fn main() -> Result<()> {
         return recap_cmd::run_inspect(recap_cmd::parse_inspect_args(&raw));
     }
     if sub == Some("serve") {
-        return mcp::run_serve(mcp::parse_serve_args(&raw)?);
+        let serve_args = mcp::parse_serve_args(&raw)?;
+        if serve_args.with_camera {
+            return run_serve_with_camera(serve_args, &raw);
+        }
+        return mcp::run_serve(serve_args);
     }
     if sub == Some("doctor") {
         let product = config_file::load()?;
