@@ -10,16 +10,20 @@
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
   597 тестов зелёных** (1 ignored — hardware live-camera), release чист.
-- **Фаза 14.6 — Дистрибуция ЗАКРЫТА по коду (2026-07-06):** GitHub Releases + `curl|sh`. Release
-  **`models-v1`** — 2 project-hosted YOLO (AGPL) опубликованы, `manifest.rs` → реальные URL (sha256
-  round-trip ✓; тег immutable, новые веса → `models-v2`) → `mvm setup` 9/9; на приватном репо — честный
-  404-скип (optional, нефатально). **`.github/workflows/release.yml`**: тег `v*`/dispatch →
-  `cargo xtask bundle` → `mvm-<target>.tar.gz`+`.sha256` → release-ассеты; x86_64 всегда, aarch64
-  (`ubuntu-24.04-arm`) за гейтом `!private`; имена ассетов без версии (`latest/download` стабилен).
-  **`install.sh`** (корень репо): детект ОС/арх → latest → `sha256sum -c` → установка в
-  `${MVM_INSTALL_DIR:-~/.local/bin}` + PATH-hint; на приватном — `gh`-фолбэк. Локальная валидация полного
-  конвейера ✓ (bundle 49.9МБ → tar 18МБ → verify → install → `mvm 0.1.0`). **Осталось (owner):** пуш
-  master + тега `v0.1.0` (CI-прогон) и **public-flip репо** (без него анонимные `curl|sh`/fetch YOLO — 404).
+- **Фаза 14.6 — Дистрибуция ЗАКРЫТА И LIVE-ПРОВАЛИДИРОВАНА (2026-07-06):** GitHub Releases + `curl|sh`.
+  Репо **публичный**. Release **`models-v1`** — 2 project-hosted YOLO (AGPL) опубликованы, `manifest.rs`
+  → реальные URL (sha256 round-trip ✓; тег immutable, новые веса → `models-v2`) → `mvm setup` **9/9
+  вживую** (оба YOLO дотянулись анонимно). **`.github/workflows/release.yml`**: тег `v*`/dispatch →
+  **`cargo build --release -p mvm-cli`** (⚠️ НЕ `xtask bundle`: bundle `include_bytes!`-ит BlazePose из
+  gitignored `models/` → падал в CI «couldn't read …onnx»; дистрибуция по плану fetch-on-setup — релизный
+  бинарь грузит модели из models-dir) → `mvm-<target>.tar.gz`+`.sha256` (из `target/release`) → release;
+  x86_64 всегда, aarch64 (`ubuntu-24.04-arm`) за гейтом `!private`. Имена ассетов без версии
+  (`latest/download` стабилен). Два джоба, не matrix (`matrix`-контекст недоступен в job-level `if`).
+  **`install.sh`** (корень репо): детект ОС/арх → `latest/download` → `sha256sum -c` → установка в
+  `${MVM_INSTALL_DIR:-~/.local/bin}` + PATH-hint; `gh`-фолбэк если репо приватный. **Live:** тег `v0.1.0`
+  → CI зелёный (оба таргета, 4 ассета выложены) → анонимный `install.sh` (temp prefix) скачал+verify+
+  установил `mvm 0.1.0`; raw-URL из README доступен. **Осталось (owner, вне репо):** репойнт Sight-профиля
+  Hermes на XDG. **Фаза 14 закрыта целиком.**
 - **Фаза 14.5 — `mvm service` ЗАКРЫТ (2026-07-06, live-провалидирован):** продюсер как systemd **user**-
   сервис (без root). `service.rs`: `install [--now]`/`uninstall`/`status`; юнит `~/.config/systemd/user/
   mvm.service` (ExecStart=**закавыченный** абс.путь mvm + `run` — путь репо содержит пробелы, live-баг

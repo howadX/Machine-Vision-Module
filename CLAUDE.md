@@ -63,9 +63,10 @@ live-провалидировано (`mvm/docs/phase-14-plan.md`): **14.0** фу
 продюсер + MCP над своими свежими артефактами), **14.4** `mvm mcp install` (регистрация MCP-сервером у
 claude-desktop/claude-code/hermes; dry-run + безопасный `--write`), **14.5** `mvm service` (systemd
 user-юнит продюсера, без root), **14.6** дистрибуция (GitHub Release `models-v1` для 2 project-hosted
-YOLO → `mvm setup` 9/9; release-workflow тег `v*` → бинарь x86_64/aarch64; `install.sh` = `curl|sh`).
-12 крейтов, 597 тестов. **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь; пуш
-master+тега `v0.1.0` (CI-релиз) и public-flip репо (анонимные `curl|sh`/fetch YOLO).
+YOLO → `mvm setup` 9/9; release-workflow тег `v*` → fetch-based бинарь x86_64/aarch64; `install.sh` =
+`curl|sh`). Репо публичный, релиз `v0.1.0` собран CI, `install.sh` анонимно ставит `mvm 0.1.0` — live ✓.
+12 крейтов, 597 тестов. **Фаза 14 закрыта целиком.** **Владельцу (вне репо):** репойнт Sight-профиля
+Hermes на XDG-путь.
 
 Ранее закрыто: **Фаза 11 — Fusion-полировка** (activity-FSM + event-journal, зоны/anomaly v2,
 mask-контакт, object-permanence, self-calib; `+0 ONNX`). **Фаза 12 — LLM-render** (snapshot v2 + recap +
