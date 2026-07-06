@@ -32,11 +32,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      - name: Build bundled mvm
+      - name: Build mvm (fetch-based — models come from `mvm setup`, not embedded)
         working-directory: mvm
-        run: cargo xtask bundle
+        run: cargo build --release -p mvm-cli
       - name: Package
-        working-directory: mvm/dist
+        working-directory: mvm/target/release
         run: |
           tar -czf "mvm-$TARGET.tar.gz" mvm
           sha256sum "mvm-$TARGET.tar.gz" > "mvm-$TARGET.tar.gz.sha256"
@@ -44,7 +44,7 @@ jobs:
         run: |
           gh release create "$TAG" --verify-tag --title "mvm $TAG" --generate-notes || true
           gh release upload "$TAG" --clobber \
-            "mvm/dist/mvm-$TARGET.tar.gz" "mvm/dist/mvm-$TARGET.tar.gz.sha256"
+            "mvm/target/release/mvm-$TARGET.tar.gz" "mvm/target/release/mvm-$TARGET.tar.gz.sha256"
 
   build-aarch64:
     # Hosted arm runners are free on public repos only — skip while private.
@@ -58,11 +58,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref_name }}
-      - name: Build bundled mvm
+      - name: Build mvm (fetch-based — models come from `mvm setup`, not embedded)
         working-directory: mvm
-        run: cargo xtask bundle
+        run: cargo build --release -p mvm-cli
       - name: Package
-        working-directory: mvm/dist
+        working-directory: mvm/target/release
         run: |
           tar -czf "mvm-$TARGET.tar.gz" mvm
           sha256sum "mvm-$TARGET.tar.gz" > "mvm-$TARGET.tar.gz.sha256"
@@ -70,4 +70,4 @@ jobs:
         run: |
           gh release create "$TAG" --verify-tag --title "mvm $TAG" --generate-notes || true
           gh release upload "$TAG" --clobber \
-            "mvm/dist/mvm-$TARGET.tar.gz" "mvm/dist/mvm-$TARGET.tar.gz.sha256"
+            "mvm/target/release/mvm-$TARGET.tar.gz" "mvm/target/release/mvm-$TARGET.tar.gz.sha256"
