@@ -6,8 +6,8 @@
 
 Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо.
 
-![phase](https://img.shields.io/badge/phase-14.5%20product-8A2BE2)
-![tests](https://img.shields.io/badge/tests-596%20green-brightgreen)
+![phase](https://img.shields.io/badge/phase-14%20closed-8A2BE2)
+![tests](https://img.shields.io/badge/tests-597%20green-brightgreen)
 ![crates](https://img.shields.io/badge/crates-12-informational)
 ![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
 ![fusion](https://img.shields.io/badge/fusion-%2B0%20deps-success)
@@ -122,6 +122,45 @@ VLM универсальна, но платит за это скоростью, 
 ---
 
 ## Архитектура (`mvm run` — Agent Mesh, body-primary, чистый Rust)
+
+```mermaid
+flowchart TD
+    CAM(["📷 Камера /dev/video0<br/>нативный v4l2 MJPG mmap, eye-level ~175см<br/>ноль Python"])
+
+    subgraph MESH["Agent Mesh — std::thread, mvm run"]
+        direction LR
+        subgraph HUMAN["HumanAgent · тело (body-primary)"]
+            direction TB
+            POSE["BlazePose 33lm → 14 фич → RandomForest<br/>standing / sitting / lying + torso-3D (VAE→OOD-гейт)"]
+            FACE["YuNet → лицо, матч по носу тела"]
+            ID["SFace → identity (галерея, margin)"]
+            EMO["EmotiEffLib → emotion×8 + entropy"]
+            HANDS["Handpose 21lm/рука (ROI из запястий) → жесты"]
+        end
+        SCENE["SceneAgent (cadence)<br/>YOLO26n объекты (80кл COCO) + трекер<br/>+ YOLO-seg маски (opt-in --masks)"]
+        DEPTH["DepthAgent (cadence)<br/>Depth-Anything-V2 → относит. карта → depth-anchoring к торс-Z"]
+    end
+
+    FUSION["FusionAgent (реляционная, object-agnostic)<br/>build_scene: 3D-граф + зоны (union-find, persistence)<br/>activity-FSM (start/stop/duration) · anomaly v2 (noisy-OR)"]
+
+    OUT1["current_state.md<br/>snapshot v2 — таблица + ноты честности"]
+    OUT2["scene-/events-*.jsonl<br/>durable-логи → recap/inspect"]
+    OUT3["journal.md<br/>rolling-рекап дня"]
+    OUT4["Scene JSON<br/>--dump-json — машинный контракт"]
+    MCP["MCP stdio<br/>serve --mcp — snapshot/recap/inspect как инструменты"]
+    LLM(["🤖 LLM-агент<br/>Hermes / Claude Code / Alter"])
+
+    CAM --> HUMAN
+    CAM --> SCENE
+    CAM --> DEPTH
+    HUMAN --> FUSION
+    SCENE --> FUSION
+    DEPTH --> FUSION
+    FUSION --> OUT1 & OUT2 & OUT3 & OUT4 & MCP
+    MCP -->|snapshot → recap → inspect| LLM
+```
+
+Тот же граф текстом (детали кадансов и модулей):
 
 ```
 Камера /dev/video0  (нативный v4l2 MJPG mmap — ноль Python; eye-level ~175см, ~горизонтально)
