@@ -24,6 +24,16 @@
   → CI зелёный (оба таргета, 4 ассета выложены) → анонимный `install.sh` (temp prefix) скачал+verify+
   установил `mvm 0.1.0`; raw-URL из README доступен. **Осталось (owner, вне репо):** репойнт Sight-профиля
   Hermes на XDG. **Фаза 14 закрыта целиком.**
+- **End-to-end живой прогон с нуля (2026-07-06):** свежий `git clone` публичного репо → `cargo build
+  --release -p mvm-cli` (23.6с, бинарь 32МБ) → `setup` 9/9 → `doctor` всё ✅ (камера `/dev/video0`
+  1280×720 MJPG) → `serve --with-camera` (продюсер+MCP один процесс, галерея подхватила Вадима/7фото→id0,
+  21 fps, **0 ошибок агентов**: fusion 4277/scene 541/depth 55 тиков). MCP stdio-контракт отработал как у
+  LLM-хоста: `initialize`→`mvm-vision 0.1.0`, `tools/list`→3 инструмента, `tools/call`. **`mvm_snapshot`**
+  вернул живой срез (зона «workstation» с объектами, Вадим ✓ id0 1.0м Neutral, поза **withheld** «видна
+  только upper» — occlusion-honesty вживую). **`mvm_recap last=60s`** свернул реальный распорядок:
+  `seated_at_workstation` 42.6с/6эп, `typing` 10.8с (conf low), `holding_drink` 7.7с (conf high),
+  `using_phone`/`reading`; зоны workstation+seating. Продукт доказан не только тестами, но и сырым прогоном
+  «поставил с гита → подключил как модуль зрения к LLM».
 - **Фаза 14.5 — `mvm service` ЗАКРЫТ (2026-07-06, live-провалидирован):** продюсер как systemd **user**-
   сервис (без root). `service.rs`: `install [--now]`/`uninstall`/`status`; юнит `~/.config/systemd/user/
   mvm.service` (ExecStart=**закавыченный** абс.путь mvm + `run` — путь репо содержит пробелы, live-баг
