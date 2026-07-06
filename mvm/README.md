@@ -1,287 +1,305 @@
+<div align="center">
+
 # MVM — Machine Vision Module
 
-*Structured Decomposed Picture-to-Text. Модульный ансамбль микро-агентов зрения.*
+**Structured Decomposed Picture-to-Text** — локальный модуль зрения, который отдаёт **факты, а не пиксели.**
 
-MVM превращает видеопоток в **метрический 3D scene-graph каждый кадр**: узлы-сущности
-с 3D-позицией (origin = камера) и рёбра-отношения между ними. Не плоский список людей,
-а граф «кто, в каком состоянии, где, и как они связаны в пространстве».
+Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо.
 
-```bash
-cd mvm
-cargo build --release
-./target/release/mvm-cli --native-camera --dump-json --dump-interval 3   # чистый Rust → Scene JSON
-```
+![phase](https://img.shields.io/badge/phase-13%20closed-8A2BE2)
+![tests](https://img.shields.io/badge/tests-548%20green-brightgreen)
+![crates](https://img.shields.io/badge/crates-12-informational)
+![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
+![fusion](https://img.shields.io/badge/fusion-%2B0%20deps-success)
+![rust](https://img.shields.io/badge/rust-edition%202024-orange)
+![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
-> **Статус (июнь 2026): фаза 8 — Agent-Mesh-ready. 197 тестов зелёные, 11 крейтов.**
-> Основной путь `--native-camera` — **чистый Rust, ноль Python**: v4l2-захват →
-> **body-primary** цепочка (тело — несущая сущность) → метрический 3D scene-graph.
-> Нативны все детекторы: лицо (YuNet), identity (SFace), эмоция (EmotiEffLib),
-> поза (BlazePose+PoseVAE), объекты (YOLO26n), глубина (Depth-Anything-V2), кисти
-> (MediaPipe handpose). Группа детекторов **G₁ Human полна**; объекты получают
-> метрическую 3D через depth-anchoring к позе человека. Следующее — **Agent Mesh**
-> (вынос тяжёлых детекторов в потоки). Python-bridge (`--native`) остаётся для
-> тестов/дебага. См. roadmap.
+</div>
 
 ---
 
-## Почему MVM, а не VLM (GPT-4V, Claude Vision, LLaVA)?
+```bash
+cd mvm && cargo build --release
 
-Vision-Language Models делают всё: фото → текст. Но за универсальность платят
-скоростью, ценой, приватностью и интерпретируемостью.
+# продакшн: живой mesh (камера + все модели) → durable-логи для recap/inspect
+./target/release/mvm-cli run --scene-log ~/vision/logs
 
-**MVM — ансамбль специализированных микро-агентов.** Каждый обучен на одну задачу
-и выдаёт структурированный сигнал с confidence. Итоговое описание собирается
-fusion-логикой — не генерацией, а арифметической сборкой.
+# что происходит прямо сейчас — одной командой
+./target/release/mvm-cli snapshot
+```
+
+```text
+# Scene 17:51:23 · occupied · anomaly 0.00 · 18 fps
+Zone «workstation»: Вадим(0), laptop(10001), mouse(10002)
+
+| id | who     | dist | posture        | motion | emotion        | head   | hands       |
+|----|---------|------|----------------|--------|----------------|--------|-------------|
+| 0  | Вадим ✓ | 0.8m | sitting (high) | idle   | Neutral (high) | camera | using_mouse |
+| 10 | anon    | 1.0m | standing (med) | idle   | —              | —      | —           |
+
+Active: seated_at_workstation · using_mouse
+
+⚠️ id10: тело не подтверждено лицом (животное или упавший — не различить)
+```
+
+Это не картинка и не свободный текст от VLM — это **детерминированный рендер** графа сцены: кто, в каком состоянии, где (в метрах), что делает, и **что модуль честно не смог подтвердить** (`⚠️`).
+
+---
+
+## Что это
+
+MVM превращает видеопоток в граф: **узлы-сущности** с метрической 3D-позицией (origin = камера, pinhole от known-size априоров — не depth-сеть) и **рёбра-отношения** (близость, пересечение, зоны). Несущая сущность цепочки — **тело** (body-primary): человек трекается по телу; лицо, identity и эмоция — это *атрибуты* тела, которые переживают отворот головы и окклюзию.
+
+Каждый сигнал несёт числовую уверенность, а неопределённость выражается **явно**, а не замалчивается. Модуль скорее скажет «позу withheld — видна только верхняя часть», чем угадает по невидимым ногам.
+
+- **Латентность** — цель `<50 мс` на CPU, движок ~16–17 fps с человеком в кадре.
+- **$0 и приватно** — ни рантайм, ни модели не требуют GPU, сети или внешних API.
+- **Интерпретируемо** — любой вывод прослеживается до конкретного агента; агент заменяется = один крейт.
+
+---
+
+## 🤖 MVM как модуль зрения для LLM (pull-модель)
+
+Главная фишка фаз 12–13: **агент (Hermes / Alter / Claude) берёт MVM в руки и сам решает, что спросить.** Три уровня, дёшево → дорого:
+
+| Инструмент | Отвечает на | Стоимость | Когда |
+|------------|-------------|-----------|-------|
+| **`snapshot`** | что происходит **сейчас** | ~300 токенов | всегда начинай отсюда |
+| **`recap`** | что **было** за период | логи → ~**190× сжатие** | сводка окна без чтения сырья |
+| **`inspect`** | **сырые кадры** за утверждением | растёт с окном | адъюдикация того, что flagged snapshot/recap |
+
+Два способа доступа:
+
+```bash
+# как файлы/CLI
+mvm snapshot                                   # current_state.md
+mvm recap   --input ~/vision/logs --last 10m
+mvm inspect --input ~/vision/logs --around 2026-07-05T17:51:23 --window 5
+
+# как MCP-инструменты (stdio JSON-RPC, read-only, +0 deps)
+mvm serve --mcp        # → mvm_snapshot / mvm_recap / mvm_inspect
+```
+
+Всё, что нужно агенту, чтобы пользоваться MVM без чтения исходников, лежит в **[`AGENT.md`](AGENT.md)**: pull-модель, как читать таблицу snapshot, семантика id, `⚠️`-ноты честности, каденс-нюансы и чего MVM **не** делает.
+
+---
+
+## Почему не VLM (GPT-4V, Claude Vision, LLaVA)
+
+VLM универсальна, но платит за это скоростью, ценой, приватностью и интерпретируемостью. MVM — не замена, а **дешёвый, приватный, детерминированный первый проход**, который закрывает ~80% бытовых сценариев за ~0.1% стоимости VLM. Открытый мир / zero-shot / QA → VLM как fallback.
 
 | | MVM | VLM |
 |---|-----|-----|
-| **Латентность** | <50 мс (цель), CPU | 2–30 с, GPU |
+| **Латентность** | `<50 мс` (цель), CPU | 2–30 с, GPU |
 | **Локальность** | всё на CPU, без сети | GPU + облако |
 | **Стоимость** | $0 | $0.01–0.05 / запрос |
-| **Приватность** | абсолютная (ничего не уходит) | фото на сервер |
+| **Приватность** | абсолютная (ничего не уходит) | кадр уходит на сервер |
 | **Confidence** | каждый сигнал: identity 0.92, emotion 0.78 | нет |
 | **Интерпретируемость** | любой сигнал прослеживаем до агента | чёрный ящик |
 | **Заменяемость** | замена агента = один крейт | переобучение всей модели |
-| **Детерминизм** | один вход → один выход | разный текст на одно фото |
+| **Детерминизм** | один вход → один выход | разный текст на один кадр |
 
-**MVM не замена VLM — это инструмент для других задач.** Для открытого описания
-сцены («опиши комнату», незнакомые предметы) сильнее VLM. Для structured-мониторинга
-real-time (кто / в каком состоянии / где) — MVM. Гибрид: MVM на 80% кадров, VLM
-по запросу на 20% сложных сцен.
-
-**Где MVM на месте:** умный дом / безопасность (тот же CPU, что Home Assistant),
-промышленная аналитика (N камер × $0 → Grafana), робототехника (control loop
-требует <100 мс), медицина/accessibility (приватность absolute), edge/embedded
-(один бинарник, Raspberry Pi 5 / Jetson / x86_64).
+**Где MVM на месте:** умный дом / безопасность (тот же CPU, что Home Assistant), промышленная аналитика (N камер × $0 → Grafana), робототехника (control-loop `<100 мс`), медицина / accessibility (приватность absolute), edge/embedded (один бинарник, Raspberry Pi 5 / Jetson / x86_64).
 
 ---
 
-## Фундаментальный стек (3 инварианта)
+## Три инварианта
 
-Каждое архитектурное решение проверяется этими тремя правилами. Нарушает — не входит в MVM.
+Каждое решение проверяется этими правилами. Нарушает — не входит в MVM.
 
-1. **Минимализм / чистая арифметика.** Fusion, трекинг, 3D, uncertainty — это
-   умножения/деления/скалярные фильтры над данными, уже лежащими в памяти.
-   **Ноль новых зависимостей** на каждую новую интеллектуальную фичу. Footprint
-   растёт только когда добавляется новый ONNX-эксперт.
-2. **CPU-first, $0.** Ни рантайм, ни модели не требуют GPU и внешних API.
-3. **Полный нативный Rust-путь.** Боевой hot-path (`--native-camera`) — целиком Rust,
-   ноль Python (снято в фазе 7). Python-bridge остаётся отдельным путём для тестов/дебага.
+1. **Минимализм / чистая арифметика.** Fusion, трекинг, 3D, uncertainty — скалярная арифметика над данными, уже лежащими в памяти. **Ноль новых зависимостей** на интеллектуальную фичу; footprint растёт только с новым ONNX-экспертом. Вся полировка fusion (фазы 9–13) — `+0 deps`.
+2. **CPU-first, $0.** Ни рантайм, ни модели не требуют GPU или внешних API.
+3. **Полный нативный Rust-путь.** Боевой hot-path — целиком Rust, ноль Python. Python-bridge остаётся отдельным путём для тестов/дебага.
 
-Тяжёлый стек (оправдан): `ort` (ONNX inference, CPU) + `ndarray` + `image`.
-Всё остальное (`anyhow`, `serde`, `chrono`) тривиально. Фундаментальные фичи
-фазы 6 (Kalman, pinhole-3D, entropy, реляционная fusion, temporal PoE) **не
-добавили ни одной зависимости**.
+Тяжёлый стек (оправдан): `ort` (ONNX inference, CPU) + `ndarray` + `image`. Остальное (`anyhow`, `serde`, `chrono`, `serde_json`) тривиально.
 
 ---
 
-## Архитектура (`--native-camera`, body-primary, чистый Rust)
+## Архитектура (`mvm run` — Agent Mesh, body-primary, чистый Rust)
 
 ```
-Камера /dev/video0  (нативный v4l2 MJPG mmap — ноль Python)
+Камера /dev/video0  (нативный v4l2 MJPG mmap — ноль Python; eye-level ~175см, ~горизонтально)
       │  RGB-кадр в памяти
-      ▼  Rust mvm-cli  (--native-camera)            ← ВЕСЬ кластер нативный
- G₁ Human (несущая сущность = ТЕЛО, body-primary):
-      ├─ BlazePose+PoseVAE → 33 landmarks → поза (6 кл) + torso-3D   (mvm-posture)
-      ├─ YuNet         → лицо по nose-landmark тела → identity/emotion (mvm-detect)
-      ├─ SFace         → identity 512d + cosine match + margin (галерея) (mvm-identity)
-      ├─ EmotiEffLib B0 → emotion[8] + entropy + calibrated_conf       (mvm-emotion)
-      └─ handpose      → 21 landmark/рука (ROI из запястий)            (mvm-hands)
- G₂ Scene (cadence /3):
-      └─ YOLO26n       → объекты (80 кл COCO) + стабильный трекер       (mvm-scene)
- G₄ Environment (cadence /30):
-      └─ Depth-Anything-V2 → относит. карта → depth-anchoring к позе    (mvm-depth)
+      ▼  Agent Mesh на std::thread:  Capture → {Human, Scene, Depth} → Fusion → StateFileWriter
+ HumanAgent (несущая сущность = ТЕЛО):
+      ├─ BlazePose → 33 lm → 14 вьюпойнт-инвариантных фич → RandomForest → поза
+      │                        {standing | sitting | lying} + torso-3D   (VAE → OOD-гейт)
+      ├─ YuNet → лицо по nose-landmark тела → SFace identity + EmotiEffLib emotion[8]+entropy
+      └─ handpose → 21 lm/рука (ROI из запястий) → жесты + взаимодействие с объектами
+ SceneAgent (cadence): YOLO26n → объекты (80 кл COCO) + стабильный трекер
+      └─ YOLO-seg (opt-in --masks) → инстанс-маски → mask-контакт + mask-median depth
+ DepthAgent (cadence): Depth-Anything-V2 → относит. карта → depth-anchoring к торс-Z
       │
-      ▼  Fusion (mvm-fusion, object-agnostic):
-      ├─ PersonTracker  → Kalman bbox + identity re-link + reserved-id модель + temporal PoE
-      ├─ build_scene()  → метрический 3D граф: узлы (люди+объекты) + рёбра + зоны (union-find)
-      └─ выход:
-           ├─ Scene JSON  (--dump-json)        ← машинный контракт для Hermes
-           ├─ --scene-debug → /tmp/mvm_scene.jpg (все детекторы цветом своего агента)
-           └─ StateFile  ~/.hermes/profiles/sight/workspace/current_state.md
+      ▼  FusionAgent (реляционная, object-agnostic):
+      ├─ build_scene() → метрический 3D граф: узлы + рёбра + зоны (union-find, persistence)
+      ├─ activity-FSM  → стабильные активности + event-journal (start/stop/duration)
+      └─ anomaly v2    → noisy-OR (нежданный объект + поза-OOD + падение standing→lying)
+      │
+      ▼  Выходы:
+         ├─ current_state.md      (snapshot v2 — таблица + ноты честности)
+         ├─ scene-/events-*.jsonl (durable-логи → recap/inspect)
+         ├─ journal.md            (rolling-рекап дня)
+         ├─ Scene JSON            (--dump-json — машинный контракт)
+         └─ MCP stdio             (serve --mcp — snapshot/recap/inspect как инструменты)
 ```
 
-**Всё нативно** в `--native-camera`. Bridge-путь (`--native`, Python мост) остаётся
-для тестов/дебага (решение владельца — venv не сносится).
+**Body-primary** (FRONTIER): человек без фронтального лица трекается по телу; identity/emotion дотягиваются при появлении лица. `mesh` = продакшн-путь; синхронный `--native-camera` и Python-bridge `--native` живы для тестов/истории.
+
+---
+
+## CLI
+
+Когерентное дерево подкоманд с `--help` на каждой (фаза 13):
+
+```bash
+mvm run       [--scene-log <DIR> --masks --dump-json --interval-ms N …]   # живой mesh (продакшн)
+mvm snapshot  [--state <PATH>]                                            # что сейчас
+mvm recap     [--input <PATH> --last <DUR> | --from/--to <ISO>]           # что было за период
+mvm inspect   [--input <PATH> --around <ISO> --window <SECS> --id N --raw] # сырые кадры
+mvm serve     --mcp [--state --logs]                                      # MCP stdio-сервер
+
+mvm --help          # обзор + pull-модель
+mvm <cmd> --help    # флаги с типами, единицами и примерами
+mvm --version
+```
+
+> `mvm mesh` — скрытый алиас `mvm run`. `--native-camera` / `--native` — скрытый legacy-путь (живой).
 
 ---
 
 ## Выходной контракт — Scene JSON
 
-`--dump-json` отдаёт одну JSON-строку на кадр. Это стабильный контракт для downstream
-(Hermes / Grafana / робот):
+`--dump-json` отдаёт одну JSON-строку на кадр — стабильный контракт для downstream (Hermes / Grafana / робот). F32 округляются (токен-диета); тяжёлые поля (`emotion_distribution`, object↔object `near`, сырые лендмарки) — за опт-ин флагами.
 
 ```json
 {
-  "ts": "2026-06-25T14:34:43+03:00",
-  "fps": 1.56,
+  "ts": "2026-07-05T17:51:23+03:00",
+  "fps": 18.0,
   "status": "occupied",
   "faces": [
     {
       "id": 0,
-      "identity": "Вадим", "identity_conf": 1.0,
-      "emotion": "Surprise", "emotion_conf": 0.50,
-      "emotion_distribution": [0.05,0.13,0.10,0.26,0.07,0.13,0.09,0.18],
-      "posture": "сидит_за_ПК", "posture_conf": 0.44,
-      "dist_m": 1.10, "pos": [0.93, 0.43, 1.10],
-      "bbox_h": 0.35
+      "identity": "Вадим", "identity_conf": 1.0, "face_verified": true,
+      "emotion": "Neutral", "emotion_conf": 0.91, "emotion_entropy": 0.18,
+      "posture": "sitting", "posture_conf": 0.88, "body_coverage": "full",
+      "motion_state": "idle", "head_facing": "camera",
+      "dist_m": 0.82, "pos": [0.31, 0.12, 0.82]
     }
   ],
   "objects": [
-    { "id": 10000, "class": "keyboard", "score": 0.61, "age": 40, "pos": [0.23, 0.56, 0.87], "bbox": [0.15,0.60,0.26,0.75] },
-    { "id": 10001, "class": "cup",      "score": 0.82, "age": 58, "pos": [0.18, 0.65, 0.68], "bbox": [0.44,0.75,0.50,0.89] }
+    { "id": 10001, "class": "laptop", "score": 0.79, "age": 40, "pos": [0.2, 0.5, 0.9], "mask_coverage": 0.16 },
+    { "id": 10002, "class": "mouse",  "score": 0.62, "age": 58, "pos": [0.3, 0.6, 0.8], "remembered": true }
   ],
-  "zones": [[0, 10000, 10001]],
-  "relations": [
-    { "a": 0, "b": 10000, "dist_m": 0.74, "overlap": 0.0, "kind": "near" }
-  ]
+  "zones": [[0, 10001, 10002]],
+  "relations": [ { "a": 0, "b": 10002, "dist_m": 0.24, "overlap": 0.0, "kind": "near" } ],
+  "activities": [
+    { "label": "seated_at_workstation", "state": "active", "conf": 0.91, "duration_s": 12.6,
+      "participants": [0], "stable_participants": true }
+  ],
+  "anomaly_score": 0.0
 }
 ```
 
-- **`faces`** — люди (несущая сущность = тело; `id` 0–9 = пользователи галереи,
-  ≥10 = анонимные тела). `emotion_distribution[8]` — полный вектор (Holo-Confidence):
-  `Anger, Contempt, Disgust, Fear, Happiness, Neutral, Sadness, Surprise`. Downstream
-  читает `emotion_conf`/энтропию, а не голую метку.
-- **`objects`** — YOLO26n узлы (`id` ≥10000, стабильный трекер). `pos` ставится
-  depth-anchoring'ом к позе человека; без depth — overlap-only.
-- **`pos`** — `[x, y, z]` в метрах, origin = камера.
-- **`zones`** — связные компоненты графа (контекстные зоны: «человек + объекты на столе»).
-- **`relations`** — рёбра `{a, b, dist_m, overlap, kind}`, kind ∈ `near | overlapping | part_of`.
-  Метрическое `near` строится только между узлами с реальной 3D (`pos_conf>0`).
+- **`faces`** — люди (несущая сущность = тело). `id` **0–9** = пользователи галереи, **≥10** = анонимные тела. `face_verified` отличает подтверждённое лицом тело от «животное/упавший». `emotion_distribution[8]` и сырые лендмарки — за `--dump-distributions` / `--dump-landmarks`.
+- **`objects`** — YOLO26n узлы (`id` **≥10000**, стабильный трекер). `pos` — depth-anchoring'ом к позе; `mask_coverage` при `--masks`; `remembered` = статичная фикстура, удержанная под окклюзией руками (object-permanence).
+- **`pos`** — `[x, y, z]` в метрах, origin = камера. Ординал надёжен, абсолют ±15–30%.
+- **`zones`** — связные компоненты графа («человек + объекты на столе»).
+- **`activities`** — активности с temporal-полями (`state`/`duration_s`) из activity-FSM; `stable_participants=false` честно маркирует эфемерных участников.
 
 ---
 
-## Крейты
+## Крейты (12)
 
-| Крейт | Статус | Содержимое |
-|-------|--------|------------|
-| **mvm-core** | ✅ | типы, Config, PersonTracker (Kalman + identity re-link + reserved-id), Pinhole/DepthEma, EMOTION_LABELS + temporal PoE, Entity/Scene |
-| **mvm-detect** | ✅ | YuNet ONNX (228 КБ), CHW BGR preprocessing, multi-stride NMS |
-| **mvm-identity** | ✅ | SFace ONNX (37 МБ), L2-эмбеддинги, gallery cosine match + margin |
-| **mvm-emotion** | ✅ | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF, EmotionResult + entropy |
-| **mvm-posture** | ✅ | нативный two-stage: person-det + BlazePose ONNX + hand-rolled PoseVAE/Classifier, мульти-persona |
-| **mvm-scene** | ✅ | YOLO26n ONNX (80 кл COCO, end-to-end/raw decode) + class-aware NMS + стабильный ObjectTracker |
-| **mvm-depth** | ✅ | Depth-Anything-V2-Small ONNX (относит. карта) + median-sample → depth-anchoring |
-| **mvm-hands** | ✅ | MediaPipe handpose ONNX (21 landmark/рука) + ROI из запястий BlazePose |
-| **mvm-fusion** | ✅ | `build_scene()` union-find граф (depth-gated near), `fuse()` PoE, Entity/Relation/Scene |
-| **mvm-pipeline** | ✅ | NativeCamera (v4l2 MJPG mmap) + Camera (Python bridge subprocess) |
-| **mvm-cli** | ✅ | main, body-primary chain, StateFile, Scene JSON, `--native-camera`/`--native`/`--dump-json`/`--scene-debug` |
-| **xtask** | ✅ | `cargo xtask bundle` → `dist/mvm` (модели embedded) |
+| Крейт | Содержимое |
+|-------|------------|
+| **mvm-core** | типы, Config, PersonTracker (Kalman + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator`), WorldState (блэкборд), `assignment` (Hungarian), `activity` (FSM+journal), `anomaly` (v2), `mask`, `recap` |
+| **mvm-detect** | YuNet ONNX (228 КБ) — лицо + 5 лендмарков |
+| **mvm-identity** | SFace ONNX (37 МБ), 128d L2-эмбеддинг, галерея + margin |
+| **mvm-emotion** | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF + entropy |
+| **mvm-posture** | нативная BlazePose (two-stage) + feature→RandomForest (method-C, 3 класса) + VAE (OOD-only), мульти-persona |
+| **mvm-scene** | YOLO26n ONNX (объекты) + ObjectTracker + YOLO-seg (`--masks`) + object-permanence статичных фикстур |
+| **mvm-depth** | Depth-Anything-V2-Small ONNX → depth-anchoring к торс-Z |
+| **mvm-hands** | MediaPipe handpose ONNX (21 lm/рука), ROI из запястий |
+| **mvm-fusion** | `build_scene` (union-find граф + зоны) + PoE; `ZoneTracker` (persistence) |
+| **mvm-mesh** | Agent trait + `LatestFrame` + `AgentMesh` оркестратор на std::thread |
+| **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
+| **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`, рендер snapshot/recap, MCP-сервер, StateFile |
 
-**Всего: 197 тестов, все зелёные.** Бинарник `target/release/mvm-cli`.
+**548 тестов, все зелёные.** Бинарник `target/release/mvm-cli` (~26 МБ, модели embedded).
 
-### Микро-агенты (группы детекторов)
+### Микро-агенты и модели
 
 | Группа | Агент | Модель | Сигнал | Лицензия |
 |--------|-------|--------|--------|----------|
-| **G₁ Human** | Pose | BlazePose+PoseVAE (нативный) | 33 landmarks → 6 поз + torso-3D | Apache 2.0 |
-| | Face | YuNet ONNX 228 КБ | bbox лица (по nose-landmark тела) | MIT |
-| | Identity | SFace ONNX 37 МБ | identity + confidence + margin | Apache 2.0 |
-| | Emotion | EmotiEffLib B0 16 МБ | 8 эмоций + distribution + entropy | Apache 2.0 |
-| | Hands | MediaPipe handpose 4 МБ | 21 landmark/рука | Apache 2.0 |
-| **G₂ Scene** | Object | YOLO26n ONNX | 80 классов COCO + стабильный id | AGPL-3.0 |
-| **G₄ Env** | Depth | Depth-Anything-V2-Small 27 МБ | относит. карта → метрич. объекты | Apache 2.0 |
-| **3D** | Pinhole | нативный | (x,y,z)м + ws_confidence | — (чистая геометрия) |
+| **Human** | Pose | BlazePose + RandomForest (нативный) | 33 lm → {standing/sitting/lying} + torso-3D | Apache-2.0 |
+| | Face | YuNet ONNX 228 КБ | bbox + 5 лендмарков лица | MIT |
+| | Identity | SFace ONNX 37 МБ | identity + confidence + margin | Apache-2.0 |
+| | Emotion | EmotiEffLib B0 16 МБ | 8 эмоций + distribution + entropy | Apache-2.0 |
+| | Hands | MediaPipe handpose 4 МБ | 21 lm/рука + жесты | Apache-2.0 |
+| **Scene** | Object | YOLO26n ONNX | 80 классов COCO + стабильный id | AGPL-3.0 |
+| | Seg | YOLO-seg (opt-in `--masks`) | инстанс-маски → контакт + depth | AGPL-3.0 |
+| **Env** | Depth | Depth-Anything-V2-Small 27 МБ | относит. карта → метрич. объекты | Apache-2.0 |
+| **3D** | Pinhole | нативный | (x,y,z) м + ws_confidence | — (чистая геометрия) |
 
 ---
 
 ## Сборка и запуск
 
 ```bash
-# Сборка
-cargo build --release
+cargo build --release          # → target/release/mvm-cli
+cargo test --workspace         # 548 тестов
+cargo xtask bundle             # → dist/mvm (один бинарник, модели embedded)
 
-# ОСНОВНОЙ путь — чистый Rust (body-primary, объекты, глубина, кисти), ноль Python
-./target/release/mvm-cli --native-camera --dump-json --dump-interval 3
+# ОСНОВНОЙ путь — живой mesh, чистый Rust, ноль Python
+./target/release/mvm-cli run --scene-log ~/vision/logs
 
-# Визуальный дебаг — все детекторы цветом своего агента → /tmp/mvm_scene.jpg
-./target/release/mvm-cli --native-camera --scene-debug --dump-interval 3
+# живой JSON с инстанс-масками
+./target/release/mvm-cli run --masks --dump-json
 
-# Bridge-путь (Python мост) — для тестов/дебага
+# model-free CI-smoke (без камеры/моделей)
+./target/release/mvm-cli run --stub --max-frames 100
+
+# Python-bridge (для тестов/дебага)
 ./target/release/mvm-cli --native --once --dump-json
-
-# Все тесты
-cargo test --workspace
-
-# Один бинарник со встроенными моделями
-cargo xtask bundle && ./dist/mvm --native-camera --once
 ```
 
-`--native-camera` не требует Python. Bridge-путь (`--native`) поднимает
-`../tools/mvm_bridge.py` из venv родительского проекта как subprocess (тесты/дебаг).
-Большие ONNX-модели качаются отдельно (см. комментарии в `.gitignore`); только
-мелкий YuNet (228 КБ) в репозитории.
+**Камера:** `run` использует прямой v4l2 MJPG mmap. Большие ONNX-модели качаются отдельно (см. `.gitignore`); только мелкий YuNet (228 КБ) в репозитории. `include_bytes!`-embed грузит их в release + bundle.
 
 ---
 
 ## 3D-калибровка
 
-Глубина считается pinhole-геометрией: `z = fx · real_size / pixel_size` — чистая
-арифметика, без depth-сети. `real_size` (`Config.face_height_m`) — **эффективная
-bbox-высота лица**, эмпирически откалиброванная под камеру и детектор.
+Глубина — pinhole-геометрией: `z = fx · real_size / pixel_size`, чистая арифметика без depth-сети. `Depth-Anything` даёт относительную карту, привязанную к метрической торс-Z (`z·d ≈ k`) — так объекты получают метрику в той же системе.
 
-```bash
-# Снять замеры на известных дистанциях (рулетка) и вычислить константу
-venv/bin/python3 ../tools/calib_3d.py --distance 1.0
-venv/bin/python3 ../tools/calib_3d.py --distance 2.0
-venv/bin/python3 ../tools/calib_3d.py --report
-```
-
-**Конверт точности** (этой камеры, потолочный монтаж, калибровка 2026-06-25):
-`<3%` ошибки на 0.5–2.0 м; на дальнем краю (2.8 м) недооценка ~8%. Тир — **грубый
-метрический + сильный относительный субстрат** (кто ближе — робастно). Константа
-привязана к bbox-конвенции текущего детектора → **рекалибровать при смене детектора**.
-Полный разбор — в docstring `crates/mvm-core/src/space.rs`.
-
----
-
-## Тестирование на камере
-
-`tools/cam_test.py` — сценарный харнесс: снимает именованную сессию в `mvm/logs/`
-и печатает вердикт (FPS, стабильность трека, identity, 3D-дистанция, scene-graph).
-
-```bash
-venv/bin/python3 ../tools/cam_test.py --list                 # сценарии
-venv/bin/python3 ../tools/cam_test.py --scenario two_people  # 6.4a граф
-venv/bin/python3 ../tools/cam_test.py --replay logs/cam_two_people.jsonl
-```
-
-Окно записи стартует от первого реального кадра (≈12 с молчит — грузятся модели),
-поэтому действие выполняется непрерывно весь интервал.
+- **Камера** — eye-level (~175 см, ~горизонтальна), **не потолок**. Абсолют 3D ±15–30% (`torso_length_m` не откалиброван рулеткой); **ординал и относительное — надёжны** («кто ближе» робастно).
+- `ScaleCalibrator` (self-calib, фаза 11) восстанавливает масштаб по known-size референсу; авто-`fx` — продуктовая фаза.
 
 ---
 
 ## Roadmap
 
-- **Фаза 5** ✅ — стабилизация, A/B эмоций, dump-json, интеграционные тесты.
-- **Фаза 6** ✅ — Metric 3D Scene-Graph: Kalman bbox, нативная pinhole-3D + калибровка,
-  entropy/uncertainty эмоций, реляционный граф + temporal PoE. + identity re-link.
-- **Фаза 7 / 7.5** ✅ — снос Python с hot-path: `--native-camera` (v4l2 MJPG, ноль
-  Python, ~25 fps), YuNet-детекция, SFace в трекер (margin + cosine re-link), нативная
-  мульти-persona поза (BlazePose ONNX + hand-rolled PoseVAE).
-- **Фаза 8** 🟡 (в работе) — **Agent-Mesh + новые группы детекторов + cross-group fusion**:
-  - **8.0.1–8.0.4** ✅ — спайки mesh (threads-not-tokio), **body-primary** иерархия
-    (тело — несущая сущность, FRONTIER закрыт), reserved-id identity-модель, стабилизация трека.
-  - **8.E** ✅ — `mvm-scene`: YOLO26n объект-узлы → `build_scene`, cadence, фильтры + стабильный трекер.
-  - **8.E.2** ✅ — `mvm-depth`: Depth-Anything-V2 → depth-anchoring объектов к позе → 3D-зоны.
-  - **8.E.4** ✅ — `mvm-hands`: handpose из запястий → **G₁ Human полна (HumanAgent ready)**.
-  - **Agent Mesh (8.A–8.D)** 🔜 — WorldState-типы, `mvm-mesh` (std::thread), HumanAgent,
-    подкоманда `mesh`. Тяжёлые детекторы (depth ~230мс, hands) доказали head-of-line blocking.
-  - **8.E.3 audio (YAMNet)** 🔜 — группа G₄.
-- **Фаза 9** 🔜 — продукт: авто-калибровка fx, drag-and-drop галерея, one-click install, systemd.
+| Фаза | | Суть |
+|------|---|------|
+| **5** | ✅ | Стабилизация (YuNet preprocessing, emotion fallback, галерея, FFmpeg backend) |
+| **6** | ✅ | Metric 3D Scene-Graph (Kalman bbox, pinhole-3D, entropy, `build_scene` + PoE) |
+| **7 / 7.5** | ✅ | Python-light hot-path (`--native-camera`, ноль Python) + нативная мульти-persona поза |
+| **8** | ✅ | Body-primary + Agent-Mesh (`mesh`) + fusion (activities / anomaly) |
+| **9** | ✅ | Tracker — кинематика + ByteTrack/OCM/OCR + lifecycle + cadenced SFace + **Hungarian** assignment |
+| **10** | ✅ | Full Data Collection (эмоция-корень, кисти, head-orientation) + **Segmentation** (+1 ONNX YOLO-seg) |
+| **11** | ✅ | Fusion-полировка — activity-FSM + journal, зоны-persistence, anomaly v2, mask-контакт, object-permanence, self-calib |
+| **12** | ✅ | **LLM-render** — pull-модель (snapshot / recap ~190× / inspect), токен-диета, MCP stdio-сервер |
+| **13** | ✅ | **Agent Tools/Skills Polishing** — когерентный CLI-дерево, `--help`, [`AGENT.md`](AGENT.md), самодокументирующие MCP-описания |
+| **14+** | 🔜 | **Продукт** — авто-калибровка fx, drag-and-drop галерея, one-click install, systemd + cron |
 
-### Известные ограничения (честно)
+---
 
-- **FPS 20→13 в `--native-camera`** при включённых depth+hands (синхронный цикл, тяжёлые
-  детекторы блокируют) — это и есть head-of-line blocking, который снимет Agent Mesh (8.C).
-- **Эмоция near-chance на потолочном ракурсе** — распределение почти равномерное; метка
-  стабильна (temporal PoE), но `conf` честно низкая. Лучше при виде с уровня глаз.
-- **Hand-ROI из запястья** неидеален (BlazePose hand-точки грубые) — кисти ловятся надёжно
-  на чётком фронтальном жесте; rotation-from-pose ROI — будущий апгрейд.
-- **Объекты под нестандартным ракурсом** (потолок/вверх ногами) — COCO out-of-distribution;
-  лучший рычаг — угол камеры (вид с уровня глаз), не настройки детектора.
-- **`torso_length_m` не откалиброван рулеткой** — ординальная 3D-глубина корректна, абсолютная
-  приблизительна.
+## Честные ограничения
+
+- **Walking-фрагментация** — ходящий человек может дробиться на фантомные треки → ложные `people_together` (честно `stable=false`). Person-маски (11.A3, `--masks`, ≥2 чел.) лечат основную часть; остаточный фантом ужимается гейтами.
+- **Абсолют 3D приблизителен** (`torso_length_m`/`fx` не откалиброваны рулеткой) — ординал/относительное надёжны, метрика ±15–30%.
+- **Объекты под нестандартным ракурсом** — COCO out-of-distribution; лучший рычаг — угол камеры, не пороги детектора.
+- **`fps` в StateFile** = темп **доставки** кадров, не темп обработки человеко-цепочки.
+- **Фантом ≠ человек**, пока `inspect` не подтвердит когерентный трек — snapshot честно ставит `⚠️`.
 
 ---
 
@@ -299,12 +317,11 @@ trait Module {
 
 ## Терминология
 
-- **Микро-агент** — независимый детектор с confidence.
-- **Structured Decomposed PTT** — архитектурная идентичность MVM.
-- **Fusion** — реляционная (граф/зоны, основная) + атрибутивная (PoE эмоций, частный случай).
-- **Workspace 3D** — метрическая система координат в метрах, origin = камера.
-- **Confidence-first** — каждый сигнал имеет числовую уверенность; Holo-Confidence — весь вектор наружу.
+- **Микро-агент** — независимый детектор с confidence. **Fusion** — реляционная (граф/зоны, основная) + атрибутивная (PoE, частный случай).
+- **Body-primary** — несущая сущность цепочки = тело (не лицо). **Reserved-id** — id 0–9 за галереей, ≥10 анонимам, ≥10000 объектам.
+- **Pull-модель** — snapshot (сейчас) → recap (период) → inspect (сырьё); дёшево-раньше.
+- **Confidence-first** — каждый сигнал несёт числовую уверенность; неопределённость выражается явно (`⚠️`).
 
 ## Лицензия
 
-Apache 2.0
+Apache-2.0. Модели — под своими лицензиями (см. таблицу выше; YOLO26n/YOLO-seg — AGPL-3.0).

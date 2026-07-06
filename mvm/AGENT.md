@@ -59,7 +59,7 @@ Zone «workstation»: Вадим(0), laptop(10001), mouse(10002)
 | id | who | dist | posture | motion | emotion | head | hands |
 |----|-----|------|---------|--------|---------|------|-------|
 | 0  | Вадим ✓ | 0.8m | sitting (high) | idle | Neutral (high) | camera | using_mouse |
-| 10 | anon | 1.0m | standing (medium) | idle | — | — | — |
+| 10 | anon | 1.0m | standing (med) | idle | — | — | — |
 
 Active: seated_at_workstation · using_mouse
 
@@ -74,7 +74,7 @@ Active: seated_at_workstation · using_mouse
   - **who** — `Name ✓` (face-verified identity) · `anon ✓face` (face seen, not in
     gallery) · `anon` (body only, no face).
   - **dist** — metres from camera (Z). Ordinal is trustworthy; absolute is ±15–30%.
-  - **posture / emotion** — label + confidence **word** in parens: `low`/`medium`/`high`.
+  - **posture / emotion** — label + confidence **word** in parens: `low`/`med`/`high`.
   - **motion** — `idle` / `walking` (+ velocity). **head** — where the face points.
   - **hands** — active hand/object interaction (e.g. `using_mouse`, `holding_drink`).
 - **Active** — current activities (with durations when the journal is running).
