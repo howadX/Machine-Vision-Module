@@ -5,15 +5,7 @@
 use std::path::Path;
 
 use crate::config_file::ProductConfig;
-
-/// Optional experts — absent models degrade gracefully (agent disabled), so
-/// they count toward the tally but never fail the check.
-const OPTIONAL_MODELS: &[&str] = &[
-    "yolo_object_detect.onnx",
-    "yolo_seg.onnx",
-    "depth_anything_v2_small.onnx",
-    "handpose_estimation_mediapipe_2023feb.onnx",
-];
+use crate::manifest::MODELS;
 
 pub enum Status {
     Ok,
@@ -41,30 +33,25 @@ pub fn render(checks: &[Check]) -> String {
     out
 }
 
-/// Count (present, total) over required + optional models in `dir`.
-pub fn models_tally(dir: &Path, required: &[&str]) -> (usize, usize, Vec<String>) {
+/// Count (present, total) over all manifest models in `dir`, plus the list of
+/// missing *required* ones.
+pub fn models_tally(dir: &Path) -> (usize, usize, Vec<String>) {
     let mut present = 0;
     let mut missing_required: Vec<String> = Vec::new();
-    let total = required.len() + OPTIONAL_MODELS.len();
-    for f in required {
-        if dir.join(f).exists() {
+    for m in MODELS {
+        if dir.join(m.file).exists() {
             present += 1;
-        } else {
-            missing_required.push((*f).to_string());
+        } else if m.required {
+            missing_required.push(m.file.to_string());
         }
     }
-    for f in OPTIONAL_MODELS {
-        if dir.join(f).exists() {
-            present += 1;
-        }
-    }
-    (present, total, missing_required)
+    (present, MODELS.len(), missing_required)
 }
 
 /// Probe everything against the resolved product config and build the report.
 /// Camera probing actually opens the device (the honest check) — a busy camera
 /// (another `mvm run`) reports as such rather than pretending.
-pub fn run_doctor(product: &ProductConfig, required_models: &[&str]) -> Vec<Check> {
+pub fn run_doctor(product: &ProductConfig) -> Vec<Check> {
     let mut checks = Vec::new();
 
     // Camera: auto → scan; explicit → open that one.
@@ -91,7 +78,7 @@ pub fn run_doctor(product: &ProductConfig, required_models: &[&str]) -> Vec<Chec
     );
 
     // Models: required missing → warn with the setup pointer.
-    let (present, total, missing) = models_tally(&product.models_dir, required_models);
+    let (present, total, missing) = models_tally(&product.models_dir);
     checks.push(if missing.is_empty() {
         Check {
             name: "models",
@@ -146,8 +133,8 @@ fn data_dir_writable(dir: &Path) -> std::io::Result<()> {
     std::fs::remove_file(&probe)
 }
 
-pub fn print_report(product: &ProductConfig, required_models: &[&str]) {
-    print!("{}", render(&run_doctor(product, required_models)));
+pub fn print_report(product: &ProductConfig) {
+    print!("{}", render(&run_doctor(product)));
 }
 
 #[cfg(test)]
@@ -171,26 +158,27 @@ mod tests {
     }
 
     #[test]
-    fn models_tally_counts_required_and_optional() {
+    fn models_tally_counts_against_the_manifest() {
         let dir = std::env::temp_dir().join(format!("mvm_doctor_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let required = ["a.onnx", "b.onnx"];
-        // One required + one optional present.
-        std::fs::write(dir.join("a.onnx"), b"x").unwrap();
+        // One required + one optional model present, from the real manifest.
+        std::fs::write(dir.join("face_recognition_sface_2021dec.onnx"), b"x").unwrap();
         std::fs::write(dir.join("yolo_seg.onnx"), b"x").unwrap();
-        let (present, total, missing) = models_tally(&dir, &required);
+        let (present, total, missing) = models_tally(&dir);
         assert_eq!(present, 2);
-        assert_eq!(total, 2 + OPTIONAL_MODELS.len());
-        assert_eq!(missing, vec!["b.onnx".to_string()]);
+        assert_eq!(total, MODELS.len());
+        // The other four required models are reported missing (order = manifest).
+        assert!(missing.contains(&"face_detection_yunet_2023mar.onnx".to_string()));
+        assert!(!missing.contains(&"yolo_seg.onnx".to_string()), "optional not flagged");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn models_tally_missing_dir_is_all_missing() {
-        let (present, _, missing) =
-            models_tally(&PathBuf::from("/definitely/not/here"), &["a.onnx"]);
+    fn models_tally_missing_dir_is_all_required_missing() {
+        let (present, total, missing) = models_tally(&PathBuf::from("/definitely/not/here"));
         assert_eq!(present, 0);
-        assert_eq!(missing, vec!["a.onnx".to_string()]);
+        assert_eq!(total, MODELS.len());
+        assert_eq!(missing.len(), MODELS.iter().filter(|m| m.required).count());
     }
 }

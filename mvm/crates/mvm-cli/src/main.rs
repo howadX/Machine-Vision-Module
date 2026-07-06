@@ -15,6 +15,7 @@
 
 mod paths;
 mod config_file;
+mod manifest;
 mod doctor;
 mod state;
 mod render;
@@ -565,32 +566,13 @@ fn build_stub_mesh(
     mesh
 }
 
-/// Models the human chain cannot start without. The optional heavy detectors
-/// (YOLO/seg/depth/hands) degrade gracefully; these five do not.
-const REQUIRED_MODELS: &[&str] = &[
-    "face_detection_yunet_2023mar.onnx",
-    "face_recognition_sface_2021dec.onnx",
-    "enet_b0_8_best_vgaf.onnx",
-    "person_detection_mediapipe_2023mar.onnx",
-    "pose_estimation_mediapipe_2023mar.onnx",
-];
-
-/// Friendly pre-flight instead of an ONNX load panic deep in the chain.
-fn check_required_models(dir: &std::path::Path) -> Result<()> {
-    let missing: Vec<&str> = REQUIRED_MODELS
-        .iter()
-        .copied()
+/// Required models (from the manifest) absent in `dir` — the human chain
+/// cannot start without these five. Optional detectors degrade gracefully.
+fn missing_required_models(dir: &std::path::Path) -> Vec<&'static str> {
+    manifest::required_files()
+        .into_iter()
         .filter(|f| !dir.join(f).exists())
-        .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "models missing in {} ({}) — run `mvm setup`, or point [models].dir \
-         in ~/.config/mvm/config.toml (or MVM_MODELS_DIR) at a populated dir",
-        dir.display(),
-        missing.join(", ")
-    );
+        .collect()
 }
 
 fn load_yolo(config: &mvm_core::Config) -> Option<mvm_scene::YoloDetector> {
@@ -716,7 +698,15 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
 
     // Fail friendly, not with an ONNX panic: the human chain can't start
     // without its models (phase 14.0 — clean machine points at `mvm setup`).
-    check_required_models(&config.models_path)?;
+    let missing = missing_required_models(&config.models_path);
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "models missing in {} ({}) — run `mvm setup`, or point [models].dir \
+             in ~/.config/mvm/config.toml (or MVM_MODELS_DIR) at a populated dir",
+            config.models_path.display(),
+            missing.join(", ")
+        );
+    }
 
     // Required models (human chain).
     eprintln!("  detect: loading YuNet");
@@ -872,7 +862,7 @@ fn main() -> Result<()> {
     }
     if sub == Some("doctor") {
         let product = config_file::load()?;
-        doctor::print_report(&product, REQUIRED_MODELS);
+        doctor::print_report(&product);
         return Ok(());
     }
 
