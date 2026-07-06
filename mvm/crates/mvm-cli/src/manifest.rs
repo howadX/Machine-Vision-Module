@@ -15,8 +15,6 @@
 //! gracefully), so the core chain sets up fully from public sources.
 
 /// One model's provenance and integrity data.
-// url/sha256/size/note are consumed by `mvm setup` (14.1b, next commit).
-#[allow(dead_code)]
 pub struct ModelSpec {
     /// Filename inside the models dir.
     pub file: &'static str,

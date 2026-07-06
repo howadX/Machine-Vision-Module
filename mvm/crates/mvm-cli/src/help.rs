@@ -23,6 +23,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
         "inspect" => INSPECT,
         "serve" => SERVE,
         "doctor" => DOCTOR,
+        "setup" => SETUP,
         _ => return None,
     })
 }
@@ -39,6 +40,7 @@ COMMANDS:
     recap      Summarise a period from the durable logs (presence, activities, zones)
     inspect    Print raw per-frame slices at full precision (adjudicate a recap)
     serve      MCP stdio server: expose snapshot/recap/inspect as LLM tools
+    setup      Fetch the ONNX models into the models dir (checksum-verified)
     doctor     Check the setup: camera, models, data dir, config
 
 PULL MODEL (cheap → expensive):
@@ -163,6 +165,22 @@ CHECKS:
     config     which ~/.config/mvm/config.toml was read (or pure defaults)
 
 Every path/device shown is the value the other commands will actually use.
+";
+
+pub const SETUP: &str = "\
+mvm setup — fetch the ONNX models into the models dir, verifying each SHA-256.
+
+USAGE:
+    mvm setup [--force]
+
+FLAGS:
+    --force    Re-download even models already present with a matching checksum
+
+Downloads to [models].dir (default: ~/.local/share/mvm/models) from each model's
+canonical source (OpenCV Zoo / HuggingFace / project). Interrupted transfers
+resume; only checksum-verified files are committed. Two YOLO models (objects,
+masks) have no public URL yet — provide them manually; the rest set up the full
+core chain. `mvm run` auto-fetches the required models on first launch.
 ";
 
 #[cfg(test)]

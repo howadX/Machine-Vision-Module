@@ -32,4 +32,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Product-layer config (phase 14.0.2) — lives ONLY in mvm-cli, never in the vision core.
 toml = "0.8"
+# `mvm setup` model fetch (phase 14.1) — product layer only. ureq is already in
+# the build tree (ort-sys build-dep); sha2 verifies fetched model integrity.
+ureq = "3"
+sha2 = "0.10"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

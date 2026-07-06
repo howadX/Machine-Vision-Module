@@ -16,6 +16,7 @@
 mod paths;
 mod config_file;
 mod manifest;
+mod setup;
 mod doctor;
 mod state;
 mod render;
@@ -864,6 +865,10 @@ fn main() -> Result<()> {
         let product = config_file::load()?;
         doctor::print_report(&product);
         return Ok(());
+    }
+    if sub == Some("setup") {
+        let product = config_file::load()?;
+        return setup::run_setup(&product, setup::parse_setup_args(&raw));
     }
 
     let args = parse_args(&raw);
