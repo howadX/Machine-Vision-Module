@@ -1,0 +1,73 @@
+# Release build (phase 14.6) — on a `v*` tag push (or manual dispatch with a tag),
+# build the bundled `mvm` binary per target and attach it to the GitHub Release.
+#
+# Asset names are version-less (`mvm-<target>.tar.gz`) so `releases/latest/download/…`
+# URLs — and therefore `install.sh` — never need to know the version.
+#
+# Two near-identical jobs instead of a matrix: the aarch64 job carries a
+# job-level `if` (hosted arm runners are free on public repos only), and the
+# `matrix` context is not available in job-level `if` expressions.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)build and upload assets for"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-x86_64:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      TARGET: x86_64-unknown-linux-gnu
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Build bundled mvm
+        working-directory: mvm
+        run: cargo xtask bundle
+      - name: Package
+        working-directory: mvm/dist
+        run: |
+          tar -czf "mvm-$TARGET.tar.gz" mvm
+          sha256sum "mvm-$TARGET.tar.gz" > "mvm-$TARGET.tar.gz.sha256"
+      - name: Create release (first job wins) and upload assets
+        run: |
+          gh release create "$TAG" --verify-tag --title "mvm $TAG" --generate-notes || true
+          gh release upload "$TAG" --clobber \
+            "mvm/dist/mvm-$TARGET.tar.gz" "mvm/dist/mvm-$TARGET.tar.gz.sha256"
+
+  build-aarch64:
+    # Hosted arm runners are free on public repos only — skip while private.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-24.04-arm
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      TARGET: aarch64-unknown-linux-gnu
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Build bundled mvm
+        working-directory: mvm
+        run: cargo xtask bundle
+      - name: Package
+        working-directory: mvm/dist
+        run: |
+          tar -czf "mvm-$TARGET.tar.gz" mvm
+          sha256sum "mvm-$TARGET.tar.gz" > "mvm-$TARGET.tar.gz.sha256"
+      - name: Create release (first job wins) and upload assets
+        run: |
+          gh release create "$TAG" --verify-tag --title "mvm $TAG" --generate-notes || true
+          gh release upload "$TAG" --clobber \
+            "mvm/dist/mvm-$TARGET.tar.gz" "mvm/dist/mvm-$TARGET.tar.gz.sha256"

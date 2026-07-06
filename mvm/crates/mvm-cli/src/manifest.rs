@@ -9,10 +9,11 @@
 //! Every URL + checksum here was verified against the on-disk models: each
 //! canonical URL resolves and its bytes hash to the recorded SHA-256 (checked
 //! 2026-07-06). Two models (the ultralytics-exported YOLO detector and
-//! segmenter, AGPL) have no public canonical URL — they are project-hosted
-//! (`url: None`); until the owner publishes them on GitHub Releases (roadmap
-//! 14.6) they must be provided locally. Both are optional (scene/masks degrade
-//! gracefully), so the core chain sets up fully from public sources.
+//! segmenter, AGPL) have no upstream canonical URL — they are project-hosted
+//! on the immutable GitHub Release `models-v1` (14.6; new weights would go to
+//! `models-v2`, tags are never rewritten). Both are optional (scene/masks
+//! degrade gracefully), so the core chain sets up even without them.
+//! `url: None` stays a valid state for future locally-provided weights.
 
 /// One model's provenance and integrity data.
 pub struct ModelSpec {
@@ -91,19 +92,19 @@ pub const MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         file: "yolo_object_detect.onnx",
-        url: None,
+        url: Some("https://github.com/howadX/Machine-Vision-Module/releases/download/models-v1/yolo_object_detect.onnx"),
         sha256: "3432b3be1961f28a741ba48c2c161960bf8236fcd3dfc4f7b53a54a50ee58a6b",
         size: 9941992,
         required: false,
-        note: "YOLO26n object detector — ultralytics export, AGPL-3.0 (project-hosted, no public URL yet)",
+        note: "YOLO26n object detector — ultralytics export, AGPL-3.0 (project-hosted, GitHub Release models-v1)",
     },
     ModelSpec {
         file: "yolo_seg.onnx",
-        url: None,
+        url: Some("https://github.com/howadX/Machine-Vision-Module/releases/download/models-v1/yolo_seg.onnx"),
         sha256: "c7690db549f9297fe4632e618b50e8d8efff81d1c1efa55896b288e58e2db13a",
         size: 13842038,
         required: false,
-        note: "YOLO-seg instance masks — ultralytics export, AGPL-3.0 (project-hosted, no public URL yet)",
+        note: "YOLO-seg instance masks — ultralytics export, AGPL-3.0 (project-hosted, GitHub Release models-v1)",
     },
 ];
 
@@ -142,6 +143,25 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for m in MODELS {
             assert!(seen.insert(m.file), "duplicate model file {}", m.file);
+        }
+    }
+
+    #[test]
+    fn yolo_models_are_fetched_from_project_releases() {
+        // 14.6: the two AGPL ultralytics exports are project-hosted on GitHub
+        // Releases (tag `models-v1`) — `mvm setup` must be able to fetch them.
+        for file in ["yolo_object_detect.onnx", "yolo_seg.onnx"] {
+            let m = MODELS.iter().find(|m| m.file == file).unwrap();
+            let url = m
+                .url
+                .unwrap_or_else(|| panic!("{file}: project-hosted YOLO must have a release URL"));
+            assert!(
+                url.starts_with(
+                    "https://github.com/howadX/Machine-Vision-Module/releases/download/models-v1/"
+                ),
+                "{file}: URL must point at the immutable models-v1 release, got {url}"
+            );
+            assert!(url.ends_with(file), "{file}: asset name must match filename");
         }
     }
 
