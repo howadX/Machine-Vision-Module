@@ -30,7 +30,15 @@
 
 ---
 
-## 14.0 — Фундамент (детально)
+## 14.0 — Фундамент (детально) — ✅ ЗАКРЫТ (2026-07-06)
+
+> Реализовано и live-провалидировано: 14.0.1 `paths.rs` (XDG, 0700) · 14.0.2 `config_file.rs`
+> (`ProductConfig`, env>file>default, models_path во все 3 точки `Config`, friendly «run `mvm setup`») ·
+> 14.0.3 шов `CameraSource` (`mvm-pipeline/source.rs`, auto-детект `/dev/video*`) · 14.0.4 XDG-выход
+> (Hermes-хардкод снят, `--logs`-ловушка закрыта, `run` пишет state+логи+journal в `data_dir` по
+> умолчанию) · 14.0.5 бинарь `mvm` + docs-sweep · 14.0.6 `mvm doctor`. 572 теста зелёные.
+> Live: `mvm run` без флагов (авто-камера, data 0700), `snapshot`/`recap`/`serve --mcp` из
+> произвольного cwd без path-флагов; без моделей падает дружелюбно. **Hermes-репойнт — owner, вне репо.**
 
 ### 14.0.1 — Модуль `paths` (XDG-шов)
 Единая точка правды по путям. Hand-rolled XDG (`+0 dep`): `$XDG_DATA_HOME`/`$XDG_CONFIG_HOME`

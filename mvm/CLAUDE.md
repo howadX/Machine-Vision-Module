@@ -6,10 +6,21 @@
 
 ---
 
-## Статус (2026-07-05)
+## Статус (2026-07-06)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  540 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+  572 теста зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 14.0 — Продукт-фундамент ЗАКРЫТ (2026-07-06, live-провалидирован):** расхардкод + конфиг.
+  `paths.rs` (XDG-шов, data 0700) · `config_file.rs` (`~/.config/mvm/config.toml`, приоритет
+  CLI>env(`MVM_*`)>file>default, `models_path`/`camera` втекают в `mvm_core::Config`; без моделей —
+  дружелюбное «run `mvm setup`») · шов **`CameraSource`** (`mvm-pipeline/source.rs`, `device="auto"` →
+  перебор `/dev/video*`; сюда позже macOS/Windows-бэкенды) · **XDG-выход**: Hermes-хардкод снят,
+  `mvm run` без флагов пишет `current_state.md`+`scene/events-*.jsonl`+`journal.md` в
+  `~/.local/share/mvm`, `snapshot`/`recap`/`serve` читают её же по умолчанию (ловушка `--logs`
+  закрыта) · бинарь называется **`mvm`** ([[bin]] rename; xtask/доки сверены) · **`mvm doctor`**
+  (camera/models/data-dir/config, честные пробы). Продуктовые deps (только `toml`) — только в
+  `mvm-cli`; ядро зрения не тронуто. **Осталось (owner, вне репо):** репойнт Sight-профиля Hermes на
+  XDG-путь. Дальше по roadmap: 14.1 `mvm setup` (fetch моделей). План — `docs/phase-14-plan.md`.
 - **Фаза 12 — LLM-render ЗАКРЫТА (2026-07-05, `+0 ONNX/+0 deps`):** MVM вызывается LLM как модуль зрения.
   Pull-модель трёх уровней: **snapshot** (`current_state.md` = markdown-таблица v2, `render.rs`, ⚠️ сменил
   legacy `key:value` — sight-journal skill обновить), **recap** (`mvm recap` / rolling `journal.md` /
