@@ -24,6 +24,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
         "serve" => SERVE,
         "doctor" => DOCTOR,
         "setup" => SETUP,
+        "gallery" => GALLERY,
         _ => return None,
     })
 }
@@ -41,6 +42,7 @@ COMMANDS:
     inspect    Print raw per-frame slices at full precision (adjudicate a recap)
     serve      MCP stdio server: expose snapshot/recap/inspect as LLM tools
     setup      Fetch the ONNX models into the models dir (checksum-verified)
+    gallery    Manage the identity gallery (add a person's photos, list people)
     doctor     Check the setup: camera, models, data dir, config
 
 PULL MODEL (cheap → expensive):
@@ -181,6 +183,23 @@ canonical source (OpenCV Zoo / HuggingFace / project). Interrupted transfers
 resume; only checksum-verified files are committed. Two YOLO models (objects,
 masks) have no public URL yet — provide them manually; the rest set up the full
 core chain. `mvm run` auto-fetches the required models on first launch.
+";
+
+pub const GALLERY: &str = "\
+mvm gallery — manage the identity gallery: who the camera should recognise by name.
+
+USAGE:
+    mvm gallery add <name> <photo>…    Add reference photo(s) for a person
+    mvm gallery list                   List known people and their photo counts
+
+The gallery lives at [gallery].dir (default: ~/.config/mvm/gallery) as one folder
+per person — the folder name IS the display name (Unicode, e.g. «Вадим»). `add`
+copies photos in; `run` detects and crops the face from each on load. You can also
+just drop photos into a `<gallery>/<Name>/` folder by hand — same effect.
+
+EXAMPLES:
+    mvm gallery add Вадим ~/photos/me1.jpg ~/photos/me2.jpg
+    mvm gallery list
 ";
 
 #[cfg(test)]

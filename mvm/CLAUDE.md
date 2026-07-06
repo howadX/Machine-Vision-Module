@@ -9,7 +9,13 @@
 ## Статус (2026-07-06)
 
 - **Ветка:** `master` (продакшн после слияния `rust-core`; `rust-core` — предок слияния, отстал). **12 крейтов,
-  580 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+  586 тестов зелёных** (1 ignored — hardware live-camera), release чист.
+- **Фаза 14.2 — watched-галерея ЗАКРЫТА (2026-07-06, live-провалидирована):** `gallery/<Имя>/*.{jpg,png}`
+  (папка = display-имя, Unicode — «Вадим» дословно). Новый `gallery.rs`: `load_into` (скан папок,
+  YuNet-crop лица на загрузке → `add_reference`), `add`/`list`, подкоманда `mvm gallery add/list`. Убраны
+  hardcoded name-map `[("V","Вадим")]` и baked-in пути из `build_gallery` (обе точки → `gallery::load_into`
+  с `product.gallery_dir`, дефолт `~/.config/mvm/gallery`). Пустая/отсутствующая галерея — не ошибка (все
+  анон). **Live:** Вадим мигрирован (`gallery add`, 7 фото) → распознан `Вадим ✓` id0 на камере.
 - **Фаза 14.1 — `mvm setup` ЗАКРЫТ (2026-07-06, live-провалидирован):** fetch-on-setup моделей.
   Единый **манифест** (`manifest.rs`: URL+sha256+size на 9 моделей, все проверены 2026-07-06; `doctor` и
   run-preflight выводятся из него). `mvm setup` (`setup.rs`, product-deps `ureq`+`sha2`): sha256-verify,
@@ -244,7 +250,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 580 тестов
+cargo test --workspace         # 586 тестов
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread

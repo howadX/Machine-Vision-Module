@@ -150,7 +150,7 @@ mvm doctor
 | Шаг | Что | Опирается на |
 |-----|-----|--------------|
 | **14.1** ✅ | `mvm setup` — fetch моделей в `models_dir` с sha256-verify + HTTP range-resume; манифест (`manifest.rs`, 7/9 публичных URL, 2 YOLO project-hosted); авто-триггер обязательных на первом `run`. Live: fetch/idempotency/перекачка-битого/resume/auto-trigger ✓. **ЗАКРЫТ 2026-07-06** | `paths::models_dir` + `[models]` |
-| **14.2** | Watched-галерея `gallery/<Имя>/*.jpg` + `mvm gallery add/list` — убрать hardcoded name-map/пути из `build_gallery` | `[gallery]` |
+| **14.2** ✅ | Watched-галерея `gallery/<Имя>/*.jpg` (папка=имя, Unicode) + `mvm gallery add/list`; `build_gallery`→`gallery::load_into`, hardcoded name-map `[("V","Вадим")]` и пути убраны; YuNet-crop на загрузке. Live: Вадим мигрирован (7 фото) → распознан ✓. **ЗАКРЫТ 2026-07-06** | `[gallery]` |
 | **14.3** | **`mvm serve --with-camera`** — единый процесс: продюсер (mesh) + MCP-сервер над своими свежими артефактами | единая `data_dir` (14.0.4) |
 | **14.4** | `mvm mcp install --host claude-desktop\|claude-code\|hermes` — пишет верный блок конфига (знает `data_dir`→`--logs`) | 14.0 + 14.3 |
 | **14.5** | `mvm service install` — systemd **user**-юнит (`~/.config/systemd/user/mvm.service`), без root | 14.3 |

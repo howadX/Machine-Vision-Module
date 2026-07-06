@@ -17,6 +17,7 @@ mod paths;
 mod config_file;
 mod manifest;
 mod setup;
+mod gallery;
 mod doctor;
 mod state;
 mod render;
@@ -289,85 +290,6 @@ fn parse_args(raw: &[String]) -> Args {
     }
 
     args
-}
-
-/// Build identity gallery from reference photos.
-/// Supports multi-angle: p_V_01.jpg, p_V_02.jpg, … all map to "Вадим".
-/// Uses YuNet to detect and crop faces before SFace embedding.
-/// EMA (α=0.3) merges multiple photos of the same person.
-fn build_gallery(
-    identity: &mut mvm_identity::IdentityModule,
-    detector: &mut mvm_detect::YunetDetector,
-    _config: &mvm_core::Config,
-) -> Result<()> {
-    // Search both: Python MVM repo and local mvm repo
-    let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
-    let candidates = vec![
-        home.join("repos/Machine Vision Module/models/references"),
-        home.join("repos/mvm/models/references"),
-    ];
-
-    let name_map: &[(&[&str], &str)] = &[
-        (&["V"], "Вадим"),
-    ];
-
-    // Lower threshold for gallery: reference photos can be small/low-quality.
-    detector.set_score_threshold(0.3);
-    let mut total = 0usize;
-    for ref_dir in &candidates {
-        if !ref_dir.is_dir() {
-            continue;
-        }
-        let entries = match std::fs::read_dir(ref_dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        for entry in entries.flatten() {
-            let fname = entry.file_name().to_string_lossy().to_string();
-            if !fname.ends_with(".jpg") {
-                continue;
-            }
-            // p_V_01.jpg → prefix=V,  p_V.jpg → prefix=V
-            let stem = fname.trim_end_matches(".jpg");
-            let prefix = if let Some(rest) = stem.strip_prefix("p_") {
-                rest.split('_').next().unwrap_or(rest)
-            } else {
-                continue;
-            };
-
-            if let Some(&(_, name)) = name_map.iter().find(|(keys, _)| keys.contains(&prefix)) {
-                let path = ref_dir.join(&fname);
-                let img = image::open(&path)
-                    .with_context(|| format!("Failed to open {}", path.display()))?;
-
-                // Detect and crop face with YuNet before SFace embedding
-                if let Ok(dets) = detector.detect(&img) {
-                    if let Some(best) = dets.first() {
-                        let (w, h) = (img.width(), img.height());
-                        let x1 = (best.bbox.x1 * w as f32) as u32;
-                        let y1 = (best.bbox.y1 * h as f32) as u32;
-                        let x2 = (best.bbox.x2 * w as f32) as u32;
-                        let y2 = (best.bbox.y2 * h as f32) as u32;
-                        if x2 > x1 && y2 > y1 {
-                            let face = img.crop_imm(x1, y1, x2 - x1, y2 - y1);
-                            identity.add_reference(name, &face)?;
-                            total += 1;
-                            continue;
-                        }
-                    }
-                }
-                eprintln!("  gallery: no face in {fname}, skipping");
-            }
-        }
-    }
-
-    eprintln!(
-        "  gallery: {} people ({} reference photos)",
-        identity.gallery_size(),
-        total
-    );
-    Ok(())
 }
 
 /// The pure-Rust `--native-camera` loop (phase 8.C-R). Drives a
@@ -722,7 +644,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     let emotion = mvm_emotion::EmotionModule::init(&config)?;
     eprintln!("  identity: loading SFace");
     let mut identity = mvm_identity::IdentityModule::init(&config)?;
-    build_gallery(&mut identity, &mut detector, &config)?;
+    gallery::load_into(&mut identity, &mut detector, &product.gallery_dir)?;
     detector.set_score_threshold(0.5); // undo the loose gallery threshold
     eprintln!("  posture: loading native BlazePose");
     let native_pose = mvm_posture::NativePose::init(&config)?;
@@ -876,6 +798,10 @@ fn main() -> Result<()> {
         let product = config_file::load()?;
         return setup::run_setup(&product, setup::parse_setup_args(&raw));
     }
+    if sub == Some("gallery") {
+        let product = config_file::load()?;
+        return gallery::run_gallery(&product.gallery_dir, &raw);
+    }
 
     let args = parse_args(&raw);
     // Product config (phase 14.0.2) — models dir for the legacy sync path too.
@@ -981,7 +907,7 @@ fn main() -> Result<()> {
         emotion_mod = Some(mvm_emotion::EmotionModule::init(&config)?);
         eprintln!("  identity: loading SFace ONNX");
         let mut id = mvm_identity::IdentityModule::init(&config)?;
-        build_gallery(&mut id, &mut _detector, &config)?;
+        gallery::load_into(&mut id, &mut _detector, &product.gallery_dir)?;
         identity_mod = Some(id);
     }
 
