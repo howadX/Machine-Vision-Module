@@ -59,12 +59,14 @@ USAGE:
     mvm run [flags]
 
 FLAGS:
-    --scene-log <DIR>       Append rotating scene-/events-YYYY-MM-DD.jsonl to <DIR>
-                            (the durable history that `recap`/`inspect` read)
+    --scene-log <DIR>       Where the rotating scene-/events-YYYY-MM-DD.jsonl history
+                            goes (default: ~/.local/share/mvm — recap/serve read it
+                            without extra flags)
     --dump-json             Print one Scene-JSON line per tick to stdout
     --masks                 Run the YOLO-seg expert (+1 ONNX): instance masks →
                             mask-contact + mask-median depth (opt-in)
-    --interval-ms <MS>      StateFile snapshot interval, milliseconds (default 100)
+    --interval-ms <MS>      StateFile snapshot interval, milliseconds
+                            (default: [cadence] snapshot_ms in config.toml, 1000)
     --max-frames <N>        Stop after N frames (default: run until Ctrl-C)
     --stub                  Model-free stub mesh (CI smoke; no camera/models)
     --emotion-debug         Show the emotion A/B table and add emotion_debug to JSON
@@ -73,9 +75,11 @@ FLAGS:
     --dump-landmarks        Include raw 21-point hand landmarks in Scene JSON (heavy)
 
 EXAMPLES:
-    mvm run --scene-log ~/vision/logs        # production: durable history for recap/inspect
+    mvm run                                  # production: camera auto-detect, history → ~/.local/share/mvm
     mvm run --masks --dump-json              # live JSON with instance masks
     mvm run --stub --max-frames 100          # CI smoke, no hardware
+
+Camera, paths and cadence come from ~/.config/mvm/config.toml (flags override).
 ";
 
 pub const SNAPSHOT: &str = "\
@@ -86,7 +90,7 @@ USAGE:
 
 FLAGS:
     --state <PATH>   StateFile to read
-                     (default: $HOME/.hermes/profiles/sight/workspace/current_state.md)
+                     (default: ~/.local/share/mvm/current_state.md, or [output] state_path)
 
 Reads the file a running `mvm run` writes — start `mvm run` (or `mvm mesh`) first.
 ";
@@ -99,7 +103,7 @@ USAGE:
 
 FLAGS:
     --input <PATH>   Log directory (scene-*.jsonl/events-*.jsonl) or a single scene file
-                     (default: current directory)
+                     (default: ~/.local/share/mvm — where `mvm run` writes)
     --events <PATH>  Explicit events file (when --input is a single file)
     --last <DUR>     Keep only the last window before the latest entry: 30s, 10m, 2h
     --from <ISO>     Inclusive ISO8601 lower bound
@@ -117,7 +121,8 @@ USAGE:
     mvm inspect [--input <PATH>] [--around <ISO>] [--window <SECS>] [--id <N>] [--raw]
 
 FLAGS:
-    --input <PATH>    Log directory or single scene file (default: current directory)
+    --input <PATH>    Log directory or single scene file
+                      (default: ~/.local/share/mvm — where `mvm run` writes)
     --around <ISO>    ISO8601 timestamp to centre the slice on
     --window <SECS>   ± seconds around --around (default 5)
     --id <N>          Keep only frames with this track id
@@ -137,10 +142,10 @@ USAGE:
 
 FLAGS:
     --mcp            Select the MCP stdio transport (the only transport)
-    --state <PATH>   Snapshot source StateFile (default: production current_state.md)
-    --logs <DIR>     Recap/inspect log dir (default: the StateFile's directory)
+    --state <PATH>   Snapshot source StateFile (default: ~/.local/share/mvm/current_state.md)
+    --logs <DIR>     Recap/inspect log dir (default: ~/.local/share/mvm — same data_dir `mvm run` writes)
 
-Reads the artifacts a running `mvm run --scene-log <DIR>` writes; producer and server stay decoupled.
+Reads the artifacts a running `mvm run` writes; producer and server stay decoupled.
 ";
 
 #[cfg(test)]

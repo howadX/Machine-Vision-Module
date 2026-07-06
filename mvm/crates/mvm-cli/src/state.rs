@@ -22,15 +22,9 @@ pub struct EmotionDebugEntry {
     pub winner: &'static str,
 }
 
-/// Path to the Sight state file.
-const STATE_PATH: &str = ".hermes/profiles/sight/workspace/current_state.md";
-
-/// The production StateFile path (`$HOME/.hermes/.../current_state.md`) — the MCP
-/// server's default snapshot source (phase 12.D2).
-pub fn default_state_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join(STATE_PATH)
-}
+// The production StateFile path is resolved by the product config
+// (phase 14.0.4: XDG `data_dir`/current_state.md, `[output].state_path` to
+// override) — the old Hermes hardcode is gone; callers use `open_at`.
 
 #[derive(Serialize)]
 struct JsonEmotionDebug {
@@ -641,14 +635,8 @@ pub struct StateFile {
 }
 
 impl StateFile {
-    /// Production: uses HOME/.hermes/profiles/sight/workspace/current_state.md
-    pub fn open() -> Result<Self> {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let path = PathBuf::from(home).join(STATE_PATH);
-        Self::open_at(path)
-    }
-
-    /// Test constructor: writes to an arbitrary path.
+    /// Open the StateFile at `path` (production: the product config's
+    /// `state_path`; tests: an arbitrary temp path).
     pub fn open_at(path: PathBuf) -> Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;

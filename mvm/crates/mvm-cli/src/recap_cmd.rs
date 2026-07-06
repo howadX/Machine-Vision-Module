@@ -23,8 +23,15 @@ pub struct RecapArgs {
     last: Option<String>,
 }
 
+/// Default log source when `--input` is absent (phase 14.0.4): the same
+/// data_dir a default `mvm run` writes to. An unreadable product config falls
+/// back to cwd — recap is read-only, and `run`/`serve` already fail loudly.
+fn default_input() -> PathBuf {
+    crate::config_file::load().map(|p| p.data_dir).unwrap_or_else(|_| PathBuf::from("."))
+}
+
 pub fn parse_recap_args(raw: &[String]) -> RecapArgs {
-    let mut a = RecapArgs { input: PathBuf::from("."), events: None, from: None, to: None, last: None };
+    let mut a = RecapArgs { input: default_input(), events: None, from: None, to: None, last: None };
     let mut i = 2; // skip program name + "recap"
     while i < raw.len() {
         match raw[i].as_str() {
@@ -293,7 +300,7 @@ pub struct InspectArgs {
 pub fn parse_inspect_args(raw: &[String]) -> InspectArgs {
     // md defaults true — compact markdown, aligned with the MCP `mvm_inspect`
     // tool (phase 13.A4). `--raw`/`--json` opts back into raw JSONL.
-    let mut a = InspectArgs { input: PathBuf::from("."), around: None, window_s: 5.0, id: None, md: true };
+    let mut a = InspectArgs { input: default_input(), around: None, window_s: 5.0, id: None, md: true };
     let mut i = 2; // skip program name + "inspect"
     while i < raw.len() {
         match raw[i].as_str() {

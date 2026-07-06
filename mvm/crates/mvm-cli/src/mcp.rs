@@ -18,8 +18,11 @@ pub struct ServeArgs {
     logs: PathBuf,
 }
 
-pub fn parse_serve_args(raw: &[String]) -> ServeArgs {
-    let mut state = crate::state::default_state_path();
+pub fn parse_serve_args(raw: &[String]) -> anyhow::Result<ServeArgs> {
+    // Defaults from the product config (phase 14.0.4): the same data_dir a
+    // default `mvm run` writes — no `--logs` needed to make recap work.
+    let product = crate::config_file::load()?;
+    let mut state = product.state_path;
     let mut logs: Option<PathBuf> = None;
     let mut i = 2; // skip program name + "serve"
     while i < raw.len() {
@@ -36,11 +39,8 @@ pub fn parse_serve_args(raw: &[String]) -> ServeArgs {
         }
         i += 1;
     }
-    // Default the log dir to the StateFile's directory (journal.md lives there).
-    let logs = logs.unwrap_or_else(|| {
-        state.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
-    });
-    ServeArgs { state, logs }
+    let logs = logs.unwrap_or(product.data_dir);
+    Ok(ServeArgs { state, logs })
 }
 
 pub fn run_serve(args: ServeArgs) -> Result<()> {

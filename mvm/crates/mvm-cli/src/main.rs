@@ -677,21 +677,26 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     // Product config (phase 14.0.2): file + env resolved once; CLI flags below
     // override the resolved values.
     let product = config_file::load()?;
-    let mut state_file = state::StateFile::open()?;
+    // One private (0700) data dir holds state + logs + journal (phase 14.0.4) —
+    // `serve`/`snapshot`/`recap` read the same place `run` writes by default.
+    paths::ensure_dir_private(&product.data_dir)?;
+    let mut state_file = state::StateFile::open_at(product.state_path.clone())?;
     state_file.dump_landmarks = args.dump_landmarks;
     state_file.dump_distributions = args.common.dump_distributions;
     state_file.dump_full_graph = args.common.dump_full_graph;
     let interval = Duration::from_millis(args.interval_ms.unwrap_or(product.snapshot_ms));
     // Durable JSONL history (phase 12.C0/C1); reuses the StateFile timezone. Both
-    // logs share the `--scene-log` dir (scene-*.jsonl frames, events-*.jsonl
-    // episodes). Moved into whichever mesh branch runs (stub diverges via return).
-    let scene_log = args.common.scene_log.as_ref().map(|d| state_file.open_scene_log(d.clone()));
-    let events_log = args.common.scene_log.as_ref().map(|d| state_file.open_events_log(d.clone()));
-    // Rolling journal.md beside current_state.md (phase 12.D1) — only when a log
-    // dir is given (it summarises those logs). ~60-write cadence.
-    let journal = args.common.scene_log.as_ref().map(|d| agents::JournalCfg {
+    // logs share one dir (scene-*.jsonl frames, events-*.jsonl episodes):
+    // `--scene-log <dir>` overrides, default = data_dir (14.0.4 — the `--logs`
+    // trap is gone: recap/serve find these without extra flags).
+    let log_dir = args.common.scene_log.clone().unwrap_or_else(|| product.data_dir.clone());
+    let scene_log = Some(state_file.open_scene_log(log_dir.clone()));
+    let events_log = Some(state_file.open_events_log(log_dir.clone()));
+    // Rolling journal.md beside current_state.md (phase 12.D1) — summarises the
+    // logs above at a ~60-write cadence.
+    let journal = Some(agents::JournalCfg {
         path: state_file.journal_path(),
-        log_dir: d.clone(),
+        log_dir: log_dir.clone(),
         cadence: 60,
     });
 
@@ -771,8 +776,9 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     )?;
     let (cam_w, cam_h) = camera.dimensions();
     eprintln!(
-        "▶ camera {} ({cam_w}×{cam_h} MJPG) · snapshot {}ms",
+        "▶ camera {} ({cam_w}×{cam_h} MJPG) · data {} · snapshot {}ms",
         camera.device(),
+        product.data_dir.display(),
         interval.as_millis()
     );
 
@@ -807,7 +813,7 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
 /// the same markdown the MCP `mvm_snapshot` tool returns. Reads the StateFile a
 /// running `mvm run` writes (no camera of its own).
 fn run_snapshot(raw: &[String]) -> Result<()> {
-    let mut state = state::default_state_path();
+    let mut state = config_file::load()?.state_path;
     let mut i = 2; // skip program name + "snapshot"
     while i < raw.len() {
         if raw[i] == "--state" && i + 1 < raw.len() {
@@ -861,7 +867,7 @@ fn main() -> Result<()> {
         return recap_cmd::run_inspect(recap_cmd::parse_inspect_args(&raw));
     }
     if sub == Some("serve") {
-        return mcp::run_serve(mcp::parse_serve_args(&raw));
+        return mcp::run_serve(mcp::parse_serve_args(&raw)?);
     }
 
     let args = parse_args(&raw);
@@ -1109,7 +1115,8 @@ fn main() -> Result<()> {
             eprintln!("  identity: user '{name}' → reserved id {uid}");
         }
     }
-    let mut state_file = state::StateFile::open()?;
+    paths::ensure_dir_private(&product.data_dir)?;
+    let mut state_file = state::StateFile::open_at(product.state_path.clone())?;
     state_file.dump_distributions = args.common.dump_distributions;
     state_file.dump_full_graph = args.common.dump_full_graph;
     state_file.camera_device = native_camera.as_ref().map(|c| c.device().to_string());

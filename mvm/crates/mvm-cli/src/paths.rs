@@ -8,9 +8,6 @@
 //! Per the XDG spec, a relative `$XDG_*` value is invalid and must be ignored
 //! (fall back to the default).
 
-// TODO(14.0.2/14.0.4): remove once the config/state layers consume this module.
-#![allow(dead_code)]
-
 use std::path::{Path, PathBuf};
 
 /// Environment lookup used by the resolvers. Tests pass a closure instead of
@@ -23,6 +20,7 @@ fn std_env(key: &str) -> Option<String> {
 
 /// `~/.local/share/mvm` (or `$XDG_DATA_HOME/mvm`) — state + scene/events logs
 /// + journal, all in one place.
+#[allow(dead_code)] // consumed by `mvm doctor` (14.0.6)
 pub fn data_dir() -> PathBuf {
     data_dir_from(&std_env)
 }
@@ -35,6 +33,7 @@ pub fn config_dir() -> PathBuf {
 /// `<data_dir>/models` — fetched ONNX models (`mvm setup`, 14.1). Deliberately
 /// under data, not `$XDG_CACHE_HOME`: the OS may purge cache, and without
 /// models the product is dead.
+#[allow(dead_code)] // consumed by `mvm setup` (14.1)
 pub fn models_dir() -> PathBuf {
     data_dir().join("models")
 }
