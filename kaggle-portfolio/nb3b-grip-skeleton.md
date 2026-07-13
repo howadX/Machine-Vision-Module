@@ -1,4 +1,4 @@
-# NB3b — Method-C: 14 Engineered Features Beat a VAE (2025–2026)
+# NB3b — GRIP: 14 Engineered Features Beat a VAE (2025–2026)
 
 **Живой документ** · Последнее обновление: июль 2026 · Версия 1.0
 ← [NB3: Weak Supervision](./nb3-weak-supervision-skeleton.md) | → [NB4: Teardown](./nb4-pipeline-teardown-skeleton.md)
@@ -7,7 +7,7 @@
 
 ## Production Status (июль 2026)
 
-**В production — основной классификатор позы.** `mvm-posture` использует method-C:
+**В production — основной классификатор позы.** `mvm-posture` использует GRIP:
 - 14 viewpoint-инвариантных фич → RandomForest (120 деревьев, max_depth=16)
 - Экспорт: `pose_rf_forest.bin` (12 КБ) → `include_bytes!` в Rust
 - Инференс: <1ms CPU
@@ -36,7 +36,7 @@
        LightGBM 71.7% — модель сглаживает шум, но потолок ограничен
 2024 ─ PoseVAE (NB2)
        ~85% на своих, ниже на публичных
-2025 ─ Method-C spike (spike_feats.py)
+2025 ─ GRIP spike (spike_feats.py)
        14 фич vs 99 сырых координат → фичи победили (0.959 vs ~0.83)
 2025 ─ Полный прогон (train_pose_p1.py)
        URFD + Zenodo + COCO → публичный VAE + RF → экспорт в Rust
@@ -46,7 +46,7 @@
 
 ## 3. `[MD]` Ключевой инсайт: инвариантность by design
 
-VAE не знает, что наклон торса к гравитации — инвариант при повороте камеры. Он должен **выучить** это из данных. Method-C **проектирует** инвариантность.
+VAE не знает, что наклон торса к гравитации — инвариант при повороте камеры. Он должен **выучить** это из данных. GRIP **проектирует** инвариантность.
 
 **14 признаков:**
 
@@ -76,7 +76,7 @@ VAE не знает, что наклон торса к гравитации — 
 
 ## 7. `[CODE]` Azimuth-тест
 
-Поворот камеры на 15°/30°/45°/90°. Method-C: падение <0.5 п.п. Сырые координаты: катастрофа (0.83 → 0.31 на 90°).
+Поворот камеры на 15°/30°/45°/90°. GRIP: падение <0.5 п.п. Сырые координаты: катастрофа (0.83 → 0.31 на 90°).
 
 ## 8. `[MD]` Почему RandomForest, а не LightGBM?
 
@@ -96,9 +96,9 @@ VAE не знает, что наклон торса к гравитации — 
 
 ## 10. `[MD]` Production Status
 
-Method-C — **основной классификатор позы в MVM** с 2025 года. VAE (NB2) оставлен как OOD-gate.
+GRIP — **основной классификатор позы в MVM** с 2025 года. VAE (NB2) оставлен как OOD-gate.
 
-**Occlusion-honesty (бонус):** если видны только верхняя часть тела (BodyCoverage::Upper) → поза **withheld** (не утверждается). Это не часть method-C, а fusion-слой (`mvm-fusion`), но method-C поставляет для этого `torso_attitude_2d`.
+**Occlusion-honesty (бонус):** если видны только верхняя часть тела (BodyCoverage::Upper) → поза **withheld** (не утверждается). Это не часть GRIP, а fusion-слой (`mvm-fusion`), но GRIP поставляет для этого `torso_attitude_2d`.
 
 ## 11. `[MD]` Открытые вопросы / что можно улучшить
 
@@ -109,10 +109,10 @@ Method-C — **основной классификатор позы в MVM** с 
 ## 12. `[MD]` What Changed
 
 - **2026-07** — ноутбук создан из spike-экспериментов (spike_feats.py + train_pose_p1.py)
-- **2025-XX** — method-C заменяет LightGBM (NB3) и VAE (NB2)
+- **2025-XX** — GRIP заменяет LightGBM (NB3) и VAE (NB2)
 
 ## 13. `[MD]` Связи
 
 ← [NB3: Weak Supervision](./nb3-weak-supervision-skeleton.md) — откуда взялись данные
-← [NB2: PoseVAE](./nb2-posevae-skeleton.md) — что method-C заменил
+← [NB2: PoseVAE](./nb2-posevae-skeleton.md) — что GRIP заменил
 → [NB4: Teardown](./nb4-pipeline-teardown-skeleton.md) — инженерное суждение

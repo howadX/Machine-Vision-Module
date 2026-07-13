@@ -133,7 +133,7 @@
 | `spike_pose/train_pose_p1.py` | Переобучение VAE на публичных (URFD+Zenodo) — **актуальная production-версия** |
 | `spike_pose/pose_vae_public.bin` | VAE веса для Rust |
 | `mvm/crates/mvm-posture/src/classifier.rs` | Rust-реализация VAE-инференса (OOD-gate) |
-| `mvm/CLAUDE.md` | Раздел «Поза — method C», VAE-порог 14.3→170 |
+| `mvm/CLAUDE.md` | Раздел «Поза — GRIP», VAE-порог 14.3→170 |
 
 ### Что сказать Claude Code
 
@@ -141,7 +141,7 @@
 Работаем над NB2 (PoseVAE). VAE: prototype/pipeline/train_pose_vae.py + core/pose_vae.py.
 Данные: poses_dataset.csv (ранний) + coco_poses.csv (COCO). Для ноутбука — использовать публичный COCO.
 Показать: обучение VAE → UMAP латента → интерполяция → few-shot (5 примеров) → anomaly (-log p(z)).
-Важно: в production VAE = только OOD-gate, классификацию делает method-C (NB3b). Честно указать метрики.
+Важно: в production VAE = только OOD-gate, классификацию делает GRIP (NB3b). Честно указать метрики.
 Актуальные веса: spike_pose/pose_vae_public.bin (переобучены на URFD+Zenodo, порог 170).
 ```
 
@@ -184,7 +184,7 @@
 | Файл | Что внутри |
 |------|-----------|
 | `spike_pose/spike_data.py` | Сбор данных URFD + Zenodo + COCO → landmarks.npz |
-| `spike_pose/data_probe/landmarks.npz` | **Датасет для method-C** (33×4 landmarks + y + grp + src) |
+| `spike_pose/data_probe/landmarks.npz` | **Датасет для GRIP** (33×4 landmarks + y + grp + src) |
 
 ### Что сказать Claude Code
 
@@ -195,12 +195,12 @@
 В ноутбуке: эвристика → анализ шума (вручную проверить K=100 примеров) → LightGBM + Optuna → 71.7%.
 Опубликовать derived-датасет на Kaggle (CC BY 4.0, атрибуция COCO).
 Важно: НЕ публиковать изображения — только keypoints + weak-метки + инженерные фичи.
-Связать с NB3b (method-C): «эти данные + URFD + Zenodo → 0.959».
+Связать с NB3b (GRIP): «эти данные + URFD + Zenodo → 0.959».
 ```
 
 ---
 
-## NB3b — Method-C: 14 features beat VAE (2025–2026)
+## NB3b — GRIP: 14 features beat VAE (2025–2026)
 
 ### Код (spike_pose)
 
@@ -232,12 +232,12 @@
 | Файл | Что внутри |
 |------|-----------|
 | `mvm/crates/mvm-posture/src/classifier.rs` | Rust-реализация: загрузка RF из бинарника, инференс, VAE-gate |
-| `mvm/CLAUDE.md` | Раздел «Поза — method C»: метрики, occlusion-honesty, BodyCoverage |
+| `mvm/CLAUDE.md` | Раздел «Поза — GRIP»: метрики, occlusion-honesty, BodyCoverage |
 
 ### Что сказать Claude Code
 
 ```
-Работаем над NB3b (Method-C). Код: spike_pose/spike_feats.py (14 фич) + spike_pose/train_pose_p1.py (полный прогон).
+Работаем над NB3b (GRIP). Код: spike_pose/spike_feats.py (14 фич) + spike_pose/train_pose_p1.py (полный прогон).
 Данные: spike_pose/data_probe/landmarks.npz.
 В ноутбуке: 14 фич с объяснением → grouped 5-fold CV → 0.959 ± 0.01 → azimuth-тест (0.959→0.957 на 90°).
 Показать сравнение: сырые координаты (99d) → 0.83, VAE latent (32d) → 0.85, фичи (14d) → 0.959.
@@ -295,7 +295,7 @@ P0–P3 приоритеты миграции. Кривая масштабиро
 | `kaggle-portfolio/nb1-distillation-skeleton.md` | NB1 |
 | `kaggle-portfolio/nb2-posevae-skeleton.md` | NB2 |
 | `kaggle-portfolio/nb3-weak-supervision-skeleton.md` | NB3 |
-| `kaggle-portfolio/nb3b-method-c-skeleton.md` | NB3b |
+| `kaggle-portfolio/nb3b-grip-skeleton.md` | NB3b |
 | `kaggle-portfolio/nb4-pipeline-teardown-skeleton.md` | NB4 |
 | `kaggle-portfolio/README.md` | Коллекция |
 
@@ -381,10 +381,10 @@ P0–P3 приоритеты миграции. Кривая масштабиро
 Продакшн: spike_pose/spike_data.py, spike_pose/data_probe/landmarks.npz
 ```
 
-### NB3b Method-C
+### NB3b GRIP
 ```
 Код: spike_pose/spike_feats.py + spike_pose/train_pose_p1.py
-Скелет: kaggle-portfolio/nb3b-method-c-skeleton.md
+Скелет: kaggle-portfolio/nb3b-grip-skeleton.md
 Данные: spike_pose/data_probe/landmarks.npz (URFD+Zenodo+COCO)
 Продакшн: spike_pose/pose_rf_forest.bin, mvm/crates/mvm-posture/src/classifier.rs
 ```

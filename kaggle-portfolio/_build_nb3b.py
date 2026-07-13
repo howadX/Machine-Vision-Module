@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Builder for NB3b (Kaggle): Method-C — 14 engineered, azimuth-invariant
+"""Builder for NB3b (Kaggle): GRIP — 14 engineered, azimuth-invariant
 features beat a VAE (and raw coordinates) on standing/sitting/lying, validated
-with grouped cross-validation. Emits nb3b_method_c.ipynb.
+with grouped cross-validation. Emits nb3b_grip.ipynb.
 
 Reproducible authoring: run `python _build_nb3b.py`. The notebook loads the
 project's published keypoint dataset (`mvm-pose-landmarks`, keypoints only,
@@ -27,27 +27,32 @@ def code(text: str):
 
 # ---------------------------------------------------------------- 1. Title
 md(r"""
-# Method-C: 14 Engineered Features vs. Raw Coordinates — a Viewpoint-Invariance Trade-off
+# GRIP: Gravity-Referenced Invariant Pose Features
 
 *MVM ML Journey — Notebook 3b of the collection · prev: NB3 (weak supervision) · NB2 (pose manifold) · next: NB4 (teardown)*
 
-**TL;DR.** Fourteen gravity-preserving, azimuth-invariant geometric features + a shallow RandomForest
+> **GRIP** = **G**ravity-**R**eferenced **I**nvariant **P**ose features: fourteen quantities measured
+> against the gravity vector (inclinations, joint flexions, extent ratios) that are invariant to camera
+> azimuth *by construction*. (In the project's spike notes this was labelled "method C" — an A/B/C
+> enumeration artifact; the descriptive name is used everywhere now.)
+
+**TL;DR.** Fourteen gravity-referenced, azimuth-invariant geometric features + a shallow RandomForest
 classify standing / sitting / lying at **0.932 ± 0.052** under **StratifiedGroupKFold** (no person in
 both train and test). The honest surprise: on clean, fixed-viewpoint data the **raw 99-D coordinates
 score *higher* — 0.976 ± 0.025** — because the hand features are a lossy summary that gives up ~4 points.
 So why ship the features? **Rotate the camera and the ranking inverts:** raw coordinates collapse from
-**0.94 → 0.33** at 90°, while Method-C stays flat at **0.909** at every angle. The engineered features
+**0.94 → 0.33** at 90°, while GRIP stays flat at **0.909** at every angle. The engineered features
 don't win on accuracy — they win on the axis you cannot afford to lose in the field: *the subject turning
-relative to a fixed camera.* That trade is why Method-C is MVM's production pose classifier
+relative to a fixed camera.* That trade is why GRIP is MVM's production pose classifier
 (dependency-free forest, **< 1 ms** CPU).
 
-> - grouped-CV: Method-C **0.932 ± 0.052** · raw coords **0.976 ± 0.025** · VAE-latent (~PCA32) **0.931 ± 0.062**
-> - azimuth 0°→90°: Method-C **0.909 → 0.909** (flat) · raw coords **0.94 → 0.33** (collapse)
+> - grouped-CV: GRIP **0.932 ± 0.052** · raw coords **0.976 ± 0.025** · VAE-latent (~PCA32) **0.931 ± 0.062**
+> - azimuth 0°→90°: GRIP **0.909 → 0.909** (flat) · raw coords **0.94 → 0.33** (collapse)
 
 **Skills shown:** feature engineering with physical invariants · grouped cross-validation · honest
 trade-off analysis (reporting where my own method *loses*) · production export.
 
-> **Reproducibility note — read this.** Earlier project docs quoted **~0.959** for Method-C and a
+> **Reproducibility note — read this.** Earlier project docs quoted **~0.959** for GRIP and a
 > **"12 KB"** forest. *Neither reproduces here.* With the shipped RF params on this public data the honest
 > grouped-CV is **0.932**, and the serialized forest is **~270 KB** in this notebook (**873 KB** in
 > production, which trains on augmented data). The lower, reproducible numbers are the ones this notebook
@@ -59,7 +64,7 @@ md(r"""
 ## Invariance: learned vs. designed — and what it costs
 
 A VAE (NB2) must **learn** from data that "torso inclination to gravity" is unchanged when the subject
-turns relative to the camera. Method-C **designs** that invariance in: every feature is an angle to the
+turns relative to the camera. GRIP **designs** that invariance in: every feature is an angle to the
 gravity-vertical, a joint flexion (fully rotation-invariant), or a ratio of extents. Rotating about the
 vertical axis leaves them fixed *by construction* — the model spends neither capacity nor data
 discovering it.
@@ -200,7 +205,7 @@ Three inputs, same RF (production params), same folds: **14 features** vs. **raw
 (99-D, the VAE-style input)** vs. **VAE latent (32-D)** (approximated by PCA→32 — `sklearn` doesn't ship
 our tiny VAE; the qualitative gap is what matters).
 
-**The result is not what the title implies.** Raw coordinates score **highest** (≈0.976), Method-C and
+**The result is not what the title implies.** Raw coordinates score **highest** (≈0.976), GRIP and
 the VAE-latent tie a few points lower (≈0.93). On clean, single-viewpoint data, throwing 33 landmarks
 into a forest simply carries more signal than 14 summaries. If accuracy on fixed-camera data were the
 only goal, you would ship the raw coordinates. Hold that thought for the azimuth test — it is the whole
@@ -235,7 +240,7 @@ def grouped_cv(Xin, estimator):
 rf = lambda: RandomForestClassifier(n_estimators=120, max_depth=16, random_state=SEED, n_jobs=-1)
 METRICS["grouped_cv"] = {}
 for tag, key, Xin, est in [
-    ("14 features", "method_c", F, rf()),
+    ("14 features", "grip", F, rf()),
     ("raw coords (99-D)", "raw_coords", C, rf()),
     ("VAE latent ~PCA32", "vae_pca32", C, make_pipeline(StandardScaler(), PCA(32, random_state=SEED), rf())),
 ]:
@@ -251,7 +256,7 @@ md(r"""
 Rotate every test pose about the vertical axis (the subject turning relative to a fixed camera) and
 re-score **without retraining**. This is the deployment reality a home camera faces every minute.
 
-The result is the entire argument: Method-C holds **0.909 at 0°, 15°, 30°, 45° and 90° — perfectly
+The result is the entire argument: GRIP holds **0.909 at 0°, 15°, 30°, 45° and 90° — perfectly
 flat.** Raw coordinates start *higher* (0.94) but decay 0.94 → 0.88 → 0.86 and then **fall off a cliff
 to 0.33 at 90°** — barely above the 1-in-3 chance line. A 99-D coordinate vector *is* the viewpoint, so
 rotating it destroys the model's world; the 14 features never saw a viewpoint to begin with.
@@ -298,15 +303,15 @@ md(r"""
 
 Two panels, one story. **Left:** on clean (fixed-viewpoint) data, raw coordinates are the *more*
 accurate input — the 14 hand features are a lossy summary and give up a few points. **Right:** rotate
-the camera and that ranking inverts violently — raw coordinates fall off a cliff while Method-C does not
+the camera and that ranking inverts violently — raw coordinates fall off a cliff while GRIP does not
 move. Engineering is choosing which axis you refuse to lose.
 """)
 
 code(r"""
 fig, (axL, axR) = plt.subplots(1, 2, figsize=(12, 4.3))
 gc = METRICS["grouped_cv"]
-order = ["raw_coords", "method_c", "vae_pca32"]
-names = {"raw_coords": "raw coords\n(99-D)", "method_c": "14 features\n(Method-C)",
+order = ["raw_coords", "grip", "vae_pca32"]
+names = {"raw_coords": "raw coords\n(99-D)", "grip": "14 features\n(GRIP)",
          "vae_pca32": "VAE latent\n(~PCA32)"}
 means = [gc[k][0] for k in order]; stds = [gc[k][1] for k in order]
 axL.bar(range(3), means, yerr=stds, capsize=5, color=["#9aa0a6", "#2a9d8f", "#9aa0a6"])
@@ -314,7 +319,7 @@ axL.set_xticks(range(3)); axL.set_xticklabels([names[k] for k in order])
 axL.set_ylim(0.80, 1.0); axL.set_ylabel("grouped-CV accuracy")
 for i, m in enumerate(means):
     axL.text(i, m + stds[i] + 0.006, f"{m:.3f}", ha="center", fontsize=9)
-gap = (gc["raw_coords"][0] - gc["method_c"][0]) * 100
+gap = (gc["raw_coords"][0] - gc["grip"][0]) * 100
 axL.set_title(f"Clean data: raw wins by ~{gap:.0f} pts")
 
 for tag, accs in METRICS["azimuth_acc"].items():
@@ -322,7 +327,7 @@ for tag, accs in METRICS["azimuth_acc"].items():
     axR.plot(METRICS["azimuth_deg"], accs, marker="o", label=tag, color=col)
 axR.set_xlabel("camera azimuth (deg)"); axR.set_ylabel("accuracy")
 axR.set_ylim(0.2, 1.0); axR.legend(); axR.grid(alpha=0.3)
-axR.set_title("Under rotation: raw collapses, Method-C holds")
+axR.set_title("Under rotation: raw collapses, GRIP holds")
 plt.suptitle("The trade-off: a few points of clean accuracy bought total viewpoint invariance",
              fontweight="bold")
 plt.tight_layout(); plt.show()
@@ -402,11 +407,11 @@ print(json.dumps(METRICS, indent=2))
 md(r"""
 ## Production Status (July 2026)
 
-Method-C is the **primary pose classifier** in MVM (`mvm-posture`) since 2025. The VAE (NB2) was
+GRIP is the **primary pose classifier** in MVM (`mvm-posture`) since 2025. The VAE (NB2) was
 demoted to an out-of-distribution gate. The forest inference is `< 1 ms` on CPU with no dependencies.
 
 **Occlusion honesty (fusion layer, `mvm-fusion`).** When only the upper body is visible
-(`BodyCoverage::Upper`), pose is **withheld** rather than guessed — Method-C supplies the 2-D torso
+(`BodyCoverage::Upper`), pose is **withheld** rather than guessed — GRIP supplies the 2-D torso
 attitude used to make that call. The classifier does *not* detect falls (a standing→lying transition
 over seconds); that is the anomaly detector's job (NB2 + fusion).
 """)
@@ -415,7 +420,7 @@ over seconds); that is the anomaly detector's job (NB2 + fusion).
 md(r"""
 ## Honest limits
 
-- **Raw coordinates beat Method-C on clean data (0.976 vs 0.932).** The feature engineering costs ~4
+- **Raw coordinates beat GRIP on clean data (0.976 vs 0.932).** The feature engineering costs ~4
   points of fixed-viewpoint accuracy; it is only worth it because the deployment rotates. On a bolted-down,
   known-viewpoint camera, this trade would be the *wrong* call.
 - **The quoted 0.959 does not reproduce** with the shipped RF params on this public data (honest grouped-CV
@@ -428,7 +433,7 @@ md(r"""
 
 ## Conclusion — the engineering lesson
 
-Method-C is not the most accurate model in this notebook; raw coordinates are. It is the *right* model,
+GRIP is not the most accurate model in this notebook; raw coordinates are. It is the *right* model,
 because it is accurate on the one nuisance that a home camera cannot escape — people turning — and it is
 right by **construction**, not by luck of the training distribution. The portfolio point is not a big
 number; it is the discipline to (1) measure with grouped CV, (2) report where my own method loses, and
@@ -440,9 +445,9 @@ looks good.
   "features beat a VAE" to an **honest viewpoint-invariance trade-off**: corrected 0.959 → **0.932**,
   "12 KB" → **~270 KB (873 KB prod)**, and surfaced that **raw coords win on clean data**.
 - **2026-07** — notebook created from `spike_pose/spike_feats.py` + `train_pose_p1.py`.
-- **2025** — Method-C replaced LightGBM (NB3) and the VAE (NB2) in production.
+- **2025** — GRIP replaced LightGBM (NB3) and the VAE (NB2) in production.
 
-*Prev: NB3 (weak supervision) — where the data pipeline began · NB2 (pose manifold) — what Method-C
+*Prev: NB3 (weak supervision) — where the data pipeline began · NB2 (pose manifold) — what GRIP
 replaced. Next: NB4 — a component-level teardown on engineering judgment.*
 """)
 
@@ -456,7 +461,7 @@ nb = {
     "nbformat": 4,
     "nbformat_minor": 5,
 }
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nb3b_method_c.ipynb")
+out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nb3b_grip.ipynb")
 with open(out_path, "w") as f:
     json.dump(nb, f, indent=1, ensure_ascii=False)
 print("wrote", out_path, "|", len(cells), "cells")

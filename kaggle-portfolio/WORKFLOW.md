@@ -41,7 +41,7 @@ local notebook — **the local build is authoritative**. Kaggle allows one
 ```bash
 # edit _build_nb3b.py …
 $V kctl.py build nb3b          # regenerate .ipynb
-# open nb3b_method_c.ipynb on kaggle.com, Run All, read the printed metrics
+# open nb3b_grip.ipynb on kaggle.com, Run All, read the printed metrics
 # paste real numbers into the [fill] placeholders in _build_nb3b.py, rebuild
 $V kctl.py push nb3b --yes     # publish the update
 ```
@@ -76,7 +76,7 @@ execution — the point of a "living document" portfolio.
 | nb1  | `howadx/distilling-a-cnn-into-a-geometric-mlp` | FER2013 via kagglehub |
 | nb2  | `howadx/a-pose-manifold-that-knows-when-it-s-surprised` | COCO keypoints |
 | nb3  | `howadx/weak-supervision-at-scale` | COCO keypoints (publishes a derived dataset) |
-| nb3b | `howadx/method-c-14-features-beat-a-vae` | `howadx/mvm-pose-landmarks` |
+| nb3b | `howadx/grip-gravity-referenced-invariant-pose-features` | `howadx/mvm-pose-landmarks` |
 | nb4  | `howadx/identity-embeddings-are-wrong-for-emotion` | written teardown |
 
 **All 6 kernels + the `mvm-pose-landmarks` dataset are live (private) as of 2026-07-13.**

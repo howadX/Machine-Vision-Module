@@ -69,9 +69,10 @@ NOTEBOOKS = {
     ),
     "nb3b": dict(
         build="_build_nb3b.py",
-        ipynb="nb3b_method_c.ipynb",
-        id=f"{USER}/method-c-14-features-beat-a-vae",
-        title="Method-C: 14 Features Beat a VAE",
+        ipynb="nb3b_grip.ipynb",
+        # Renamed from the "Method-C" spike label (an A/B/C enumeration artifact) to GRIP.
+        id=f"{USER}/grip-gravity-referenced-invariant-pose-features",
+        title="GRIP: Gravity-Referenced Invariant Pose Features",
         dataset_sources=[f"{USER}/mvm-pose-landmarks"],
     ),
     "nb4": dict(
@@ -109,7 +110,7 @@ CC BY 4.0. Derivative of URFD (http://fenix.ur.edu.pl/~mkepski/ds/uf.html) and t
 Zenodo MultiPosture dataset. Attribute both original sources.
 
 ## Starter notebook
-See "Method-C: 14 Features Beat a VAE" (NB3b of the MVM ML-journey collection).
+See "GRIP: Gravity-Referenced Invariant Pose Features" (NB3b of the MVM ML-journey collection).
 """,
     ),
 }

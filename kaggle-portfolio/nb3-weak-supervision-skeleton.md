@@ -1,22 +1,22 @@
 # NB3 — Weak Supervision at Scale: Auto-labeling 6k COCO Poses (2024)
 
 **Живой документ** · Последнее обновление: июль 2026 · Версия 1.0
-← [NB2: PoseVAE](./nb2-posevae-skeleton.md) | → [NB3b: Method-C](./nb3b-method-c-skeleton.md)
+← [NB2: PoseVAE](./nb2-posevae-skeleton.md) | → [NB3b: GRIP](./nb3b-grip-skeleton.md)
 
 ---
 
 ## Production Status (июль 2026)
 
-**Датасет — в production.** Weak-метки из этого ноутбука стали фундаментом для method-C (NB3b).
-Без NB3 не было бы датасета → без датасета не было бы 0.959 → без method-C не было бы `mvm-posture`.
+**Датасет — в production.** Weak-метки из этого ноутбука стали фундаментом для GRIP (NB3b).
+Без NB3 не было бы датасета → без датасета не было бы 0.959 → без GRIP не было бы `mvm-posture`.
 
-Сам LightGBM-классификатор (71.7%) **заменён** на RandomForest (method-C) по трём причинам:
+Сам LightGBM-классификатор (71.7%) **заменён** на RandomForest (GRIP) по трём причинам:
 - RF проще экспортировать в Rust: бинарный формат 12 КБ, `include_bytes!`
 - LightGBM требует C++-рантайм → лишняя зависимость
 - На 14 фичах RF не уступает градиентному бустингу
 
 **Опубликованный датасет** (`coco-poses-weakly-labeled`) — **живой актив**. Производный от COCO, CC BY 4.0.
-Ссылка на него — в NB3b (method-C) и в README проекта.
+Ссылка на него — в NB3b (GRIP) и в README проекта.
 
 **Связанные крейты:** `mvm-posture` (data pipeline)
 
@@ -72,13 +72,13 @@
 
 ## 5. `[MD]` Почему Y-координаты — не те признаки
 
-Эвристика v1 использует **только Y-координаты** (вертикальные позиции). Method-C (NB3b) постфактум показал:
+Эвристика v1 использует **только Y-координаты** (вертикальные позиции). GRIP (NB3b) постфактум показал:
 - `torso_inc` (наклон торса к вертикали) — главный для standing vs lying
 - `knee_flex` (угол сгиба колена) — главный для sitting
 
 **Эвристика шумная, потому что использует не те признаки.** Углы инвариантны к азимуту. Y-координаты — нет.
 
-В ноутбуке: сравнить confusion matrix эвристики vs confusion matrix method-C на одном тестовом сете.
+В ноутбуке: сравнить confusion matrix эвристики vs confusion matrix GRIP на одном тестовом сете.
 
 ## 6–12. `[CODE]` Feature extraction, Optuna HPO, LightGBM, оценка, важность признаков
 
@@ -90,9 +90,9 @@
 
 - LightGBM accuracy 71.7% > precision эвристики (~65-75%) → модель **сглаживает** часть шума
 - Но confusion matrix показывает систематические ошибки (пропущенный sitting)
-- Потолок качества ограничен эвристикой — нужен другой подход к признакам (method-C)
+- Потолок качества ограничен эвристикой — нужен другой подход к признакам (GRIP)
 
-## 14. `[MD]` Мост к method-C (NB3b)
+## 14. `[MD]` Мост к GRIP (NB3b)
 
 ```
 Эвристика (Y-координаты, 65-75% precision)
@@ -103,23 +103,23 @@ LightGBM на инженерных фичах (71.7% — сгладил шум)
     ↓
 Инсайт: нужны УГЛЫ, а не ПОЗИЦИИ. Нужна ИНВАРИАНТНОСТЬ к азимуту.
     ↓
-Method-C: 14 viewpoint-инвариантных фич → RF → 0.959
+GRIP: 14 viewpoint-инвариантных фич → RF → 0.959
 ```
 
 Этот слайд — центральный для собеседования. Он показывает data-centric мышление.
 
 ## 15. `[MD]` Production Status
 
-- LightGBM (71.7%) → **заменён** на RF (0.959, method-C)
-- Weak-метки → **использованы** как основа датасета для method-C (+ URFD + Zenodo)
+- LightGBM (71.7%) → **заменён** на RF (0.959, GRIP)
+- Weak-метки → **использованы** как основа датасета для GRIP (+ URFD + Zenodo)
 - `coco-poses-weakly-labeled` → **опубликован** на Kaggle, ссылка в NB3b
 
 ## 16. `[MD]` What Changed
 
-- **2026-07** — ноутбук обновлён: Production Status, анализ шума (4 типа ошибок), мост к method-C
+- **2026-07** — ноутбук обновлён: Production Status, анализ шума (4 типа ошибок), мост к GRIP
 - **2024-XX** — оригинальная версия: COCO + эвристика + LightGBM
 
 ## 17. `[MD]` Связи
 
 ← [NB2: PoseVAE](./nb2-posevae-skeleton.md) — куда пошли данные
-→ [NB3b: Method-C](./nb3b-method-c-skeleton.md) — как эвристика привела к production-классификатору
+→ [NB3b: GRIP](./nb3b-grip-skeleton.md) — как эвристика привела к production-классификатору

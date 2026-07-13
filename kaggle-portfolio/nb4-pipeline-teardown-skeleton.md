@@ -1,7 +1,7 @@
 # NB4 — Why Identity Embeddings Are the Wrong Tool for Emotion: A Component-Level Teardown (2023)
 
 **Живой документ** · Последнее обновление: июль 2026 · Версия 1.0
-← [NB3b: Method-C](./nb3b-method-c-skeleton.md) | → [README](./README.md) (замыкание коллекции)
+← [NB3b: GRIP](./nb3b-grip-skeleton.md) | → [README](./README.md) (замыкание коллекции)
 
 ---
 
@@ -15,7 +15,7 @@
 | Лендмарки | dlib 68 | **MediaPipe 468** (FaceLandmarker) | Точность: NME 5.3 → 2.1 |
 | Эмбеддинг | dlib ResNet 128d | **SFace** (128d, Apache 2.0) | EER: 2.5% → 0.4% |
 | Эмоции | SVM на 68 точках | **EmotiEffLib B0 ONNX** | Accuracy: 45% → 73% |
-| Поза | (отсутствовала) | **Method-C RF** (0.959) | Добавлен как независимый crate |
+| Поза | (отсутствовала) | **GRIP RF** (0.959) | Добавлен как независимый crate |
 
 **Связанные крейты:** `mvm-detect`, `mvm-identity`, `mvm-emotion`, `mvm-posture`
 
@@ -132,6 +132,6 @@ MODERN (MVM 2026):
 
 ## 15. `[MD]` Связи
 
-← [NB3b: Method-C](./nb3b-method-c-skeleton.md)
+← [NB3b: GRIP](./nb3b-grip-skeleton.md)
 ← [NB0: EmoZid](./nb0-emozid-skeleton.md) — разбираемый legacy-стек
 → [README](./README.md) — замыкание коллекции. Полный цикл: 2019 → 2026.

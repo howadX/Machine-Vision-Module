@@ -21,9 +21,9 @@
  │      PoseVAE: manifold + few-shot + anomaly
  │
 2025 ─ Knowledge distillation: CNN → MLP (72%, 7× легче)
- │      Method-C: 14 фич → RF → 0.959
+ │      GRIP: 14 фич → RF → 0.959
  │
-2026 ─ Production: EmotiEffLib ONNX + method-C в Rust
+2026 ─ Production: EmotiEffLib ONNX + GRIP в Rust
         MVM v0.1.0: 597 тестов, MCP, systemd
 ```
 
@@ -37,7 +37,7 @@
 | **1** | Distilling CNN → geometric MLP | Knowledge distillation, edge inference | 2023–2025 | `mvm-emotion` |
 | **2** | PoseVAE: manifold that knows when it's surprised | Representation learning, few-shot, anomaly | 2024–2025 | `mvm-posture` (OOD-gate) |
 | **3** | Weak supervision at scale | Data-centric ML, HPO, свой датасет | 2024 | `mvm-posture` (data pipeline) |
-| **3b** | Method-C: 14 features beat VAE | Feature engineering, production classifier | 2025–2026 | `mvm-posture` (core) |
+| **3b** | GRIP: 14 features beat VAE | Feature engineering, production classifier | 2025–2026 | `mvm-posture` (core) |
 | **4** | Why identity embeddings are the wrong tool for emotion | Engineering judgment, component teardown | 2023 | `mvm-identity` + `mvm-emotion` |
 
 ---
