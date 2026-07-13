@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Builder for NB3b (Kaggle): GRIP — 14 engineered, azimuth-invariant
-features beat a VAE (and raw coordinates) on standing/sitting/lying, validated
+"""Builder for NB3b (Kaggle): GRIP (gravity-referenced pose features) — 14 azimuth-invariant
+features for standing/sitting/lying, validated honestly
 with grouped cross-validation. Emits nb3b_grip.ipynb.
 
 Reproducible authoring: run `python _build_nb3b.py`. The notebook loads the
@@ -37,24 +37,24 @@ md(r"""
 > enumeration artifact; the descriptive name is used everywhere now.)
 
 **TL;DR.** Fourteen gravity-referenced, azimuth-invariant geometric features + a shallow RandomForest
-classify standing / sitting / lying at **0.932 ± 0.052** under **StratifiedGroupKFold** (no person in
+classify standing / sitting / lying at **0.93 ± 0.05** under **StratifiedGroupKFold** (no person in
 both train and test). The honest surprise: on clean, fixed-viewpoint data the **raw 99-D coordinates
-score *higher* — 0.976 ± 0.025** — because the hand features are a lossy summary that gives up ~4 points.
+score *higher* — 0.98 ± 0.03** — because the hand features are a lossy summary that gives up ~4 points.
 So why ship the features? **Rotate the camera and the ranking inverts:** raw coordinates collapse from
-**0.94 → 0.33** at 90°, while GRIP stays flat at **0.909** at every angle. The engineered features
+**≈0.94 → ≈0.35** at 90°, while GRIP stays flat at **0.91** at every angle. The engineered features
 don't win on accuracy — they win on the axis you cannot afford to lose in the field: *the subject turning
 relative to a fixed camera.* That trade is why GRIP is MVM's production pose classifier
 (dependency-free forest, **< 1 ms** CPU).
 
-> - grouped-CV: GRIP **0.932 ± 0.052** · raw coords **0.976 ± 0.025** · VAE-latent (~PCA32) **0.931 ± 0.062**
-> - azimuth 0°→90°: GRIP **0.909 → 0.909** (flat) · raw coords **0.94 → 0.33** (collapse)
+> - grouped-CV: GRIP **0.93 ± 0.05** · raw coords **0.98 ± 0.03** · VAE-latent (~PCA32) **0.93 ± 0.06**
+> - azimuth 0°→90°: GRIP **0.91 → 0.91** (flat) · raw coords **≈0.94 → ≈0.35** (collapse)
 
 **Skills shown:** feature engineering with physical invariants · grouped cross-validation · honest
 trade-off analysis (reporting where my own method *loses*) · production export.
 
 > **Reproducibility note — read this.** Earlier project docs quoted **~0.959** for GRIP and a
 > **"12 KB"** forest. *Neither reproduces here.* With the shipped RF params on this public data the honest
-> grouped-CV is **0.932**, and the serialized forest is **~270 KB** in this notebook (**873 KB** in
+> grouped-CV is **≈0.93**, and the serialized forest is **~270 KB** in this notebook (**873 KB** in
 > production, which trains on augmented data). The lower, reproducible numbers are the ones this notebook
 > stands behind — an honest metric beats a flattering one.
 """)
@@ -205,7 +205,7 @@ Three inputs, same RF (production params), same folds: **14 features** vs. **raw
 (99-D, the VAE-style input)** vs. **VAE latent (32-D)** (approximated by PCA→32 — `sklearn` doesn't ship
 our tiny VAE; the qualitative gap is what matters).
 
-**The result is not what the title implies.** Raw coordinates score **highest** (≈0.976), GRIP and
+**The result is not what the title implies.** Raw coordinates score **highest** (≈0.98), GRIP and
 the VAE-latent tie a few points lower (≈0.93). On clean, single-viewpoint data, throwing 33 landmarks
 into a forest simply carries more signal than 14 summaries. If accuracy on fixed-camera data were the
 only goal, you would ship the raw coordinates. Hold that thought for the azimuth test — it is the whole
@@ -256,9 +256,9 @@ md(r"""
 Rotate every test pose about the vertical axis (the subject turning relative to a fixed camera) and
 re-score **without retraining**. This is the deployment reality a home camera faces every minute.
 
-The result is the entire argument: GRIP holds **0.909 at 0°, 15°, 30°, 45° and 90° — perfectly
-flat.** Raw coordinates start *higher* (0.94) but decay 0.94 → 0.88 → 0.86 and then **fall off a cliff
-to 0.33 at 90°** — barely above the 1-in-3 chance line. A 99-D coordinate vector *is* the viewpoint, so
+The result is the entire argument: GRIP holds **0.91 at 0°, 15°, 30°, 45° and 90° — perfectly
+flat.** Raw coordinates start *higher* (≈0.94) but decay steadily and then **fall off a cliff to the
+1-in-3 chance line by 90°** (≈0.33–0.40 across runs). A 99-D coordinate vector *is* the viewpoint, so
 rotating it destroys the model's world; the 14 features never saw a viewpoint to begin with.
 """)
 
@@ -342,7 +342,7 @@ features**, not a fancier booster — and for *this* product RandomForest wins o
 
 | | LightGBM | RandomForest |
 |---|---|---|
-| grouped-CV accuracy (features) | comparable | **0.932 ± 0.052** |
+| grouped-CV accuracy (features) | comparable | **0.93 ± 0.05** |
 | export to Rust | C++ runtime (`liblightgbm`) | plain binary, **no runtime** |
 | runtime deps | yes | **zero** |
 | CPU inference | ~1–2 ms | **< 1 ms** |
@@ -420,11 +420,11 @@ over seconds); that is the anomaly detector's job (NB2 + fusion).
 md(r"""
 ## Honest limits
 
-- **Raw coordinates beat GRIP on clean data (0.976 vs 0.932).** The feature engineering costs ~4
+- **Raw coordinates beat GRIP on clean data (≈0.98 vs ≈0.93).** The feature engineering costs ~4
   points of fixed-viewpoint accuracy; it is only worth it because the deployment rotates. On a bolted-down,
   known-viewpoint camera, this trade would be the *wrong* call.
 - **The quoted 0.959 does not reproduce** with the shipped RF params on this public data (honest grouped-CV
-  = 0.932). The gap is most plausibly the production run's train-time augmentation and/or a different data
+  = ≈0.93). The gap is most plausibly the production run's train-time augmentation and/or a different data
   snapshot — flagged, not hidden.
 - **Only 26 groups.** The ±0.052 std is wide; the mean alone is not trustworthy. Adding public pose data
   (more people) to tighten the interval is the obvious next experiment.
@@ -442,7 +442,7 @@ looks good.
 
 ## What changed
 - **2026-07 (revision)** — live Kaggle run replaced projected numbers with measured ones. Reframed from
-  "features beat a VAE" to an **honest viewpoint-invariance trade-off**: corrected 0.959 → **0.932**,
+  "features beat a VAE" to an **honest viewpoint-invariance trade-off**: corrected 0.959 → **≈0.93**,
   "12 KB" → **~270 KB (873 KB prod)**, and surfaced that **raw coords win on clean data**.
 - **2026-07** — notebook created from `spike_pose/spike_feats.py` + `train_pose_p1.py`.
 - **2025** — GRIP replaced LightGBM (NB3) and the VAE (NB2) in production.
