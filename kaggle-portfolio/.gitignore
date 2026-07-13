@@ -1,0 +1,7 @@
+# Kaggle tool venv and staging — never committed
+.venv/
+.stage/
+pulled/
+
+# Notebook execution scratch
+.ipynb_checkpoints/
