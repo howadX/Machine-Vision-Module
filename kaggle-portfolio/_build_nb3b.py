@@ -62,12 +62,19 @@ to publish and fast to Run-All.
 
 # ---------------------------------------------------------------- 3. Load
 code(r"""
-import os, numpy as np, pandas as pd, matplotlib.pyplot as plt
+import os, glob, numpy as np, pandas as pd, matplotlib.pyplot as plt
 SEED = 0
 np.random.seed(SEED)
 
 # Published derivative of URFD + Zenodo MultiPosture — keypoints only, CC BY 4.0.
-NPZ = "/kaggle/input/mvm-pose-landmarks/landmarks.npz"
+# Locate the file wherever Kaggle mounts the attached dataset (mount slug can vary).
+cands = glob.glob("/kaggle/input/**/landmarks.npz", recursive=True)
+if not cands:
+    mounted = os.listdir("/kaggle/input") if os.path.isdir("/kaggle/input") else "NONE"
+    raise FileNotFoundError(f"landmarks.npz not found. Attach dataset 'howadx/mvm-pose-landmarks'. "
+                            f"Currently mounted under /kaggle/input: {mounted}")
+NPZ = cands[0]
+print("loading:", NPZ)
 d = np.load(NPZ, allow_pickle=True)
 X, y_str, src, grp = d["X"], d["y"], d["src"], d["grp"]   # X: (N, 33, 4) = x,y,z,vis
 CLASSES = ["lying", "sitting", "standing"]
@@ -75,6 +82,8 @@ y = np.array([CLASSES.index(s) for s in y_str])
 import collections
 print("poses:", X.shape, "| classes:", dict(collections.Counter(y_str.tolist())))
 print("groups (people/sequences):", len(set(grp.tolist())), "| sources:", dict(collections.Counter(src.tolist())))
+
+METRICS = {"n_poses": int(X.shape[0]), "n_groups": len(set(grp.tolist()))}   # harvested by kctl fetch
 """)
 
 # ---------------------------------------------------------------- 4. Features
@@ -201,12 +210,14 @@ def grouped_cv(Xin, estimator):
     return s.mean(), s.std()
 
 rf = lambda: RandomForestClassifier(n_estimators=300, random_state=SEED, n_jobs=-1)
-for tag, Xin, est in [
-    ("14 features", F, rf()),
-    ("raw coords (99-D)", C, rf()),
-    ("VAE latent ~PCA32", C, make_pipeline(StandardScaler(), PCA(32, random_state=SEED), rf())),
+METRICS["grouped_cv"] = {}
+for tag, key, Xin, est in [
+    ("14 features", "method_c", F, rf()),
+    ("raw coords (99-D)", "raw_coords", C, rf()),
+    ("VAE latent ~PCA32", "vae_pca32", C, make_pipeline(StandardScaler(), PCA(32, random_state=SEED), rf())),
 ]:
     m, s = grouped_cv(Xin, est)
+    METRICS["grouped_cv"][key] = [round(float(m), 4), round(float(s), 4)]
     print(f"  {tag:22} grouped-CV acc = {m:.3f} ± {s:.3f}")   # <- fill the three into TL;DR
 """)
 
@@ -243,6 +254,8 @@ for tag, feat_fn in [("14 features", features), ("raw coords", raw_coords)]:
         accs.append(accuracy_score(y[gss_te], m.predict(Xte)))
     curves[tag] = accs
     print(f"  {tag:12}: " + " ".join(f"az{d}={a:.3f}" for d, a in zip(ROT, accs)))
+METRICS["azimuth_deg"] = ROT
+METRICS["azimuth_acc"] = {t: [round(float(a), 4) for a in accs] for t, accs in curves.items()}
 
 plt.figure(figsize=(6, 4))
 for tag, accs in curves.items():
@@ -299,8 +312,20 @@ def serialize_forest(forest):
 
 blob = serialize_forest(rf_final)
 open("/kaggle/working/pose_rf_forest.bin", "wb").write(blob)
+METRICS["forest_kb"] = round(len(blob) / 1024, 1)
+METRICS["forest_trees"] = len(rf_final.estimators_)
 print(f"serialized forest: {len(blob)/1024:.1f} KB, {len(rf_final.estimators_)} trees "
       f"-> pose_rf_forest.bin  (production embeds this via include_bytes!)")
+""")
+
+# ---------------------------------------------------------------- metrics dump
+code(r"""
+# --- Emit all harvested numbers for kctl fetch -> results/metrics.json ---
+import json, os
+os.makedirs("/kaggle/working", exist_ok=True)
+with open("/kaggle/working/metrics.json", "w") as f:
+    json.dump(METRICS, f, indent=2)
+print(json.dumps(METRICS, indent=2))
 """)
 
 # ---------------------------------------------------------------- 10. Production

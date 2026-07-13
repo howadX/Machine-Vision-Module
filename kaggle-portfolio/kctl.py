@@ -33,6 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KAGGLE = os.path.join(os.path.dirname(sys.executable), "kaggle")  # venv's CLI
 STAGE = os.path.join(HERE, ".stage")
 PULLED = os.path.join(HERE, "pulled")
+RESULTS = os.path.join(HERE, "results", "metrics.json")   # source of truth for real numbers
 
 USER = "howadx"
 
@@ -226,6 +227,41 @@ def pull(keys):
         subprocess.run([KAGGLE, "kernels", "pull", nb["id"], "-p", d, "-m"], check=False)
 
 
+def runstatus(keys):
+    """Show the latest server-side run status of each kernel (a push auto-runs it)."""
+    for k in resolve(keys):
+        r = subprocess.run([KAGGLE, "kernels", "status", NOTEBOOKS[k]["id"]],
+                           capture_output=True, text=True)
+        line = (r.stdout or r.stderr).strip().replace("KernelWorkerStatus.", "")
+        print(f"  {k:6} {line}")
+
+
+def logs(key):
+    if key not in NOTEBOOKS:
+        sys.exit(f"unknown notebook '{key}'")
+    subprocess.run([KAGGLE, "kernels", "logs", NOTEBOOKS[key]["id"]])
+
+
+def fetch(keys):
+    """Download each kernel's run output and merge its metrics.json into results/metrics.json."""
+    os.makedirs(os.path.dirname(RESULTS), exist_ok=True)
+    allm = json.load(open(RESULTS)) if os.path.exists(RESULTS) else {}
+    for k in resolve(keys):
+        d = os.path.join(PULLED, k)
+        os.makedirs(d, exist_ok=True)
+        subprocess.run([KAGGLE, "kernels", "output", NOTEBOOKS[k]["id"], "-p", d],
+                       check=False, capture_output=True)
+        mfile = os.path.join(d, "metrics.json")
+        if os.path.exists(mfile):
+            allm[k] = json.load(open(mfile))
+            print(f"  {k}: merged {len(allm[k])} metric group(s)")
+        else:
+            print(f"  {k}: no metrics.json in output (run errored, or notebook emits none)")
+    with open(RESULTS, "w") as f:
+        json.dump(allm, f, indent=2, ensure_ascii=False)
+    print(f"-> {os.path.relpath(RESULTS, HERE)}")
+
+
 def status():
     out = subprocess.run(
         [KAGGLE, "kernels", "list", "--user", USER, "--csv"],
@@ -252,6 +288,9 @@ def main():
     pd.add_argument("dataset", nargs="?", default="landmarks")
     pd.add_argument("--yes", action="store_true", help="confirm publish")
     pd.add_argument("--create", action="store_true", help="first-time create (else new version)")
+    for name in ("runstatus", "fetch"):
+        sub.add_parser(name).add_argument("nb", nargs="*", default=["all"])
+    sub.add_parser("logs").add_argument("nb")
     sub.add_parser("status")
     sub.add_parser("list")
     a = p.parse_args()
@@ -264,6 +303,12 @@ def main():
         pull(a.nb or ["all"])
     elif a.cmd == "push-data":
         push_data(a.dataset, a.yes, a.create)
+    elif a.cmd == "runstatus":
+        runstatus(a.nb or ["all"])
+    elif a.cmd == "fetch":
+        fetch(a.nb or ["all"])
+    elif a.cmd == "logs":
+        logs(a.nb)
     elif a.cmd == "status":
         status()
     elif a.cmd == "list":
