@@ -211,7 +211,10 @@
 - **Live-ревалидация 9 (1 чел., камера eye-level ~175см, ~горизонтальна):** idle/сидя — `id=0` lock 100%, motion idle↔walking
   + velocity в JSON. Ходьба — `id=0` держится 91% кадров (9.9), но детектор фрагментирует тело → краткие
   анон-мелькания остаются (**эмпирика для 10.7 person-масок**; см. память `walking-track-fragmentation`).
-- **Pose-классификатор ПЕРЕПИСАН (method C, коммит `9308783c`)** — корень хвоста #2 закрыт по данным/методу.
+- **Pose-классификатор ПЕРЕПИСАН (GRIP, коммит `9308783c`)** — корень хвоста #2 закрыт по данным/методу.
+  > **GRIP = Gravity-Referenced Invariant Pose features** — 14 фич, отсчитанных от вектора гравитации
+  > (наклоны, флексии, extent-отношения), инвариантных к азимуту камеры *by construction*. Ранее в
+  > спайк-заметках назывался «method C» (ярлык из A/B/C-перебора) — теперь используется описательное имя.
   Старый `PoseVAE→head` (переобучен на ~1137 самозаснятых кадрах) заменён на **инженерные вьюпойнт-инвариантные
   фичи (14: наклоны торса/конечностей к гравитации, флексии суставов, extent/aspect) → RandomForest** (soft-vote,
   `pose_rf_forest.bin` 873КБ) → **3 класса `standing/sitting/lying`** (экзотика `sitting_at_desk/lying_*/arms_crossed`
@@ -241,7 +244,7 @@
   0.1 `PostureStabilizer` (dwell+conf-гейт) + 0.2 OOD-гейт по VAE-`plausibility` (порог `POSTURE_OOD_LOGPZ`
   **перекалиброван 14.3→170** под новый публичный VAE, коммит `9308783c` — старый порог глушил ВСЮ постуру live);
   0.3 гейт эмоции по энтропии (≥0.90) → near-chance метка подавляется (live: 47/48 подавлено). Позу теперь лечит
-  **по корню** method C (см. выше); Tier 0 остаётся темпоральным сглаживанием. Корень эмоции (#1, вход EmotiEffLib)
+  **по корню** GRIP (см. выше); Tier 0 остаётся темпоральным сглаживанием. Корень эмоции (#1, вход EmotiEffLib)
   открыт. Модули `mvm-core/posture.rs`, `emotion.rs::emotion_label_gated`, `mvm-cli/pipeline.rs::plausibility_flag`.
 - **⚠️ Камера — eye-level (~175см, ~горизонтальна, `rotate_180=false`), НЕ потолок/45°.** Прежняя «потолочная»
   формулировка в доках была ошибочной (исправлено); симптомы #1/#2 — не от ракурса. Bridge всё ещё крутит
@@ -323,7 +326,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-detect** | YuNet ONNX (228KB, embed, multi-stride NMS) — лицо |
 | **mvm-identity** | SFace ONNX (37MB, 128d L2-эмбеддинг, gallery, `embed()`) |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |
-| **mvm-posture** | нативная BlazePose two-stage (детектор+поза) + **feature→RandomForest** классификатор (method C, 3 класса) + VAE (OOD-only); `compute_features`/`pose_from_face`, `NativePose` мульти-persona |
+| **mvm-posture** | нативная BlazePose two-stage (детектор+поза) + **feature→RandomForest** классификатор (GRIP, 3 класса) + VAE (OOD-only); `compute_features`/`pose_from_face`, `NativePose` мульти-persona |
 | **mvm-fusion** | `build_scene` (union-find граф+зоны) + `fuse()` PoE; activities + anomaly_score (8.F); `ZoneTracker` (persistence+семантика зон, 11.B1) |
 | **mvm-scene** | YOLO26n ONNX (9.5МБ, end-to-end NMS-free), object-узлы (id≥10000) + `ObjectTracker` [8.E] + YOLO-seg (`--masks`, 10.4) + **object-permanence** статичных фикстур под окклюзией руками (`STATIC_CLASSES`/`static_hold`, 11) |
 | **mvm-depth** | Depth-Anything-V2-Small ONNX (квант 27МБ, ~230мс CPU), depth-anchoring к торс-Z [8.E.2] |
@@ -391,7 +394,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | # | Проблема | Статус |
 |---|----------|--------|
 | 1 | Эмоция near-chance — **КОРЕНЬ НАЙДЕН, ЗАКРЫТ И LIVE-ВАЛИДИРОВАН (10.1)**: препроцесс писал HWC-interleaved в NCHW-тензор → модель видела скремблированные каналы → near-uniform softmax на любом лице (жило с порта фазы 6). Фикс planar-CHW + regression-тест на layout; вдобавок кроп выравнивается по 5 лендмаркам YuNet (Umeyama→ArcFace-шаблон). **Live (mesh, свет, 1 чел., 2026-07-02): Neutral conf 0.82–0.93, энтропия H=0.12–0.24** (было ≈0.96, peak 0.16–0.22) — метка проходит гейт 0.90, distribution резко пиковое (0.93 на Neutral). Прежний симптом «47/48 подавлено» снят по корню | ✅ (live-validated) |
-| 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** (method C, `9308783c`). Остаточный desk-гэп (публичная модель читала desk-sitting как `lying`, ноги под столом) **закрыт архитектурно, occlusion-aware, БЕЗ файн-тюна**: `BodyCoverage`+2D-attitude → метка withheld в Upper-режиме, `lying`+upright отвергается, fusion даёт `seated_at_workstation` реляционно; оракул переписан и включён. | ✅ (occlusion-aware; файн-тюн отменён как ненужный) |
+| 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** (GRIP, `9308783c`). Остаточный desk-гэп (публичная модель читала desk-sitting как `lying`, ноги под столом) **закрыт архитектурно, occlusion-aware, БЕЗ файн-тюна**: `BodyCoverage`+2D-attitude → метка withheld в Upper-режиме, `lying`+upright отвергается, fusion даёт `seated_at_workstation` реляционно; оракул переписан и включён. | ✅ (occlusion-aware; файн-тюн отменён как ненужный) |
 | 3 | `torso_length_m=0.5` не откалиброван рулеткой (абсолют 3D приблизителен) | 🟡 |
 | 4 | `fps` в StateFile = темп доставки, не обработки | 🟡 (семантика) |
 | 5 | Hand-ROI из запястья требует чёткого жеста — **закрыт (10.2)**: vis-floor 0.5→0.2, score честно downweight'ится ×(vis/0.5), presence-гейт модели сохранён; кисти за столом/у края кадра возвращаются в поток | ✅ |

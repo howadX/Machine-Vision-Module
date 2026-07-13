@@ -261,7 +261,7 @@ mvm --version
 | **mvm-detect** | YuNet ONNX (228 КБ) — лицо + 5 лендмарков |
 | **mvm-identity** | SFace ONNX (37 МБ), 128d L2-эмбеддинг, галерея + margin |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF + entropy |
-| **mvm-posture** | нативная BlazePose (two-stage) + feature→RandomForest (method-C, 3 класса) + VAE (OOD-only), мульти-persona |
+| **mvm-posture** | нативная BlazePose (two-stage) + feature→RandomForest (GRIP, 3 класса) + VAE (OOD-only), мульти-persona |
 | **mvm-scene** | YOLO26n ONNX (объекты) + ObjectTracker + YOLO-seg (`--masks`) + object-permanence статичных фикстур |
 | **mvm-depth** | Depth-Anything-V2-Small ONNX → depth-anchoring к торс-Z |
 | **mvm-hands** | MediaPipe handpose ONNX (21 lm/рука), ROI из запястий |
