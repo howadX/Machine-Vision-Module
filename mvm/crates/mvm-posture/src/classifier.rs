@@ -1,4 +1,4 @@
-//! Hand-rolled Rust port of the pose classifier (P1 method C): raw 33×4 landmarks →
+//! Hand-rolled Rust port of the GRIP pose classifier (gravity-referenced pose features; formerly 'method C'): raw 33×4 landmarks →
 //! `compute_features` (14 azimuth-invariant, gravity-preserving geometric features) →
 //! RandomForest soft-vote → {lying, sitting, standing}. Plus the VAE (retrained on public
 //! data) for `recon_error` and `log_prob_z` → plausibility (OOD only, Tier 0.2).
