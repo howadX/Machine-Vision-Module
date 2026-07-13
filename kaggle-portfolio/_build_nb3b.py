@@ -27,37 +27,52 @@ def code(text: str):
 
 # ---------------------------------------------------------------- 1. Title
 md(r"""
-# Method-C: 14 Engineered Features Beat a VAE (with Grouped Cross-Validation)
+# Method-C: 14 Engineered Features vs. Raw Coordinates — a Viewpoint-Invariance Trade-off
 
 *MVM ML Journey — Notebook 3b of the collection · prev: NB3 (weak supervision) · NB2 (pose manifold) · next: NB4 (teardown)*
 
-**TL;DR.** Fourteen **gravity-preserving, azimuth-invariant** geometric features + a shallow
-RandomForest classify standing / sitting / lying at **[fill] accuracy** under **StratifiedGroupKFold**
-(no person appears in both train and test). The same classifier on **raw normalized coordinates**
-(the VAE-style input) matches on clean data but **collapses** when the camera rotates — while
-Method-C barely moves. This is the production pose classifier in MVM: exported to a **12 KB** binary,
-**< 1 ms** on CPU, zero runtime dependencies.
+**TL;DR.** Fourteen gravity-preserving, azimuth-invariant geometric features + a shallow RandomForest
+classify standing / sitting / lying at **0.932 ± 0.052** under **StratifiedGroupKFold** (no person in
+both train and test). The honest surprise: on clean, fixed-viewpoint data the **raw 99-D coordinates
+score *higher* — 0.976 ± 0.025** — because the hand features are a lossy summary that gives up ~4 points.
+So why ship the features? **Rotate the camera and the ranking inverts:** raw coordinates collapse from
+**0.94 → 0.33** at 90°, while Method-C stays flat at **0.909** at every angle. The engineered features
+don't win on accuracy — they win on the axis you cannot afford to lose in the field: *the subject turning
+relative to a fixed camera.* That trade is why Method-C is MVM's production pose classifier
+(dependency-free forest, **< 1 ms** CPU).
 
-> - Method-C RF, grouped CV: **[fill] ± [fill]** · raw-coords RF: **[fill]** · VAE-latent RF: **[fill]**
-> - Azimuth 90° rotation — Method-C drop: **[fill] pts** · raw-coords drop: **[fill] pts**
+> - grouped-CV: Method-C **0.932 ± 0.052** · raw coords **0.976 ± 0.025** · VAE-latent (~PCA32) **0.931 ± 0.062**
+> - azimuth 0°→90°: Method-C **0.909 → 0.909** (flat) · raw coords **0.94 → 0.33** (collapse)
 
-**Skills shown:** feature engineering with physical invariants · grouped cross-validation ·
-model-size/latency trade-offs · production export.
+**Skills shown:** feature engineering with physical invariants · grouped cross-validation · honest
+trade-off analysis (reporting where my own method *loses*) · production export.
+
+> **Reproducibility note — read this.** Earlier project docs quoted **~0.959** for Method-C and a
+> **"12 KB"** forest. *Neither reproduces here.* With the shipped RF params on this public data the honest
+> grouped-CV is **0.932**, and the serialized forest is **~270 KB** in this notebook (**873 KB** in
+> production, which trains on augmented data). The lower, reproducible numbers are the ones this notebook
+> stands behind — an honest metric beats a flattering one.
 """)
 
 # ---------------------------------------------------------------- 2. Premise
 md(r"""
-## Invariance: learned vs. designed
+## Invariance: learned vs. designed — and what it costs
 
-A VAE (NB2) must **learn** from data that "torso inclination to gravity" is unchanged when the camera
-walks around the subject. Method-C **designs** that invariance in: every feature is either an angle to
-the gravity-vertical, a joint flexion (fully rotation-invariant), or a ratio of extents. Rotating the
-camera about the vertical axis leaves them (almost) fixed *by construction* — so the model never has to
-spend capacity, or data, discovering it.
+A VAE (NB2) must **learn** from data that "torso inclination to gravity" is unchanged when the subject
+turns relative to the camera. Method-C **designs** that invariance in: every feature is an angle to the
+gravity-vertical, a joint flexion (fully rotation-invariant), or a ratio of extents. Rotating about the
+vertical axis leaves them fixed *by construction* — the model spends neither capacity nor data
+discovering it.
 
-The dataset here is the project's own **keypoints-only** pose set (URFD falls + Zenodo MultiPosture),
-33×4 MediaPipe-style landmarks, **26 person/sequence groups**, three classes. No images — so it is safe
-to publish and fast to Run-All.
+The catch this notebook measures honestly: **designed invariance is not free.** Compressing 33 landmarks
+into 14 physical quantities discards information that helps on clean, fixed-viewpoint data — which is
+exactly why raw coordinates out-score the features below. The engineering question is not "which is more
+accurate?" but "**is the robustness worth the accuracy I pay for it?**" — and that answer is set by the
+deployment, not the dataset. For a camera that people turn away from, it is worth it.
+
+The dataset is the project's own **keypoints-only** pose set (URFD falls + Zenodo MultiPosture), 33×4
+MediaPipe-style landmarks, **26 person/sequence groups**, three classes. No images — safe to publish,
+fast to Run-All.
 """)
 
 # ---------------------------------------------------------------- 3. Load
@@ -174,16 +189,22 @@ plt.tight_layout(); plt.show()
 
 # ---------------------------------------------------------------- 6. Grouped CV
 md(r"""
-## Grouped cross-validation — the honest number
+## Grouped cross-validation — the honest number (and a surprise)
 
 A random split lets frames of the *same person* land in both train and test, and the model scores
-itself partly on memorized identity. **StratifiedGroupKFold** keeps every person's frames on one side
-of the split. This is the number that predicts performance on people the model has never seen — and the
-one worth putting on a résumé.
+itself partly on memorized identity. **StratifiedGroupKFold** keeps every person's frames on one side of
+the split. This is the number that predicts performance on people the model has never seen — the only one
+worth putting on a résumé.
 
-Three inputs, same RF, same folds: **14 features** vs. **raw normalized coordinates (99-D, VAE-style
-input)** vs. **VAE latent (32-D)**. `sklearn` isn't shipped with our tiny VAE, so the latent row is
-approximated by PCA→32 (a linear stand-in); the qualitative gap is what matters.
+Three inputs, same RF (production params), same folds: **14 features** vs. **raw normalized coordinates
+(99-D, the VAE-style input)** vs. **VAE latent (32-D)** (approximated by PCA→32 — `sklearn` doesn't ship
+our tiny VAE; the qualitative gap is what matters).
+
+**The result is not what the title implies.** Raw coordinates score **highest** (≈0.976), Method-C and
+the VAE-latent tie a few points lower (≈0.93). On clean, single-viewpoint data, throwing 33 landmarks
+into a forest simply carries more signal than 14 summaries. If accuracy on fixed-camera data were the
+only goal, you would ship the raw coordinates. Hold that thought for the azimuth test — it is the whole
+argument.
 """)
 
 code(r"""
@@ -209,7 +230,9 @@ def grouped_cv(Xin, estimator):
     s = cross_val_score(estimator, Xin, y, groups=groups, cv=sgkf, scoring="accuracy")
     return s.mean(), s.std()
 
-rf = lambda: RandomForestClassifier(n_estimators=300, random_state=SEED, n_jobs=-1)
+# Same RF hyper-params as the production export (n_estimators=120, max_depth=16),
+# so this number is directly comparable to the shipped forest and the quoted figure.
+rf = lambda: RandomForestClassifier(n_estimators=120, max_depth=16, random_state=SEED, n_jobs=-1)
 METRICS["grouped_cv"] = {}
 for tag, key, Xin, est in [
     ("14 features", "method_c", F, rf()),
@@ -223,11 +246,15 @@ for tag, key, Xin, est in [
 
 # ---------------------------------------------------------------- 7. Azimuth test
 md(r"""
-## The azimuth test — where "designed" beats "learned"
+## The azimuth test — where the trade-off pays off
 
-Rotate every test pose about the vertical axis (a camera walking around the subject) and re-score,
-**without retraining**. Method-C should barely move; raw coordinates should fall apart, because a
-99-D coordinate vector *is* the viewpoint.
+Rotate every test pose about the vertical axis (the subject turning relative to a fixed camera) and
+re-score **without retraining**. This is the deployment reality a home camera faces every minute.
+
+The result is the entire argument: Method-C holds **0.909 at 0°, 15°, 30°, 45° and 90° — perfectly
+flat.** Raw coordinates start *higher* (0.94) but decay 0.94 → 0.88 → 0.86 and then **fall off a cliff
+to 0.33 at 90°** — barely above the 1-in-3 chance line. A 99-D coordinate vector *is* the viewpoint, so
+rotating it destroys the model's world; the 14 features never saw a viewpoint to begin with.
 """)
 
 code(r"""
@@ -247,7 +274,7 @@ ROT = [0, 15, 30, 45, 90]
 curves = {}
 for tag, feat_fn in [("14 features", features), ("raw coords", raw_coords)]:
     Xtr = np.array([feat_fn(X[i]) for i in gss_tr]); ytr = y[gss_tr]
-    m = RandomForestClassifier(n_estimators=300, random_state=SEED, n_jobs=-1).fit(Xtr, ytr)
+    m = RandomForestClassifier(n_estimators=120, max_depth=16, random_state=SEED, n_jobs=-1).fit(Xtr, ytr)
     accs = []
     for deg in ROT:
         Xte = np.array([feat_fn(azimuth_rotate(X[i], deg)) for i in gss_te])
@@ -265,32 +292,75 @@ plt.title("Robustness to viewpoint — designed vs. learned invariance")
 plt.legend(); plt.grid(alpha=0.3); plt.tight_layout(); plt.show()
 """)
 
+# ---------------------------------------------------------------- 7b. The trade-off figure
+md(r"""
+## The trade-off, in one figure
+
+Two panels, one story. **Left:** on clean (fixed-viewpoint) data, raw coordinates are the *more*
+accurate input — the 14 hand features are a lossy summary and give up a few points. **Right:** rotate
+the camera and that ranking inverts violently — raw coordinates fall off a cliff while Method-C does not
+move. Engineering is choosing which axis you refuse to lose.
+""")
+
+code(r"""
+fig, (axL, axR) = plt.subplots(1, 2, figsize=(12, 4.3))
+gc = METRICS["grouped_cv"]
+order = ["raw_coords", "method_c", "vae_pca32"]
+names = {"raw_coords": "raw coords\n(99-D)", "method_c": "14 features\n(Method-C)",
+         "vae_pca32": "VAE latent\n(~PCA32)"}
+means = [gc[k][0] for k in order]; stds = [gc[k][1] for k in order]
+axL.bar(range(3), means, yerr=stds, capsize=5, color=["#9aa0a6", "#2a9d8f", "#9aa0a6"])
+axL.set_xticks(range(3)); axL.set_xticklabels([names[k] for k in order])
+axL.set_ylim(0.80, 1.0); axL.set_ylabel("grouped-CV accuracy")
+for i, m in enumerate(means):
+    axL.text(i, m + stds[i] + 0.006, f"{m:.3f}", ha="center", fontsize=9)
+gap = (gc["raw_coords"][0] - gc["method_c"][0]) * 100
+axL.set_title(f"Clean data: raw wins by ~{gap:.0f} pts")
+
+for tag, accs in METRICS["azimuth_acc"].items():
+    col = "#2a9d8f" if "feat" in tag else "#e76f51"
+    axR.plot(METRICS["azimuth_deg"], accs, marker="o", label=tag, color=col)
+axR.set_xlabel("camera azimuth (deg)"); axR.set_ylabel("accuracy")
+axR.set_ylim(0.2, 1.0); axR.legend(); axR.grid(alpha=0.3)
+axR.set_title("Under rotation: raw collapses, Method-C holds")
+plt.suptitle("The trade-off: a few points of clean accuracy bought total viewpoint invariance",
+             fontweight="bold")
+plt.tight_layout(); plt.show()
+""")
+
 # ---------------------------------------------------------------- 8. Why RF
 md(r"""
 ## Why RandomForest, not LightGBM?
 
-NB3's LightGBM peaked at ~71.7% on noisy COCO weak-labels. Here the winning lever was **better data +
-better features**, not a fancier booster. RandomForest wins on the axes that matter for this product:
+NB3's LightGBM peaked at ~71.7% on noisy COCO weak-labels. The lever here was **better data + invariant
+features**, not a fancier booster — and for *this* product RandomForest wins on deployment, not accuracy:
 
 | | LightGBM | RandomForest |
 |---|---|---|
-| grouped-CV accuracy | ~0.72 (NB3 data) | **[fill]** (this data + features) |
-| export to Rust | C++ runtime (`liblightgbm`) | **12 KB** hand-rolled binary |
+| grouped-CV accuracy (features) | comparable | **0.932 ± 0.052** |
+| export to Rust | C++ runtime (`liblightgbm`) | plain binary, **no runtime** |
 | runtime deps | yes | **zero** |
 | CPU inference | ~1–2 ms | **< 1 ms** |
 
-A forest is just thresholds and probabilities — trivial to serialize and re-implement, which is the
-whole point of the next section.
+The decisive column is *runtime deps*: a forest is just thresholds and probabilities, so it re-implements
+as a ~40-line reader over a flat binary — no `liblightgbm`, no ONNX, nothing to ship but bytes. That is
+what makes the next section possible.
 """)
 
 # ---------------------------------------------------------------- 9. Export
 md(r"""
-## Export to a 12 KB binary (what production actually loads)
+## Export to a dependency-free binary (what production actually loads)
 
-The production model is serialized as: `u32 n_trees`, then per tree `u32 n_nodes` and nodes of
+The forest is serialized as: `u32 n_trees`, then per tree `u32 n_nodes` and nodes of
 `<i32 feature, f32 threshold, i32 left, i32 right, f32 prob[3]>`. Rust `include_bytes!` embeds it; a
-~40-line reader walks the trees. Below, the same forest is written in that format and the on-disk size
-reported — the artifact that ships in `mvm-posture`.
+~40-line reader walks the trees. Below, the same forest is written in that format and its on-disk size
+reported.
+
+**Honest sizing.** This notebook's forest is **~270 KB**; the *production* `pose_rf_forest.bin` is
+**873 KB** because it is trained on augmented data (more samples → deeper trees). Earlier docs said
+"12 KB" — that was never true for a 120-tree, depth-16 forest and is corrected here. Still: a few hundred
+KB of pure bytes, zero dependencies, sub-millisecond — which is the property that matters, not the exact
+figure.
 """)
 
 code(r"""
@@ -345,13 +415,30 @@ over seconds); that is the anomaly detector's job (NB2 + fusion).
 md(r"""
 ## Honest limits
 
+- **Raw coordinates beat Method-C on clean data (0.976 vs 0.932).** The feature engineering costs ~4
+  points of fixed-viewpoint accuracy; it is only worth it because the deployment rotates. On a bolted-down,
+  known-viewpoint camera, this trade would be the *wrong* call.
+- **The quoted 0.959 does not reproduce** with the shipped RF params on this public data (honest grouped-CV
+  = 0.932). The gap is most plausibly the production run's train-time augmentation and/or a different data
+  snapshot — flagged, not hidden.
+- **Only 26 groups.** The ±0.052 std is wide; the mean alone is not trustworthy. Adding public pose data
+  (more people) to tighten the interval is the obvious next experiment.
 - `torso_length_m = 0.5` is assumed, not tape-measured — absolute 3-D placement is approximate.
-- Three coarse classes (standing/sitting/lying); "sitting on a chair" vs. "sitting on the floor" is not
-  distinguished.
-- The published dataset is derived from URFD + Zenodo MultiPosture; the group count (26) is modest, so
-  the grouped-CV std is the number to trust, not the mean alone.
+- Three coarse classes; "sitting on a chair" vs. "sitting on the floor" is not distinguished.
+
+## Conclusion — the engineering lesson
+
+Method-C is not the most accurate model in this notebook; raw coordinates are. It is the *right* model,
+because it is accurate on the one nuisance that a home camera cannot escape — people turning — and it is
+right by **construction**, not by luck of the training distribution. The portfolio point is not a big
+number; it is the discipline to (1) measure with grouped CV, (2) report where my own method loses, and
+(3) pick the input whose failure mode matches the deployment. A model you can defend beats a model that
+looks good.
 
 ## What changed
+- **2026-07 (revision)** — live Kaggle run replaced projected numbers with measured ones. Reframed from
+  "features beat a VAE" to an **honest viewpoint-invariance trade-off**: corrected 0.959 → **0.932**,
+  "12 KB" → **~270 KB (873 KB prod)**, and surfaced that **raw coords win on clean data**.
 - **2026-07** — notebook created from `spike_pose/spike_feats.py` + `train_pose_p1.py`.
 - **2025** — Method-C replaced LightGBM (NB3) and the VAE (NB2) in production.
 
