@@ -2,19 +2,70 @@
   "nb3b": {
     "n_poses": 1035,
     "n_groups": 26,
+    "class_by_source": {
+      "multiposture": {
+        "lying": 0,
+        "sitting": 400,
+        "standing": 0
+      },
+      "urfd": {
+        "lying": 323,
+        "sitting": 0,
+        "standing": 312
+      }
+    },
+    "feat_importance": {
+      "aspect": 0.1887,
+      "ank_below": 0.1582,
+      "torso_inc": 0.1111,
+      "hext": 0.0963,
+      "nose_above": 0.0902,
+      "vext": 0.0872,
+      "shank_inc": 0.0652,
+      "thigh_inc": 0.0602,
+      "elbow_flex": 0.0411,
+      "hip_flex": 0.0306,
+      "kn_below": 0.028,
+      "knee_flex": 0.0245,
+      "thigh_asym": 0.0107,
+      "knee_asym": 0.0078
+    },
     "grouped_cv": {
-      "grip": [
-        0.9338,
-        0.0458
-      ],
       "raw_coords": [
         0.9753,
         0.0261
+      ],
+      "grip": [
+        0.9338,
+        0.0458
       ],
       "vae_pca32": [
         0.929,
         0.0656
       ]
+    },
+    "grouped_cv_oof": {
+      "raw_coords": 0.9729,
+      "grip": 0.9324,
+      "vae_pca32": 0.9246
+    },
+    "grouped_cv_ci": {
+      "raw_coords": [
+        0.9385,
+        0.998
+      ],
+      "grip": [
+        0.8714,
+        0.9785
+      ],
+      "vae_pca32": [
+        0.8381,
+        0.9929
+      ]
+    },
+    "adversarial_source_auc": {
+      "raw_coords": 1.0,
+      "grip": 0.9869
     },
     "azimuth_deg": [
       0,
@@ -24,20 +75,161 @@
       90
     ],
     "azimuth_acc": {
-      "14 features": [
-        0.9087,
-        0.9087,
-        0.9087,
-        0.9087,
-        0.9087
+      "GRIP": [
+        0.9338,
+        0.9338,
+        0.9338,
+        0.9338,
+        0.9338
       ],
       "raw coords": [
-        0.9391,
-        0.9217,
-        0.8739,
-        0.7522,
-        0.4
+        0.9753,
+        0.9615,
+        0.9298,
+        0.8686,
+        0.4932
       ]
+    },
+    "azimuth_std": {
+      "GRIP": [
+        0.0458,
+        0.0458,
+        0.0458,
+        0.0458,
+        0.0458
+      ],
+      "raw coords": [
+        0.0261,
+        0.0433,
+        0.0578,
+        0.0749,
+        0.1607
+      ]
+    },
+    "azimuth_perclass": {
+      "GRIP": {
+        "lying": [
+          0.9671,
+          0.9671,
+          0.9671,
+          0.9671,
+          0.9671
+        ],
+        "sitting": [
+          0.9783,
+          0.9783,
+          0.9783,
+          0.9783,
+          0.9783
+        ],
+        "standing": [
+          0.8787,
+          0.8787,
+          0.8787,
+          0.8787,
+          0.8787
+        ]
+      },
+      "raw coords": {
+        "lying": [
+          0.9788,
+          0.9788,
+          0.9564,
+          0.9514,
+          0.9407
+        ],
+        "sitting": [
+          1.0,
+          1.0,
+          0.9829,
+          0.831,
+          0.0
+        ],
+        "standing": [
+          0.9487,
+          0.914,
+          0.8647,
+          0.8593,
+          0.7733
+        ]
+      }
+    },
+    "ablation": [
+      {
+        "n_feats": 3,
+        "top_feats": "aspect, ank_below, torso_inc",
+        "grouped_CV": 0.9055,
+        "az_0": 0.9055,
+        "az_90": 0.9055
+      },
+      {
+        "n_feats": 5,
+        "top_feats": "aspect, ank_below, torso_inc...",
+        "grouped_CV": 0.9073,
+        "az_0": 0.9073,
+        "az_90": 0.9073
+      },
+      {
+        "n_feats": 10,
+        "top_feats": "aspect, ank_below, torso_inc...",
+        "grouped_CV": 0.9263,
+        "az_0": 0.9263,
+        "az_90": 0.9263
+      },
+      {
+        "n_feats": 14,
+        "top_feats": "aspect, ank_below, torso_inc...",
+        "grouped_CV": 0.9255,
+        "az_0": 0.9255,
+        "az_90": 0.9255
+      }
+    ],
+    "confusion": [
+      [
+        309,
+        10,
+        4
+      ],
+      [
+        2,
+        389,
+        9
+      ],
+      [
+        6,
+        39,
+        267
+      ]
+    ],
+    "recall_per_class": {
+      "lying": 0.9567,
+      "sitting": 0.9725,
+      "standing": 0.8558
+    },
+    "ece": 0.0435,
+    "calibration_by_pred_class": {
+      "lying": [
+        0.9385,
+        0.9748
+      ],
+      "sitting": [
+        0.863,
+        0.8881
+      ],
+      "standing": [
+        0.8795,
+        0.9536
+      ]
+    },
+    "hpo": {
+      "best_params": {
+        "n_estimators": 120,
+        "max_depth": 12,
+        "min_samples_split": 2
+      },
+      "best_score": 0.9338,
+      "shipped_score": 0.9338,
+      "delta_pts": 0.0
     },
     "forest_kb": 271.5,
     "forest_trees": 120

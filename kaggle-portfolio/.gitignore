@@ -1,7 +1,11 @@
 # Kaggle tool venv and staging — never committed
 .venv/
+.venv-viz/
 .stage/
 pulled/
 
 # Notebook execution scratch
 .ipynb_checkpoints/
+
+# viz design lab (local preview, never committed)
+.viz-lab/
