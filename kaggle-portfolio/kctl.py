@@ -105,7 +105,7 @@ NOTEBOOKS = {
         dir="lj1",
         build="_build_lj1.py",
         ipynb="lj1_pose_rebuilt_honestly.ipynb",
-        id=f"{USER}/lj1-pose-model-rebuilt-honestly",
+        id=f"{USER}/lj1-the-pose-model-rebuilt-honestly",   # must equal slugify(title)
         title="LJ1 — The Pose Model, Rebuilt Honestly",
         dataset_sources=[f"{USER}/cmu-mocap-views", f"{USER}/mvm-pose-landmarks", f"{USER}/mvm-animal-ood"],
     ),
@@ -148,7 +148,7 @@ NB3b (GRIP) uses `landmarks.npz`; LJ0/LJ1 (MVM Lab Journal) use `landmarks_v2.np
     ),
     "mocap": dict(
         id=f"{USER}/cmu-mocap-views",
-        title="CMU Mocap Views — 13-joint 3D + virtual-camera poses",
+        title="CMU Mocap Views (13-joint 3D + virtual camera)",
         files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "mocap_views.npz")],
         licenses=[{"name": "CC-BY-4.0"}],
         card="""# CMU Mocap Views
@@ -188,7 +188,7 @@ See the MVM "Lab Journal" series (LJ0 — Building the lab).
     ),
     "animal": dict(
         id=f"{USER}/mvm-animal-ood",
-        title="MVM Animal OOD — false-positive pose detections",
+        title="MVM Animal OOD (false-positive pose detections)",
         files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "animal_ood_poses.npz")],
         licenses=[{"name": "CC-BY-4.0"}],
         card="""# MVM Animal OOD
