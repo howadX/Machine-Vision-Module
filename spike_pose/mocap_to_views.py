@@ -66,6 +66,8 @@ TRIALS = {
                   "111_06", "111_07", "111_08"],                    # get up from floor
     "fall":      ["85_15", "90_12", "90_13", "90_16", "90_18"],     # floor-contact falls
     "walk":      ["111_34", "113_25", "07_01", "35_01"],
+    "bend":      ["02_06", "26_09", "26_10", "26_11", "15_06",      # forward bends: standing + high flexion
+                  "15_07", "13_29", "14_20"],                       # (labeled standing by the pelvis-gated labeler)
 }
 
 
@@ -194,8 +196,8 @@ def label_pose(P3D, pelvis_ref=None):
                  + np.linalg.norm(P3D[8] - P3D[10]) + np.linalg.norm(P3D[10] - P3D[12]))
     ratio = (hip[1] - ank[1]) / (leg + 1e-9)       # hip height / leg length: scale-free
     knee = 0.5 * (_flex(P3D[7], P3D[9], P3D[11]) + _flex(P3D[8], P3D[10], P3D[12]))
-    if inc > 50:                                   # torso horizontal
-        return "lying"
+    if inc > 50 and ratio < 0.45:                  # torso horizontal AND body collapsed to ground -> lying
+        return "lying"                             # (a deep forward bend keeps hips high -> NOT lying)
     if ratio < 0.70 or knee < 120:                 # hips lowered / knees flexed
         return "sitting"
     return "standing"
