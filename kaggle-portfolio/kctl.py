@@ -109,6 +109,14 @@ NOTEBOOKS = {
         title="LJ1 — The Pose Model, Rebuilt Honestly",
         dataset_sources=[f"{USER}/cmu-mocap-views", f"{USER}/mvm-pose-landmarks", f"{USER}/mvm-animal-ood"],
     ),
+    "lj2": dict(
+        dir="lj2",
+        build="_build_lj2.py",
+        ipynb="lj2_physics_of_posture_transitions.ipynb",
+        id=f"{USER}/lj2-physics-of-posture-transitions",   # must equal slugify(title)
+        title="LJ2 — Physics of Posture Transitions",
+        dataset_sources=[f"{USER}/mvm-mocap-transitions", f"{USER}/mvm-pose-landmarks"],
+    ),
 }
 
 
@@ -208,6 +216,43 @@ CC BY 4.0; images CC BY 2.0, NOT redistributed here). Attribute OpenImages.
 
 ## Starter notebook
 See "LJ1 — The Pose Model, Rebuilt Honestly" (MVM Lab Journal).
+""",
+    ),
+    "mocap_transitions": dict(
+        id=f"{USER}/mvm-mocap-transitions",
+        title="MVM Mocap Transitions (posture, 60fps)",
+        files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "mocap_transitions.npz")],
+        licenses=[{"name": "CC-BY-4.0"}],
+        card="""# MVM Mocap Transitions
+
+Transition-focused CMU mocap: 35 trials (sit↔stand, lie-down/get-up, floor falls, stable
+standing) as 13-joint 3D + a virtual eye-level camera projection, at **60 fps** so the pelvis
+velocity of a fall is resolved. **Derived** from the CMU Graphics Lab Motion Capture Database
+(via Bruce Hahne's cgspeed BVH conversion). Built for phase-15.2 (LJ2): posture-transition
+kinematics, the stabiliser flip-rate↔latency benchmark, and the fall-vs-lie-down velocity threshold.
+
+**Derived keypoints only — no BVH files or motion data are redistributed.**
+
+## Contents (`mocap_transitions.npz`)
+- `X`: float32 (N, 33, 4) — 13 joints projected MediaPipe-style at azimuth 0 (GRIP slots filled).
+- `P3D`: float32 (N, 13, 3) — TRUE metric 3D, subject-centered, Y-up, feet ~ y=0.
+- `y`: str — per-frame posture {standing, sitting, lying}, labelled kinematically (NOT the features).
+- `t`: float — time (s) within the trial (60 fps);  `pelvis`: float — pelvis height (m).
+- `scenario`: str — per-trial mechanism {sit_stand, lie_down, controlled_desc, fall, standing}.
+- `subj`, `trial`: str — CMU subject / trial ids (grouping keys; never split a trial across folds).
+
+## How it was built
+CMU BVH -> forward kinematics -> 13 joints -> metric leg-length scale -> subject-centered 3D
+(robust floor from a low percentile of the per-frame lowest joint, ignoring BVH settling frames)
+-> pinhole camera at 1.75 m, horizontal, 60 fps. Pipeline: `spike_pose/lj2_transitions.py`.
+
+## License & attribution
+CC BY 4.0 on these derived features. Source: **CMU Graphics Lab Motion Capture Database**
+(http://mocap.cs.cmu.edu — free for research and product use with attribution; resale prohibited)
+and **Bruce Hahne's cgspeed BVH conversion**. Attribute both.
+
+## Starter notebook
+See "LJ2 — Physics of Posture Transitions" (MVM Lab Journal).
 """,
     ),
 }
