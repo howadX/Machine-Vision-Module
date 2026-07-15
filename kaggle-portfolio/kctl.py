@@ -91,6 +91,16 @@ NOTEBOOKS = {
         id=f"{USER}/identity-embeddings-are-wrong-for-emotion",
         title="Identity Embeddings Are Wrong for Emotion",
     ),
+    # Phase-15 Lab Journal series (LJ0-LJ6). Each gates one refactor stage; needs the derived
+    # datasets mounted (cmu-mocap-views + the pose-landmarks set) for Run-All on Kaggle.
+    "lj0": dict(
+        dir="lj0",
+        build="_build_lj0.py",
+        ipynb="lj0_building_the_lab.ipynb",
+        id=f"{USER}/lj0-building-the-lab",
+        title="LJ0 — Building the Lab",
+        dataset_sources=[f"{USER}/cmu-mocap-views", f"{USER}/mvm-pose-landmarks"],
+    ),
 }
 
 
@@ -125,6 +135,46 @@ Zenodo MultiPosture dataset. Attribute both original sources.
 
 ## Starter notebook
 See "GRIP: Gravity-Referenced Invariant Pose Features" (NB3b of the MVM ML-journey collection).
+""",
+    ),
+    "mocap": dict(
+        id=f"{USER}/cmu-mocap-views",
+        title="CMU Mocap Views — 13-joint 3D + virtual-camera poses",
+        files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "mocap_views.npz")],
+        licenses=[{"name": "CC-BY-4.0"}],
+        card="""# CMU Mocap Views
+
+13-joint 3D skeletons + a virtual eye-level camera projection, **derived** from the CMU
+Graphics Lab Motion Capture Database (via Bruce Hahne's cgspeed BVH conversion). Built for
+an **honest camera-azimuth benchmark**: because mocap is true 3D, rotating the camera is a
+REAL viewpoint change, not the circular y-rotation of a monocular pose estimator's noisy z.
+
+**Derived keypoints only — no BVH files or motion data are redistributed.**
+
+## Contents (`mocap_views.npz`)
+- `P3D`: float32 (N, 13, 3) — TRUE metric 3D, subject-centered, Y-up, feet ~ y=0.
+  Joint order: nose, L/R shoulder, elbow, wrist, hip, knee, ankle. Re-project at any azimuth.
+- `X`: float32 (N, 33, 4) — the 13 joints projected to MediaPipe-style (x/w, y/h, z, vis) at
+  azimuth 0 (GRIP indices filled, others 0), for drop-in geometric-feature code.
+- `y`: str — posture {standing, sitting, lying}, labelled kinematically (pelvis height / leg
+  ratio / torso inclination / knee flexion), NOT from the pose feature vector.
+- `azimuth`: float — azimuth of `X` (0; `P3D` carries the truth for re-projection).
+- `t`: float — time (s) within the trial;  `pelvis`: float — pelvis height (m).
+- `subj`, `trial`: str — CMU subject / trial ids (grouping keys; never split a trial across folds).
+
+## How it was built
+CMU BVH -> forward kinematics -> 13 joints -> metric scale (leg length -> 0.90 m) ->
+subject-centered 3D -> pinhole camera at 1.75 m, horizontal. Subjects 111 & 113 perform every
+posture, so class is independent of subject (no class<->source confound). Full pipeline:
+`spike_pose/mocap_to_views.py` in the MVM repo.
+
+## License & attribution
+CC BY 4.0 on these derived features. Source: **CMU Graphics Lab Motion Capture Database**
+(http://mocap.cs.cmu.edu — free for research and product use with attribution; direct resale
+of the data prohibited) and **Bruce Hahne's cgspeed BVH conversion**. Attribute both.
+
+## Starter notebook
+See the MVM "Lab Journal" series (LJ0 — Building the lab).
 """,
     ),
 }
