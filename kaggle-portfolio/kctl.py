@@ -117,6 +117,14 @@ NOTEBOOKS = {
         title="LJ2 — Physics of Posture Transitions",
         dataset_sources=[f"{USER}/mvm-mocap-transitions", f"{USER}/mvm-pose-landmarks"],
     ),
+    "lj3": dict(
+        dir="lj3",
+        build="_build_lj3.py",
+        ipynb="lj3_why_walking_people_multiply.ipynb",
+        id=f"{USER}/lj3-why-walking-people-multiply",      # must equal slugify(title), <=50 chars
+        title="LJ3 — Why Walking People Multiply",
+        dataset_sources=[f"{USER}/mvm-mocap-tracks"],
+    ),
 }
 
 
@@ -253,6 +261,47 @@ and **Bruce Hahne's cgspeed BVH conversion**. Attribute both.
 
 ## Starter notebook
 See "LJ2 — Physics of Posture Transitions" (MVM Lab Journal).
+""",
+    ),
+    "mocap_tracks": dict(
+        id=f"{USER}/mvm-mocap-tracks",
+        title="MVM Mocap Tracks (walking bbox trajectories)",
+        files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "mocap_tracks.npz")],
+        licenses=[{"name": "CC-BY-4.0"}],
+        card="""# MVM Mocap Tracks
+
+CMU walking mocap projected to **bounding-box trajectories with ground-truth identity**, for the
+phase-15.3 tracker benchmark (LJ3): reproduce the live "walking fragmentation" bug (one walker
+splits into multiple phantom track ids) on repeatable data. 24 walk trials + 2 standing-still
+(idle regression) + 2 head-on crossings (id-swap regression). **Derived** from the CMU Graphics
+Lab Motion Capture Database (via Bruce Hahne's cgspeed BVH conversion).
+
+Unlike the per-frame-centered pose sets, this one **preserves world translation** (a single global
+offset, not per-frame hip centering) so the person actually moves across the frame — that motion is
+what fragments the tracker.
+
+**Derived boxes + identity only — no BVH files or motion data are redistributed.**
+
+## Contents (`mocap_tracks.npz`, flat, grouped by `seq`)
+- `seq`: str — sequence id ("07_01" | "idle_111_28" | "cross_07_01__08_02");  `kind`: {walk, idle, cross}.
+- `frame`: int32 — frame index within the sequence (15 fps, the production human-chain cadence).
+- `person`: int8 — TRUE identity within the sequence (0 or 1) — the tracking ground truth.
+- `bbox`: float32 (M, 4) — image-normalized [x1,y1,x2,y2] (tall-narrow, YOLO-like; may exceed [0,1] at frame edges).
+- `vis`: bool — bbox center within frame (a detector could plausibly see it).
+- `t`: float — time (s) within the sequence;  `pelvis3d`: float32 (M, 3) — world metric pelvis (m).
+
+## How it was built
+CMU BVH -> forward kinematics -> 13 joints -> metric leg-length scale -> global offset (translation
+PRESERVED) -> walk oriented laterally (worst case for the IoU gate) -> pinhole camera at 1.75 m
+-> tall-narrow person bbox from the body core. Pipeline: `spike_pose/lj3_trajectories.py`.
+
+## License & attribution
+CC BY 4.0 on these derived features. Source: **CMU Graphics Lab Motion Capture Database**
+(http://mocap.cs.cmu.edu — free for research and product use with attribution; resale prohibited)
+and **Bruce Hahne's cgspeed BVH conversion**. Attribute both.
+
+## Starter notebook
+See "LJ3 — Why Walking People Multiply" (MVM Lab Journal).
 """,
     ),
 }

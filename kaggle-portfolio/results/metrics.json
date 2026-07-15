@@ -245,31 +245,159 @@
     "artifact": "mocap_transitions.npz (35 CMU trials, 60fps, true time)",
     "transition_matrix_15fps": {
       "note": "P(pose_t | pose_t-1); standing<->lying ~forbidden",
-      "standing": [0.9721, 0.0266, 0.0013],
-      "sitting": [0.0211, 0.9724, 0.0066],
-      "lying": [0.0000, 0.0267, 0.9733],
-      "direct_standing_lying": [4, 7670]
+      "standing": [
+        0.9721,
+        0.0266,
+        0.0013
+      ],
+      "sitting": [
+        0.0211,
+        0.9724,
+        0.0066
+      ],
+      "lying": [
+        0.0,
+        0.0267,
+        0.9733
+      ],
+      "direct_standing_lying": [
+        4,
+        7670
+      ]
     },
     "e1_stabilizer": {
       "verdict": "H-prior NOT established (aggregate wash); ships as hybrid dwell+SL-veto",
       "emitter": "2D-GRIP forest on lab+gold only (zero CMU leakage)",
-      "floor_hybrid": {"flip_per_min": 6.31, "sl_flip_per_min": 0.23, "latency_ms": 591,
-                       "delta_sl_vs_dwell3": -0.47, "delta_sl_ci": [-1.20, 0.12], "established": false},
-      "stress_hybrid": {"flip_per_min": 4.44, "sl_flip_per_min": 0.00, "latency_ms": 901,
-                        "delta_sl_vs_dwell3": -1.77, "delta_sl_ci": [-3.62, -0.43], "established": true},
+      "floor_hybrid": {
+        "flip_per_min": 6.31,
+        "sl_flip_per_min": 0.23,
+        "latency_ms": 591,
+        "delta_sl_vs_dwell3": -0.47,
+        "delta_sl_ci": [
+          -1.2,
+          0.12
+        ],
+        "established": false
+      },
+      "stress_hybrid": {
+        "flip_per_min": 4.44,
+        "sl_flip_per_min": 0.0,
+        "latency_ms": 901,
+        "delta_sl_vs_dwell3": -1.77,
+        "delta_sl_ci": [
+          -3.62,
+          -0.43
+        ],
+        "established": true
+      },
       "ship": "PostureStabilizer = dwell + sl_dwell=12 veto on standing<->lying edge (+0 deps, port in 15.6)"
     },
     "e2_fall_threshold": {
       "verdict": "CONFIRMED with ceiling; ships to anomaly",
       "rule": "reached floor (min pelvis <=0.35m) AND peak downward pelvis velocity >= ~1.13 m/s",
       "auroc_velocity_framingA": 0.994,
-      "auroc_endpoint_framingA": 0.960,
-      "auroc_velocity_framingB": 1.000,
-      "framingB_n": {"fall": 6, "controlled": 8},
+      "auroc_endpoint_framingA": 0.96,
+      "auroc_velocity_framingB": 1.0,
+      "framingB_n": {
+        "fall": 6,
+        "controlled": 8
+      },
       "threshold_ms": 1.13,
-      "fall_peak_down_range": [1.13, 3.74],
-      "controlled_peak_down_range": [0.01, 0.99],
+      "fall_peak_down_range": [
+        1.13,
+        3.74
+      ],
+      "controlled_peak_down_range": [
+        0.01,
+        0.99
+      ],
       "caveat": "CMU falls stunt-only -> threshold bounds clinical from above; controlled class thin"
     }
+  },
+  "lj3": {
+    "kernel": "howadx/lj3-why-walking-people-multiply",
+    "run_all": "COMPLETE (Kaggle Run-All; numbers identical to local, data sha matches)",
+    "passport": {
+      "code_commit": "(kaggle run \u2014 no git)",
+      "data_sha256": {
+        "mocap_tracks.npz": "987e628a333473f1"
+      }
+    },
+    "artifact": "mocap_tracks.npz \u2014 24 walk + 2 idle + 2 cross seqs, world-translation-preserving bbox, 15fps",
+    "metric": "excess tracks / min walk (distinct committed ids per true person - 1)",
+    "T1a_reproduce_fix": {
+      "FLOOR": 0.0,
+      "mild": {
+        "base": 0.78,
+        "base_ci": [
+          0.0,
+          2.56
+        ],
+        "fix": 0.0,
+        "delta": -0.76,
+        "delta_ci": [
+          -2.56,
+          0.0
+        ],
+        "established": false
+      },
+      "med": {
+        "base": 5.43,
+        "base_ci": [
+          1.56,
+          9.92
+        ],
+        "fix": 0.78,
+        "delta": -4.7,
+        "delta_ci": [
+          -8.78,
+          -0.82
+        ],
+        "established": true
+      },
+      "heavy": {
+        "base": 13.95,
+        "base_ci": [
+          8.33,
+          18.88
+        ],
+        "fix": 5.43,
+        "delta": -8.25,
+        "delta_ci": [
+          -12.79,
+          -3.5
+        ],
+        "established": true
+      }
+    },
+    "T1b_deadzone_attribution": {
+      "base_face": 5.43,
+      "base_noface": 2.33,
+      "fix": 0.78,
+      "deadzone_share": 0.57
+    },
+    "T1c_honest_negatives": {
+      "real_accel_var": 0.0002,
+      "prod_Q_VEL": 0.01,
+      "calibratedQ": 7.75,
+      "gate_0.1": 2.33,
+      "verdict": "Kalman-Q calibration refuted (worse); gate/center-dist marginal; dead-zone is the cause"
+    },
+    "T2_regression": {
+      "idle_base": 0.0,
+      "idle_fix": 0.0,
+      "crossings": {
+        "cross_07_01__08_02": {
+          "base": 2,
+          "fix": 2
+        },
+        "cross_35_02__16_15": {
+          "base": 0,
+          "fix": 0
+        }
+      },
+      "verdict": "idle 0/0; no crossing-swap increase"
+    },
+    "prod_decision_15_6": "center re-link may recover an identified track through a stale identity unless that name is claimed by a confident detection this frame (+0 deps, one branch); Kalman/gate constants unchanged"
   }
 }
