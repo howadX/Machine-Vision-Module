@@ -22,8 +22,8 @@ torso-flexion channel (OWAS/REBA precedent), base 3-class + flexion_deg output; 
 on 14 features is the candidate** to replace the 195KB VAE (Denouden 2018: recon-error blind spot).
 Scripts: `spike_pose/azimuth_2dgrip_test.py`, `azimuth_aug_test.py`.
 
-Previous active track: **Data Expansion (Track A)** — see [DATA-EXPANSION-DESIGN.md](./DATA-EXPANSION-DESIGN.md)
-and [NARRATIVE-STRUCTURE.md](./NARRATIVE-STRUCTURE.md).
+Previous active track: **Data Expansion (Track A)** — see [DATA-EXPANSION-DESIGN.md](./research/DATA-EXPANSION-DESIGN.md)
+and [NARRATIVE-STRUCTURE.md](./research/NARRATIVE-STRUCTURE.md).
 
 ## Where we are
 
@@ -97,13 +97,12 @@ the right partner for MVM-as-data-factory**, not just another training set:
 - **2D-GRIP → production:** `mvm-posture` uses z; the z-ablation says a z-free variant generalizes better.
 - **`grp` by source-video** (not just image_id/split) for fully-clean gold grouped-CV.
 - **Cherry-pick `a1433c5a` (GRIP rename) into `master`**; reconcile `mvm/CLAUDE.md` "0.959"; fix "12 КБ" →
-  ~270/873 KB in `ARTIFACT-MAP.md`, `METHODOLOGY-AUDIT.md`, skeleton docs.
-- Nothing from the data-expansion work is git-committed yet (extract/train scripts, `landmarks_v2.npz`,
-  `pose_rf_2dgrip.bin`, this checkpoint, design docs) — commit on request.
+  ~270/873 KB in `research/ARTIFACT-MAP.md`, `research/METHODOLOGY-AUDIT.md`, skeleton docs.
+- Data-expansion scripts + design docs committed `ed2007d1`; `data_probe/*.npz` stay gitignored (regenerable).
 
 ## Key files
 - `spike_pose/extract_images.py` — MPPose runner (folder + coco + no-crop modes). `r3_confound_test.py`,
   `gold6_zablation.py`, `assemble_and_train.py`, `train_baseline_2dgrip.py` — the experiment scripts.
 - `spike_pose/data_probe/landmarks_v2.npz` — assembled 8309-pose set. `pose_rf_2dgrip.bin` — baseline model.
-- `DATA-EXPANSION-DESIGN.md` — the plan (R3+R1 framing, source inventory §11). `kctl.py` — Kaggle driver.
+- `research/DATA-EXPANSION-DESIGN.md` — the plan (R3+R1 framing, source inventory §11). `kctl.py` — Kaggle driver.
 - Gold raw images: `/home/dawoh/goldwork/{lyingv2,sitstand}/` (outside repo).

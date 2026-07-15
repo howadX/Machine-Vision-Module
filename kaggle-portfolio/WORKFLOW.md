@@ -1,10 +1,22 @@
 # Kaggle workflow — how this portfolio is maintained
 
-The portfolio is **generated, not hand-edited**. Each notebook has a deterministic
-build script (`_build_nbX.py` → `nbX_*.ipynb`); a single driver, `kctl.py`, builds
-them and syncs them to Kaggle. Kernel identity, titles, and dataset links live in
-one manifest inside `kctl.py`, so a push *updates* the existing kernel instead of
-forking a duplicate.
+The portfolio is **generated, not hand-edited**. Each notebook lives in its own
+folder `notebooks/<nb>/` holding a deterministic build script (`_build_nbX.py` →
+`nbX_*.ipynb`) and its design skeleton (`nbX-*-skeleton.md`). A single driver,
+`kctl.py`, builds them and syncs them to Kaggle. Kernel identity, titles, folders,
+and dataset links live in one manifest inside `kctl.py`, so a push *updates* the
+existing kernel instead of forking a duplicate.
+
+## Layout
+
+```
+kaggle-portfolio/
+├── kctl.py                # the driver (build/push/pull/status) + manifest
+├── README.md WORKFLOW.md CHECKPOINT.md
+├── notebooks/<nb>/        # one folder per notebook: build script + .ipynb + skeleton
+├── research/              # ML-development research & design notes (not notebooks)
+└── results/metrics.json   # real numbers fetched from Kaggle runs
+```
 
 ## One-time setup
 
@@ -16,8 +28,8 @@ python3 -m venv .venv
 ./.venv/bin/kaggle kernels list --user howadx    # read-only smoke test
 ```
 
-`.venv/`, `.stage/`, `pulled/` are git-ignored — only source (build scripts,
-`.ipynb`, docs, `kctl.py`) is committed.
+`.venv/`, `.stage/`, `pulled/` are git-ignored — only source (build scripts under
+`notebooks/<nb>/`, the `.ipynb`, docs, `kctl.py`) is committed.
 
 ## The loop
 
@@ -39,8 +51,8 @@ local notebook — **the local build is authoritative**. Kaggle allows one
 ### Typical iteration
 
 ```bash
-# edit _build_nb3b.py …
-$V kctl.py build nb3b          # regenerate .ipynb
+# edit notebooks/nb3b/_build_nb3b.py …
+$V kctl.py build nb3b          # regenerate notebooks/nb3b/nb3b_grip.ipynb
 # open nb3b_grip.ipynb on kaggle.com, Run All, read the printed metrics
 # paste real numbers into the [fill] placeholders in _build_nb3b.py, rebuild
 $V kctl.py push nb3b --yes     # publish the update

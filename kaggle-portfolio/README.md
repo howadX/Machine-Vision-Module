@@ -7,6 +7,16 @@
 **Автор:** Вадим Ховрин · ML / Computer Vision Engineer
 **Как это поддерживается:** [WORKFLOW.md](./WORKFLOW.md) — build → Kaggle push/pull через `kctl.py` (ноутбуки генерируются, не редактируются вручную)
 
+## Структура каталога
+
+```
+kctl.py                 — драйвер сборки/синка + манифест ноутбуков
+README · WORKFLOW · CHECKPOINT   — обзор, процесс, точка возобновления
+notebooks/<nb>/         — по папке на ноутбук: _build_nbX.py + .ipynb + skeleton.md
+research/               — исследования и заметки по ML-разработке (design docs, аудиты, планы)
+results/metrics.json    — реальные числа, стянутые с прогонов Kaggle
+```
+
 ---
 
 ## Временная шкала: от EmoZid к MVM

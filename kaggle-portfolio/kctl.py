@@ -6,9 +6,10 @@ then push/pull them as Kaggle kernels. All kernel identity lives in the
 NOTEBOOKS manifest below (single source of truth) so pushes *update* the
 existing kernels instead of creating duplicates.
 
-Kaggle wants exactly one ``kernel-metadata.json`` per folder, but our notebooks
-live flat (``nbX_*.ipynb``). So push/pull stage each notebook into a throwaway
-``.stage/<nb>/`` folder (git-ignored) with a freshly-written metadata file.
+Each notebook lives in its own folder ``notebooks/<nb>/`` (build script + built
+``.ipynb`` + design skeleton). Kaggle wants exactly one ``kernel-metadata.json``
+per folder with the code file beside it, so push/pull stage each notebook into a
+throwaway ``.stage/<nb>/`` folder (git-ignored) with a freshly-written metadata file.
 
 Run everything through the tool venv:
 
@@ -38,11 +39,14 @@ RESULTS = os.path.join(HERE, "results", "metrics.json")   # source of truth for 
 USER = "howadx"
 
 # --- Single source of truth ------------------------------------------------
-# key -> build script, built notebook, remote kernel id, human title.
-# ids for nb1/nb2/nb3 are the EXISTING slugs on Kaggle (do not rename, or a
-# push forks a new kernel). nb0/nb3b/nb4 slugs are chosen for first publish.
+# key -> folder, build script, built notebook, remote kernel id, human title.
+# Each notebook lives under notebooks/<dir>/; `build` and `ipynb` are basenames
+# inside that folder. ids for nb1/nb2/nb3 are the EXISTING slugs on Kaggle
+# (do not rename, or a push forks a new kernel); nb0/nb3b/nb4 slugs are for first publish.
+NB_ROOT = "notebooks"
 NOTEBOOKS = {
     "nb0": dict(
+        dir="nb0",
         build="_build_nb0.py",
         ipynb="nb0_emozid.ipynb",
         # NOTE: Kaggle derives the kernel slug from the TITLE; id must equal it.
@@ -50,24 +54,28 @@ NOTEBOOKS = {
         title="EmoZid: An SVM on Facial Geometry (2019)",
     ),
     "nb1": dict(
+        dir="nb1",
         build="_build_nb1.py",
         ipynb="nb1_distillation.ipynb",
         id=f"{USER}/distilling-a-cnn-into-a-geometric-mlp",
         title="Distilling a CNN into a Geometric MLP",
     ),
     "nb2": dict(
+        dir="nb2",
         build="_build_nb2.py",
         ipynb="nb2_posevae.ipynb",
         id=f"{USER}/a-pose-manifold-that-knows-when-it-s-surprised",
         title="A Pose Manifold That Knows When It's Surprised",
     ),
     "nb3": dict(
+        dir="nb3",
         build="_build_nb3.py",
         ipynb="nb3_weak_supervision.ipynb",
         id=f"{USER}/weak-supervision-at-scale",
         title="Weak Supervision at Scale",
     ),
     "nb3b": dict(
+        dir="nb3b",
         build="_build_nb3b.py",
         ipynb="nb3b_grip.ipynb",
         # Renamed from the "Method-C" spike label (an A/B/C enumeration artifact) to GRIP.
@@ -76,6 +84,7 @@ NOTEBOOKS = {
         dataset_sources=[f"{USER}/mvm-pose-landmarks"],
     ),
     "nb4": dict(
+        dir="nb4",
         build="_build_nb4.py",
         ipynb="nb4_pipeline_teardown.ipynb",
         # Kaggle caps kernel titles at 50 chars; the notebook's H1 keeps the full phrasing.
@@ -83,6 +92,11 @@ NOTEBOOKS = {
         title="Identity Embeddings Are Wrong for Emotion",
     ),
 }
+
+
+def nb_path(nb, key):
+    """Absolute path to a notebook's file (`build`/`ipynb` basename) in its folder."""
+    return os.path.join(HERE, NB_ROOT, nb["dir"], nb[key])
 
 # Derived datasets we publish (keypoints only, no images). Source file is read
 # from the main repo; staging copies it next to a generated dataset-metadata.json.
@@ -143,18 +157,18 @@ def resolve(keys):
 def build(keys):
     for k in resolve(keys):
         nb = NOTEBOOKS[k]
-        script = os.path.join(HERE, nb["build"])
+        script = nb_path(nb, "build")
         if not os.path.exists(script):
             print(f"  {k}: SKIP (no {nb['build']} yet)")
             continue
-        print(f"  {k}: {nb['build']} -> {nb['ipynb']}")
+        print(f"  {k}: {nb['dir']}/{nb['build']} -> {nb['ipynb']}")
         subprocess.run([sys.executable, script], cwd=HERE, check=True)
 
 
 def _stage(k):
     """Create .stage/<k>/ with the notebook + a fresh kernel-metadata.json."""
     nb = NOTEBOOKS[k]
-    src = os.path.join(HERE, nb["ipynb"])
+    src = nb_path(nb, "ipynb")
     if not os.path.exists(src):
         sys.exit(f"{k}: {nb['ipynb']} not built yet — run: kctl.py build {k}")
     if len(nb["title"]) > 50:
@@ -272,7 +286,7 @@ def status():
     print(f"{'nb':6} {'built':6} {'remote':7} id")
     print("-" * 70)
     for k, nb in NOTEBOOKS.items():
-        built = "yes" if os.path.exists(os.path.join(HERE, nb["ipynb"])) else "-"
+        built = "yes" if os.path.exists(nb_path(nb, "ipynb")) else "-"
         onremote = "live" if nb["id"] in remote else "-"
         print(f"{k:6} {built:6} {onremote:7} {nb['id']}")
 
