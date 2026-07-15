@@ -214,6 +214,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **12** | ✅ | LLM-render (+0 ONNX/+0 deps): pull-модель snapshot/recap/inspect, токен-диета, MCP stdio-сервер |
 | **13** | ✅ | Agent Tools/Skills Polishing: когерентное CLI-дерево + `--help`, `mvm/AGENT.md`, само-докум. MCP |
 | **14** | ✅ | Продукт: XDG/config, `setup`/`doctor`, watched-галерея, `serve --with-camera`, `mcp install`, `service`, дистрибуция v0.1.0 |
+| **15** | 🔨 | ML Refactor → v0.2.0 (ветка `kaggle`, lab-first): **15.0 ✅** лаборатория+бенч-протокол (LJ0), **15.1 ✅** поза (2D-GRIP z-free, mocap как train-актив, flexion, Mahalanobis↔VAE; footprint −79%, LJ1). Порт в этот крейт-workspace — **15.6**; прод пока v0.1.0. План — `docs/phase-15-plan.md` |
 
 ## Терминология
 
