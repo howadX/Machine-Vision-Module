@@ -1,16 +1,16 @@
-# Checkpoint — 2026-07-15
+# Checkpoint — 2026-07-16
 
 Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.0**
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 
-## ⭐ Where we are: 15.0 + 15.1 CLOSED and PUBLISHED; next = 15.2 (transition kinematics)
+## ⭐ Where we are: 15.0 + 15.1 + 15.2 CLOSED and PUBLISHED; next = 15.3 (tracker)
 
 | stage | status |
 |---|---|
 | 15.0 — lab foundation (CMU+OpenImages conveyors, frozen bench, LJ0) | ✅ closed |
 | 15.1 — pose (5 experiments + integration + LJ1) | ✅ closed |
-| 15.2 — transition kinematics (stabilizer) | ⬜ next |
-| 15.3 — tracker on true trajectories | ⬜ (parallel to 15.2) |
+| 15.2 — transition kinematics (stabilizer + fall threshold, LJ2) | ✅ closed |
+| 15.3 — tracker on true trajectories | ⬜ next |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly) | ⬜ |
 | 15.5 — expert passport + diet (weight/speed) | ⬜ |
 | 15.6 — Rust port + release v0.2.0 | ⬜ |
@@ -21,9 +21,10 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
 ## Published on Kaggle (private, account `howadx`)
 
 - Notebooks (Run-All **COMPLETE**, numbers verified on Kaggle):
-  `lj0-building-the-lab`, `lj1-the-pose-model-rebuilt-honestly`.
+  `lj0-building-the-lab`, `lj1-the-pose-model-rebuilt-honestly`,
+  `lj2-physics-of-posture-transitions`.
 - Datasets (derived keypoints only, no images/BVH): `cmu-mocap-views`,
-  `mvm-pose-landmarks` (+`landmarks_v2.npz`), `mvm-animal-ood`.
+  `mvm-pose-landmarks` (+`landmarks_v2.npz`), `mvm-animal-ood`, `mvm-mocap-transitions`.
 - Gotchas hit + baked in: dataset title ≤50 chars; kernel `id` must equal `slugify(title)`;
   Kaggle auto-runs on push so datasets must finish processing first; `_find` does a recursive
   `/kaggle/input` search (robust to dataset nesting).
@@ -56,16 +57,28 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
 - **Honest limits carried forward:** lying recall ~0.78 (scarce class); 2D-GRIP ties raw (not beats)
   cross-domain — GRIP's value is invariance + interpretability + $0-Rust.
 
-## Next actions — 15.2 (transition kinematics) → journal LJ2
+## 15.2 done (LJ2) — decisions to port in 15.6
 
-- From CMU (`mocap_views.npz` has `pelvis`+`t`): pose transition matrix, sit↔stand durations,
-  and the **fall-vs-lie-down vertical pelvis-velocity threshold** (measured, not hardcoded).
-- Turn PostureStabilizer dwell/conf constants into a calibrated transition-prior (HMM-like, pure
-  arithmetic, +0 deps); physically-impossible instant transitions suppressed by the prior.
-- Gate: prior lowers per-frame flip-rate without raising reaction latency beyond target;
-  fall/lie-down separated on CMU falls. Then write **LJ2**.
-- 15.3 (tracker) can run in parallel: CMU bbox trajectories with true identity → reproduce
-  walking fragmentation as a regression test; Kalman noise from real speed distributions.
+- **E1 stabilizer:** forward-filter prior ties hand-tuned dwell on aggregate flip-rate (H-prior
+  NOT established — honest negative). Ships as a **hybrid**: dwell + one per-edge veto
+  (`sl_dwell=12` on the `standing↔lying` edge, licensed by measured `A[standing,lying]≈0`) →
+  drives the false standing↔lying flip to **0** under occlusion stress (Δ CI [−3.62,−0.43],
+  established), no aggregate regression. That edge = the fall-relevant one.
+- **E2 anomaly fall rule:** *reached floor (min pelvis ≤0.35 m)* AND *peak downward pelvis
+  velocity ≳1.13 m/s* (AUROC 1.000, 6 falls vs 8 controlled; velocity alone insufficient).
+  Caveat: CMU falls stunt-only → threshold bounds clinical from above.
+- Tools: `spike_pose/lj2_{transitions,fall_velocity,transition_matrix,stabilizer}.py`; artifact
+  `mocap_transitions.npz` (35 trials @60fps); design `research/LJ2-DESIGN.md`. Numbers in
+  `results/metrics.json["lj2"]`, passport commit `e0514bed`.
+
+## Next actions — 15.3 (tracker on true trajectories) → journal LJ3
+
+- Offline bench from CMU projections: bbox trajectories with true identity → **reproduce walking
+  fragmentation** (the live pain: up to 7 phantom tracks) as a regression test.
+- Kalman process-noise from real human speed/accel distributions; re-link + Hungarian on paired
+  sequences (crossings, occlusions). Gate: fragmentation ≤ agreed threshold; zero idle regressions.
+- 15.2's `mocap_transitions.npz` already has walk trials (111_34/113_25/07_01/35_01 via
+  `mocap_to_views`); may need a walk-focused pull + bbox synthesis from projected landmarks.
 
 ## Open debts (non-blocking)
 

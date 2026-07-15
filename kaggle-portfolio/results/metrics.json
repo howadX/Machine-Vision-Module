@@ -233,5 +233,43 @@
     },
     "forest_kb": 271.5,
     "forest_trees": 120
+  },
+  "lj2": {
+    "kernel": "howadx/lj2-physics-of-posture-transitions",
+    "run_all": "COMPLETE (private, verified on Kaggle)",
+    "passport": {
+      "code_commit": "e0514bed",
+      "mocap_transitions_sha16": "b993e910b96fa9a1",
+      "core_sha16": "aecb97c2db5f4e0b"
+    },
+    "artifact": "mocap_transitions.npz (35 CMU trials, 60fps, true time)",
+    "transition_matrix_15fps": {
+      "note": "P(pose_t | pose_t-1); standing<->lying ~forbidden",
+      "standing": [0.9721, 0.0266, 0.0013],
+      "sitting": [0.0211, 0.9724, 0.0066],
+      "lying": [0.0000, 0.0267, 0.9733],
+      "direct_standing_lying": [4, 7670]
+    },
+    "e1_stabilizer": {
+      "verdict": "H-prior NOT established (aggregate wash); ships as hybrid dwell+SL-veto",
+      "emitter": "2D-GRIP forest on lab+gold only (zero CMU leakage)",
+      "floor_hybrid": {"flip_per_min": 6.31, "sl_flip_per_min": 0.23, "latency_ms": 591,
+                       "delta_sl_vs_dwell3": -0.47, "delta_sl_ci": [-1.20, 0.12], "established": false},
+      "stress_hybrid": {"flip_per_min": 4.44, "sl_flip_per_min": 0.00, "latency_ms": 901,
+                        "delta_sl_vs_dwell3": -1.77, "delta_sl_ci": [-3.62, -0.43], "established": true},
+      "ship": "PostureStabilizer = dwell + sl_dwell=12 veto on standing<->lying edge (+0 deps, port in 15.6)"
+    },
+    "e2_fall_threshold": {
+      "verdict": "CONFIRMED with ceiling; ships to anomaly",
+      "rule": "reached floor (min pelvis <=0.35m) AND peak downward pelvis velocity >= ~1.13 m/s",
+      "auroc_velocity_framingA": 0.994,
+      "auroc_endpoint_framingA": 0.960,
+      "auroc_velocity_framingB": 1.000,
+      "framingB_n": {"fall": 6, "controlled": 8},
+      "threshold_ms": 1.13,
+      "fall_peak_down_range": [1.13, 3.74],
+      "controlled_peak_down_range": [0.01, 0.99],
+      "caveat": "CMU falls stunt-only -> threshold bounds clinical from above; controlled class thin"
+    }
   }
 }
