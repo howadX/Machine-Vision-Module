@@ -113,6 +113,7 @@ import os, numpy as np, collections
 np.random.seed(0)
 
 def _find(*names):
+    import glob
     roots = ["/kaggle/input/cmu-mocap-views", "/kaggle/input/mvm-pose-landmarks-v2",
              "/kaggle/input/mvm-pose-landmarks",
              os.path.join("..", "..", "..", "spike_pose", "data_probe"),   # local dev
@@ -122,7 +123,12 @@ def _find(*names):
             p = os.path.join(r, n)
             if os.path.exists(p):
                 return p
-    raise FileNotFoundError(names)
+    for n in names:                                   # robust: any nesting under /kaggle/input
+        hits = glob.glob(f"/kaggle/input/**/{n}", recursive=True)
+        if hits:
+            return hits[0]
+    have = os.listdir("/kaggle/input") if os.path.isdir("/kaggle/input") else "no /kaggle/input"
+    raise FileNotFoundError((names, "mounted:", have))
 
 MOCAP = np.load(_find("mocap_views.npz"), allow_pickle=True)
 CORE  = np.load(_find("landmarks_v2.npz", "landmarks.npz"), allow_pickle=True)

@@ -56,6 +56,7 @@ from sklearn.metrics import roc_auc_score
 np.random.seed(0); SEED = 0; CLASSES = ["standing", "sitting", "lying"]
 
 def _find(*names):
+    import glob
     roots = ["/kaggle/input/cmu-mocap-views", "/kaggle/input/mvm-pose-landmarks-v2",
              "/kaggle/input/mvm-pose-landmarks", "/kaggle/input/mvm-animal-ood",
              os.path.join("..","..","..","spike_pose","data_probe"),
@@ -63,7 +64,11 @@ def _find(*names):
     for r in roots:
         for n in names:
             if os.path.exists(os.path.join(r, n)): return os.path.join(r, n)
-    raise FileNotFoundError(names)
+    for n in names:                                   # robust: any nesting under /kaggle/input
+        hits = glob.glob(f"/kaggle/input/**/{n}", recursive=True)
+        if hits: return hits[0]
+    have = os.listdir("/kaggle/input") if os.path.isdir("/kaggle/input") else "no /kaggle/input"
+    raise FileNotFoundError((names, "mounted:", have))
 
 CORE = np.load(_find("landmarks_v2.npz","landmarks.npz"), allow_pickle=True)
 MOC  = np.load(_find("mocap_views.npz"), allow_pickle=True)
