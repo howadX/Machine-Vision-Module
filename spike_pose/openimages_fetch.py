@@ -33,25 +33,25 @@ def cached(path):
     return dst
 
 
-def select(split, max_n, min_h, min_area):
-    """Return image ids with exactly one prominent standalone Person box."""
+def select(split, max_n, min_h, min_area, mid=PERSON, exclude=None):
+    """Image ids with a prominent standalone `mid` box (and, if exclude set, none of `exclude`).
+    Default = one full-body Person. For OOD (animals) pass mid=animal, exclude=Person."""
     csv_path = cached(BBOX[split])
-    per_img = collections.defaultdict(list)   # image -> list of person boxes (as dicts)
+    per_img = collections.defaultdict(list); has_excl = set()
     with open(csv_path, newline="") as fh:
-        r = csv.DictReader(fh)
-        for row in r:
-            if row["LabelName"] != PERSON:
-                continue
-            if row["IsGroupOf"] == "1" or row["IsDepiction"] == "1":
+        for row in csv.DictReader(fh):
+            if exclude and row["LabelName"] == exclude:
+                has_excl.add(row["ImageID"])
+            if row["LabelName"] != mid or row["IsGroupOf"] == "1" or row["IsDepiction"] == "1":
                 continue
             w = float(row["XMax"]) - float(row["XMin"]); h = float(row["YMax"]) - float(row["YMin"])
             per_img[row["ImageID"]].append((w, h, w * h))
     picked = []
     for img, boxes in per_img.items():
-        if len(boxes) != 1:                    # exactly one person -> unambiguous best-person
+        if exclude and img in has_excl:        # keep images with NO person (clean OOD source)
             continue
-        w, h, area = boxes[0]
-        if h >= min_h and area >= min_area:    # tall + large -> roughly full-body
+        w, h, area = max(boxes, key=lambda b: b[2])
+        if h >= min_h and area >= min_area:
             picked.append(img)
         if len(picked) >= max_n:
             break
@@ -84,12 +84,14 @@ def main():
     ap.add_argument("--max", type=int, default=300)
     ap.add_argument("--min-h", type=float, default=0.5)      # box height >= 50% of image
     ap.add_argument("--min-area", type=float, default=0.12)  # box area >= 12% of image
+    ap.add_argument("--mid", default=PERSON, help="target label MID (default Person)")
+    ap.add_argument("--exclude", default=None, help="drop images containing this MID (e.g. Person for OOD)")
+    ap.add_argument("--subdir", default=None, help="output subfolder name (default=split)")
     ap.add_argument("--dst", default=os.path.join(HERE, "oi_images"))
     a = ap.parse_args()
-    ids = select(a.split, a.max, a.min_h, a.min_area)
-    print(f"selected {len(ids)} clean single-person {a.split} images "
-          f"(min_h={a.min_h}, min_area={a.min_area})")
-    dst = os.path.join(a.dst, a.split)
+    ids = select(a.split, a.max, a.min_h, a.min_area, mid=a.mid, exclude=a.exclude)
+    print(f"selected {len(ids)} images (mid={a.mid}, exclude={a.exclude}, min_h={a.min_h}, min_area={a.min_area})")
+    dst = os.path.join(a.dst, a.subdir or a.split)
     ok = download(a.split, ids, dst)
     print(f"downloaded {ok}/{len(ids)} -> {dst}")
     print(f"next: extract_images.py --mode folder --root {dst} --src openimages "
