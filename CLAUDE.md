@@ -64,12 +64,15 @@ XDG-пути/`config.toml`, авто-детект камеры, `mvm setup` (fet
 **Фаза 15 — ML Refactor → v0.2.0 (В РАБОТЕ, ветка `kaggle`):** лабораторный пересмотр всей ML-логики
 на эталонной паре (CMU mocap + OpenImages), три оси — скорость/точность/вес. **15.0 ✅** (лаборатория +
 замороженный бенч-протокол), **15.1 ✅** (поза: 2D-GRIP z-free, mocap как тренировочный актив,
-flexion-канал, Mahalanobis вместо VAE; footprint позы −79%, gold R3 0.894) и **15.2 ✅** (переходы:
+flexion-канал, Mahalanobis вместо VAE; footprint позы −79%, gold R3 0.894), **15.2 ✅** (переходы:
 prior vs dwell — агрегатный wash не подтверждён, ships гибрид dwell+SL-вето → ложный fall-флип в 0
-под стрессом established; E2 fall-правило «пол + скорость таза ≳1.1 м/с», AUROC 1.000) закрыты и
-опубликованы как Kaggle-журналы LJ0/LJ1/LJ2 (Run-All COMPLETE). Каждый этап гейтится нарративным
+под стрессом established; E2 fall-правило «пол + скорость таза ≳1.1 м/с», AUROC 1.000) и **15.3 ✅**
+(трекер: walking-фрагментация воспроизведена на истинных CMU-траекториях, корень — структурная re-link
+dead-zone устаревшей identity = 57%; фикс `center-relink через stale identity` established
+med Δ−4.70/heavy Δ−8.25, idle 0/0; Kalman-Q-калибровка опровергнута → gate/Kalman без изменений)
+закрыты и опубликованы как Kaggle-журналы LJ0–LJ3 (Run-All COMPLETE). Каждый этап гейтится нарративным
 журналом (LJ0–LJ6). **Прод-Rust пока v0.1.0** — порт победивших решений будет в 15.6. Следующее —
-**15.3** (трекер). План — `mvm/docs/phase-15-plan.md`.
+**15.4** (симулятор golden-сценариев). План — `mvm/docs/phase-15-plan.md`.
 
 ## Для Agents
 

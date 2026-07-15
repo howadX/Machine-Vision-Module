@@ -3,15 +3,15 @@
 Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.0**
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 
-## ⭐ Where we are: 15.0 + 15.1 + 15.2 CLOSED and PUBLISHED; next = 15.3 (tracker)
+## ⭐ Where we are: 15.0–15.3 CLOSED and PUBLISHED; next = 15.4 (golden-scenario simulator)
 
 | stage | status |
 |---|---|
 | 15.0 — lab foundation (CMU+OpenImages conveyors, frozen bench, LJ0) | ✅ closed |
 | 15.1 — pose (5 experiments + integration + LJ1) | ✅ closed |
 | 15.2 — transition kinematics (stabilizer + fall threshold, LJ2) | ✅ closed |
-| 15.3 — tracker on true trajectories | ⬜ next |
-| 15.4 — golden-scenario simulator (fusion/FSM/anomaly) | ⬜ |
+| 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
+| 15.4 — golden-scenario simulator (fusion/FSM/anomaly) | ⬜ next |
 | 15.5 — expert passport + diet (weight/speed) | ⬜ |
 | 15.6 — Rust port + release v0.2.0 | ⬜ |
 
@@ -22,9 +22,10 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
 
 - Notebooks (Run-All **COMPLETE**, numbers verified on Kaggle):
   `lj0-building-the-lab`, `lj1-the-pose-model-rebuilt-honestly`,
-  `lj2-physics-of-posture-transitions`.
-- Datasets (derived keypoints only, no images/BVH): `cmu-mocap-views`,
-  `mvm-pose-landmarks` (+`landmarks_v2.npz`), `mvm-animal-ood`, `mvm-mocap-transitions`.
+  `lj2-physics-of-posture-transitions`, `lj3-why-walking-people-multiply`.
+- Datasets (derived keypoints/boxes only, no images/BVH): `cmu-mocap-views`,
+  `mvm-pose-landmarks` (+`landmarks_v2.npz`), `mvm-animal-ood`, `mvm-mocap-transitions`,
+  `mvm-mocap-tracks`.
 - Gotchas hit + baked in: dataset title ≤50 chars; kernel `id` must equal `slugify(title)`;
   Kaggle auto-runs on push so datasets must finish processing first; `_find` does a recursive
   `/kaggle/input` search (robust to dataset nesting).
@@ -71,14 +72,31 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
   `mocap_transitions.npz` (35 trials @60fps); design `research/LJ2-DESIGN.md`. Numbers in
   `results/metrics.json["lj2"]`, passport commit `e0514bed`.
 
-## Next actions — 15.3 (tracker on true trajectories) → journal LJ3
+## 15.3 done (LJ3) — decisions to port in 15.6
 
-- Offline bench from CMU projections: bbox trajectories with true identity → **reproduce walking
-  fragmentation** (the live pain: up to 7 phantom tracks) as a regression test.
-- Kalman process-noise from real human speed/accel distributions; re-link + Hungarian on paired
-  sequences (crossings, occlusions). Gate: fragmentation ≤ agreed threshold; zero idle regressions.
-- 15.2's `mocap_transitions.npz` already has walk trials (111_34/113_25/07_01/35_01 via
-  `mocap_to_views`); may need a walk-focused pull + bbox synthesis from projected landmarks.
+- ⚠️ Needed a **new extractor** `lj3_trajectories.py`: `mocap_to_views` re-centers the pelvis per
+  frame → kills walk translation. New one keeps world x,z (single global offset), tall-narrow
+  YOLO-like bbox. Artifact `mocap_tracks.npz` (24 walk + 2 idle + 2 cross @15fps).
+- Tracker ported to Python (`lj3_tracker.py`, byte-faithful to `tracker.rs`/`kalman.rs`), bench
+  `lj3_bench.py` (bursty-occlusion emitter, grouped bootstrap CI).
+- **Root cause = structural re-link DEAD-ZONE**, not the knobs: one early confident face sticks
+  `track.identity` on a body-primary walker → the anonymous center re-link is skipped forever
+  (`if t.identity is not None: continue`) → every IoU gap spawns a phantom (**57%** of frag).
+- **Fix (+0 deps, one branch):** center re-link may recover an identified track through a stale
+  identity unless that name is claimed by a confident detection this frame. Δ(fix−base): med
+  **−4.70 [−8.78,−0.82]**, heavy **−8.25 [−12.79,−3.50]** (established); below no-face baseline.
+- **Honest negatives:** Kalman-Q calibrated to real accel var (~2e-4 vs prod 0.01) is **worse**
+  (7.75 vs 5.43) → refuted; gate marginal → **Kalman/gate constants unchanged in 15.6**.
+- **T2:** idle 0/0; crossings no swap increase (2/2, 0/0). Numbers `results/metrics.json["lj3"]`.
+
+## Next actions — 15.4 (golden-scenario simulator) → journal LJ4
+
+- Inject synthetic landmarks+bbox AFTER the detectors → full tracker→Fusion(FSM/zones/anomaly)
+  →journal/recap run; check events vs a known scenario (enter→sit→work; got up→left; lay; fell;
+  two met). Honest boundary: the simulator does NOT test the pixel detectors, only everything above.
+- Audit FSM activities on OpenImages relations (which activities the data can actually supervise;
+  inventory already in `research/openimages-relations-inventory.md`).
+- Gate: golden scenarios in CI (`--stub`); anomaly silent on normal, fires on the fall.
 
 ## Open debts (non-blocking)
 
@@ -88,9 +106,9 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
 - Doc debt "0.959"/"12 КБ" fixed across skeletons + research maps (15.07).
 
 ## Key files
-- Tools/experiments: `spike_pose/{mocap_to_views,mocap_sanity_gate,bench,openimages_*,lj1_*}.py`
-  + `extract_images.py` (shared MPPose runner). `kctl.py` — Kaggle driver + DATASETS/NOTEBOOKS.
-- Docs: `research/{BENCH-PROTOCOL,openimages-relations-inventory,DATA-EXPANSION-DESIGN}.md`,
-  `mvm/docs/phase-15-plan.md`. Journals: `notebooks/{lj0,lj1}/`.
+- Tools/experiments: `spike_pose/{mocap_to_views,mocap_sanity_gate,bench,openimages_*,lj1_*,lj2_*,
+  lj3_*}.py` + `extract_images.py` (shared MPPose runner). `kctl.py` — Kaggle driver + DATASETS/NOTEBOOKS.
+- Docs: `research/{BENCH-PROTOCOL,openimages-relations-inventory,DATA-EXPANSION-DESIGN,LJ2-DESIGN,
+  LJ3-DESIGN}.md`, `mvm/docs/phase-15-plan.md`. Journals: `notebooks/{lj0,lj1,lj2,lj3}/`.
 - Data (gitignored, regenerable): `data_probe/*.npz`, `mocap_bvh/`, `oi_images/`, `oi_meta/`,
   `ship/`. Gold raw images: `/home/dawoh/goldwork/{lyingv2,sitstand}/`.
