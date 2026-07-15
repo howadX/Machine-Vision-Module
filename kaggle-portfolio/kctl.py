@@ -123,26 +123,27 @@ DATASETS = {
     "landmarks": dict(
         id=f"{USER}/mvm-pose-landmarks",
         title="MVM Pose Landmarks (URFD + MultiPosture)",
-        files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "landmarks.npz")],
+        files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "landmarks.npz"),
+               os.path.join(REPO_ROOT, "spike_pose", "data_probe", "landmarks_v2.npz")],
         licenses=[{"name": "CC-BY-4.0"}],
         card="""# MVM Pose Landmarks
 
 33x4 MediaPipe-style pose landmarks (x, y, z, visibility) for standing / sitting / lying,
-**derived** from the public URFD (fall detection) and Zenodo MultiPosture datasets.
-**Keypoints only — no images are redistributed.**
+**derived** from public datasets. **Keypoints only — no images are redistributed.**
 
-## Contents (`landmarks.npz`)
-- `X`: float32 (N, 33, 4) — landmarks
-- `y`: str — label {lying, sitting, standing}
-- `grp`: str — person/sequence group id (use for GroupKFold; frames of one group must not split)
-- `src`: str — origin {urfd, multiposture}
+## Contents
+- `landmarks.npz` — the original probe (URFD + Zenodo MultiPosture, 1035 poses). Used by NB3b.
+- `landmarks_v2.npz` — expanded set used by the Lab Journal series (LJ0/LJ1): `src ∈ {lab, gold5,
+  gold6}` where lab = URFD+MultiPosture and gold = human-labeled Roboflow pose datasets. Fields:
+  `X` (N,33,4), `y` {standing,sitting,lying}, `grp` (group id — never split across folds), `src`.
+  The clean core used in the journals is `src ∈ {lab, gold5}`.
 
 ## License & attribution
-CC BY 4.0. Derivative of URFD (http://fenix.ur.edu.pl/~mkepski/ds/uf.html) and the
-Zenodo MultiPosture dataset. Attribute both original sources.
+CC BY 4.0. Derivative of URFD (http://fenix.ur.edu.pl/~mkepski/ds/uf.html), the Zenodo
+MultiPosture dataset, and human-labeled Roboflow posture datasets (gold). Attribute originals.
 
-## Starter notebook
-See "GRIP: Gravity-Referenced Invariant Pose Features" (NB3b of the MVM ML-journey collection).
+## Starter notebooks
+NB3b (GRIP) uses `landmarks.npz`; LJ0/LJ1 (MVM Lab Journal) use `landmarks_v2.npz`.
 """,
     ),
     "mocap": dict(
@@ -183,6 +184,30 @@ of the data prohibited) and **Bruce Hahne's cgspeed BVH conversion**. Attribute 
 
 ## Starter notebook
 See the MVM "Lab Journal" series (LJ0 — Building the lab).
+""",
+    ),
+    "animal": dict(
+        id=f"{USER}/mvm-animal-ood",
+        title="MVM Animal OOD — false-positive pose detections",
+        files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "animal_ood_poses.npz")],
+        licenses=[{"name": "CC-BY-4.0"}],
+        card="""# MVM Animal OOD
+
+Out-of-distribution pose landmarks: an MPPose human-pose estimator **forced onto dog/cat images**
+(no person present) — real false-positive detections. Used in LJ1 to show that a class-conditional
+Mahalanobis OOD gate flags these near-manifold cases where reconstruction-error detectors (a VAE)
+do not (Denouden 2018). **Derived keypoints only — no images redistributed.**
+
+## Contents (`animal_ood_poses.npz`)
+- `X`: float32 (N, 33, 4) — MediaPipe-style landmarks (the garbage skeletons)
+- `y`: str — "ood";  `grp`, `src`, `conf`: provenance fields
+
+## License & attribution
+CC BY 4.0 on these derived features. Source images: OpenImages V6 Dog/Cat subset (annotations
+CC BY 4.0; images CC BY 2.0, NOT redistributed here). Attribute OpenImages.
+
+## Starter notebook
+See "LJ1 — The Pose Model, Rebuilt Honestly" (MVM Lab Journal).
 """,
     ),
 }
