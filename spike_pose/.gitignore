@@ -14,3 +14,7 @@ pose_vae_public.bin
 pose_p1_config.json
 pose_p1_golden.in
 golden_pose_p1.json
+
+# OpenImages pose pilot: image + CSV cache (regenerable via openimages_fetch.py / _relations.py).
+oi_images/
+oi_meta/
