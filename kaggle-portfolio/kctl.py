@@ -101,6 +101,14 @@ NOTEBOOKS = {
         title="LJ0 — Building the Lab",
         dataset_sources=[f"{USER}/cmu-mocap-views", f"{USER}/mvm-pose-landmarks"],
     ),
+    "lj1": dict(
+        dir="lj1",
+        build="_build_lj1.py",
+        ipynb="lj1_pose_rebuilt_honestly.ipynb",
+        id=f"{USER}/lj1-pose-model-rebuilt-honestly",
+        title="LJ1 — The Pose Model, Rebuilt Honestly",
+        dataset_sources=[f"{USER}/cmu-mocap-views", f"{USER}/mvm-pose-landmarks", f"{USER}/mvm-animal-ood"],
+    ),
 }
 
 
