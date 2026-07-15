@@ -15,7 +15,7 @@
 | Лендмарки | dlib 68 | **MediaPipe 468** (FaceLandmarker) | Точность: NME 5.3 → 2.1 |
 | Эмбеддинг | dlib ResNet 128d | **SFace** (128d, Apache 2.0) | EER: 2.5% → 0.4% |
 | Эмоции | SVM на 68 точках | **EmotiEffLib B0 ONNX** | Accuracy: 45% → 73% |
-| Поза | (отсутствовала) | **GRIP RF** (0.959) | Добавлен как независимый crate |
+| Поза | (отсутствовала) | **GRIP RF** (≈0.93) | Добавлен как независимый crate |
 
 **Связанные крейты:** `mvm-detect`, `mvm-identity`, `mvm-emotion`, `mvm-posture`
 

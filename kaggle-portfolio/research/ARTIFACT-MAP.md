@@ -195,7 +195,7 @@
 В ноутбуке: эвристика → анализ шума (вручную проверить K=100 примеров) → LightGBM + Optuna → 71.7%.
 Опубликовать derived-датасет на Kaggle (CC BY 4.0, атрибуция COCO).
 Важно: НЕ публиковать изображения — только keypoints + weak-метки + инженерные фичи.
-Связать с NB3b (GRIP): «эти данные + URFD + Zenodo → 0.959».
+Связать с NB3b (GRIP): «эти данные + URFD + Zenodo → ≈0.93».
 ```
 
 ---
@@ -223,7 +223,7 @@
 
 | Файл | Что внутри |
 |------|-----------|
-| `spike_pose/pose_rf_forest.bin` | **Production-модель.** RandomForest в бинарном формате (12 КБ) |
+| `spike_pose/pose_rf_forest.bin` | **Production-модель.** RandomForest в бинарном формате (~873 КБ prod; ~270 КБ на публичных данных) |
 | `spike_pose/pose_vae_public.bin` | VAE для OOD-gate (публичные веса) |
 | `spike_pose/pose_p1_config.json` | Конфиг: class_names, feature_names, n_trees |
 
@@ -239,9 +239,11 @@
 ```
 Работаем над NB3b (GRIP). Код: spike_pose/spike_feats.py (14 фич) + spike_pose/train_pose_p1.py (полный прогон).
 Данные: spike_pose/data_probe/landmarks.npz.
-В ноутбуке: 14 фич с объяснением → grouped 5-fold CV → 0.959 ± 0.01 → azimuth-тест (0.959→0.957 на 90°).
-Показать сравнение: сырые координаты (99d) → 0.83, VAE latent (32d) → 0.85, фичи (14d) → 0.959.
-Экспорт в бинарный формат для Rust (12 КБ).
+В ноутбуке: 14 фич с объяснением → grouped 5-fold CV → **≈0.93** [0.91,0.96] → azimuth-тест
+(честный на mocap-истинном-3D в LJ0/LJ1; старый y-rotation-тест был циркулярным).
+Показать сравнение честно (NB3b v5): сырые координаты (99d) **выигрывают на чистых данных** (~0.98),
+VAE latent → ~0.85, фичи (14d) → ≈0.93 — GRIP берёт не accuracy, а инвариантность+интерпретируемость.
+Экспорт в бинарный формат для Rust (~270 КБ на публичных данных; ~873 КБ prod).
 Бонус: occlusion-honesty (BodyCoverage — mvm-fusion).
 ```
 
