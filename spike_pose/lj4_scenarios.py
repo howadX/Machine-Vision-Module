@@ -201,6 +201,42 @@ def emit_person(P, person=0, t0=0.0, wrist_override=None):
     return rows
 
 
+CONTACT_MARGIN = 0.03   # fusion.rs:195 — the contact predicate the injection truth mirrors
+EXIT_BRIDGE = 5         # runs closer than the FSM exit dwell merge into one episode
+
+
+def contact_runs(rows, bb, min_frames=3):
+    """Expected activity episodes from the INJECTED wrists themselves: frames where any
+    wrist lies within bb+CONTACT_MARGIN, gaps <= EXIT_BRIDGE bridged (cooling), runs
+    shorter than min_frames dropped (ACTIVITY_ENTER_DWELL = 3 consecutive frames is
+    exactly what confirms an instance — a 3-frame wrist swing through the keyboard IS
+    an episode to the FSM, honestly). The lesson of the first
+    FLOOR run: truth must be derived from what the data contains, not from the phase the
+    author intended — a walking-in person's wrists hang at seated-keyboard height and 2D
+    contact (prod semantics, no depth) honestly starts before the sit."""
+    touch = []
+    for r in rows:
+        w = r["wrists"]
+        hit = any(bb[0] - CONTACT_MARGIN <= x <= bb[2] + CONTACT_MARGIN
+                  and bb[1] - CONTACT_MARGIN <= y <= bb[3] + CONTACT_MARGIN
+                  for x, y in w)
+        touch.append((r["frame"], hit))
+    touch.sort()
+    runs, cur = [], None
+    for f, hit in touch:
+        if hit:
+            if cur is None:
+                cur = [f, f]
+            elif f - cur[1] <= EXIT_BRIDGE:
+                cur[1] = f
+            else:
+                runs.append(cur)
+                cur = [f, f]
+    if cur is not None:
+        runs.append(cur)
+    return [(a / FPS, (b + 1) / FPS) for a, b in runs if b - a + 1 >= min_frames]
+
+
 def kb_from_pose(P_frame):
     """Synthetic keyboard bbox centred on the projected wrists of a (seated) pose,
     plus the two wrist contact points inside it."""
@@ -250,7 +286,9 @@ def build_g1(walk, sit):
                dict(oid=10002, cls="chair", bbox=chair_from_pose(seat_pose))]
     expected = [
         dict(kind="activity", label="typing", person=0, obj=10001,
-             t_start=type_a / FPS, t_end=len(P) / FPS, tol_start=1.0, tol_end=1.5),
+             t_start=a, t_end=b, tol_start=0.5, tol_end=1.0)
+        for a, b in contact_runs(rows, kb_bb)
+    ] + [
         dict(kind="anomaly_quiet", max=ANOMALY_GATE),
         dict(kind="tracks", person=0, n=1),
     ]
@@ -287,7 +325,9 @@ def build_g2(sit_stand, walk):
                dict(oid=10002, cls="chair", bbox=chair_from_pose(seat_pose))]
     expected = [
         dict(kind="activity", label="typing", person=0, obj=10001,
-             t_start=0.0, t_end=len(T) / FPS, tol_start=0.5, tol_end=1.5),
+             t_start=a, t_end=b, tol_start=0.5, tol_end=1.0)
+        for a, b in contact_runs(rows, kb_bb)
+    ] + [
         dict(kind="anomaly_quiet", max=ANOMALY_GATE),
         dict(kind="tracks", person=0, n=1),
         dict(kind="gone", person=0, t_by=(len(P)) / FPS + 1.0),

@@ -304,12 +304,17 @@ def _event_from(inst):
 
 
 class ActivityJournal:
-    """activity.rs:220 — temporal debounce + event journal, stitching opt-in."""
+    """activity.rs:220 — temporal debounce + event journal, stitching opt-in.
 
-    def __init__(self, stitch_churn=False):
+    The exit-dwell knobs are exposed for the LJ4 sweep (lab pattern, like
+    lj3_tracker's gates); the defaults ARE the production constants."""
+
+    def __init__(self, stitch_churn=False, exit_dwell=ACTIVITY_EXIT_DWELL,
+                 exit_young=ACTIVITY_EXIT_DWELL_YOUNG, exit_old=ACTIVITY_EXIT_DWELL_OLD):
         self.instances = []     # sorted by key — deterministic emission order
         self.completed = []
         self.stitch_churn = stitch_churn
+        self.exit_dwell, self.exit_young, self.exit_old = exit_dwell, exit_young, exit_old
 
     def update(self, raw, t_secs, frame_id):
         # Present keys → strongest observed confidence this tick (sorted).
@@ -352,11 +357,11 @@ class ActivityJournal:
                     inst.absent_streak += 1
                     d = inst.last_seen - inst.started_at
                     if d < ACTIVITY_D_MIN_S:
-                        exit_dwell = ACTIVITY_EXIT_DWELL_YOUNG
+                        exit_dwell = self.exit_young
                     elif d > ACTIVITY_D_TYP_S:
-                        exit_dwell = ACTIVITY_EXIT_DWELL_OLD
+                        exit_dwell = self.exit_old
                     else:
-                        exit_dwell = ACTIVITY_EXIT_DWELL
+                        exit_dwell = self.exit_dwell
                     if inst.absent_streak >= exit_dwell:
                         inst.phase = ENDED
                         self.completed.append(_event_from(inst))
@@ -464,8 +469,8 @@ class FusionStep:
     NEW frame_id (the mesh loop spins faster than frames arrive). Stitching is
     ON as in the mesh FusionAgent (fusion.rs:40)."""
 
-    def __init__(self, stitch_churn=True):
-        self.journal = ActivityJournal(stitch_churn=stitch_churn)
+    def __init__(self, stitch_churn=True, journal_kw=None):
+        self.journal = ActivityJournal(stitch_churn=stitch_churn, **(journal_kw or {}))
         self.anomaly = AnomalyScorer()
         self.last_frame = None
 
