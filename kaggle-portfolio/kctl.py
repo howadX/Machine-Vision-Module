@@ -168,6 +168,16 @@ NOTEBOOKS = {
         dataset_sources=[f"{USER}/mvm-onnx-experts", "shuvoalok/raf-db-dataset",
                          f"{USER}/mvm-lfw-verification"],
     ),
+    "lj6": dict(
+        dir="lj6",
+        build="_build_lj6.py",
+        ipynb="lj6_shipping_the_scorecard.ipynb",
+        id=f"{USER}/lj6-shipping-the-scorecard",           # must equal slugify(title), <=50 chars
+        title="LJ6 — Shipping the Scorecard",
+        # The closer. Recomputes NOTHING — the scorecard is baked from results/metrics.json at build
+        # time (LJ2–LJ5) + LJ1 literals — so Run-All completes offline with no mounts (no DNS on
+        # API-pushed runs). H1 keeps the full "Shipping v0.2.0: the scorecard" phrasing.
+    ),
 }
 
 

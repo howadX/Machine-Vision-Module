@@ -101,9 +101,14 @@ The code side of 15.6 is complete on branch `kaggle`. Remaining is owner/human:
    tag, not Cargo.toml.
 2. **Live checklist** (real camera): sit/stand/lie/bend × azimuths + walking + identity-lock (verify the
    SFace align-fix locks Вадим) + a fall (E2 fires) + confirm `torso_flexion`/`using_object(...)` render.
-3. **LJ6 — "Shipping v0.2.0: the scorecard"** — the closing Kaggle journal (before/after on
-   speed/accuracy/weight, links LJ0–5). `spike_pose/lj6_golden.py`/`lj6_fall_ablation.py` already exist as
-   supporting artifacts. This closes phase 15.
+3. **LJ6 — "Shipping v0.2.0: the scorecard"** — ✅ **AUTHORED + Run-All verified locally** (17.07):
+   `notebooks/lj6/_build_lj6.py` → `lj6_shipping_the_scorecard.ipynb` (16 cells), kctl entry `lj6`
+   (id `howadx/lj6-shipping-the-scorecard`, title "LJ6 — Shipping the Scorecard", **no mounts** — recomputes
+   nothing, scorecard baked from `results/metrics.json` at build time so numbers can't drift; offline-safe).
+   Sections: the LJ0–5 arc · 3-axis scorecard (accuracy/weight/speed before→after) · the 8 port acts P0–P8 +
+   3 contract changes · **the honest ledger of 6 measured-and-rejected/deferred decisions** · live-camera
+   validation · north-star close. **Remaining owner step: `kctl push lj6`** (external publish — not agent
+   work). This closes phase 15.
 See `mvm/docs/phase-15.6-port-plan.md` (P8) + `mvm/CHANGELOG.md`.
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
