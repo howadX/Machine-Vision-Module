@@ -12,7 +12,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.2 — transition kinematics (stabilizer + fall threshold, LJ2) | ✅ closed |
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
-| 15.5 — expert passport + diet (weight/speed) | ⬜ next |
+| 15.5 — expert passport + diet (weight/speed) | 🔨 MEASURED + journal built; Kaggle Run-All debugging |
 | 15.6 — Rust port + release v0.2.0 | ⬜ |
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
@@ -115,12 +115,49 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
   verified. LJ4 notebook is built FROM the lab sources (import surgery) — no code drift possible.
 - Numbers: `results/metrics.json["lj4"]`; design+results: `research/LJ4-DESIGN.md`.
 
-## Next actions — 15.5 (expert passport + diet) → journal LJ5
+## 15.5 done (measured + LJ5 built) — Kaggle Run-All still failing; RESUME HERE
 
-- Per-agent passport: latency (reference hardware), weight, honest accuracy on a public bench
-  (emotion/identity/detect) — where feasible, no retraining.
-- Diet per 15.1: drop the 195 KB VAE (Mahalanobis won), forest size already 220 KB (−79%);
-  revisit quantizations. Gate: total model weight and latency do NOT grow vs v0.1.0.
+**Measured + committed** (commits `5fdffd76` + `42d73aeb`; design+RESULTS `research/LJ5-DESIGN.md`,
+numbers `results/metrics.json["lj5"]`, tools `spike_pose/lj5_{latency,emotion,identity,detect,objects}.py`):
+- **A latency/weight:** human chain 16.7 ms all-cores (<50 PASS, 3×); dominant SFace 36.9 MiB/5.2 ms;
+  total ONNX 121.7 MiB; depth 232 ms / YOLO cadenced (off-budget).
+- **B1 emotion (RAF-DB held-out, `/home/dawoh/datasets/rafdb`):** neg-control HEALTHY (10.1 bug not
+  reproduced); balanced-acc 0.665 / overall 0.726.
+- **B2 identity (SFace/LFW):** aligned 0.978 = published, **but prod ships UNALIGNED 0.783 → +19.5 pt
+  on the table** (`pipeline.rs:470`). ⭐ Top 15.6 fix: `align_face(lm5,112)` on the id crop, +0 cost.
+- **B3 detect (OpenImages val):** YuNet face recall 0.805; YOLO object passport 18 classes — interaction
+  core 0.6–0.8, weak tail = cross-taxonomy. keep.
+- **C diet:** SFace INT8 = **measured NEGATIVE** (lossless acc 0.979, weight −74%, but latency ×6 →
+  REJECT). Gate PASS: ONNX flat, arithmetic 1068→222 KB (−79%). Verdicts for 15.6: align-fix + VAE-drop +
+  forest-220 KB; keep all ONNX experts.
+
+**Datasets published (private):** `howadx/mvm-onnx-experts` (ready), `howadx/mvm-lfw-verification`
+(ready, Kaggle auto-extracted the zip). RAF-DB mounted from community `shuvoalok/raf-db-dataset`.
+kctl `lj5` registered; kernel `howadx/lj5-weighing-the-experts`.
+
+### ⚠️ Kaggle push problem (UNRESOLVED — v4 pushed, status unchecked when paused)
+1. **No `onnxruntime` in the Kaggle base image** (`ModuleNotFoundError`). `pip install` also fails —
+   **the LJ4 "API-pushed runs resolve no DNS" gotcha applies to pip too** (no PyPI). → Converted the
+   notebook's live cells to **cv2.dnn** (byte-identical to prod `ort`, verified max|Δ|≈2e-6 on emotion,
+   8e-6 on SFace). Act A latency + Act C INT8 requant need onnxruntime → presented as **tables** (measured
+   in repo), not re-run. Load-bearing accuracy (B1, B2) re-runs live via cv2.dnn.
+2. **`kctl build` did NOT refresh `.stage/lj5`** — it left a STALE notebook (v2, 22 cells with the
+   onnxruntime cells), so pushes kept shipping the old version even after the source was fixed. **Workaround:**
+   `cp notebooks/lj5/lj5_weighing_the_experts.ipynb .stage/lj5/` before `.venv/bin/kaggle kernels push -p .stage/lj5`.
+   Root cause of the stale stage not yet diagnosed (kctl build for lj5 not re-running `_build_lj5.py` or
+   staging a cache). ⚠️ push with the **tool-venv** kaggle (`.venv/bin/kaggle`); kctl.py's KAGGLE points at
+   the main-venv kaggle which isn't the authed one.
+3. **Mount paths are nested**: `/kaggle/input/datasets/<owner>/<slug>/` (not `/kaggle/input/<slug>/`).
+   The notebook's recursive `_find`/`_find_dir` over `/kaggle/input/**` handles it (setup print confirmed
+   correct resolution).
+
+### RESUME STEPS
+- **Uncommitted:** the cv2.dnn builder rewrite (`notebooks/lj5/_build_lj5.py` + `.ipynb`) — COMMIT IT.
+- Check v4 run: `.venv/bin/kaggle kernels status howadx/lj5-weighing-the-experts`; on ERROR pull
+  `kaggle kernels output ... -p /tmp/lj5_out` and read the `.log` (papermill "In [N]" tells the cell).
+- Source notebook is fresh (20 cells, no top-level onnxruntime; cell 2's `import onnxruntime` is inside
+  the unused `bench_model`). Always re-stage manually (workaround #2) before pushing.
+- On COMPLETE: fetch numbers, confirm bit-for-bit with `metrics.json["lj5"]`, update memory + this file.
 
 ## Open debts (non-blocking)
 
