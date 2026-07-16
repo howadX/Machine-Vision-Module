@@ -40,6 +40,20 @@ pub const ACTIVITY_EXIT_DWELL_YOUNG: u32 = 8;
 /// past the typical duration. Still > `object_cadence` (3): the YOLO
 /// inter-cadence flicker must never end an activity.
 pub const ACTIVITY_EXIT_DWELL_OLD: u32 = 4;
+//
+// ── Phase 15.6 P7: FSM exit-dwell sweep — DEFERRED (not shipped) ──────────────
+// LJ4/S1 found the exit dwell is the ONE knob that fixes episode fragmentation
+// under detector STRESS: raising base/young 5/8 → 12/15 lifts stress precision
+// med 0.133 → 0.667, heavy 0.029 → 0.545 (no tracker/stabilizer/face/flip knob
+// touches it). Verified in 15.6: 12/15 keeps the golden CI green (FLOOR P/R still
+// 1.000, idle G6 clean) — no regression. It is NOT shipped, deliberately:
+//   • the golden CI is FLOOR-only, so the *benefit* cannot be adjudicated by the
+//     shipping gate — it exists only against LJ4's synthetic stress model;
+//   • under normal (FLOOR) load 5/8 already scores P/R 1.000, so the sweep buys
+//     nothing there while imposing an always-on cost: ~0.5 s later event
+//     finalization, plus merging episodes separated by < ~0.8 s.
+// It is a one-line flip (5→12, 8→15) once the owner live-validates that real
+// multi-person/occlusion fragmentation warrants the latency. Keep at 5/8.
 /// Below this observed duration an instance counts as "young" for θ_lo(d).
 pub const ACTIVITY_D_MIN_S: f64 = 2.0;
 /// Above this observed duration an instance counts as "past typical" for θ_lo(d).

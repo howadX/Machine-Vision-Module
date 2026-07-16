@@ -175,11 +175,21 @@ published Kaggle `mvm-golden-scenarios` dataset + LJ4 notebook are **frozen at v
 contract change lands in 15.6, not retroactively) — a future LJ4-v2 re-push must carry the regenerated
 npz + updated `lj4_fusion.py`.
 
-### P7 — Golden refresh + full workspace green
-- Regenerate `tests/data/golden_scenarios.json` from `spike_pose/lj4_scenarios.py` (never hand-edit).
-- Decide FSM exit-dwell sweep (15.4 candidate 5/8→12/15): ship only if golden stress subset improves
-  with no idle regression; else defer with a logged note.
-- **Gate:** `cargo test --workspace` (597+ green), `agents::golden` green, negative controls hold.
+### P7 — Golden refresh + FSM exit-dwell sweep decision + full workspace green
+- Golden `tests/data/golden_scenarios.json` was already regenerated deterministically in P6 (vocab v2).
+- **FSM exit-dwell sweep (LJ4 candidate 5/8→12/15) — DEFERRED (not shipped).** Verified 12/15 keeps the
+  golden CI green (FLOOR P/R 1.000, idle G6 clean — no regression); the 4 activity-FSM units that
+  hard-code the old dwell counts would need mechanical updates. Not shipped, deliberately: the golden CI
+  is FLOOR-only so it **cannot adjudicate the benefit** (stress precision med 0.133→0.667 / heavy
+  0.029→0.545 exists only against LJ4's synthetic stress model), while under normal load 5/8 already
+  scores 1.000 → the sweep is an always-on cost (~0.5 s later event finalization + sub-0.8 s episode
+  merges) for a stress-only, synthetically-measured gain. Logged as a one-line flip (5→12, 8→15) in
+  `activity.rs` for the owner to enable after live multi-person/occlusion validation. Kept at 5/8.
+
+**SHIPPED (P7, 2026-07-17).** No code behavior change — golden was regenerated in P6; P7 is the sweep
+decision (defer, documented in `activity.rs` next to `ACTIVITY_EXIT_DWELL_OLD`). Workspace **608 tests**
+green, `agents::golden` green, negative controls hold.
+- **Gate:** `cargo test --workspace` (597+ green), `agents::golden` green, negative controls hold. ✅
 
 ### P8 — Release v0.2.0
 - Bump `Cargo.toml:20` 0.1.0→0.2.0. Quality passport in README/AGENT.md (numbers from LJ0-5 with

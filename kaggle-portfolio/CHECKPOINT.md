@@ -4,7 +4,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 15.6 port runbook: `mvm/docs/phase-15.6-port-plan.md`.
 
-## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P6 shipped, RESUME at P7
+## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P7 shipped, RESUME at P8 (release)
 
 | stage | status |
 |---|---|
@@ -14,7 +14,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P6 done+committed, RESUME at P7** |
+| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P7 done+committed, RESUME at P8 (release)** |
 
 ## 15.6 progress (act-by-act on branch `kaggle`, pause after each; workspace green each act)
 
@@ -71,15 +71,27 @@ Baseline was 597+2 tests; now **608 passed / 0 failed / 1 ignored**. Commits:
   **Published `mvm-golden-scenarios`/LJ4 frozen at v1 by design** — the contract change lands in 15.6, not
   retroactively; a future LJ4-v2 re-push carries the regenerated npz + updated lj4_fusion.py.
 
-### RESUME HERE → P7 — Golden refresh + FSM exit-dwell sweep decision + full workspace green
-Golden JSON already regenerated in P6 (vocab v2, deterministic) — so P7's remaining work is the **FSM
-exit-dwell sweep decision** (LJ4 candidate 5/8→12/15: lifts stress precision 0.133→0.667 but is a
-latency↔stress-phantom knob). Ship the sweep ONLY if the golden stress subset improves with **no idle
-regression**; else defer with a logged note. Verify `cargo test --workspace` (608+ green), `agents::golden`
-green, negative controls hold. Then P8 (release v0.2.0: bump `Cargo.toml:20` 0.1.0→0.2.0, quality passport
-in README/AGENT.md with LJ0–5 numbers+links, CHANGELOG, document contract changes #1 flexion/#2 vocab-v2/#3
-posture-OOD semantics + camera_height_m config, CI two-job `cargo build -p mvm-cli` NOT xtask bundle, then
-**LJ6 — "Shipping v0.2.0: the scorecard"**). See `mvm/docs/phase-15.6-port-plan.md`.
+- **P7** `eff1d778` — FSM exit-dwell sweep decision = **DEFER** (golden regenerated already in P6).
+  Verified 12/15 keeps golden CI green (FLOOR P/R 1.000, idle G6 clean — no regression; 4 activity-FSM
+  units hard-code old dwell counts, would need mechanical updates). NOT shipped: golden CI is FLOOR-only →
+  can't adjudicate the benefit (stress precision 0.133→0.667 med / 0.029→0.545 heavy exists only vs LJ4's
+  synthetic stress model); under normal load 5/8 already 1.000, so the sweep is an always-on cost (~0.5 s
+  later event finalization + sub-0.8 s episode merges) for a stress-only synthetic gain. Logged as a
+  one-line flip (5→12, 8→15) in `activity.rs` next to `ACTIVITY_EXIT_DWELL_OLD` for the owner post
+  live-validation. Kept 5/8. No behavior change → workspace 608 green, golden green.
+
+### RESUME HERE → P8 — Release v0.2.0 (the final act)
+Bump `Cargo.toml:20` workspace.package.version `0.1.0`→`0.2.0`. Write the **quality passport** into
+README/AGENT.md (numbers from LJ0–5 with journal links: pose gold R3 0.894 / footprint −79%; SL-veto
+false-flip→0; tracker Δ med −4.70/heavy −8.25; E2 fall AUROC≈1.0; SFace align +19.5 pt; human chain
+16.7 ms <50). CHANGELOG. **Document the 3 contract changes:** #1 `torso_flexion` new optional posture
+field; #2 vocab v2 (`using_object(class)`, watching_tv dropped); #3 posture OOD semantics (`plausibility`
+from Mahalanobis, `recon_error` deprecated→None) + new `Config.camera_height_m` (E2 floor ref). **P1
+passport carry-items** (record honestly): z-free sit↔stand near-tie limit (p_V_06); anomaly pose-OOD now
+live. CI release: existing **two-job** workflow, `cargo build -p mvm-cli` NOT `xtask bundle` (embed-models
+include_bytes! from gitignored models/ → CI fail); aarch64 gated `!private`. Owner live checklist:
+sit/stand/lie/bend × azimuths + walking + identity-lock + a fall. Then **LJ6 — "Shipping v0.2.0: the
+scorecard"** (before/after on speed/accuracy/weight). See `mvm/docs/phase-15.6-port-plan.md`.
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.
