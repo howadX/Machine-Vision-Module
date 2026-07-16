@@ -2,8 +2,9 @@
 
 Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.0**
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
+15.6 port runbook: `mvm/docs/phase-15.6-port-plan.md`.
 
-## ⭐ Where we are: 15.0–15.5 CLOSED and PUBLISHED; next = 15.6 (Rust port + v0.2.0)
+## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P3 shipped, RESUME at P4
 
 | stage | status |
 |---|---|
@@ -13,7 +14,47 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | 🔨 port plan written; P4.0 resolved; RESUME at P0 |
+| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P3 done+committed, RESUME at P4** |
+
+## 15.6 progress (act-by-act on branch `kaggle`, pause after each; workspace green each act)
+
+Baseline was 597+2 tests; now **603 passed / 0 failed / 1 ignored**. Commits:
+- **P0** `6f90e20e` — parity fixtures + maha class-order unify. `lj1_build_ship.py`: maha class
+  order unified to forest alphabetical `[lying,sitting,standing]` (byte-only reorder, score/thr
+  identical). New `spike_pose/lj6_golden.py` reads the shipped `.bin`s (forest traversal + min-maha)
+  → `crates/mvm-posture/src/pose_v2_golden.in` (8 real-npz inputs, deterministic, compiles). New maha
+  sha `bb85d87c`; forest sha unchanged `c902bf9b`.
+- **P1** `1c7e730b` (+ `2fbc1a86` passport notes) — pose port. `compute_features` → 12 z-free feats
+  (GRIP vext/hext over 13 joints); forest v2 embedded (`pose_rf_2dgrip_v2.bin`, dropped 873 KB one);
+  `MahaOod` replaces the whole VAE stack (dropped `pose_vae_public.bin`, `normalize_landmarks`,
+  `rodrigues`, `Linear/Cursor`); `torso_flexion` (feat[0]) threaded PoseResult→Detection→PersonTrack
+  →PersonState→Scene JSON (`JsonFace.torso_flexion`) + snapshot. **Decisions taken:** plausibility
+  vocab unified to `"low"/"ok"` (was 3 inconsistent) → `anomaly.rs:95` pose-OOD trigger **now live**
+  (was dead); `posture_trusted` moved `"unusual"→"low"`; `recon_error` now always-None (VAE gone),
+  field kept for schema stability. **Passport carry-items (→P8):** (a) z-free sit↔stand limit —
+  `p_V_06` frontal desk-sitter reads `standing` at a near-tie (.42/.48); oracle relaxed to
+  never-`lying` invariant + sit↔stand confusion ≤1; (b) anomaly pose-OOD now fires on maha OOD.
+- **P2** `db1808b5` — tracker stale-identity center-relink (LJ3, Δ med −4.70/heavy −8.25). `tracker.rs`:
+  identified track eligible for anonymous center re-link UNLESS its name is claimed by a confident
+  detection this frame (`claimed_names`); tier-3 entry also admits stale low-conf identity. New unit
+  reproduces phantom (count 2→1). Golden G6 + full golden stack green.
+- **P3** `05e07bea` — posture SL-veto (LJ2, Δ CI [−3.62,−0.43]). `posture.rs`: direct `standing↔lying`
+  commit needs `SL_DWELL=12` (vs dwell 3); licensed by `A[standing,lying]≈0.0013`; no aggregate
+  regression by construction. 3 units.
+
+### RESUME HERE → P4 — anomaly E2 scene-level fall (biggest; needs plumbing)
+Replace the per-id standing→lying window (`anomaly.rs:73-101`, `standing_seen`) with the scene-level
+E2 rule. **P4.0 already resolved (locked):** ship **peak downward pelvis velocity** (primary) **+ a
+coarse ground-endpoint veto** from the known camera mount (`camera_height_m≈1.75`), NOT floor-free.
+Python truth `spike_pose/lj2_fall_velocity.py`: `WIN_S=0.4` sliding window, median-filter pelvis
+height, `FLOOR_M=0.35` (min pelvis ≤ 0.35 m = reached floor), fall = peak_down_v ≥ thr AND reached
+floor. LJ4 recalibrated the velocity thr to **prod fps (~1.05 m/s @15fps)** — thr is fps-dependent
+(Δpelvis over a time window), so recalibrate to the real engine tick (~16 fps). Plumbing: per-track
+pelvis-y ring buffer + `camera_height_m` in `Config`; pelvis height = `camera_height_m −
+position_3d.y` (verify MediaPipe y-down sign live). velocity-only = documented fallback. Gate: golden
+FLOOR subset fires; brisk lie-down / fast crouch stay quiet; velocity-only path unit-tested. Then
+P5 (SFace align-fix), P6 (vocab v2), P7 (golden refresh + FSM exit-dwell sweep decision), P8 (release
+v0.2.0 + passport + LJ6). See `mvm/docs/phase-15.6-port-plan.md`.
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.
