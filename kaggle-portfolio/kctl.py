@@ -131,7 +131,9 @@ NOTEBOOKS = {
         ipynb="lj4_a_camera_that_never_lies.ipynb",
         id=f"{USER}/lj4-a-camera-that-never-lies",         # must equal slugify(title), <=50 chars
         title="LJ4 — A Camera That Never Lies",
-        dataset_sources=[f"{USER}/mvm-golden-scenarios"],
+        # vrd-meta mounted so the S3 audit needs NO kernel internet (API-pushed runs
+        # resolve no DNS even with enable_internet=true — learned on LJ4 v1).
+        dataset_sources=[f"{USER}/mvm-golden-scenarios", f"{USER}/mvm-openimages-vrd-meta"],
     ),
 }
 
@@ -346,6 +348,31 @@ prohibited) and **Bruce Hahne's cgspeed BVH conversion**. Attribute both.
 
 ## Starter notebook
 See "LJ4 — A Camera That Never Lies" (MVM Lab Journal).
+""",
+    ),
+    "vrdmeta": dict(
+        id=f"{USER}/mvm-openimages-vrd-meta",
+        title="OpenImages V6 VRD Annotations (val+test)",
+        files=[os.path.join(REPO_ROOT, "spike_pose", "oi_meta", f) for f in
+               ("oidv6-validation-annotations-vrd.csv", "oidv6-test-annotations-vrd.csv",
+                "oidv6-class-descriptions.csv")],
+        licenses=[{"name": "CC-BY-4.0"}],
+        card="""# OpenImages V6 VRD Annotations (val + test)
+
+Unmodified re-hosting of three OpenImages V6 metadata files, mounted so the MVM Lab Journal
+notebooks can run **without kernel internet**:
+
+- `oidv6-validation-annotations-vrd.csv` — per-image visual-relationship instances (validation)
+- `oidv6-test-annotations-vrd.csv` — per-image visual-relationship instances (test)
+- `oidv6-class-descriptions.csv` — MID → human-readable class name
+
+## License & attribution
+The OpenImages annotations are licensed **CC BY 4.0** by Google LLC — redistribution with
+attribution permitted. Source: https://storage.googleapis.com/openimages/web/download_v6.html
+(Open Images Dataset V6, Kuznetsova et al., IJCV 2020). No images are included.
+
+## Starter notebook
+See "LJ4 — A Camera That Never Lies" (MVM Lab Journal) — the raw-activity vocabulary audit.
 """,
     ),
 }

@@ -180,16 +180,33 @@ ML зрительной системы на честных данных». Пи�
 - **Порт в 15.6:** `associate_core` += одна ветка center-relink (guard по `claimed`), golden-тест битности.
 - **Журнал LJ3 — «Why walking people multiply, and how we stopped it»** (опубликован, private, Run-All COMPLETE).
 
-### 15.4 — Симулятор: golden-сценарии temporal-стека
+### 15.4 — Симулятор: golden-сценарии temporal-стека ✅ ЗАКРЫТА (2026-07-16)
 
-- Инжекция синтетических лендмарок+bbox **после детекторов** → полный прогон
-  tracker→Fusion(FSM/зоны/anomaly)→journal/recap; сверка событий с известным сценарием.
-- Набор golden-сценариев: вошёл→сел→работает; встал→ушёл; лёг; упал; двое встретились.
-- Честная граница: детекторы (пиксельный слой) симулятор НЕ проверяет — только всё над ними.
-- Аудит FSM-активностей на OpenImages-реляциях (какие активности вообще подтверждаемы данными).
-- **Гейт:** golden-сценарии в CI (`--stub`-класс тестов); anomaly не срабатывает на нормальных
-  сценариях и срабатывает на падении.
-- **Журнал LJ4 — «A camera that never lies: simulating the world for the fusion layer»**.
+- **Лаборатория:** битные Python-порты fusion-слоя (`lj4_fusion.py`: infer_activities+FSM+anomaly,
+  39 Rust-юнит-сценариев в self-check) + компилятор сценариев (`lj4_scenarios.py`: 28 инстансов
+  G1–G6 из CMU в мировом 3D, камера 5 м — на 3 м LJ3 пол вне кадра и лежащий исчезает; settling-
+  кадры выброшены — рождали фантомный fall на t=0) + бенч (`lj4_bench.py`, эмиттер LJ3 + posture-flip,
+  независимые RNG-потоки на источник шума).
+- **S1 (гейт взят):** FLOOR event-P/R = **1.000/1.000**, 0 фантомов, 0 swaps. STRESS: P 0.20/0.13/0.03 —
+  **FP=100% фрагменты, 0 чужеродных**; P/R инвариантен к трекеру/стабилизатору/face/flip; ручка —
+  **FSM exit-dwell** (sweep 5/8→12/15: P med 0.133→**0.667**, heavy 0.029→0.545) → кандидат 15.6.
+  Кросс-валидация LJ3: excess/min 5.38≈5.43, fix15.3 → 1.91.
+- **S2 (вердикт измерен, 4 правила × FLOOR/STRESS):** прод-правило (per-id окно 3с) = 3/10 FA на
+  быстрых укладываниях + 4/6 под стрессом (**корень пропусков: падение само рвёт track_id**, новый id
+  «никогда не стоял»); SL-вето LJ2 не лечит FA и стоит пропуск. **Ships 15.6: E2 scene-level,
+  порог рекалиброван под 15fps (≈1.05) — 0/10 FA + 6/6 на обоих протоколах** (зазор тонкий:
+  0.99 vs 1.12; CMU-падения трюковые).
+- **S3 (директива подтверждена данными):** 110k VRD-инстансов — typing/using_mouse/watching_tv = **0**,
+  using_phone 15, reading 24, holding_drink 145; `holds` generic 2153, `at` Table/Desk 1360; **lying
+  в `is` отсутствует** (CMU — единственный fall-источник). Вердикт v2 (`research/LJ4-VRD-AUDIT.md`):
+  fold → `using_object(class)`, drop watching_tv, keep holding_drink+геометрические; contract change — 15.6.
+- **Гейт CI:** `agents::golden` в mvm-cli (6 FLOOR-инстансов, тот же compiled-файл, что скорит журнал;
+  негативный контроль проверен), 597+2 зелёные. Anomaly молчит на G3-quiet, срабатывает на G4 ✓.
+- **Инструменты:** `spike_pose/lj4_{fusion,scenarios,bench,vrd_audit}.py`; датасеты
+  `mvm-golden-scenarios`, `mvm-openimages-vrd-meta` (VRD CC BY 4.0 — kernel-интернет на API-пушах
+  не резолвит DNS); design `research/LJ4-DESIGN.md`; числа `results/metrics.json["lj4"]`.
+- **Журнал LJ4 — «A Camera That Never Lies»** (опубликован private, Run-All **COMPLETE**, числа
+  бит-в-бит с локальными; ноутбук собирается из ИСХОДНИКОВ лаборатории — код не может разойтись).
 
 ### 15.5 — Паспорт внешних экспертов + диета (вес/скорость)
 

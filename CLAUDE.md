@@ -66,13 +66,16 @@ XDG-пути/`config.toml`, авто-детект камеры, `mvm setup` (fet
 замороженный бенч-протокол), **15.1 ✅** (поза: 2D-GRIP z-free, mocap как тренировочный актив,
 flexion-канал, Mahalanobis вместо VAE; footprint позы −79%, gold R3 0.894), **15.2 ✅** (переходы:
 prior vs dwell — агрегатный wash не подтверждён, ships гибрид dwell+SL-вето → ложный fall-флип в 0
-под стрессом established; E2 fall-правило «пол + скорость таза ≳1.1 м/с», AUROC 1.000) и **15.3 ✅**
+под стрессом established; E2 fall-правило «пол + скорость таза ≳1.1 м/с», AUROC 1.000), **15.3 ✅**
 (трекер: walking-фрагментация воспроизведена на истинных CMU-траекториях, корень — структурная re-link
 dead-zone устаревшей identity = 57%; фикс `center-relink через stale identity` established
 med Δ−4.70/heavy Δ−8.25, idle 0/0; Kalman-Q-калибровка опровергнута → gate/Kalman без изменений)
-закрыты и опубликованы как Kaggle-журналы LJ0–LJ3 (Run-All COMPLETE). Каждый этап гейтится нарративным
+и **15.4 ✅** (симулятор golden-сценариев: FLOOR event-P/R 1.000; стресс рвёт FSM exit-dwell →
+sweep-кандидат 15.6; fall-правило прода = 3/10 FA + пропуски от id-churn → ships E2 scene-level;
+VRD-аудит: typing/using_mouse/watching_tv = 0 инстансов → словарь v2; CI-гейт golden в mvm-cli)
+закрыты и опубликованы как Kaggle-журналы LJ0–LJ4 (Run-All COMPLETE). Каждый этап гейтится нарративным
 журналом (LJ0–LJ6). **Прод-Rust пока v0.1.0** — порт победивших решений будет в 15.6. Следующее —
-**15.4** (симулятор golden-сценариев). План — `mvm/docs/phase-15-plan.md`.
+**15.5** (паспорт экспертов + диета). План — `mvm/docs/phase-15-plan.md`.
 
 ## Для Agents
 

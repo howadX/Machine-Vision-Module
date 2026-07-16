@@ -399,5 +399,123 @@
       "verdict": "idle 0/0; no crossing-swap increase"
     },
     "prod_decision_15_6": "center re-link may recover an identified track through a stale identity unless that name is claimed by a confident detection this frame (+0 deps, one branch); Kalman/gate constants unchanged"
+  },
+  "lj4": {
+    "s1": {
+      "floor": {
+        "event_precision": 1.0,
+        "event_recall": 1.0,
+        "phantom_events": 0,
+        "swaps": 0,
+        "excess_per_min": 0.17,
+        "notes": "flags on FLOOR are findings: prod-anomaly FA on 3/10 controlled floor scenarios (S2); stunt fall G4_88_04 fragments tracker on clean boxes"
+      },
+      "stress": {
+        "mild": {
+          "P": 0.2,
+          "R": 0.333
+        },
+        "med": {
+          "P": 0.133,
+          "R": 0.222
+        },
+        "heavy": {
+          "P": 0.029,
+          "R": 0.111
+        },
+        "fp_split": "100% fragments, 0 foreign (all protocols)"
+      },
+      "ablations_med": "event P/R invariant to tracker fix / stabilizer hybrid / face / posture flip; excess/min 5.38->1.91 with fix15.3 (LJ3 cross-check: 5.43)",
+      "exit_dwell_sweep": {
+        "prod_5_8": {
+          "med_P": 0.133,
+          "heavy_P": 0.029
+        },
+        "8_11": {
+          "med_P": 0.333,
+          "heavy_P": 0.167
+        },
+        "10_13": {
+          "med_P": 0.5,
+          "heavy_P": 0.385
+        },
+        "12_15": {
+          "med_P": 0.667,
+          "heavy_P": 0.545
+        },
+        "verdict": "15.6 candidate: raise ACTIVITY_EXIT_DWELL toward 10-12 (cost ~+0.5s episode end latency)"
+      }
+    },
+    "s2": {
+      "floor": {
+        "prod": {
+          "g3_fa": "3/10",
+          "g4_hits": "6/6"
+        },
+        "prod_idfree": {
+          "g3_fa": "3/10",
+          "g4_hits": "6/6"
+        },
+        "e2_113": {
+          "g3_fa": "0/10",
+          "g4_hits": "5/6"
+        },
+        "e2_105": {
+          "g3_fa": "0/10",
+          "g4_hits": "6/6"
+        }
+      },
+      "stress_med": {
+        "prod": {
+          "g3_fa": "3/10",
+          "g4_hits": "4/6"
+        },
+        "prod_idfree": {
+          "g3_fa": "3/10",
+          "g4_hits": "6/6"
+        },
+        "e2_113": {
+          "g3_fa": "0/10",
+          "g4_hits": "5/6"
+        },
+        "e2_105": {
+          "g3_fa": "0/10",
+          "g4_hits": "6/6"
+        }
+      },
+      "miss_mechanism": "the fall itself churns the track id (impact occlusion); new id 'never stood' -> per-id standing memory dies at the critical moment",
+      "margin": "worst quiet vmax 0.99 vs weakest fall 1.12 m/s @15fps (thin; CMU falls are stunts -> upper bound)",
+      "ships_15_6": "E2 physics rule, scene-level (id-robust), threshold recalibrated to prod cadence (~1.05); per-id window rule retires"
+    },
+    "s3": {
+      "vrd_instances": {
+        "total": 109989,
+        "person_subject": 94380
+      },
+      "current_vocab": {
+        "typing": 0,
+        "using_mouse": 0,
+        "watching_tv": 0,
+        "using_phone": 15,
+        "reading": 24,
+        "holding_drink": 145
+      },
+      "mass_elsewhere": {
+        "holds_generic": 2153,
+        "at_table_desk": 1360,
+        "ride": 1432,
+        "plays": 618,
+        "is_walking": 3602,
+        "is_running": 2156
+      },
+      "no_lying_state_in_vrd": true,
+      "verdict": "fold specific names into using_object(class); drop watching_tv; keep holding_drink + geometric; sports/ride -> phase 16; contract change lands in 15.6"
+    },
+    "ci_gate": "6-instance FLOOR subset as cargo test in mvm workspace (agents::golden, 597+2 green); negative control verified",
+    "passport": {
+      "code_commit": "fe0bae76",
+      "golden_scenarios_sha16": "10da2afa98c6cfcf"
+    },
+    "kaggle_runall": "COMPLETE (v2, numbers bit-identical to local; VRD from mounted dataset)"
   }
 }

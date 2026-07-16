@@ -3,7 +3,7 @@
 Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.0**
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 
-## ⭐ Where we are: 15.0–15.3 CLOSED and PUBLISHED; next = 15.4 (golden-scenario simulator)
+## ⭐ Where we are: 15.0–15.4 CLOSED and PUBLISHED; next = 15.5 (expert passport + diet)
 
 | stage | status |
 |---|---|
@@ -11,8 +11,8 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.1 — pose (5 experiments + integration + LJ1) | ✅ closed |
 | 15.2 — transition kinematics (stabilizer + fall threshold, LJ2) | ✅ closed |
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
-| 15.4 — golden-scenario simulator (fusion/FSM/anomaly) | ⬜ next |
-| 15.5 — expert passport + diet (weight/speed) | ⬜ |
+| 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
+| 15.5 — expert passport + diet (weight/speed) | ⬜ next |
 | 15.6 — Rust port + release v0.2.0 | ⬜ |
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
@@ -22,13 +22,16 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
 
 - Notebooks (Run-All **COMPLETE**, numbers verified on Kaggle):
   `lj0-building-the-lab`, `lj1-the-pose-model-rebuilt-honestly`,
-  `lj2-physics-of-posture-transitions`, `lj3-why-walking-people-multiply`.
+  `lj2-physics-of-posture-transitions`, `lj3-why-walking-people-multiply`,
+  `lj4-a-camera-that-never-lies`.
 - Datasets (derived keypoints/boxes only, no images/BVH): `cmu-mocap-views`,
   `mvm-pose-landmarks` (+`landmarks_v2.npz`), `mvm-animal-ood`, `mvm-mocap-transitions`,
-  `mvm-mocap-tracks`.
+  `mvm-mocap-tracks`, `mvm-golden-scenarios`, `mvm-openimages-vrd-meta` (VRD CSVs, CC BY 4.0).
 - Gotchas hit + baked in: dataset title ≤50 chars; kernel `id` must equal `slugify(title)`;
   Kaggle auto-runs on push so datasets must finish processing first; `_find` does a recursive
-  `/kaggle/input` search (robust to dataset nesting).
+  `/kaggle/input` search (robust to dataset nesting); **API-pushed kernel runs resolve no DNS
+  even with `enable_internet=true`** — anything a notebook fetches must be a mounted dataset
+  (that's why the VRD CSVs are re-hosted).
 
 ## The lab (15.0) — reusable tools
 
@@ -89,14 +92,35 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
   (7.75 vs 5.43) → refuted; gate marginal → **Kalman/gate constants unchanged in 15.6**.
 - **T2:** idle 0/0; crossings no swap increase (2/2, 0/0). Numbers `results/metrics.json["lj3"]`.
 
-## Next actions — 15.4 (golden-scenario simulator) → journal LJ4
+## 15.4 done (LJ4) — decisions to port in 15.6
 
-- Inject synthetic landmarks+bbox AFTER the detectors → full tracker→Fusion(FSM/zones/anomaly)
-  →journal/recap run; check events vs a known scenario (enter→sit→work; got up→left; lay; fell;
-  two met). Honest boundary: the simulator does NOT test the pixel detectors, only everything above.
-- Audit FSM activities on OpenImages relations (which activities the data can actually supervise;
-  inventory already in `research/openimages-relations-inventory.md`).
-- Gate: golden scenarios in CI (`--stub`); anomaly silent on normal, fires on the fall.
+- **Lab:** bit-faithful fusion-stack ports (`lj4_fusion.py`, 39 Rust self-check scenarios) +
+  scenario compiler (`lj4_scenarios.py`: 28 instances G1–G6, world-3D composition, 5 m camera —
+  at LJ3's 3 m a lying body leaves the frame; settling frames dropped — they inject a phantom
+  fall at t=0) + bench (`lj4_bench.py`, per-source RNG streams for paired ablations).
+- **S1 gate taken:** FLOOR event-P/R = **1.000/1.000**, 0 phantoms/swaps. Under stress FP =
+  100% fragments / 0 foreign; P/R invariant to tracker/stabilizer/face/flip — the knob is the
+  **FSM exit dwell** (5/8→12/15 lifts P med 0.133→0.667, heavy 0.029→0.545) → 15.6 candidate.
+- **S2 verdict measured:** prod fall rule = 3/10 FA on brisk lie-downs + 4/6 under stress (the
+  fall itself churns the track id → per-id standing memory dies). **Ships: E2 scene-level,
+  threshold recalibrated to 15 fps (~1.05) → 0/10 FA + 6/6 on FLOOR and STRESS** (thin margin
+  0.99 vs 1.12 stated; CMU falls are stunts). Per-id window rule retires.
+- **S3 verdict (directive confirmed by data):** 110k VRD instances — typing/using_mouse/
+  watching_tv = **0**, using_phone 15, reading 24, holding_drink 145; holds generic 2153, at
+  Table/Desk 1360; **no lying state in VRD** (CMU stays the only fall source). Vocabulary v2
+  table in `research/LJ4-VRD-AUDIT.md` (fold → `using_object(class)`, drop watching_tv);
+  contract change lands in 15.6.
+- **CI gate:** `mvm-cli agents::golden` replays a 6-instance FLOOR subset (same compiled file
+  the notebook scores) through the production crates — 597+2 tests green, negative control
+  verified. LJ4 notebook is built FROM the lab sources (import surgery) — no code drift possible.
+- Numbers: `results/metrics.json["lj4"]`; design+results: `research/LJ4-DESIGN.md`.
+
+## Next actions — 15.5 (expert passport + diet) → journal LJ5
+
+- Per-agent passport: latency (reference hardware), weight, honest accuracy on a public bench
+  (emotion/identity/detect) — where feasible, no retraining.
+- Diet per 15.1: drop the 195 KB VAE (Mahalanobis won), forest size already 220 KB (−79%);
+  revisit quantizations. Gate: total model weight and latency do NOT grow vs v0.1.0.
 
 ## Open debts (non-blocking)
 
@@ -107,8 +131,11 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
 
 ## Key files
 - Tools/experiments: `spike_pose/{mocap_to_views,mocap_sanity_gate,bench,openimages_*,lj1_*,lj2_*,
-  lj3_*}.py` + `extract_images.py` (shared MPPose runner). `kctl.py` — Kaggle driver + DATASETS/NOTEBOOKS.
+  lj3_*,lj4_*}.py` + `extract_images.py` (shared MPPose runner). `kctl.py` — Kaggle driver + DATASETS/NOTEBOOKS.
+- Rust CI gate: `mvm/crates/mvm-cli/src/agents/golden.rs` + `tests/data/golden_scenarios.json`
+  (exported by `lj4_scenarios.py` — regenerate there, never hand-edit).
 - Docs: `research/{BENCH-PROTOCOL,openimages-relations-inventory,DATA-EXPANSION-DESIGN,LJ2-DESIGN,
-  LJ3-DESIGN}.md`, `mvm/docs/phase-15-plan.md`. Journals: `notebooks/{lj0,lj1,lj2,lj3}/`.
+  LJ3-DESIGN,LJ4-DESIGN,LJ4-VRD-AUDIT}.md`, `mvm/docs/phase-15-plan.md`.
+  Journals: `notebooks/{lj0,lj1,lj2,lj3,lj4}/`.
 - Data (gitignored, regenerable): `data_probe/*.npz`, `mocap_bvh/`, `oi_images/`, `oi_meta/`,
   `ship/`. Gold raw images: `/home/dawoh/goldwork/{lyingv2,sitstand}/`.

@@ -149,7 +149,9 @@ import numpy as np
 
 def _find(*names):
     roots = ["/kaggle/input/mvm-golden-scenarios",
+             "/kaggle/input/mvm-openimages-vrd-meta",
              os.path.join("..","..","..","spike_pose","data_probe"),
+             os.path.join("..","..","..","spike_pose","oi_meta"),
              os.path.join("..","..","spike_pose","data_probe")]
     for r in roots:
         for n in names:
@@ -354,15 +356,21 @@ corpus with *human-labeled* visual relationships — below we count **per-image 
 """)
 
 code(r"""
-# fetch the VRD metadata (public GCS, ~12 MB) into the notebook workspace
-import urllib.request
+# VRD metadata: prefer the mounted mvm-openimages-vrd-meta dataset (API-pushed Kaggle
+# runs resolve no DNS even with internet 'on'); fall back to public GCS elsewhere.
+import shutil, urllib.request
 os.makedirs("oi_meta", exist_ok=True)
 for f in ["oidv6-validation-annotations-vrd.csv", "oidv6-test-annotations-vrd.csv",
           "oidv6-class-descriptions.csv"]:
     dst = os.path.join("oi_meta", f)
-    if not os.path.exists(dst):
+    if os.path.exists(dst):
+        continue
+    try:
+        shutil.copy(_find(f), dst)
+        print("mounted ", f)
+    except FileNotFoundError:
         urllib.request.urlretrieve(f"https://storage.googleapis.com/openimages/v6/{f}", dst)
-        print("fetched", f)
+        print("fetched ", f)
 """)
 
 code(src(
