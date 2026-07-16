@@ -4,7 +4,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 15.6 port runbook: `mvm/docs/phase-15.6-port-plan.md`.
 
-## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P4 shipped, RESUME at P5
+## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P5 shipped, RESUME at P6
 
 | stage | status |
 |---|---|
@@ -14,11 +14,11 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P4 done+committed, RESUME at P5** |
+| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P5 done+committed, RESUME at P6** |
 
 ## 15.6 progress (act-by-act on branch `kaggle`, pause after each; workspace green each act)
 
-Baseline was 597+2 tests; now **607 passed / 0 failed / 1 ignored**. Commits:
+Baseline was 597+2 tests; now **608 passed / 0 failed / 1 ignored**. Commits:
 - **P0** `6f90e20e` — parity fixtures + maha class-order unify. `lj1_build_ship.py`: maha class
   order unified to forest alphabetical `[lying,sitting,standing]` (byte-only reorder, score/thr
   identical). New `spike_pose/lj6_golden.py` reads the shipped `.bin`s (forest traversal + min-maha)
@@ -54,15 +54,22 @@ Baseline was 597+2 tests; now **607 passed / 0 failed / 1 ignored**. Commits:
   people_together sign-invariant). Validated on golden data (lab recipe @15fps): G4 3.19 m/s/min 0.077 fires,
   G3 0.095 + all controls ≤0.13 quiet. 8 anomaly units (−2 old +6 new).
 
-### RESUME HERE → P5 — SFace align-fix (`pipeline.rs:~473`)
-⭐ The LJ5 top find. Prod feeds `id.identify_margin` the raw bbox crop; feed it the **aligned** crop
-instead: `face_lm5_px.and_then(|lm| mvm_emotion::align_face(frame, lm, 112)).unwrap_or_else(|| face.clone())`
-(mirror the emotion path ~437-440). +0 weight/latency, LFW held-out +19.5 pt (unaligned 0.7833 → aligned
-0.9783; TAR@FAR=1e-3 0.173→0.949). Gate: aligned path taken (unit on crop selection); no crash on degenerate
-lm; the +19.5 is the LJ5 number, not re-measured in prod (owner live identity-lock check). Then P6 (vocab v2:
-`fusion.rs` typing/using_mouse/tv → `using_object(class)`, drop watching_tv — contract change #2), P7 (golden
-refresh from `lj4_scenarios.py` + FSM exit-dwell sweep 5/8→12/15 decision), P8 (release v0.2.0 + passport +
-LJ6). See `mvm/docs/phase-15.6-port-plan.md`.
+- **P5** `ce33e6a6` — SFace align-fix (LJ5 ⭐). `pipeline.rs`: new `identity_crop(frame,
+  face_lm5_px, face)` feeds `id.identify_margin` the ArcFace-aligned 112 crop
+  (`mvm_emotion::align_face(frame, lm, 112)`), raw-crop fallback on absent/degenerate lm (mirrors the
+  emotion align path). SFace only `resize_exact`s its input, so this is the whole fix, +0 weight/latency;
+  LFW held-out +19.5 pt (0.783→0.978; TAR@FAR=1e-3 0.173→0.949). Unit pins all 3 paths (aligned 112² /
+  no-lm raw / degenerate raw). Owner re-validates identity-lock live.
+
+### RESUME HERE → P6 — Vocab v2 (`fusion.rs:~213-223`, contract change #2)
+`interaction_label`: `keyboard|laptop|mouse|cell phone|remote|tv → using_object(<class>)`; **drop
+`watching_tv`**; keep `holding_drink`, `reading`, relational (`people_together`, `seated_at_workstation`).
+VRD audit (LJ4): typing/using_mouse/watching_tv = 0 real instances → the flat verbs were fictional.
+Update golden episode-label asserts + fusion tests. Then P7 (golden refresh from `lj4_scenarios.py` +
+FSM exit-dwell sweep 5/8→12/15 decision — ship only if golden stress subset improves, no idle
+regression), P8 (release v0.2.0: bump Cargo.toml 0.1.0→0.2.0, passport in README/AGENT.md, document
+contract changes #1 flexion/#2 vocab-v2/#3 posture-OOD, CI two-job `cargo build -p mvm-cli`, then LJ6
+journal). See `mvm/docs/phase-15.6-port-plan.md`.
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.

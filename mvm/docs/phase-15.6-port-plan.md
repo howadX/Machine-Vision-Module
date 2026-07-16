@@ -147,6 +147,14 @@ data itself (lab recipe @15 fps): G4 descent **3.19 m/s** / min-pelvis **0.077**
 - **Gate:** aligned path taken (unit on crop selection); no crash on degenerate lm; live identity-lock
   validated by owner (the +19.5 pt is the LJ5 held-out number, not re-measured in prod).
 
+**SHIPPED (P5, 2026-07-17).** `pipeline.rs`: new `identity_crop(frame, face_lm5_px, face)` helper feeds
+`id.identify_margin` the ArcFace-aligned 112 crop (`mvm_emotion::align_face(frame, lm, 112)`), raw-crop
+fallback on absent/degenerate landmarks — mirrors the emotion align path. SFace only `resize_exact`s its
+input (no internal alignment), so this is the whole fix, +0 weight/latency. Unit
+`identity_crop_aligns_with_landmarks_and_falls_back_without` pins all three paths (aligned 112×112 /
+no-lm raw / degenerate raw). The +19.5 pt (LFW held-out 0.783→0.978) is the LJ5 number — owner
+re-validates identity-lock live. Workspace **608 tests** green.
+
 ### P6 — Vocab v2 — `mvm-cli/fusion.rs:213-223`
 - `interaction_label`: `keyboard|laptop|mouse|cell phone|remote|tv → using_object(<class>)`; **drop
   `watching_tv`**; keep `holding_drink`, `reading`, relational (`people_together`,

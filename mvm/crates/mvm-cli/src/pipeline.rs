@@ -390,6 +390,22 @@ fn anchor_objects_depth(
 /// fallback. Mirrors the bridge-path enrichment so behaviour is identical.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
+/// The crop fed to SFace. LJ5 (phase 15.5) measured that production shipped the
+/// **raw bbox rectangle** — SFace merely `resize_exact`s it, so head roll/offset
+/// smears the embedding (LFW aligned 0.978 vs unaligned 0.783 → +19.5 pt;
+/// TAR@FAR=1e-3 0.949 vs 0.173). Feed the ArcFace-aligned 112 crop instead — the
+/// same 5-landmark similarity transform the emotion path already uses, at +0
+/// weight/latency. Degenerate landmarks (or none) fall back to the raw crop.
+fn identity_crop(
+    frame: &image::DynamicImage,
+    face_lm5_px: Option<&[[f32; 2]; 5]>,
+    face: &image::DynamicImage,
+) -> image::DynamicImage {
+    face_lm5_px
+        .and_then(|lm| mvm_emotion::align_face(frame, lm, 112))
+        .unwrap_or_else(|| face.clone())
+}
+
 fn enrich_face_crop(
     frame: &image::DynamicImage,
     face_bbox: &mvm_core::BBox,
@@ -454,9 +470,13 @@ fn enrich_face_crop(
     // re-check cadence or the track unlocks. Emotion above still runs every frame.
     if run_identity {
         if let Some(id) = identity_mod {
-            if let Ok((name, sim, emb)) =
-                id.identify_margin(&face, config.identity_abs_thresh, config.identity_margin_thresh)
-            {
+            // SFace align-fix (LJ5): feed the ArcFace-aligned crop, not the raw bbox.
+            let id_input = identity_crop(frame, face_lm5_px, &face);
+            if let Ok((name, sim, emb)) = id.identify_margin(
+                &id_input,
+                config.identity_abs_thresh,
+                config.identity_margin_thresh,
+            ) {
                 det.embedding = Some(emb);
                 if det.identity.is_none() && name != "unknown" {
                     det.identity = Some(name);
@@ -1015,6 +1035,26 @@ mod tests {
         anchor_objects_depth(&mut objects, &depth, &tracker, &config, &frame);
         assert_eq!(objects[0].pos_3d, None);
         assert_eq!(objects[0].pos_conf, 0.0);
+    }
+
+    /// SFace align-fix (LJ5, phase 15.6 P5): with landmarks the identity crop is
+    /// the ArcFace-aligned 112×112 (not the raw bbox rectangle SFace only resizes);
+    /// degenerate/absent landmarks fall back to the raw crop without crashing.
+    #[test]
+    fn identity_crop_aligns_with_landmarks_and_falls_back_without() {
+        let frame = image::DynamicImage::new_rgb8(64, 64);
+        let face = image::DynamicImage::new_rgb8(20, 24); // raw bbox crop, distinct size
+        // Valid landmarks → aligned 112×112 crop fed to SFace (the fix).
+        let lm = [[12.0, 14.0], [40.0, 14.0], [26.0, 30.0], [16.0, 44.0], [38.0, 44.0]];
+        let aligned = identity_crop(&frame, Some(&lm), &face);
+        assert_eq!((aligned.width(), aligned.height()), (112, 112), "aligned crop feeds SFace");
+        // No landmarks → raw crop fallback.
+        let raw = identity_crop(&frame, None, &face);
+        assert_eq!((raw.width(), raw.height()), (20, 24), "no landmarks → raw crop");
+        // Degenerate (all-identical) landmarks → also the raw fallback, no crash.
+        let degen = [[5.0, 5.0]; 5];
+        let d = identity_crop(&frame, Some(&degen), &face);
+        assert_eq!((d.width(), d.height()), (20, 24), "degenerate landmarks → raw crop");
     }
 
     /// Phase 10.4: an object whose bbox straddles a near silhouette + far
