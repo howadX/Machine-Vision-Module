@@ -9,3 +9,5 @@ pulled/
 
 # viz design lab (local preview, never committed)
 .viz-lab/
+notebooks/*/oi_meta/
+notebooks/*/LJ4-VRD-AUDIT.md

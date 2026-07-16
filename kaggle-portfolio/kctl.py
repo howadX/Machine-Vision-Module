@@ -125,6 +125,14 @@ NOTEBOOKS = {
         title="LJ3 — Why Walking People Multiply",
         dataset_sources=[f"{USER}/mvm-mocap-tracks"],
     ),
+    "lj4": dict(
+        dir="lj4",
+        build="_build_lj4.py",
+        ipynb="lj4_a_camera_that_never_lies.ipynb",
+        id=f"{USER}/lj4-a-camera-that-never-lies",         # must equal slugify(title), <=50 chars
+        title="LJ4 — A Camera That Never Lies",
+        dataset_sources=[f"{USER}/mvm-golden-scenarios"],
+    ),
 }
 
 
@@ -302,6 +310,42 @@ and **Bruce Hahne's cgspeed BVH conversion**. Attribute both.
 
 ## Starter notebook
 See "LJ3 — Why Walking People Multiply" (MVM Lab Journal).
+""",
+    ),
+    "golden": dict(
+        id=f"{USER}/mvm-golden-scenarios",
+        title="MVM Golden Scenarios (fusion-layer truth)",
+        files=[os.path.join(REPO_ROOT, "spike_pose", "data_probe", "golden_scenarios.npz")],
+        licenses=[{"name": "CC-BY-4.0"}],
+        card="""# MVM Golden Scenarios
+
+Synthetic golden scenarios for the phase-15.4 fusion-layer simulator (LJ4): timelines whose
+truth is known **by construction** — walked-in→sat→works, stood-up→left, controlled lie-down /
+get-up, falls, two people meeting, a lone walker — compiled from the CMU Graphics Lab Motion
+Capture Database (via Bruce Hahne's cgspeed BVH conversion) in world 3D (pelvis-continuous
+seams, robust percentile floor, settling frames dropped) and projected through a virtual
+eye-level camera (1.75 m, 5 m rig — the floor stays in frame so a lying body remains visible).
+
+**Derived features only — no BVH files, no motion data, no images are redistributed.**
+
+## Contents (`golden_scenarios.npz`, flat, grouped by `inst`)
+- `inst`, `group`: str — scenario instance / group (G1..G6); 28 instances @ 15 fps.
+- `frame`: int32;  `t`: float32 — time (s);  `person`: int8 — TRUE identity (0/1).
+- `bbox`: float32 (M,4) — normalized [x1,y1,x2,y2] tall-narrow person box;  `vis`: bool.
+- `posture`: str — kinematic ground-truth label (biomechanics, NOT pose features).
+- `wrists`: float32 (M,2,2) — projected wrist points (the contact truth).
+- `pelvis3d`: float32 (M,3) — world metric pelvis (fall physics / the E2 rule).
+- `pos3d`: float32 (M,3) — camera-frame pelvis (3D proximity truth).
+- `obj_*` — synthetic static furniture (keyboard/chair) per instance.
+- `meta_json`: str — per-instance expected events with tolerances (the scoring truth).
+
+## License & attribution
+CC BY 4.0 on these derived features. Source: **CMU Graphics Lab Motion Capture Database**
+(http://mocap.cs.cmu.edu — free for research and product use with attribution; resale
+prohibited) and **Bruce Hahne's cgspeed BVH conversion**. Attribute both.
+
+## Starter notebook
+See "LJ4 — A Camera That Never Lies" (MVM Lab Journal).
 """,
     ),
 }
