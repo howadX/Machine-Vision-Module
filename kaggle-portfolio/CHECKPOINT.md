@@ -4,7 +4,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 15.6 port runbook: `mvm/docs/phase-15.6-port-plan.md`.
 
-## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P3 shipped, RESUME at P4
+## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P4 shipped, RESUME at P5
 
 | stage | status |
 |---|---|
@@ -14,11 +14,11 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P3 done+committed, RESUME at P4** |
+| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P4 done+committed, RESUME at P5** |
 
 ## 15.6 progress (act-by-act on branch `kaggle`, pause after each; workspace green each act)
 
-Baseline was 597+2 tests; now **603 passed / 0 failed / 1 ignored**. Commits:
+Baseline was 597+2 tests; now **607 passed / 0 failed / 1 ignored**. Commits:
 - **P0** `6f90e20e` — parity fixtures + maha class-order unify. `lj1_build_ship.py`: maha class
   order unified to forest alphabetical `[lying,sitting,standing]` (byte-only reorder, score/thr
   identical). New `spike_pose/lj6_golden.py` reads the shipped `.bin`s (forest traversal + min-maha)
@@ -42,19 +42,27 @@ Baseline was 597+2 tests; now **603 passed / 0 failed / 1 ignored**. Commits:
   commit needs `SL_DWELL=12` (vs dwell 3); licensed by `A[standing,lying]≈0.0013`; no aggregate
   regression by construction. 3 units.
 
-### RESUME HERE → P4 — anomaly E2 scene-level fall (biggest; needs plumbing)
-Replace the per-id standing→lying window (`anomaly.rs:73-101`, `standing_seen`) with the scene-level
-E2 rule. **P4.0 already resolved (locked):** ship **peak downward pelvis velocity** (primary) **+ a
-coarse ground-endpoint veto** from the known camera mount (`camera_height_m≈1.75`), NOT floor-free.
-Python truth `spike_pose/lj2_fall_velocity.py`: `WIN_S=0.4` sliding window, median-filter pelvis
-height, `FLOOR_M=0.35` (min pelvis ≤ 0.35 m = reached floor), fall = peak_down_v ≥ thr AND reached
-floor. LJ4 recalibrated the velocity thr to **prod fps (~1.05 m/s @15fps)** — thr is fps-dependent
-(Δpelvis over a time window), so recalibrate to the real engine tick (~16 fps). Plumbing: per-track
-pelvis-y ring buffer + `camera_height_m` in `Config`; pelvis height = `camera_height_m −
-position_3d.y` (verify MediaPipe y-down sign live). velocity-only = documented fallback. Gate: golden
-FLOOR subset fires; brisk lie-down / fast crouch stay quiet; velocity-only path unit-tested. Then
-P5 (SFace align-fix), P6 (vocab v2), P7 (golden refresh + FSM exit-dwell sweep decision), P8 (release
-v0.2.0 + passport + LJ6). See `mvm/docs/phase-15.6-port-plan.md`.
+- **P4** `1591b407` — anomaly E2 scene-level fall (LJ2/LJ4). `anomaly.rs`: per-id standing→lying
+  window retired → per-track pelvis-height ring + kinematic rule. Fires `ANOMALY_FALL=0.6` when peak
+  windowed descent ≥ `E2_FALL_VEL_MS=1.05` (median k=3, **time-based** `E2_WIN_S=0.4` window → fps-robust)
+  AND floor endpoint ≤ `E2_FLOOR_M=0.35`; `E2_LOOKBACK_S=3.0` bounded ring. `e2_fall(samples, require_floor)`
+  — shipped path `true`, velocity-only fallback `false` (both unit-tested: vault fires velocity-only, floor
+  gate vetoes). New `Config.camera_height_m=1.75`; `FusionAgent` wires it; height = `camera_height_m − y`.
+  **Coordinate crux resolved (unify y-down):** prod `position_3d` is y-DOWN (`pixel_to_3d`); golden fixture
+  `pos3d` is world Y-up pelvis (floor=0) → `golden.rs` converts at injection (`y_cam=CAM_H−h`, CAM_H=1.75),
+  no lab/JSON edit. **LJ4 notebook verified unaffected** (its E2 reads `pelvis3d`, not `pos3d`;
+  people_together sign-invariant). Validated on golden data (lab recipe @15fps): G4 3.19 m/s/min 0.077 fires,
+  G3 0.095 + all controls ≤0.13 quiet. 8 anomaly units (−2 old +6 new).
+
+### RESUME HERE → P5 — SFace align-fix (`pipeline.rs:~473`)
+⭐ The LJ5 top find. Prod feeds `id.identify_margin` the raw bbox crop; feed it the **aligned** crop
+instead: `face_lm5_px.and_then(|lm| mvm_emotion::align_face(frame, lm, 112)).unwrap_or_else(|| face.clone())`
+(mirror the emotion path ~437-440). +0 weight/latency, LFW held-out +19.5 pt (unaligned 0.7833 → aligned
+0.9783; TAR@FAR=1e-3 0.173→0.949). Gate: aligned path taken (unit on crop selection); no crash on degenerate
+lm; the +19.5 is the LJ5 number, not re-measured in prod (owner live identity-lock check). Then P6 (vocab v2:
+`fusion.rs` typing/using_mouse/tv → `using_object(class)`, drop watching_tv — contract change #2), P7 (golden
+refresh from `lj4_scenarios.py` + FSM exit-dwell sweep 5/8→12/15 decision), P8 (release v0.2.0 + passport +
+LJ6). See `mvm/docs/phase-15.6-port-plan.md`.
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.

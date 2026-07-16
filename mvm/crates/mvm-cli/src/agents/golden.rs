@@ -28,6 +28,12 @@ use mvm_core::{
 use std::collections::HashMap;
 
 const FPS: f64 = 15.0;
+/// Camera mount height (m) — the scenarios carry `pos3d` as a world Y-up pelvis
+/// height (floor = 0), but production `position_3d` is the y-DOWN camera frame
+/// (`space::pixel_to_3d`). Injection mirrors production, so we convert here:
+/// `y_cam = CAM_H − height`. Matches `Config::camera_height_m` (and the lab
+/// `mocap_to_views.CAM_H`) so the E2 fall rule recovers the true floor endpoint.
+const CAM_H: f32 = 1.75;
 const DATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/golden_scenarios.json");
 
 fn arr4(v: &serde_json::Value) -> [f32; 4] {
@@ -135,7 +141,8 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
                 posture: committed.map(|l| (l, conf)),
                 position_3d: Some(Position3D {
                     x: p3[0].as_f64().unwrap() as f32,
-                    y: p3[1].as_f64().unwrap() as f32,
+                    // Y-up world height → y-down camera frame (production convention).
+                    y: CAM_H - p3[1].as_f64().unwrap() as f32,
                     z: p3[2].as_f64().unwrap() as f32,
                     confidence: 0.5,
                 }),

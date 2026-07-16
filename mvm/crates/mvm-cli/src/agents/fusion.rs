@@ -29,6 +29,7 @@ pub(crate) struct FusionAgent {
 
 impl FusionAgent {
     pub(crate) fn new(config: mvm_core::Config, depth_slot: DepthSlot) -> Self {
+        let camera_height_m = config.camera_height_m;
         Self {
             config,
             depth_slot,
@@ -38,7 +39,7 @@ impl FusionAgent {
             // stitching collapses a churned object-id (or anon person-id) under
             // a held anchor into one continuous episode.
             journal: ActivityJournal::new().with_stitching(true),
-            anomaly: AnomalyScorer::new(),
+            anomaly: AnomalyScorer::new().with_camera_height(camera_height_m),
             last_frame: None,
             epoch: std::time::Instant::now(),
         }

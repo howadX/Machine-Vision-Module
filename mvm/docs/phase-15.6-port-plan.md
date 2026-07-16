@@ -126,6 +126,20 @@ gate is approximate; CMU falls are stunt-only (threshold bounds clinical from ab
 - **Gate:** golden FLOOR subset fires; brisk lie-down / fast crouch stays quiet; velocity-only
   fallback path unit-tested; threshold recalibrated to prod fps.
 
+**SHIPPED (P4, 2026-07-17).** `Config.camera_height_m=1.75`; `AnomalyScorer` keeps a per-track
+pelvis-height ring (`E2_LOOKBACK_S=3.0`, bounded) and fires `ANOMALY_FALL=0.6` when peak windowed
+descent ≥ `E2_FALL_VEL_MS=1.05` (median-smoothed k=3, time-based `E2_WIN_S=0.4` window — fps-robust)
+AND floor endpoint ≤ `E2_FLOOR_M=0.35`. `e2_fall(samples, require_floor)` — the shipped path passes
+`true`; `false` is the velocity-only fallback (both unit-tested: the vault fires velocity-only but the
+floor gate vetoes it). Per-id standing→lying window retired. **Coordinate unify (y-down) — the crux,
+resolved:** prod `position_3d` is y-DOWN (`space::pixel_to_3d`), so `height = camera_height_m − y`; the
+golden fixture carries `pos3d` as world Y-up pelvis height (floor=0), so `golden.rs` converts at the
+injection boundary (`y_cam = CAM_H − height`, `CAM_H=1.75`) — mirrors production, no lab/JSON edit.
+**LJ4 notebook verified unaffected:** its own E2 reads `pelvis3d[1]` (Y-up, `lj4_bench.py:341/421`) not
+`pos3d`; `people_together` uses 3D distance (sign-invariant under the y flip). Validated on the golden
+data itself (lab recipe @15 fps): G4 descent **3.19 m/s** / min-pelvis **0.077** → fires; G3 controlled
+**0.095 m/s** and every other control ≤ 0.13 → quiet (huge margin). Workspace **607 tests** green.
+
 ### P5 — SFace align-fix — `mvm-cli/pipeline.rs:473`
 - Feed `id.identify_margin` the aligned crop: `face_lm5_px.and_then(|lm|
   mvm_emotion::align_face(frame, lm, 112)).unwrap_or_else(|| face.clone())` (mirrors emotion path
@@ -156,6 +170,12 @@ gate is approximate; CMU falls are stunt-only (threshold bounds clinical from ab
   - **anomaly pose-OOD now live:** plausibility unified to `"low"/"ok"`; the previously-dead
     `anomaly.rs` pose-OOD trigger (weight 0.3) now fires on Mahalanobis OOD. `recon_error` is
     deprecated → always `None` (VAE removed) but kept in the state schema.
+  - **anomaly fall rule is now kinematic (E2), not label-transition (P4):** fires on a fast
+    pelvis descent that ends on the floor (velocity ≥1.05 m/s + floor ≤0.35 m), not on a
+    standing→lying label flip. New config `camera_height_m` (default 1.75, eye-level rig) is the
+    floor reference — inherits the uncalibrated 3D scale (tail #3, ±15–30%) so the floor gate is
+    approximate; CMU falls are stunts → threshold bounds clinical from above; velocity-only is the
+    documented fallback if the scale proxy is too noisy live.
 - Release via existing CI (two jobs, `cargo build -p mvm-cli`, NOT `xtask bundle`). Then **LJ6 —
   "Shipping v0.2.0: the scorecard"** (before/after on the three axes).
 - **Gate:** tests green, golden green, live checklist passed, release built by CI.
