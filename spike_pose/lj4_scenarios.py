@@ -285,7 +285,7 @@ def build_g1(walk, sit):
     objects = [dict(oid=10001, cls="keyboard", bbox=kb_bb),
                dict(oid=10002, cls="chair", bbox=chair_from_pose(seat_pose))]
     expected = [
-        dict(kind="activity", label="typing", person=0, obj=10001,
+        dict(kind="activity", label="using_object(keyboard)", person=0, obj=10001,
              t_start=a, t_end=b, tol_start=0.5, tol_end=1.0)
         for a, b in contact_runs(rows, kb_bb)
     ] + [
@@ -324,7 +324,7 @@ def build_g2(sit_stand, walk):
     objects = [dict(oid=10001, cls="keyboard", bbox=kb_bb),
                dict(oid=10002, cls="chair", bbox=chair_from_pose(seat_pose))]
     expected = [
-        dict(kind="activity", label="typing", person=0, obj=10001,
+        dict(kind="activity", label="using_object(keyboard)", person=0, obj=10001,
              t_start=a, t_end=b, tol_start=0.5, tol_end=1.0)
         for a, b in contact_runs(rows, kb_bb)
     ] + [

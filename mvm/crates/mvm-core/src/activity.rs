@@ -135,10 +135,12 @@ fn one_churn_apart(a: &[u32], b: &[u32]) -> bool {
 /// histograms once they exist.
 pub fn max_dwell_s(label: &str) -> f64 {
     match label {
-        // Transient by nature: a drink in the hand / phone in the hand for an
-        // hour straight is two-or-more episodes, not one.
+        // Transient by nature: a drink in the hand / an object in use for an
+        // hour straight is two-or-more episodes, not one. (Vocab v2: the old
+        // `using_phone` folded into the `using_object(...)` umbrella — the cap
+        // rides the whole family by prefix.)
         "holding_drink" => 900.0,
-        "using_phone" => 1800.0,
+        l if l.starts_with("using_object(") => 1800.0,
         _ => 3600.0,
     }
 }

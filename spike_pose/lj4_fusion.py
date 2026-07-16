@@ -61,21 +61,28 @@ WORKSTATION_CLASSES = ("dining table", "laptop", "keyboard", "mouse", "tv", "boo
 
 
 def interaction_label(cls):
-    """fusion.rs:213 — activity label for a person↔object interaction, else None."""
-    return {
-        "keyboard": "typing", "laptop": "typing",
-        "mouse": "using_mouse",
-        "cell phone": "using_phone",
-        "cup": "holding_drink", "bottle": "holding_drink",
-        "wine glass": "holding_drink", "bowl": "holding_drink",
-        "book": "reading",
-        "remote": "watching_tv", "tv": "watching_tv",
-    }.get(cls)
+    """fusion.rs — activity label for a person↔object interaction, else None.
+    Vocabulary v2 (LJ4/S3 VRD audit): the flat verbs typing/using_mouse/using_phone/
+    reading (0-15 supervisable VRD instances) fold into the honest umbrella
+    `using_object(<class>)`; holding_drink is kept (145 instances); watching_tv is
+    dropped (head-facing, not a wrist contact; VRD 0)."""
+    if cls in ("cup", "bottle", "wine glass", "bowl"):
+        return "holding_drink"
+    if cls in ("remote", "tv"):
+        return None
+    if cls in ("keyboard", "laptop", "mouse", "cell phone", "book"):
+        return f"using_object({cls})"
+    return None
 
 
 def max_dwell_s(label):
-    """activity.rs:136 — bounded-duration cap per label."""
-    return {"holding_drink": 900.0, "using_phone": 1800.0}.get(label, 3600.0)
+    """activity.rs — bounded-duration cap per label (vocab v2: using_object family
+    rides the transient cap by prefix)."""
+    if label == "holding_drink":
+        return 900.0
+    if label.startswith("using_object("):
+        return 1800.0
+    return 3600.0
 
 
 # ── injected observations (the simulator's post-detector contract) ─────────────

@@ -211,14 +211,25 @@ const WORKSTATION_CLASSES: &[&str] =
 
 /// The activity label a person↔object interaction yields, or `None` for objects
 /// that are context only (furniture you don't "use" as an activity).
-fn interaction_label(class: &str) -> Option<&'static str> {
+///
+/// Vocabulary v2 (phase 15.6, LJ4/S3 VRD audit — contract change #2): the flat
+/// verbs `typing`/`using_mouse`/`using_phone`/`reading` had **0–15** supervisable
+/// VRD instances — unsupervisable *names* for what the data only labels as "a
+/// person holds/uses X" (`holds`: 2153). They fold into a single honest umbrella
+/// `using_object(<class>)`, the class riding as a parameter, not a fabricated
+/// verb. `holding_drink` is **kept** — the one specialization with real support
+/// (145 instances). `watching_tv` is **dropped** entirely: wrist-on-remote/tv is
+/// not "watching" (that is head-facing, a different signal), and VRD has 0.
+fn interaction_label(class: &str) -> Option<String> {
     match class {
-        "keyboard" | "laptop" => Some("typing"),
-        "mouse" => Some("using_mouse"),
-        "cell phone" => Some("using_phone"),
-        "cup" | "bottle" | "wine glass" | "bowl" => Some("holding_drink"),
-        "book" => Some("reading"),
-        "remote" | "tv" => Some("watching_tv"),
+        // The one specialization with real VRD support — kept as a named verb.
+        "cup" | "bottle" | "wine glass" | "bowl" => Some("holding_drink".to_string()),
+        // Watching is head-facing, not a wrist-on-object contact → no claim.
+        "remote" | "tv" => None,
+        // Everything else a wrist can touch is an honest generic "uses X".
+        "keyboard" | "laptop" | "mouse" | "cell phone" | "book" => {
+            Some(format!("using_object({class})"))
+        }
         _ => None,
     }
 }
@@ -358,8 +369,8 @@ fn upper_upright_stationary(p: &PersonState) -> bool {
 /// Infer cross-group activities from the fused world (phase 8.F). Pure arithmetic:
 ///   - person↔person within `ACTIVITY_NEAR_M` (metric) → "people_together";
 ///   - person↔interactive-object: a **hand/wrist landmark** of the person lands
-///     inside the object bbox → a class-specific label ("typing", "using_mouse",
-///     "holding_drink", …). Body-landmark contact, not body-bbox overlap — on a
+///     inside the object bbox → a label (`using_object(<class>)`, or the kept
+///     `holding_drink`). Body-landmark contact, not body-bbox overlap — on a
 ///     ceiling cam the wrists reach the desk while the body bbox (head/shoulders)
 ///     does not.
 /// Furniture is context only (no activity).
@@ -399,7 +410,7 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
         }
         if let Some(winner) = best {
             acts.push(Activity {
-                label: label.into(),
+                label,
                 confidence: o.confidence.clamp(0.0, 1.0),
                 participants: vec![winner.track_id, o.id],
             });
@@ -504,7 +515,7 @@ mod tests {
         FusionAgent::new(Config::default(), slot)
     }
 
-    /// A world whose raw inference yields "typing" (wrist on keyboard).
+    /// A world whose raw inference yields "using_object(keyboard)" (wrist on keyboard).
     fn typing_world(now: Instant, frame_id: u64) -> mvm_core::WorldState {
         let mut w = mvm_core::WorldState::new(now);
         w.frame_id = frame_id;
@@ -520,7 +531,7 @@ mod tests {
     fn repeated_raw_debounces_then_journals_an_event() {
         let mut agent = fusion_agent();
         let t0 = Instant::now();
-        // Frames 0-1: raw "typing" present but below the enter dwell -> no claim.
+        // Frames 0-1: raw "using_object(keyboard)" present but below the enter dwell -> no claim.
         for f in 0..2u64 {
             let mut w = typing_world(t0 + std::time::Duration::from_millis(100 * f), f);
             agent.advance_journal(&mut w);
@@ -530,7 +541,7 @@ mod tests {
         let mut w = typing_world(t0 + std::time::Duration::from_millis(200), 2);
         agent.advance_journal(&mut w);
         assert_eq!(w.activities.len(), 1, "debounced activity emitted");
-        assert_eq!(w.activities[0].label, "typing");
+        assert_eq!(w.activities[0].label, "using_object(keyboard)");
         assert!(w.events.is_empty());
         // Keep it alive past D_MIN so the base exit dwell applies, then vanish.
         let mut f = 3u64;
@@ -547,7 +558,7 @@ mod tests {
             last_events = w.events.clone();
         }
         assert_eq!(last_events.len(), 1, "end of contact journals one event");
-        assert_eq!(last_events[0].label, "typing");
+        assert_eq!(last_events[0].label, "using_object(keyboard)");
         assert!(last_events[0].duration_s > 2.0, "duration {}", last_events[0].duration_s);
     }
 
@@ -657,7 +668,7 @@ mod tests {
         p.wrists = vec![[0.40, 0.58]];
         let acts = infer_activities(&[p], &[kb]);
         assert!(
-            acts.iter().any(|a| a.label == "typing" && a.participants == vec![10, 10001]),
+            acts.iter().any(|a| a.label == "using_object(keyboard)" && a.participants == vec![10, 10001]),
             "got {acts:?}"
         );
     }
@@ -691,7 +702,7 @@ mod tests {
         kb.mask = Some(region_mask(&BBox { x1: 0.2, y1: 0.5, x2: 0.45, y2: 0.7 }));
         p.wrists = vec![[0.7, 0.6]]; // in bbox, ~0.25 right of the silhouette
         assert!(
-            infer_activities(&[p], &[kb]).iter().all(|a| a.label != "typing"),
+            infer_activities(&[p], &[kb]).iter().all(|a| a.label != "using_object(keyboard)"),
             "bbox-only background contact must be cut by the mask"
         );
     }
@@ -705,7 +716,7 @@ mod tests {
         p.wrists = vec![[0.3, 0.6]]; // on the silhouette
         let acts = infer_activities(&[p], &[kb]);
         assert!(
-            acts.iter().any(|a| a.label == "typing" && a.participants == vec![10, 10001]),
+            acts.iter().any(|a| a.label == "using_object(keyboard)" && a.participants == vec![10, 10001]),
             "got {acts:?}"
         );
     }
@@ -740,7 +751,7 @@ mod tests {
         let mut b = person_id(11);
         b.hands = vec![hand_at([0.58, 0.55])];
         let acts = infer_activities(&[a, b], &[phone]);
-        let phone_acts: Vec<_> = acts.iter().filter(|x| x.label == "using_phone").collect();
+        let phone_acts: Vec<_> = acts.iter().filter(|x| x.label == "using_object(cell phone)").collect();
         assert_eq!(phone_acts.len(), 1, "one attribution per contested object, got {acts:?}");
         assert_eq!(phone_acts[0].participants, vec![11, 10001], "holder wins over reacher");
     }
@@ -781,8 +792,8 @@ mod tests {
         let mut b = person_id(11);
         b.wrists = vec![[0.7, 0.55]];
         let acts = infer_activities(&[a, b], &[kb1, kb2]);
-        assert!(acts.iter().any(|x| x.label == "typing" && x.participants == vec![10, 10001]));
-        assert!(acts.iter().any(|x| x.label == "typing" && x.participants == vec![11, 10002]));
+        assert!(acts.iter().any(|x| x.label == "using_object(keyboard)" && x.participants == vec![10, 10001]));
+        assert!(acts.iter().any(|x| x.label == "using_object(keyboard)" && x.participants == vec![11, 10002]));
     }
 
     #[test]
@@ -795,14 +806,14 @@ mod tests {
         kb.mask = Some(mvm_core::InstanceMask::empty());
         p.wrists = vec![[0.40, 0.58]];
         assert!(
-            infer_activities(&[p], &[kb]).iter().any(|a| a.label == "typing"),
+            infer_activities(&[p], &[kb]).iter().any(|a| a.label == "using_object(keyboard)"),
             "empty mask → honest bbox fallback"
         );
     }
 
     #[test]
     fn hand_landmark_triggers_object_use() {
-        // No wrists, but a detected hand landmark on the mouse → "using_mouse".
+        // No wrists, but a detected hand landmark on the mouse → "using_object(mouse)".
         let mut p = person(1.0);
         p.hands = vec![mvm_core::HandState {
             landmarks: vec![[0.33, 0.57], [0.34, 0.56]],
@@ -813,7 +824,7 @@ mod tests {
         }];
         let mouse = obj_class(10001, "mouse", BBox { x1: 0.31, y1: 0.54, x2: 0.36, y2: 0.60 });
         let acts = infer_activities(&[p], &[mouse]);
-        assert!(acts.iter().any(|a| a.label == "using_mouse"), "got {acts:?}");
+        assert!(acts.iter().any(|a| a.label == "using_object(mouse)"), "got {acts:?}");
     }
 
     #[test]

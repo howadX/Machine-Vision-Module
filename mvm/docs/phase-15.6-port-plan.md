@@ -161,6 +161,20 @@ re-validates identity-lock live. Workspace **608 tests** green.
   `seated_at_workstation`). Update golden episode-label asserts + fusion tests. **Contract change #2.**
 - **Gate:** fusion + golden tests updated & green.
 
+**SHIPPED (P6, 2026-07-17).** `interaction_label` → `Option<String>`, vocab v2: `holding_drink` **kept**
+(cup/bottle/wine glass/bowl — 145 VRD instances, the one real specialization); `remote|tv` **drop**
+(watching is head-facing, not a wrist contact); `keyboard|laptop|mouse|cell phone|book` →
+`using_object(<class>)` (the flat verbs typing/using_mouse/using_phone/reading had 0–15 supervisable
+instances — unsupervisable names). `activity.rs::max_dwell_s` folds the old `using_phone` 1800 s cap
+into the whole `using_object(...)` family by prefix. Golden regenerated from `lj4_scenarios.py`
+(`label="typing"` → `"using_object(keyboard)"` at G1/G2) — **byte-diff = exactly the 2 label strings**,
+all scenario numbers identical (regeneration verified deterministic). Python lab mirror
+`lj4_fusion.py` updated in lockstep (interaction_label + max_dwell_s) so the lab stays self-consistent.
+Rust fusion + `state.rs` sync test + golden asserts updated. Workspace **608 tests** green. **Note:** the
+published Kaggle `mvm-golden-scenarios` dataset + LJ4 notebook are **frozen at v1 vocab by design** (the
+contract change lands in 15.6, not retroactively) — a future LJ4-v2 re-push must carry the regenerated
+npz + updated `lj4_fusion.py`.
+
 ### P7 — Golden refresh + full workspace green
 - Regenerate `tests/data/golden_scenarios.json` from `spike_pose/lj4_scenarios.py` (never hand-edit).
 - Decide FSM exit-dwell sweep (15.4 candidate 5/8→12/15): ship only if golden stress subset improves

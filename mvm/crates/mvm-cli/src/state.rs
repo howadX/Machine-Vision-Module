@@ -1703,8 +1703,8 @@ mod tests {
         let v2: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[kbd], &[body], &[])).unwrap();
         assert!(
-            v2["activities"].as_array().unwrap().iter().any(|a| a["label"] == "typing"),
-            "wrist on keyboard → typing"
+            v2["activities"].as_array().unwrap().iter().any(|a| a["label"] == "using_object(keyboard)"),
+            "wrist on keyboard → using_object(keyboard)"
         );
     }
 

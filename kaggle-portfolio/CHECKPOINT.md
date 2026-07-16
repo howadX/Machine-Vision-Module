@@ -4,7 +4,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 15.6 port runbook: `mvm/docs/phase-15.6-port-plan.md`.
 
-## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P5 shipped, RESUME at P6
+## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P6 shipped, RESUME at P7
 
 | stage | status |
 |---|---|
@@ -14,7 +14,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P5 done+committed, RESUME at P6** |
+| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P6 done+committed, RESUME at P7** |
 
 ## 15.6 progress (act-by-act on branch `kaggle`, pause after each; workspace green each act)
 
@@ -61,15 +61,25 @@ Baseline was 597+2 tests; now **608 passed / 0 failed / 1 ignored**. Commits:
   LFW held-out +19.5 pt (0.783→0.978; TAR@FAR=1e-3 0.173→0.949). Unit pins all 3 paths (aligned 112² /
   no-lm raw / degenerate raw). Owner re-validates identity-lock live.
 
-### RESUME HERE → P6 — Vocab v2 (`fusion.rs:~213-223`, contract change #2)
-`interaction_label`: `keyboard|laptop|mouse|cell phone|remote|tv → using_object(<class>)`; **drop
-`watching_tv`**; keep `holding_drink`, `reading`, relational (`people_together`, `seated_at_workstation`).
-VRD audit (LJ4): typing/using_mouse/watching_tv = 0 real instances → the flat verbs were fictional.
-Update golden episode-label asserts + fusion tests. Then P7 (golden refresh from `lj4_scenarios.py` +
-FSM exit-dwell sweep 5/8→12/15 decision — ship only if golden stress subset improves, no idle
-regression), P8 (release v0.2.0: bump Cargo.toml 0.1.0→0.2.0, passport in README/AGENT.md, document
-contract changes #1 flexion/#2 vocab-v2/#3 posture-OOD, CI two-job `cargo build -p mvm-cli`, then LJ6
-journal). See `mvm/docs/phase-15.6-port-plan.md`.
+- **P6** `9d15a4fb` — Vocab v2 (LJ4/S3 VRD audit, contract change #2). `fusion.rs`
+  `interaction_label` → `Option<String>`: **keep** `holding_drink` (cup/bottle/wine glass/bowl, 145 VRD);
+  **drop** `remote|tv` watching_tv (head-facing ≠ wrist contact); `keyboard|laptop|mouse|cell phone|book`
+  → `using_object(<class>)` (flat verbs 0–15 instances, unsupervisable names). `activity.rs::max_dwell_s`
+  folds using_phone's 1800 s cap into the `using_object(` family by prefix. Golden regenerated from
+  `lj4_scenarios.py` (byte-diff = exactly 2 label strings, numbers identical — regen deterministic);
+  Python mirror `lj4_fusion.py` updated in lockstep. `state.rs` sync test + fusion asserts updated.
+  **Published `mvm-golden-scenarios`/LJ4 frozen at v1 by design** — the contract change lands in 15.6, not
+  retroactively; a future LJ4-v2 re-push carries the regenerated npz + updated lj4_fusion.py.
+
+### RESUME HERE → P7 — Golden refresh + FSM exit-dwell sweep decision + full workspace green
+Golden JSON already regenerated in P6 (vocab v2, deterministic) — so P7's remaining work is the **FSM
+exit-dwell sweep decision** (LJ4 candidate 5/8→12/15: lifts stress precision 0.133→0.667 but is a
+latency↔stress-phantom knob). Ship the sweep ONLY if the golden stress subset improves with **no idle
+regression**; else defer with a logged note. Verify `cargo test --workspace` (608+ green), `agents::golden`
+green, negative controls hold. Then P8 (release v0.2.0: bump `Cargo.toml:20` 0.1.0→0.2.0, quality passport
+in README/AGENT.md with LJ0–5 numbers+links, CHANGELOG, document contract changes #1 flexion/#2 vocab-v2/#3
+posture-OOD semantics + camera_height_m config, CI two-job `cargo build -p mvm-cli` NOT xtask bundle, then
+**LJ6 — "Shipping v0.2.0: the scorecard"**). See `mvm/docs/phase-15.6-port-plan.md`.
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.
