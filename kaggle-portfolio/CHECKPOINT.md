@@ -13,7 +13,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | ⬜ RESUME HERE |
+| 15.6 — Rust port + release v0.2.0 | 🔨 port plan written; P4.0 resolved; RESUME at P0 |
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.
@@ -148,11 +148,32 @@ a stale stage. Fix: kctl now resolves the tool-venv `.venv/bin/kaggle` explicitl
 if absent) and `_stage`/`_stage_data` recreate the stage dir from scratch. Verified: build lj5
 deterministic (20 cells), stale files wiped on stage, dry-push OK under the broken interpreter.
 
+## 15.6 in progress — Rust port + release v0.2.0 (act-by-act with pauses)
+
+Port runbook = **`mvm/docs/phase-15.6-port-plan.md`** (source of truth: bit-exact contracts, 8 acts
+P0–P8, dependencies, risks). Ship artifacts present: `spike_pose/ship/pose_rf_2dgrip_v2.bin` (220 KB),
+`ship/pose_maha.bin` (1.9 KB). Acts: P0 parity fixtures → P1 pose (feats12/z=0 · forest v2 ·
+Mahalanobis↔VAE drop · flexion output) → P2 tracker stale-relink → P3 posture SL-veto → P4 anomaly
+E2 → P5 SFace align-fix → P6 vocab v2 → P7 golden refresh → P8 release. **Mode: act-by-act, pause
+after each.** RESUME at **P0**.
+
+**⚠️ Bit gotcha (golden pins it):** forest proba columns are sklearn order `[lying,sitting,standing]`;
+Mahalanobis means/inv_cov are `bench.CLASSES` order `[standing,sitting,lying]` — **different**.
+
+**P4.0 RESOLVED (measured, `spike_pose/lj6_fall_ablation.py`):** does absolute floor matter, or can
+a floor-free relative signal replace it? CMU 6 falls/35 trials, rules @v≥1.13 m/s: velocity-only 6TP/
+**1FP** (vault `01_08`), velocity+abs-floor **6/0**, velocity+rel-net-drop 5/1/1. Single AUROC:
+velocity 0.994 > abs-endpoint 0.960 > rel-net-drop 0.891. **Floor carries real info** the relative
+signal loses (it conflates "dropped from height" with "ended on the ground"). Decision (locked):
+ship **velocity primary + coarse ground-endpoint veto from the known camera mount** (config
+`camera_height_m≈1.75`) — recovers 6/0 without a surveyor's calibration; **velocity-only = documented
+fallback** if the proxy is too noisy live; bed/couch-vs-floor deferred to affordance layer (north-star
+7.D). North-star framing: ground-plane perception is a visual primitive (the eye *uses* the floor),
+so a floor reference is human-analog, not a surveyor's abstraction.
+
 ## Open debts (non-blocking)
 
 - Kaggle assets are **private** → flip to public for portfolio when ready.
-- 15.6 will port the 15.1 ship artifacts to Rust (bit-exact golden tests; posture output gains a
-  `torso_flexion` field — contract change to document).
 - Doc debt "0.959"/"12 КБ" fixed across skeletons + research maps (15.07).
 
 ## Key files
