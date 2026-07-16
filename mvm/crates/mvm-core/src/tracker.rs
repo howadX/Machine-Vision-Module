@@ -714,6 +714,7 @@ impl PersonTracker {
             }
             if det.recon_error.is_some() { t.recon_error = det.recon_error; }
             if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
+            if det.torso_flexion.is_some() { t.torso_flexion = det.torso_flexion; }
             if det.body_coverage.is_some() { t.body_coverage = det.body_coverage; }
             if det.torso_attitude.is_some() { t.torso_attitude = det.torso_attitude; }
             // Head orientation (phase 10.3): latest snapshot, like body_coverage.
@@ -828,7 +829,7 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -942,7 +943,7 @@ mod tests {
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1001,7 +1002,7 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1014,7 +1015,7 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1034,7 +1035,7 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1046,7 +1047,7 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1256,7 +1257,7 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1771,6 +1772,7 @@ mod tests {
             posture_confidence: Some(0.95),
             distance: Some(1.5), position_x: Some(0.1), position_y: Some(0.2), position_z: Some(1.5),
             ws_confidence: Some(0.8), recon_error: Some(0.01), plausibility: Some("normal".into()),
+            torso_flexion: Some(5.0),
             body_coverage: None, torso_attitude: None,
             head_yaw: None, head_facing: None,
             emotion_distribution: None, embedding: Some(vec![1.0, 0.0, 0.0]),

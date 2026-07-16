@@ -15,14 +15,6 @@ use crate::scene_debug;
 use crate::state;
 use mvm_core::Detection;
 
-/// Tier 0.2 OOD gate threshold on the pose VAE's `log_prob_z` surprise: a pose
-/// above this is flagged `"unusual"` so the `PostureStabilizer` won't commit it.
-/// Calibrated to the public-data VAE (`pose_vae_public.bin`): in-distribution
-/// `log_prob_z` is p50≈57, p95≈121, p99≈169 — so ~p99 flags only the most
-/// surprising poses (and true garbage: empty ROI / hallucinated landmarks).
-/// The retired 14.3 belonged to the old user-data VAE and gated *everything* here.
-const POSTURE_OOD_LOGPZ: f32 = 170.0;
-
 /// Minimum body-bbox height (normalized) to classify posture at all. A body shorter
 /// than this is a fragment / far-partial detection whose landmarks are unreliable —
 /// live these bbox_h≈0.08 fragments produced confident false `lying`. Full/seated
@@ -34,15 +26,6 @@ const POSTURE_MIN_BBOX_H: f32 = 0.15;
 /// physical instance's boxes overlap heavily; 0.5 rejects a mask landing on the
 /// wrong (adjacent) object while tolerating YOLO26n↔YOLO-seg box disagreement.
 const SEG_ATTACH_IOU: f32 = 0.5;
-
-/// Tier 0.2 plausibility label from a pose's `log_prob_z`.
-fn plausibility_flag(logpz: f32) -> &'static str {
-    if logpz < POSTURE_OOD_LOGPZ {
-        "normal"
-    } else {
-        "unusual"
-    }
-}
 
 /// Occlusion-aware posture claim gate. The RF's 3-class label is a *full-body*
 /// claim; whether the pipeline may make it depends on what the camera saw:
@@ -85,8 +68,10 @@ fn posture_claimable(coverage: mvm_posture::classifier::BodyCoverage, attitude: 
 fn attach_posture(det: &mut Detection, pose: &mvm_posture::classifier::PoseResult) {
     det.body_coverage = Some(pose.coverage.as_str());
     det.torso_attitude = Some(pose.attitude);
-    det.recon_error = Some(pose.recon_error);
-    det.plausibility = Some(plausibility_flag(pose.plausibility).to_string());
+    // Posture OOD (15.6): Mahalanobis distance replaces the VAE. "low" = out-of-
+    // distribution skeleton (the `PostureStabilizer` distrusts it; anomaly nudges).
+    det.plausibility = Some(if pose.ood { "low" } else { "ok" }.to_string());
+    det.torso_flexion = pose.torso_flexion;
     if posture_claimable(pose.coverage, pose.attitude, pose.label) {
         det.posture = Some(pose.label.to_string());
         det.posture_confidence = Some(pose.confidence);
@@ -933,8 +918,9 @@ mod tests {
             label_idx: idx,
             confidence: 0.9,
             probs,
-            recon_error: 0.01,
-            plausibility: 50.0, // in-distribution → "normal"
+            torso_flexion: Some(if attitude == "horizontal" { 90.0 } else { 5.0 }),
+            maha_score: 2.0, // in-distribution → not OOD
+            ood: false,
             coverage,
             attitude,
         }
@@ -992,7 +978,8 @@ mod tests {
         assert_eq!(det.posture, None, "hallucinated-leg lying must be withheld");
         assert_eq!(det.body_coverage, Some("upper"));
         assert_eq!(det.torso_attitude, Some("upright"));
-        assert_eq!(det.plausibility.as_deref(), Some("normal"));
+        assert_eq!(det.plausibility.as_deref(), Some("ok")); // in-distribution (maha)
+        assert_eq!(det.torso_flexion, Some(5.0)); // flexion flows even when label withheld
     }
 
     #[test]

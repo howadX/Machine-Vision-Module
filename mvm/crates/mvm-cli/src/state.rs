@@ -144,12 +144,17 @@ struct JsonFace {
     /// pre-baked "how reliable is `emotion`" signal (phase 10.0). 1 ≈ uniform.
     #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     emotion_entropy: Option<f32>,
-    /// Posture VAE reconstruction error — diagnostic (phase 10.0).
+    /// Deprecated posture VAE reconstruction error — always absent since 15.6
+    /// (VAE dropped for Mahalanobis OOD); kept for schema stability.
     #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
     recon_error: Option<f32>,
-    /// Posture OOD plausibility flag — diagnostic (phase 10.0).
+    /// Posture OOD plausibility flag ("ok"/"low") — Mahalanobis-derived (phase 15.6).
     #[serde(skip_serializing_if = "Option::is_none")]
     plausibility: Option<String>,
+    /// Continuous torso flexion, degrees to gravity-up (2D z-free) — phase 15.6,
+    /// pure arithmetic. Present whenever a torso was measured.
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    torso_flexion: Option<f32>,
     /// Coarse head yaw, degrees (phase 10.3): 0 = frontal, − nose toward image
     /// left, + toward image right. Latest face-matched snapshot.
     #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
@@ -391,6 +396,7 @@ fn person_to_json_face(
         emotion_entropy: p.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
         recon_error: p.recon_error,
         plausibility: p.plausibility.clone(),
+        torso_flexion: p.torso_flexion,
         head_yaw: p.head_yaw,
         head_facing: p.head_facing,
     }
@@ -729,6 +735,9 @@ impl StateFile {
                         lines.push(format!("  - body_coverage: {cov} (torso {att})"));
                     }
                 }
+                if let Some(fl) = t.torso_flexion {
+                    lines.push(format!("  - torso_flexion: {fl:.1}°"));
+                }
                 if let Some(d) = t.distance {
                     lines.push(format!("  - distance: {d:.2}"));
                 }
@@ -955,6 +964,7 @@ impl StateFile {
                 emotion_entropy: t.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
                 recon_error: t.recon_error,
                 plausibility: t.plausibility.clone(),
+                torso_flexion: t.torso_flexion,
                 head_yaw: t.head_yaw,
                 head_facing: t.head_facing,
             }
@@ -1296,6 +1306,7 @@ mod tests {
             ws_confidence: None,
             recon_error: None,
             plausibility: None,
+            torso_flexion: None,
             body_coverage: None,
             torso_attitude: None,
             emotion_distribution: None, embedding: None,
@@ -1361,6 +1372,7 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
+                torso_flexion: None,
                 body_coverage: None,
                 torso_attitude: None,
                 emotion_distribution: None, embedding: None,
@@ -1387,6 +1399,7 @@ mod tests {
                 ws_confidence: None,
                 recon_error: None,
                 plausibility: None,
+                torso_flexion: None,
                 body_coverage: None,
                 torso_attitude: None,
                 emotion_distribution: None, embedding: None,
@@ -1489,6 +1502,7 @@ mod tests {
             ws_confidence: Some(0.9),
             recon_error: None,
             plausibility: None,
+            torso_flexion: None,
             body_coverage: None,
             torso_attitude: None,
             emotion_distribution: None, embedding: None,
@@ -1842,6 +1856,7 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
+            torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
             mask: None,
@@ -1877,6 +1892,7 @@ mod tests {
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
             ws_confidence: None, recon_error: None, plausibility: None,
+            torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
  head_yaw: None, head_facing: None,
             mask: None,
@@ -1907,6 +1923,7 @@ mod tests {
             right_gesture: None,
             recon_error: None,
             plausibility: None,
+            torso_flexion: None,
             head_yaw: None, head_facing: None,
             last_seen: std::time::Instant::now(),
         }

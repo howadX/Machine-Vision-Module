@@ -150,6 +150,7 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
                 right_gesture: None,
                 recon_error: None,
                 plausibility: None,
+                torso_flexion: None,
                 head_yaw: None,
                 head_facing: None,
                 last_seen: std::time::Instant::now(),

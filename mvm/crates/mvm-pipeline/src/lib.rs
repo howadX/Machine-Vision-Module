@@ -143,6 +143,7 @@ impl Camera {
             ws_confidence: d.ws_confidence,
             recon_error: d.recon_error,
             plausibility: d.plausibility,
+            torso_flexion: None, // bridge path does not compute flexion (native only)
             body_coverage: None, // bridge path does not compute the occlusion regime
             torso_attitude: None,
             emotion_distribution: None, // Python bridge doesn't output distributions

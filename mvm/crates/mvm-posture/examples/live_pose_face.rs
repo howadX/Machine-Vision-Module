@@ -47,8 +47,8 @@ fn main() -> anyhow::Result<()> {
             match p {
                 Some(p) => {
                     any = true;
-                    line += &format!(" | F{i}: {}@{:.2} recon={:.3} plaus={:.1}",
-                        p.label, p.confidence, p.recon_error, p.plausibility);
+                    line += &format!(" | F{i}: {}@{:.2} maha={:.2}{}",
+                        p.label, p.confidence, p.maha_score, if p.ood { " OOD" } else { "" });
                 }
                 None => line += &format!(" | F{i}: pose<thr"),
             }

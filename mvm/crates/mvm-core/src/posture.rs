@@ -16,9 +16,9 @@
 //! - **Confidence gate (`min_conf`):** a frame whose confidence is below the gate
 //!   is *ambiguous* — it never changes the committed label and breaks any pending
 //!   streak (so evidence for a flip must be both confident **and** consecutive).
-//! - **Trust gate (Tier 0.2):** a frame the pose VAE flags out-of-distribution
-//!   (`plausibility` "unusual" — high `log_prob_z` surprise, e.g. garbage
-//!   landmarks from a fragmented detection) is *ambiguous* too, regardless of the
+//! - **Trust gate (Tier 0.2):** a frame the pose Mahalanobis OOD detector flags
+//!   out-of-distribution (`plausibility` "low" — far from any posture cluster, e.g.
+//!   garbage landmarks from a fragmented detection) is *ambiguous* too, regardless of the
 //!   classifier's softmax confidence. The signal was already computed upstream but
 //!   only reported; now it also guards the committed label. A flip therefore needs
 //!   evidence that is confident, **plausible**, and consecutive.
@@ -33,11 +33,12 @@
 /// Trust verdict for one per-frame posture observation, fed as `trusted` to
 /// [`PostureStabilizer::observe`]. A frame is distrusted (treated as ambiguous —
 /// never flips the committed label) when either:
-/// - the pose VAE flagged it out-of-distribution (`plausibility == "unusual"`), or
+/// - the pose Mahalanobis OOD detector flagged it out-of-distribution
+///   (`plausibility == "low"`), or
 /// - it says **`lying` while the body is moving** — `lying` is a static posture, so
 ///   `moving + lying` is almost always a bad/fragment frame (mitigation, 2026-07).
 pub fn posture_trusted(plausibility: Option<&str>, label: &str, moving: bool) -> bool {
-    plausibility != Some("unusual") && !(label == "lying" && moving)
+    plausibility != Some("low") && !(label == "lying" && moving)
 }
 
 /// Per-track posture stabiliser. Feed each frame's `(label, confidence)` through
@@ -333,12 +334,12 @@ mod tests {
     #[test]
     fn posture_trusted_gates_ood_and_moving_lying() {
         // OOD frame → distrusted regardless of label/motion.
-        assert!(!posture_trusted(Some("unusual"), "standing", false));
+        assert!(!posture_trusted(Some("low"), "standing", false));
         // `lying` while moving → distrusted (lying is static).
-        assert!(!posture_trusted(Some("normal"), "lying", true));
+        assert!(!posture_trusted(Some("ok"), "lying", true));
         assert!(!posture_trusted(None, "lying", true));
         // `lying` while still → trusted; moving non-lying → trusted.
-        assert!(posture_trusted(Some("normal"), "lying", false));
+        assert!(posture_trusted(Some("ok"), "lying", false));
         assert!(posture_trusted(None, "standing", true));
         assert!(posture_trusted(None, "sitting", true));
     }

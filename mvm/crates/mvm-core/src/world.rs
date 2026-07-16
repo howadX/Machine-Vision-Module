@@ -86,10 +86,14 @@ pub struct PersonState {
     pub left_gesture: Option<&'static str>,
     /// Right-arm twin of [`left_gesture`](Self::left_gesture).
     pub right_gesture: Option<&'static str>,
-    /// Posture VAE reconstruction error — diagnostic quality signal (phase 10.0).
+    /// Deprecated posture VAE reconstruction error — always `None` since the VAE was
+    /// dropped for Mahalanobis OOD (phase 15.6); retained for state-schema stability.
     pub recon_error: Option<f32>,
-    /// Posture OOD plausibility flag ("ok"/"low", phase 10.0 diagnostic).
+    /// Posture OOD plausibility flag ("ok"/"low"): now Mahalanobis-derived (phase 15.6).
     pub plausibility: Option<String>,
+    /// Continuous torso flexion (degrees to gravity-up, 2D z-free) — phase 15.6,
+    /// pure arithmetic, +0 model weight.
+    pub torso_flexion: Option<f32>,
     /// Coarse head yaw in degrees (phase 10.3): 0 = frontal, sign = image side
     /// the nose points toward. Latest face-matched snapshot off the track.
     pub head_yaw: Option<f32>,
@@ -147,6 +151,7 @@ impl PersonState {
             right_gesture: gesture_label(t.motion.right_gesture()),
             recon_error: t.recon_error,
             plausibility: t.plausibility.clone(),
+            torso_flexion: t.torso_flexion,
             head_yaw: t.head_yaw,
             head_facing: t.head_facing,
             last_seen: now,
