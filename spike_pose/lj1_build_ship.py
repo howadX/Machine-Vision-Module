@@ -4,8 +4,8 @@
 Consolidates the five LJ1 decisions into shippable artifacts:
   1. 2D-GRIP RandomForest (features_13, z=0) trained on lab + mocap (corrected pelvis-gated
      labels + bend trials). Validated on gold R3 (held-out) + held-out azimuth.
-  2. Class-conditional Mahalanobis (means + inv-cov on the 14 features) + OOD threshold — the
-     195 KB VAE's replacement (~2.5 KB, pure arithmetic).
+  2. Class-conditional Mahalanobis (means + inv-cov on the 12 z-free features) + OOD threshold — the
+     195 KB VAE's replacement (~1.8 KB, pure arithmetic). Class order = forest alphabetical.
   3. Torso-flexion output — pick pure arithmetic (2D torso_inc) vs a small regressor by MAE.
 
 Artifacts -> spike_pose/ship/ (gitignored; regenerable). Rust port reads these in 15.6.
@@ -67,19 +67,25 @@ def main():
     print(f"    serialized -> ship/pose_rf_2dgrip_v2.bin ({len(blob)/1024:.1f} KB)")
 
     # ---- 2. Mahalanobis OOD (fit on training features) ----
+    # Class order UNIFIED to the forest (sklearn classes_ = alphabetical [lying,sitting,standing]) so
+    # pose_maha.bin and pose_rf_2dgrip_v2.bin carry ONE order = Rust POSE_LABELS (15.6 port hygiene,
+    # decided 2026-07-16). The score is a pure min over classes → this is a byte-only reorder,
+    # score/thr are identical. The load-bearing invariant is the mean_c <-> inv_cov_c pairing (zipped).
+    MAHA_CLASSES = [str(c) for c in forest.classes_]
     means, iP = [], []
-    for c in CLASSES:
+    for c in MAHA_CLASSES:
         Fc = F_tr[y_tr == c]; mu = Fc.mean(0)
         cov = np.cov(Fc, rowvar=False) + 1e-3 * np.eye(F_tr.shape[1])
         means.append(mu); iP.append(np.linalg.inv(cov))
     def maha_score(F):
         return np.sqrt(np.stack([np.einsum("ij,jk,ik->i", F - m, P, F - m) for m, P in zip(means, iP)], 1).min(1))
     thr = float(np.percentile(maha_score(F_tr), 99))      # OOD gate: 99th pct of ID
-    buf = struct.pack("<II", len(CLASSES), F_tr.shape[1]) + struct.pack("<f", thr)
+    buf = struct.pack("<II", len(MAHA_CLASSES), F_tr.shape[1]) + struct.pack("<f", thr)
     for mu, P in zip(means, iP):
         buf += mu.astype("<f4").tobytes() + P.astype("<f4").tobytes()
     open(os.path.join(SHIP, "pose_maha.bin"), "wb").write(buf)
-    print(f"\n[2] Mahalanobis OOD: 3 classes x 14-d, thr(99pct)={thr:.2f} -> ship/pose_maha.bin ({len(buf)} B)")
+    print(f"\n[2] Mahalanobis OOD: {len(MAHA_CLASSES)} classes x {F_tr.shape[1]}-d (order {MAHA_CLASSES}), "
+          f"thr(99pct)={thr:.2f} -> ship/pose_maha.bin ({len(buf)} B)")
 
     # ---- 3. flexion output: arithmetic (2D torso_inc) vs small regressor ----
     bP, btr = [], []

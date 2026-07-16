@@ -20,9 +20,19 @@ regenerable via `spike_pose/lj1_build_ship.py`): `ship/pose_rf_2dgrip_v2.bin` (2
   sklearn `classes_` order = alphabetical `[lying, sitting, standing]`.** Same format as prod
   `Forest::load` already parses (classifier.rs:194) — only the file + N_FEAT change.
 - **Mahalanobis** `pose_maha.bin`: `<II` (n_classes=3, n_features=12) · `<f` thr (99th pct of ID) ·
-  per class **in `bench.CLASSES` order = `[standing, sitting, lying]`**: mean 12×f32 + inv_cov
-  12×12×f32 row-major. score = min_c √((F−μ_c)ᵀ P_c (F−μ_c)); **OOD iff score > thr**.
-  ⚠️ **Class order differs from the forest** — golden test must catch a mismatched map.
+  per class: mean 12×f32 + inv_cov 12×12×f32 row-major. score = min_c √((F−μ_c)ᵀ P_c (F−μ_c));
+  **OOD iff score > thr**.
+  ⚠️ **Class order UNIFIED to the forest = alphabetical `[lying, sitting, standing]`** (decided
+  2026-07-16). Rationale: the score is a pure `min` over classes — the maha class order is
+  *functionally inert* (no positional index, no per-class label ever emitted; verified in
+  `lj1_ood.py:63`, `lj1_build_ship.py:76`, and every bench consumer), whereas the forest column
+  order is fixed by sklearn `classes_` **and already load-bearing in prod** (`POSE_LABELS`,
+  `PoseResult.probs`, gold-R3). So we move the free side: one `POSE_LABELS`/`CLASS_ORDER` constant
+  drives both loaders + golden. **Do NOT unify the other way** (forest→bench order) — that permutes
+  forest columns and touches the prod contract (R1) for zero gain.
+  ⚠️ **The real bit-invariant golden must pin is NOT the class order** (score is permutation-
+  invariant, so a reorder is silent) **but the `mean_c ↔ inv_cov_c` pairing** — mean[i] must stay
+  zipped with inv_cov[i]. Golden asserts `maha_score` (order-invariant) + a paired-integrity check.
 - **Flexion** = feature[0] `torso_inc` raw (arithmetic, +0 weight). Exposed as `torso_flexion`.
 - **Anomaly E2** (15.4): fall = *reached floor* AND *peak downward pelvis velocity ≳ 1.05 m/s @15fps*;
   scene-level, retires the per-id standing→lying window.
@@ -39,12 +49,19 @@ regenerable via `spike_pose/lj1_build_ship.py`): `ship/pose_rf_2dgrip_v2.bin` (2
 ## Acts (sequenced; each ends at a green `cargo test --workspace`)
 
 ### P0 — Foundation: parity fixtures (non-production)
-- Regenerate ship artifacts deterministically (`lj1_build_ship.py`), confirm sha vs committed numbers.
+- **Unify maha class order first:** in `lj1_build_ship.py` change the maha loop `for c in bench.CLASSES`
+  → `for c in POSE_LABELS` (alphabetical `[lying, sitting, standing]`), so `pose_maha.bin` and the
+  forest share one order. Also fix the stale print (`:82` says "14-d" — the committed .bin is 12-d:
+  1884 B = `8 + 4 + 3·(12·4 + 12·12·4)`). Cosmetic but the log must not lie.
+- Regenerate ship artifacts deterministically (`lj1_build_ship.py`), confirm sha vs committed numbers
+  (note: unifying the maha order changes `pose_maha.bin` bytes — re-record its sha as the new baseline).
 - New Python parity exporter `spike_pose/lj6_golden.py`: for a fixed set of landmark inputs
   (reuse `pose_p1_golden` inputs + a lying/sitting/standing/bend spread) emit reference
   `(features12[z=0], forest_probs3, maha_score, flexion)` → `crates/mvm-posture/src/pose_v2_golden.in`.
   Replaces the stale `pose_p1_golden.in` (14-feat+VAE).
-- **Gate:** exporter deterministic (empty diff on re-run); fixtures committed.
+- **Gate:** exporter deterministic (empty diff on re-run); fixtures committed; maha `mean↔inv_cov`
+  paired-integrity assertion drafted for the P1c loader test (class order alone is silent — see the
+  Mahalanobis contract note).
 
 ### P1 — Pose port (load-bearing) — crate `mvm-posture` + pipeline OOD + state contract
 - **P1a** `compute_features` → 12 feats, z=0, Python order. `N_FEAT 14→3`-consumers audited.
