@@ -43,12 +43,23 @@ pub fn posture_trusted(plausibility: Option<&str>, label: &str, moving: bool) ->
 
 /// Per-track posture stabiliser. Feed each frame's `(label, confidence)` through
 /// [`Self::observe`]; read the smoothed committed label via [`Self::label`].
+/// Per-edge veto (LJ2): a *direct* `standing↔lying` commit must earn this many
+/// consecutive confident frames instead of `dwell`. Licensed by the measured CMU
+/// transition matrix — `A[standing,lying] ≈ 0.0013` (a real lie-down passes through
+/// sitting), so vetoing the instant standing↔lying flip removes the fall-relevant
+/// false flip without taxing any possible transition. `dwell` elsewhere is unchanged,
+/// so there is no aggregate regression by construction. A genuine fall is caught by
+/// the scene-level anomaly rule (E2), not by this posture commit.
+pub const SL_DWELL: u32 = 12;
+
 #[derive(Debug, Clone)]
 pub struct PostureStabilizer {
     label: Option<String>,
     confidence: f32,
     min_conf: f32,
     dwell: u32,
+    /// Frames required for a direct `standing↔lying` flip (see [`SL_DWELL`]).
+    sl_dwell: u32,
     candidate: Option<String>,
     streak: u32,
     /// Consecutive frames the posture was *withheld* upstream (body coverage
@@ -77,6 +88,7 @@ impl PostureStabilizer {
             confidence: 0.0,
             min_conf,
             dwell: dwell.max(1),
+            sl_dwell: SL_DWELL.max(dwell.max(1)),
             candidate: None,
             streak: 0,
             hidden_streak: 0,
@@ -123,15 +135,24 @@ impl PostureStabilizer {
                 self.candidate = self.label.clone();
                 self.streak = 0;
             }
-            // A different confident label → accumulate consecutive evidence.
-            Some(_) => {
+            // A different confident label → accumulate consecutive evidence. A direct
+            // standing↔lying flip must earn `sl_dwell` frames (the fall-relevant edge);
+            // every other flip earns `dwell` (LJ2 per-edge veto, no aggregate change).
+            Some(cur) => {
+                let need = if (cur == "standing" && label == "lying")
+                    || (cur == "lying" && label == "standing")
+                {
+                    self.sl_dwell
+                } else {
+                    self.dwell
+                };
                 if self.candidate.as_deref() == Some(label) {
                     self.streak += 1;
                 } else {
                     self.candidate = Some(label.to_string());
                     self.streak = 1;
                 }
-                if self.streak >= self.dwell {
+                if self.streak >= need {
                     self.label = Some(label.to_string());
                     self.confidence = conf;
                     self.streak = 0;
@@ -187,6 +208,46 @@ mod tests {
         s.observe("standing", 0.9, true);
         s.observe("lying_side", 0.95, true); // outlier — must NOT flip
         assert_eq!(s.label(), Some("standing"));
+    }
+
+    #[test]
+    fn sl_veto_blocks_short_standing_to_lying_burst() {
+        // LJ2 per-edge veto: the fall-relevant standing→lying flip must earn
+        // SL_DWELL=12 confident frames, not the general dwell (3). An occlusion-
+        // stress burst of hallucinated `lying` shorter than that must NOT flip.
+        let mut s = PostureStabilizer::new(0.5, 3);
+        s.observe("standing", 0.9, true);
+        for _ in 0..(SL_DWELL - 1) {
+            s.observe("lying", 0.99, true); // 11 confident lying frames
+        }
+        assert_eq!(s.label(), Some("standing"), "< SL_DWELL → the impossible flip is vetoed");
+        s.observe("lying", 0.99, true); // SL_DWELL-th confident frame
+        assert_eq!(s.label(), Some("lying"), "a sustained SL_DWELL run does earn the flip");
+    }
+
+    #[test]
+    fn sl_veto_is_symmetric_for_lying_to_standing() {
+        // The veto is on the {standing,lying} edge in either direction.
+        let mut s = PostureStabilizer::new(0.5, 3);
+        s.observe("lying", 0.9, true);
+        for _ in 0..(SL_DWELL - 1) {
+            s.observe("standing", 0.99, true);
+        }
+        assert_eq!(s.label(), Some("lying"), "lying→standing is vetoed below SL_DWELL too");
+        s.observe("standing", 0.99, true);
+        assert_eq!(s.label(), Some("standing"));
+    }
+
+    #[test]
+    fn non_sl_flip_keeps_the_cheap_dwell() {
+        // standing↔sitting is a possible transition (A[standing,sitting]≠0) → still
+        // the general dwell (3), so the veto adds no aggregate latency (no regression).
+        let mut s = PostureStabilizer::new(0.5, 3);
+        s.observe("standing", 0.9, true);
+        s.observe("sitting", 0.9, true); // streak 1
+        s.observe("sitting", 0.9, true); // streak 2
+        s.observe("sitting", 0.9, true); // streak 3 → commits at dwell
+        assert_eq!(s.label(), Some("sitting"));
     }
 
     #[test]
