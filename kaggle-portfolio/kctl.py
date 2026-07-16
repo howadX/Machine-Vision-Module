@@ -135,6 +135,20 @@ NOTEBOOKS = {
         # resolve no DNS even with enable_internet=true — learned on LJ4 v1).
         dataset_sources=[f"{USER}/mvm-golden-scenarios", f"{USER}/mvm-openimages-vrd-meta"],
     ),
+    "lj5": dict(
+        dir="lj5",
+        build="_build_lj5.py",
+        ipynb="lj5_weighing_the_experts.ipynb",
+        id=f"{USER}/lj5-weighing-the-experts",             # must equal slugify(title), <=50 chars
+        title="LJ5 — Weighing the Experts",
+        # Mounted (API-pushed runs resolve no DNS): the ONNX experts, RAF-DB (emotion held-out,
+        # community mirror), LFW (identity). The load-bearing findings (B1 emotion healthy, B2
+        # +19.5 align headroom, C SFace-INT8 negative) re-run live off these. Act A latency is
+        # reference-hardware (Kaggle-CPU echo only); Act B3 detect is presented (OI images heavy,
+        # "where feasible") — so no OpenImages mount is needed for Run-All to complete.
+        dataset_sources=[f"{USER}/mvm-onnx-experts", "shuvoalok/raf-db-dataset",
+                         f"{USER}/mvm-lfw-verification"],
+    ),
 }
 
 
