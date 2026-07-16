@@ -58,10 +58,10 @@ Zone «workstation»: Вадим(0), laptop(10001), mouse(10002)
 
 | id | who | dist | posture | motion | emotion | head | hands |
 |----|-----|------|---------|--------|---------|------|-------|
-| 0  | Вадим ✓ | 0.8m | sitting (high) | idle | Neutral (high) | camera | using_mouse |
+| 0  | Вадим ✓ | 0.8m | sitting (high) | idle | Neutral (high) | camera | using_object(mouse) |
 | 10 | anon | 1.0m | standing (med) | idle | — | — | — |
 
-Active: seated_at_workstation · using_mouse
+Active: seated_at_workstation · using_object(mouse)
 
 ⚠️ id10: тело не подтверждено лицом (животное или упавший — не различить)
 ```
@@ -75,8 +75,13 @@ Active: seated_at_workstation · using_mouse
     gallery) · `anon` (body only, no face).
   - **dist** — metres from camera (Z). Ordinal is trustworthy; absolute is ±15–30%.
   - **posture / emotion** — label + confidence **word** in parens: `low`/`med`/`high`.
+    Posture may also carry **`torso_flexion`** (continuous torso inclination in degrees,
+    v0.2.0) — a bent-forward torso reads high even while the discrete label stays `standing`.
   - **motion** — `idle` / `walking` (+ velocity). **head** — where the face points.
-  - **hands** — active hand/object interaction (e.g. `using_mouse`, `holding_drink`).
+  - **hands** — active hand/object interaction. Labels: **`using_object(<class>)`**
+    (`using_object(keyboard)`, `using_object(mouse)`, `using_object(cell phone)`, …) and
+    **`holding_drink`**. (v0.2.0 folded the old `typing`/`using_mouse`/`using_phone`/`reading`
+    into the honest `using_object` umbrella and dropped `watching_tv` — see below.)
 - **Active** — current activities (with durations when the journal is running).
 - **⚠️ notes** — the frame's honest uncertainty, made explicit (see below).
 
@@ -109,6 +114,23 @@ activity start/stop **per frame**, but the **scene log** (`scene-*.jsonl`, what
 in a recap's episode list yet have **no matching scene frame** in the inspected
 window. Absence in `inspect` doesn't disprove a recap episode; it means the moment
 fell between scene dumps. Widen `--window` before concluding.
+
+## Contract changes in v0.2.0 (from v0.1.0)
+
+The ML refactor (phase 15, journals LJ0–LJ6) changed three things a consumer sees:
+
+1. **`torso_flexion`** — a new *optional* posture field (continuous torso inclination
+   in degrees). Present when the torso is visible; absent otherwise. Additive — old
+   readers ignore it safely.
+2. **Activity vocabulary v2** — the flat verbs `typing` / `using_mouse` / `using_phone`
+   / `reading` are gone; a wrist-on-object interaction is now **`using_object(<class>)`**
+   (the object class rides as a parameter). `holding_drink` is kept. **`watching_tv`
+   was removed** — "watching" is a head-facing signal, not a wrist contact, and the
+   supervising corpus had zero real instances of it. If you matched on the old strings,
+   switch to the `using_object(` prefix.
+3. **Pose-OOD semantics** — `plausibility` (`low`/`ok`) is now derived from a Mahalanobis
+   distance, not the old VAE. The `recon_error` field is **deprecated** and always `null`
+   (kept only for schema stability). Read `plausibility`, not `recon_error`.
 
 ## What MVM does NOT do
 

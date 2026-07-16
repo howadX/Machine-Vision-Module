@@ -4,7 +4,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 15.6 port runbook: `mvm/docs/phase-15.6-port-plan.md`.
 
-## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 IN PROGRESS — P0–P7 shipped, RESUME at P8 (release)
+## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 P0–P8 DONE BY CODE — release v0.2.0 pending owner tag-push + LJ6
 
 | stage | status |
 |---|---|
@@ -14,7 +14,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | 🔨 act-by-act; **P0–P7 done+committed, RESUME at P8 (release)** |
+| 15.6 — Rust port + release v0.2.0 | 🔨 **P0–P8 done by code+committed**; release pending owner tag-push + LJ6 |
 
 ## 15.6 progress (act-by-act on branch `kaggle`, pause after each; workspace green each act)
 
@@ -80,18 +80,24 @@ Baseline was 597+2 tests; now **608 passed / 0 failed / 1 ignored**. Commits:
   one-line flip (5→12, 8→15) in `activity.rs` next to `ACTIVITY_EXIT_DWELL_OLD` for the owner post
   live-validation. Kept 5/8. No behavior change → workspace 608 green, golden green.
 
-### RESUME HERE → P8 — Release v0.2.0 (the final act)
-Bump `Cargo.toml:20` workspace.package.version `0.1.0`→`0.2.0`. Write the **quality passport** into
-README/AGENT.md (numbers from LJ0–5 with journal links: pose gold R3 0.894 / footprint −79%; SL-veto
-false-flip→0; tracker Δ med −4.70/heavy −8.25; E2 fall AUROC≈1.0; SFace align +19.5 pt; human chain
-16.7 ms <50). CHANGELOG. **Document the 3 contract changes:** #1 `torso_flexion` new optional posture
-field; #2 vocab v2 (`using_object(class)`, watching_tv dropped); #3 posture OOD semantics (`plausibility`
-from Mahalanobis, `recon_error` deprecated→None) + new `Config.camera_height_m` (E2 floor ref). **P1
-passport carry-items** (record honestly): z-free sit↔stand near-tie limit (p_V_06); anomaly pose-OOD now
-live. CI release: existing **two-job** workflow, `cargo build -p mvm-cli` NOT `xtask bundle` (embed-models
-include_bytes! from gitignored models/ → CI fail); aarch64 gated `!private`. Owner live checklist:
-sit/stand/lie/bend × azimuths + walking + identity-lock + a fall. Then **LJ6 — "Shipping v0.2.0: the
-scorecard"** (before/after on speed/accuracy/weight). See `mvm/docs/phase-15.6-port-plan.md`.
+- **P8** `3bab0ce1` — Release v0.2.0 prep (final act, code side). `Cargo.toml:20` 0.1.0→0.2.0
+  (version flows everywhere via `CARGO_PKG_VERSION`: `mvm --version`→`mvm 0.2.0`, MCP serverInfo). New
+  `mvm/CHANGELOG.md` (v0.2.0 + v0.1.0). README: version/phase/tests badges, **Паспорт качества v0.2.0**
+  table (LJ0–5 numbers + the 3 contract changes), honest-limits += z-free sit↔stand + fall-ceiling, Roadmap
+  row 15, `using_mouse`→`using_object(mouse)`. AGENT.md: vocab-v2 + torso_flexion + `## Contract changes in
+  v0.2.0`. mvm/CLAUDE.md status + phase-15 row updated (608 tests). Workspace 608 green.
+
+### RESUME HERE → owner-only tail (release + LJ6) — NOT agent work
+The code side of 15.6 is complete on branch `kaggle`. Remaining is owner/human:
+1. **Merge `kaggle`→`master`** (or tag on `kaggle`), then **push tag `v0.2.0`** → CI `release.yml` builds
+   x86_64 (+aarch64 once public) via `cargo build -p mvm-cli` and attaches assets. Version comes from the
+   tag, not Cargo.toml.
+2. **Live checklist** (real camera): sit/stand/lie/bend × azimuths + walking + identity-lock (verify the
+   SFace align-fix locks Вадим) + a fall (E2 fires) + confirm `torso_flexion`/`using_object(...)` render.
+3. **LJ6 — "Shipping v0.2.0: the scorecard"** — the closing Kaggle journal (before/after on
+   speed/accuracy/weight, links LJ0–5). `spike_pose/lj6_golden.py`/`lj6_fall_ablation.py` already exist as
+   supporting artifacts. This closes phase 15.
+See `mvm/docs/phase-15.6-port-plan.md` (P8) + `mvm/CHANGELOG.md`.
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.
