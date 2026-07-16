@@ -149,6 +149,13 @@ gate is approximate; CMU falls are stunt-only (threshold bounds clinical from ab
 - Bump `Cargo.toml:20` 0.1.0→0.2.0. Quality passport in README/AGENT.md (numbers from LJ0-5 with
   journal links). CHANGELOG. Document contract changes (#1 flexion, #2 vocab-v2, posture OOD
   semantics). Owner live checklist: sit/stand/lie/bend × azimuths + walking + identity lock.
+- **Passport carry-items from P1 (record honestly):**
+  - **z-free sit↔stand limit:** 2D-GRIP drops MediaPipe z (cross-domain liability, LJ1) → loses the
+    seated-thigh depth cue → a *frontal* desk-sitter can read `standing` at a near-tie (measured
+    `p_V_06` .42 vs .48). Safety invariant (never false `lying`) holds; oracle bounds confusion ≤1.
+  - **anomaly pose-OOD now live:** plausibility unified to `"low"/"ok"`; the previously-dead
+    `anomaly.rs` pose-OOD trigger (weight 0.3) now fires on Mahalanobis OOD. `recon_error` is
+    deprecated → always `None` (VAE removed) but kept in the state schema.
 - Release via existing CI (two jobs, `cargo build -p mvm-cli`, NOT `xtask bundle`). Then **LJ6 —
   "Shipping v0.2.0: the scorecard"** (before/after on the three axes).
 - **Gate:** tests green, golden green, live checklist passed, release built by CI.
