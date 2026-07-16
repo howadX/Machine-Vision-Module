@@ -385,6 +385,50 @@ def build_g5(a, b):
     return rows, [], expected, n_frames
 
 
+# ── CI export (the Rust --stub-class golden test reads THIS file) ─────────────
+
+CI_OUT = os.path.join(os.path.dirname(HERE), "mvm", "crates", "mvm-cli",
+                      "tests", "data", "golden_scenarios.json")
+# One representative per group, FLOOR-clean. G3_111_07 is a prod-quiet floor
+# scenario (the three prod false-alarm instances are documented in LJ4 and flip
+# with the E2 port in 15.6 — CI asserts what production promises TODAY).
+CI_INSTANCES = ["G1_07_01__13_01", "G2_111_09__07_03", "G3_111_07",
+                "G4_90_12", "G5_07_01__08_02", "G6_07_06"]
+
+
+def export_ci(R, meta):
+    """Compact FLOOR-only JSON (visible rows, rounded) for the Rust golden test —
+    scenario file = single source of truth for the Python bench AND the CI gate."""
+    idx = collections.defaultdict(list)
+    for i, inst in enumerate(R["inst"]):
+        idx[inst].append(i)
+    out = {"fps": FPS, "instances": []}
+    for inst in CI_INSTANCES:
+        m = meta[inst]
+        frames = [[] for _ in range(m["n_frames"])]
+        for i in idx[inst]:
+            if not R["vis"][i]:
+                continue                      # FLOOR emitter skips invisible rows
+            r4 = lambda v: [round(float(x), 4) for x in np.asarray(v).ravel()]
+            frames[int(R["frame"][i])].append(dict(
+                person=int(R["person"][i]), bbox=r4(R["bbox"][i]),
+                posture=str(R["posture"][i]),
+                wrists=[r4(R["wrists"][i][0]), r4(R["wrists"][i][1])],
+                pos3d=r4(R["pos3d"][i])))
+        objs = [dict(id=int(R["obj_id"][j]), cls=str(R["obj_cls"][j]),
+                     bbox=[round(float(x), 4) for x in R["obj_bbox"][j]])
+                for j, oi in enumerate(R["obj_inst"]) if oi == inst]
+        out["instances"].append(dict(
+            id=inst, group=m["group"], n_frames=m["n_frames"],
+            posture_conf=m["posture_conf"], objects=objs, frames=frames,
+            expected=m["expected"]))
+    os.makedirs(os.path.dirname(CI_OUT), exist_ok=True)
+    with open(CI_OUT, "w") as fh:
+        json.dump(out, fh, separators=(",", ":"))
+    print(f"CI export: {CI_OUT} ({os.path.getsize(CI_OUT)//1024} KB, "
+          f"{len(out['instances'])} instances)")
+
+
 # ── driver ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -448,6 +492,7 @@ def main():
     groups = collections.Counter(m["group"] for m in meta.values())
     print(f"\nsaved {OUT}: {len(R['inst'])} person-rows, {len(meta)} instances, "
           f"groups={dict(groups)}")
+    export_ci(R, meta)
 
 
 if __name__ == "__main__":

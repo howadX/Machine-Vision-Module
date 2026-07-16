@@ -16,6 +16,10 @@
 mod capture;
 mod depth;
 mod fusion;
+/// Golden-scenario CI gate (phase 15.4): replays compiled scenarios through the
+/// production temporal stack — model-free, `--stub`-class.
+#[cfg(test)]
+mod golden;
 mod human;
 mod scene;
 mod statefile;
