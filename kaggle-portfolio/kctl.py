@@ -27,11 +27,30 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-KAGGLE = os.path.join(os.path.dirname(sys.executable), "kaggle")  # venv's CLI
+
+
+def _find_kaggle():
+    """The authed CLI lives in the tool venv (.venv). Resolving from
+    sys.executable bit us on LJ5: run kctl with the main repo venv and KAGGLE
+    points at ../venv/bin/kaggle, whose kagglesdk is broken under py3.14 —
+    push crashes, people fall back to raw `kaggle kernels push` and ship a
+    stale .stage. Prefer the tool venv explicitly; fail loudly otherwise."""
+    tool = os.path.join(HERE, ".venv", "bin", "kaggle")
+    if os.path.exists(tool):
+        return tool
+    beside = os.path.join(os.path.dirname(sys.executable), "kaggle")
+    if os.path.exists(beside):
+        return beside
+    sys.exit("no kaggle CLI found — expected the tool venv at "
+             f"{tool} (see WORKFLOW.md 'One-time setup')")
+
+
+KAGGLE = _find_kaggle()
 STAGE = os.path.join(HERE, ".stage")
 PULLED = os.path.join(HERE, "pulled")
 RESULTS = os.path.join(HERE, "results", "metrics.json")   # source of truth for real numbers
@@ -436,7 +455,10 @@ def _stage(k):
     if len(nb["title"]) > 50:
         sys.exit(f"{k}: Kaggle title must be <= 50 chars (got {len(nb['title'])}): {nb['title']!r}")
     d = os.path.join(STAGE, k)
-    os.makedirs(d, exist_ok=True)
+    # .stage is a throwaway build product: recreate it from scratch so nothing
+    # stale ever ships (raw `kaggle kernels push -p .stage/<k>` bit us on LJ5).
+    shutil.rmtree(d, ignore_errors=True)
+    os.makedirs(d)
     dst = os.path.join(d, nb["ipynb"])
     with open(src) as f:
         data = f.read()
@@ -466,7 +488,8 @@ def push(keys, yes):
 def _stage_data(key):
     ds = DATASETS[key]
     d = os.path.join(STAGE, "data-" + key)
-    os.makedirs(d, exist_ok=True)
+    shutil.rmtree(d, ignore_errors=True)   # throwaway: never version a stale file
+    os.makedirs(d)
     for src in ds["files"]:
         if not os.path.exists(src):
             sys.exit(f"dataset '{key}': missing source file {src}")

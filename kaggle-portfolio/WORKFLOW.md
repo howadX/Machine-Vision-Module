@@ -96,4 +96,12 @@ Next step per notebook: open on kaggle.com, Run All, paste real metrics into the
 placeholders in `_build_nbX.py`, rebuild, re-push.
 
 **Kaggle gotchas baked into `kctl.py`:** the kernel `id` slug must equal `slugify(title)`,
-and the title must be ≤ 50 characters (kctl asserts this before staging).
+and the title must be ≤ 50 characters (kctl asserts this before staging). The authed
+kaggle CLI is the **tool venv's** (`.venv/bin/kaggle`) — kctl resolves it explicitly, so
+running kctl with any python works; `.stage/<nb>/` is recreated from scratch on every
+push (never push it with a raw `kaggle kernels push` — that's how a stale LJ5 shipped).
+API-pushed kernel runs resolve **no DNS** even with `enable_internet=true`: anything a
+notebook needs (data, models, pip deps) must be a mounted dataset or in the base image
+(no PyPI — LJ5 runs its ONNX experts through `cv2.dnn`, not onnxruntime). Mounts can
+appear nested (`/kaggle/input/datasets/<owner>/<slug>/`) — resolve paths by recursive
+search, not fixed prefixes.
