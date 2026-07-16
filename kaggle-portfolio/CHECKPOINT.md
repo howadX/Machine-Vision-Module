@@ -3,7 +3,7 @@
 Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.0**
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 
-## ⭐ Where we are: 15.0–15.4 CLOSED and PUBLISHED; next = 15.5 (expert passport + diet)
+## ⭐ Where we are: 15.0–15.5 CLOSED and PUBLISHED; next = 15.6 (Rust port + v0.2.0)
 
 | stage | status |
 |---|---|
@@ -12,8 +12,8 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.2 — transition kinematics (stabilizer + fall threshold, LJ2) | ✅ closed |
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
-| 15.5 — expert passport + diet (weight/speed) | 🔨 MEASURED + journal built; Kaggle Run-All debugging |
-| 15.6 — Rust port + release v0.2.0 | ⬜ |
+| 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
+| 15.6 — Rust port + release v0.2.0 | ⬜ RESUME HERE |
 
 Every ML number runs through the frozen protocol (`spike_pose/bench.py`, SEED=0, grouped
 bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the port is 15.6.
@@ -23,15 +23,21 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
 - Notebooks (Run-All **COMPLETE**, numbers verified on Kaggle):
   `lj0-building-the-lab`, `lj1-the-pose-model-rebuilt-honestly`,
   `lj2-physics-of-posture-transitions`, `lj3-why-walking-people-multiply`,
-  `lj4-a-camera-that-never-lies`.
-- Datasets (derived keypoints/boxes only, no images/BVH): `cmu-mocap-views`,
+  `lj4-a-camera-that-never-lies`, `lj5-weighing-the-experts`.
+- Datasets (derived keypoints/boxes/models only, no images/BVH): `cmu-mocap-views`,
   `mvm-pose-landmarks` (+`landmarks_v2.npz`), `mvm-animal-ood`, `mvm-mocap-transitions`,
-  `mvm-mocap-tracks`, `mvm-golden-scenarios`, `mvm-openimages-vrd-meta` (VRD CSVs, CC BY 4.0).
+  `mvm-mocap-tracks`, `mvm-golden-scenarios`, `mvm-openimages-vrd-meta` (VRD CSVs, CC BY 4.0),
+  `mvm-onnx-experts` (Apache/MIT ONNX), `mvm-lfw-verification`. RAF-DB is mounted from the
+  community `shuvoalok/raf-db-dataset` (research-only license — never re-host).
 - Gotchas hit + baked in: dataset title ≤50 chars; kernel `id` must equal `slugify(title)`;
   Kaggle auto-runs on push so datasets must finish processing first; `_find` does a recursive
-  `/kaggle/input` search (robust to dataset nesting); **API-pushed kernel runs resolve no DNS
-  even with `enable_internet=true`** — anything a notebook fetches must be a mounted dataset
-  (that's why the VRD CSVs are re-hosted).
+  `/kaggle/input` search (robust to `/kaggle/input/datasets/<owner>/<slug>/` nesting);
+  **API-pushed kernel runs resolve no DNS even with `enable_internet=true`** — no fetches AND
+  no `pip install` (that's why VRD CSVs/LFW/ONNX are re-hosted and LJ5 runs experts through
+  `cv2.dnn`, byte-equivalent to ort, max|Δ|≈2e-6); the Kaggle base image has no `onnxruntime`;
+  push with kctl only (it resolves the authed **tool-venv** `.venv/bin/kaggle` itself and
+  recreates `.stage/<nb>/` from scratch — a raw `kaggle kernels push -p .stage/...` once
+  shipped a stale LJ5; both fixed in kctl 2026-07-16).
 
 ## The lab (15.0) — reusable tools
 
@@ -115,49 +121,32 @@ bootstrap CI, data+code passport). Rust production is still **v0.1.0** — the p
   verified. LJ4 notebook is built FROM the lab sources (import surgery) — no code drift possible.
 - Numbers: `results/metrics.json["lj4"]`; design+results: `research/LJ4-DESIGN.md`.
 
-## 15.5 done (measured + LJ5 built) — Kaggle Run-All still failing; RESUME HERE
+## 15.5 done (LJ5) — CLOSED + PUBLISHED, Run-All COMPLETE, numbers bit-for-bit
 
-**Measured + committed** (commits `5fdffd76` + `42d73aeb`; design+RESULTS `research/LJ5-DESIGN.md`,
-numbers `results/metrics.json["lj5"]`, tools `spike_pose/lj5_{latency,emotion,identity,detect,objects}.py`):
+Design+RESULTS `research/LJ5-DESIGN.md`; numbers `results/metrics.json["lj5"]`; tools
+`spike_pose/lj5_{latency,emotion,identity,detect,objects}.py`; kernel
+`howadx/lj5-weighing-the-experts` (v4, verified 2026-07-16: status COMPLETE, remote == local
+source 20 cells code-identical, log numbers == metrics.json to the last digit).
 - **A latency/weight:** human chain 16.7 ms all-cores (<50 PASS, 3×); dominant SFace 36.9 MiB/5.2 ms;
-  total ONNX 121.7 MiB; depth 232 ms / YOLO cadenced (off-budget).
-- **B1 emotion (RAF-DB held-out, `/home/dawoh/datasets/rafdb`):** neg-control HEALTHY (10.1 bug not
-  reproduced); balanced-acc 0.665 / overall 0.726.
-- **B2 identity (SFace/LFW):** aligned 0.978 = published, **but prod ships UNALIGNED 0.783 → +19.5 pt
-  on the table** (`pipeline.rs:470`). ⭐ Top 15.6 fix: `align_face(lm5,112)` on the id crop, +0 cost.
-- **B3 detect (OpenImages val):** YuNet face recall 0.805; YOLO object passport 18 classes — interaction
-  core 0.6–0.8, weak tail = cross-taxonomy. keep.
-- **C diet:** SFace INT8 = **measured NEGATIVE** (lossless acc 0.979, weight −74%, but latency ×6 →
-  REJECT). Gate PASS: ONNX flat, arithmetic 1068→222 KB (−79%). Verdicts for 15.6: align-fix + VAE-drop +
-  forest-220 KB; keep all ONNX experts.
+  total ONNX 121.7 MiB; depth 232 ms / YOLO cadenced (off-budget). Reference-hardware (i7-12700K);
+  presented in the journal as tables (Kaggle image has no onnxruntime).
+- **B1 emotion (RAF-DB held-out):** neg-control HEALTHY (10.1 bug not reproduced); balanced-acc
+  0.665 [0.643,0.688] / overall 0.726. Re-ran live on Kaggle via cv2.dnn ✓.
+- **B2 identity (SFace/LFW):** aligned 0.9783 = published, **but prod ships UNALIGNED 0.7833 →
+  +19.5 pt on the table** (`pipeline.rs:470`); TAR@FAR=1e-3 0.173→0.949. ⭐ Top 15.6 fix:
+  `align_face(lm5,112)` on the id crop, +0 cost. Re-ran live on Kaggle ✓.
+- **B3 detect (OpenImages val):** YuNet face recall 0.805; YOLO object passport 18 classes —
+  interaction core 0.6–0.8, weak tail = cross-taxonomy. KEEP.
+- **C diet:** SFace INT8 = **measured NEGATIVE** (lossless acc 0.979, weight −74%, latency ×6 →
+  REJECT). Gate MET: ONNX flat, arithmetic 1068→222 KB (−79%). Verdicts for 15.6: align-fix SHIP +
+  VAE-drop + forest-220 KB; keep all ONNX experts.
 
-**Datasets published (private):** `howadx/mvm-onnx-experts` (ready), `howadx/mvm-lfw-verification`
-(ready, Kaggle auto-extracted the zip). RAF-DB mounted from community `shuvoalok/raf-db-dataset`.
-kctl `lj5` registered; kernel `howadx/lj5-weighing-the-experts`.
-
-### ⚠️ Kaggle push problem (UNRESOLVED — v4 pushed, status unchecked when paused)
-1. **No `onnxruntime` in the Kaggle base image** (`ModuleNotFoundError`). `pip install` also fails —
-   **the LJ4 "API-pushed runs resolve no DNS" gotcha applies to pip too** (no PyPI). → Converted the
-   notebook's live cells to **cv2.dnn** (byte-identical to prod `ort`, verified max|Δ|≈2e-6 on emotion,
-   8e-6 on SFace). Act A latency + Act C INT8 requant need onnxruntime → presented as **tables** (measured
-   in repo), not re-run. Load-bearing accuracy (B1, B2) re-runs live via cv2.dnn.
-2. **`kctl build` did NOT refresh `.stage/lj5`** — it left a STALE notebook (v2, 22 cells with the
-   onnxruntime cells), so pushes kept shipping the old version even after the source was fixed. **Workaround:**
-   `cp notebooks/lj5/lj5_weighing_the_experts.ipynb .stage/lj5/` before `.venv/bin/kaggle kernels push -p .stage/lj5`.
-   Root cause of the stale stage not yet diagnosed (kctl build for lj5 not re-running `_build_lj5.py` or
-   staging a cache). ⚠️ push with the **tool-venv** kaggle (`.venv/bin/kaggle`); kctl.py's KAGGLE points at
-   the main-venv kaggle which isn't the authed one.
-3. **Mount paths are nested**: `/kaggle/input/datasets/<owner>/<slug>/` (not `/kaggle/input/<slug>/`).
-   The notebook's recursive `_find`/`_find_dir` over `/kaggle/input/**` handles it (setup print confirmed
-   correct resolution).
-
-### RESUME STEPS
-- **Uncommitted:** the cv2.dnn builder rewrite (`notebooks/lj5/_build_lj5.py` + `.ipynb`) — COMMIT IT.
-- Check v4 run: `.venv/bin/kaggle kernels status howadx/lj5-weighing-the-experts`; on ERROR pull
-  `kaggle kernels output ... -p /tmp/lj5_out` and read the `.log` (papermill "In [N]" tells the cell).
-- Source notebook is fresh (20 cells, no top-level onnxruntime; cell 2's `import onnxruntime` is inside
-  the unused `bench_model`). Always re-stage manually (workaround #2) before pushing.
-- On COMPLETE: fetch numbers, confirm bit-for-bit with `metrics.json["lj5"]`, update memory + this file.
+**kctl bug fixed (2026-07-16, the LJ5 stale-push root cause):** KAGGLE was resolved from
+`sys.executable` → wrong/broken CLI under the main repo venv (kagglesdk broken on py3.14) →
+kctl push unusable → manual `kaggle kernels push -p .stage/lj5` bypassed `_stage()` and shipped
+a stale stage. Fix: kctl now resolves the tool-venv `.venv/bin/kaggle` explicitly (fails loudly
+if absent) and `_stage`/`_stage_data` recreate the stage dir from scratch. Verified: build lj5
+deterministic (20 cells), stale files wiped on stage, dry-push OK under the broken interpreter.
 
 ## Open debts (non-blocking)
 

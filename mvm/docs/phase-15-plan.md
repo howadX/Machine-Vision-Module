@@ -208,15 +208,33 @@ ML зрительной системы на честных данных». Пи�
 - **Журнал LJ4 — «A Camera That Never Lies»** (опубликован private, Run-All **COMPLETE**, числа
   бит-в-бит с локальными; ноутбук собирается из ИСХОДНИКОВ лаборатории — код не может разойтись).
 
-### 15.5 — Паспорт внешних экспертов + диета (вес/скорость)
+### 15.5 — Паспорт внешних экспертов + диета (вес/скорость) ✅ ЗАКРЫТА (2026-07-16)
 
-- Per-agent паспорт: latency (замер на эталонном железе), вес, честная точность на доступном
-  публичном бенче (emotion/identity/detect) — where feasible, без переобучения.
-- Диета по итогам 15.1: VAE (195КБ) убирается, если Mahalanobis выиграл; размер леса
-  (873КБ → target по кривой качество/размер); ревизия квантований.
-- Latency-бюджет цепочки: подтвердить <50ms CPU человеко-цепочки, зафиксировать по-агентно.
-- **Гейт:** суммарный вес моделей и latency НЕ выросли vs v0.1.0 при выросшей измеренной точности.
-- **Журнал LJ5 — «Weighing the experts»**.
+- **Акт A (latency/weight ledger, гипотеза подтверждена):** человеко-цепочка (YuNet 1.88 + SFace 5.20 +
+  emotion 4.56 + person-det 2.19 + pose 2.87 мс) = **16.7 мс all-cores → гейт <50 мс PASS (3× запас)**;
+  1-поток 52.0 мс (portable floor). Cadenced вне бюджета by design: depth 231.8 / YOLO-seg 21.3 /
+  YOLO-obj 12.5 мс. Всего ONNX **121.7 MiB**; доминант по latency И весу = **SFace** (36.9 MiB).
+- **Акт B1 (emotion, RAF-DB held-out):** негативный контроль обвязки **HEALTHY** (max-prob 0.720,
+  entropy 0.365 — баг 10.1 не воспроизводится); **balanced-acc 0.665 [0.643,0.688] / overall 0.726**
+  (chance 0.143). Слабые Surprise/Disgust — классические FER-путаницы, кросс-домен.
+- **Акт B2 (identity, SFace/LFW): НАХОДКА —** aligned **0.9783** = published (модель+препроцесс верны),
+  но **прод шлёт в SFace невыровненный bbox-кроп** (`pipeline.rs:470`): unaligned **0.7833** →
+  **align-фикс = +19.5 п.п., TAR@FAR=1e-3 0.173→0.949, +0 вес/latency** → ⭐ топ-порт 15.6.
+- **Акт B3 (detect, OpenImages val, where feasible):** YuNet face recall@IoU0.5 **0.805** prominent;
+  YOLO26n person 0.653 (proxy — прод-путь BlazePose); объект-паспорт 18 классов: интеракц.-ядро
+  fusion 0.6–0.8 (phone .81, laptop .74, mouse .73), слабый хвост = кросс-таксономия COCO≠OI. KEEP.
+- **Акт C (диета решена, гейт ВЗЯТ):** SFace INT8 = **измеренный НЕГАТИВ** (acc lossless 0.979, вес
+  −74%, но latency ×6 — dynamic-quant CNN pitfall) → REJECT. Вес: ONNX flat, арифметика
+  **1068→222 КБ (−79%**, VAE drop + forest 220 из 15.1). Вердикты 15.6: **align-фикс SHIP · VAE DROP ·
+  forest 220КБ · все ONNX KEEP · INT8 REJECT**.
+- **Гейт 15.5 — MET:** вес ↓, latency = (<50 мс), точность внешних экспертов впервые промерена
+  (базлайн-паспорт установлен), ни одна измеренная точность не упала.
+- **Инструменты:** `spike_pose/lj5_{latency,emotion,identity,detect,objects}.py`; датасеты
+  `mvm-onnx-experts`, `mvm-lfw-verification` (+community RAF-DB mirror); design+RESULTS
+  `research/LJ5-DESIGN.md`; числа `results/metrics.json["lj5"]`.
+- **Журнал LJ5 — «Weighing the Experts»** (опубликован private, Run-All **COMPLETE**, числа бит-в-бит;
+  живые ячейки B1/B2 на **cv2.dnn** — в Kaggle-имидже нет onnxruntime и нет DNS/PyPI на API-ранах;
+  верифицировано max|Δ|≈2e-6 против ort. Попутно починен kctl: KAGGLE → tool-venv CLI, чистый re-stage).
 
 ### 15.6 — Порт в прод + релиз v0.2.0
 

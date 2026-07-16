@@ -197,7 +197,7 @@ arithmetic layer»), инвариант «не растёт» соблюдён, 
 6. LJ5 (`notebooks/lj5/_build_lj5.py`), регистрация в `kctl.py`, датасеты-mounts (`mvm-onnx-experts` +
    бенчи), push, Run-All, числа+паспорт → `results/metrics.json["lj5"]`.
 
-## РЕЗУЛЬТАТЫ (измерено 16.07.2026, локально; Kaggle Run-All — PENDING)
+## РЕЗУЛЬТАТЫ (измерено 16.07.2026, локально; Kaggle Run-All — ✅ COMPLETE, числа бит-в-бит)
 
 Инструменты: `spike_pose/lj5_{latency,emotion,identity,detect,objects}.py`. Железо: i7-12700K,
 onnxruntime 1.27.0 CPU EP. Числа в `results/metrics.json["lj5"]`.
@@ -252,5 +252,10 @@ onnxruntime 1.27.0 CPU EP. Числа в `results/metrics.json["lj5"]`.
 **ГЕЙТ 15.5 — ВЫПОЛНЕН:** вес ↓, latency = (<50 мс), точность впервые промерена (поза ↑ из 15.1,
 identity align +19.5, emotion/detect healthy-базлайн). Главный actionable — align identity-кроп в 15.6.
 
-**Осталось:** записать LJ5-журнал (`notebooks/lj5/_build_lj5.py`), датасеты-mounts на Kaggle
-(RAF-DB/LFW/OI-subset/ONNX-эксперты), push + Run-All → числа бит-в-бит.
+**ЗАКРЫТО 16.07.2026:** журнал `howadx/lj5-weighing-the-experts` опубликован (private), Run-All
+**COMPLETE**; B1 (0.665/0.726, neg-control HEALTHY) и B2 (0.7833/0.9783, TAR 0.173/0.949)
+воспроизведены на Kaggle бит-в-бит через **cv2.dnn** (в Kaggle-имидже нет onnxruntime, а API-раны
+не резолвят DNS → и не PyPI; эквивалентность cv2.dnn↔ort верифицирована max|Δ|≈2e-6). Act A latency
+и Act C INT8-requant требуют onnxruntime → в журнале как reference-hardware таблицы (замерены в
+репо, паспорт в metrics.json). Mounts: `mvm-onnx-experts`, `mvm-lfw-verification`,
+`shuvoalok/raf-db-dataset`. Гейт 15.5 — MET.

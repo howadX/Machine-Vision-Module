@@ -70,12 +70,16 @@ prior vs dwell — агрегатный wash не подтверждён, ships 
 (трекер: walking-фрагментация воспроизведена на истинных CMU-траекториях, корень — структурная re-link
 dead-zone устаревшей identity = 57%; фикс `center-relink через stale identity` established
 med Δ−4.70/heavy Δ−8.25, idle 0/0; Kalman-Q-калибровка опровергнута → gate/Kalman без изменений)
-и **15.4 ✅** (симулятор golden-сценариев: FLOOR event-P/R 1.000; стресс рвёт FSM exit-dwell →
+**15.4 ✅** (симулятор golden-сценариев: FLOOR event-P/R 1.000; стресс рвёт FSM exit-dwell →
 sweep-кандидат 15.6; fall-правило прода = 3/10 FA + пропуски от id-churn → ships E2 scene-level;
 VRD-аудит: typing/using_mouse/watching_tv = 0 инстансов → словарь v2; CI-гейт golden в mvm-cli)
-закрыты и опубликованы как Kaggle-журналы LJ0–LJ4 (Run-All COMPLETE). Каждый этап гейтится нарративным
+и **15.5 ✅** (паспорт внешних экспертов + диета: человеко-цепочка 16.7 мс <50 PASS, ONNX 121.7 MiB;
+emotion RAF-DB 0.665 healthy; ⭐ прод шлёт в SFace невыровненный кроп (`pipeline.rs:470`) —
+align-фикс +19.5 п.п. за $0 → топ-порт 15.6; SFace INT8 = измеренный негатив (acc lossless, latency ×6)
+→ REJECT; арифметика 1068→222 КБ)
+закрыты и опубликованы как Kaggle-журналы LJ0–LJ5 (Run-All COMPLETE). Каждый этап гейтится нарративным
 журналом (LJ0–LJ6). **Прод-Rust пока v0.1.0** — порт победивших решений будет в 15.6. Следующее —
-**15.5** (паспорт экспертов + диета). План — `mvm/docs/phase-15-plan.md`.
+**15.6** (Rust-порт + релиз v0.2.0). План — `mvm/docs/phase-15-plan.md`.
 
 ## Для Agents
 
