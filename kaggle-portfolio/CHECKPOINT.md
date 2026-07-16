@@ -4,7 +4,14 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 (plan: `mvm/docs/phase-15-plan.md`; frozen bench: `research/BENCH-PROTOCOL.md`).
 15.6 port runbook: `mvm/docs/phase-15.6-port-plan.md`.
 
-## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 P0–P8 DONE BY CODE — release v0.2.0 pending owner tag-push + LJ6
+## ⭐ Where we are: 15.0–15.5 CLOSED+PUBLISHED; 15.6 P0–P8 DONE + LIVE-VALIDATED — release v0.2.0 pending owner tag-push + LJ6
+
+**Live-validated 2026-07-17** (real camera, v0.2.0 binary, Вадим id0 in frame, 2× `mvm run`, 0 agent
+errors): P5 align-fix → `Вадим ✓` locked every tick; P1 `torso_flexion` live 5.7–11.7° + plausibility
+`ok` (Mahalanobis); P6 vocab v2 → `using_object(mouse/keyboard/laptop/cell phone)` + `holding_drink`
+kept + **`watching_tv` gone** (tv detected, no activity) + zero legacy verbs; P4 anomaly 0.00 calm.
+Fall (E2) not staged (stunt-calibrated threshold, unsafe live). Details: `mvm/docs/phase-15.6-port-plan.md`
+§Live validation.
 
 | stage | status |
 |---|---|
@@ -14,7 +21,7 @@ Resume point. Branch: **`kaggle`**. Active phase: **15 — ML Refactor → v0.2.
 | 15.3 — tracker on true trajectories (fragmentation + dead-zone fix, LJ3) | ✅ closed |
 | 15.4 — golden-scenario simulator (fusion/FSM/anomaly, LJ4) | ✅ closed |
 | 15.5 — expert passport + diet (weight/speed, LJ5) | ✅ closed |
-| 15.6 — Rust port + release v0.2.0 | 🔨 **P0–P8 done by code+committed**; release pending owner tag-push + LJ6 |
+| 15.6 — Rust port + release v0.2.0 | 🔨 **P0–P8 done+committed+LIVE-VALIDATED**; release pending owner tag-push + LJ6 |
 
 ## 15.6 progress (act-by-act on branch `kaggle`, pause after each; workspace green each act)
 

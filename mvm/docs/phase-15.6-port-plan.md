@@ -234,3 +234,24 @@ P0 ─► P1 ─┬─► P2
           └─► P6
    P2..P6 ─► P7 ─► P8
 ```
+
+## Live validation — 2026-07-17 (real camera, v0.2.0 binary, owner in frame)
+
+Two `mvm run` captures (mesh, `--dump-json`), **0 agent errors** each, ~28 fps delivery,
+owner (Вадим, gallery id0) in frame. All agent-side 15.6 changes confirmed live:
+
+| Act | Live evidence |
+|---|---|
+| **P5** SFace align-fix | `Вадим ✓` id0 locked in **every** dumped tick (12/12) — stable identity-lock (the +19.5 pt payoff) |
+| **P1** `torso_flexion` | live field, **5.7–11.7°** (seated, slight forward lean) |
+| **P1/P3** plausibility=Mahalanobis | `plausibility: ok` every tick (pose in-distribution); `recon_error` gone |
+| **P6** vocab v2 | fired live: `using_object(mouse)`, `using_object(keyboard)`, `using_object(laptop)`, `using_object(cell phone)`, `holding_drink` (kept), `seated_at_workstation` (relational, kept). **Zero** legacy `typing/using_mouse/using_phone/watching_tv`; a `tv` object was detected but produced **no** `watching_tv` — drop confirmed live |
+| **P4** anomaly E2 | `anomaly 0.00` under calm — no false fall |
+| occlusion-honesty | posture often `withheld` (upper-body-only), commits `sitting` when legs geometry allows |
+| mesh health | 0 errors across capture/human/scene/depth/fusion/statefile |
+
+Not staged: an actual fall (E2 trigger) — the threshold is calibrated on stunt-only CMU
+falls, unsafe to stage live; left to a careful owner check if desired.
+
+**Verdict: the 15.6 port runs correctly in production.** Code side of phase 15 is done and
+live-validated; owner tail remaining = tag-push `v0.2.0` (CI release) + LJ6 journal.
