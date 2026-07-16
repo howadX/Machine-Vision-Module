@@ -113,19 +113,31 @@ code(r"""
 import os, glob, json, time, sys
 import numpy as np
 
+ROOTS = ("/kaggle/input", "/kaggle/working/_ext")
 def _find_dir(*names):
     for n in names:
-        for root in ("/kaggle/input",):
+        for root in ROOTS:
             hits = [d for d in glob.glob(f"{root}/**/{n}", recursive=True) if os.path.isdir(d)]
             if hits: return hits[0]
     return None
 
 def _find(*names):
     for n in names:
-        hits = glob.glob(f"/kaggle/input/**/{n}", recursive=True)
-        if hits: return hits[0]
+        for root in ROOTS:
+            hits = glob.glob(f"{root}/**/{n}", recursive=True)
+            if hits: return hits[0]
     return None
 
+def _unzip_if_needed(keyword, marker):
+    # Kaggle usually auto-extracts dataset zips; if not, extract a mounted <keyword>*.zip once.
+    import zipfile
+    if _find_dir(marker): return
+    for z in glob.glob("/kaggle/input/**/*.zip", recursive=True):
+        if keyword in os.path.basename(z).lower():
+            dst = "/kaggle/working/_ext"; os.makedirs(dst, exist_ok=True)
+            print("extracting", z); zipfile.ZipFile(z).extractall(dst); return
+
+_unzip_if_needed("lfw", "lfw_home")
 MODELS_DIR = _find_dir("mvm-onnx-experts", "models") or "."
 RAF_DIR    = _find_dir("rafdb", "raf-db-dataset", "DATASET")
 LFW_DIR    = _find_dir("lfw_home", "lfw-verification", "lfw_funneled")
