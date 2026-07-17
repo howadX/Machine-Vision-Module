@@ -10,13 +10,16 @@
 //!   статусы разметки, provenance, ключи связывания (§16.0.1–16.0.2).
 //! - [`router`] — Semantic Group Router: чистое детерминированное отображение
 //!   снимка [`mvm_core::WorldState`] в наблюдение по ветвям G₁–G₅ (§16.0.3).
+//! - [`config`] — [`DatasetConfig`]: секция `[dataset]` конфига (§16.1.1).
 //!
 //! ML-фреймворки (PyTorch/TF) сюда не протекают — экспорт в ML-форматы живёт
 //! в Python-утилитах (`prototype/pipeline/dataset/`).
 
+pub mod config;
 pub mod observation;
 pub mod router;
 
+pub use config::{DatasetConfig, ExportConfig, ExportFormat, FrameFormat, Privacy};
 pub use observation::{
     CanonicalObservation, EntityRecord, FrameMeta, Label, LabelStatus, Provenance, QualityBlock,
     SemanticGroup, SessionRef, SCHEMA_VERSION,

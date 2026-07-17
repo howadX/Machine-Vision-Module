@@ -185,7 +185,7 @@ fn insert_opt(m: &mut serde_json::Map<String, serde_json::Value>, key: &str, v: 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mvm_core::world::{Position3D, WorldState};
+    use mvm_core::world::WorldState;
     use mvm_core::{Activity, BBox};
     use std::time::Instant;
 
