@@ -531,6 +531,7 @@ dependencies = [
  "chrono",
  "image",
  "mvm-core",
+ "mvm-dataset",
  "mvm-depth",
  "mvm-detect",
  "mvm-emotion",
@@ -553,6 +554,17 @@ name = "mvm-core"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+]
+
+[[package]]
+name = "mvm-dataset"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "mvm-core",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
