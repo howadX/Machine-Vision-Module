@@ -186,7 +186,38 @@ fn object_attributes(o: &ObjectState) -> serde_json::Value {
             serde_json::json!({ "x": pos.x, "y": pos.y, "z": pos.z, "confidence": pos.confidence }),
         );
     }
+    // Instance mask (§16.2.3) — present only when `--masks` ran. RLE inside the
+    // JSONL keeps the 64² grid self-describing (no side file). `remembered` object-
+    // permanence holds carry no fresh mask.
+    if let Some(mask) = &o.mask {
+        m.insert("mask".into(), mask_rle_json(mask));
+    }
     serde_json::Value::Object(m)
+}
+
+/// Encode a low-res [`mvm_core::InstanceMask`] as run-length JSON: alternating run
+/// lengths over the row-major grid, **starting with a run of 0s** (first run is 0
+/// if the grid opens on a set cell). Reversible; compact for a sparse 64² grid.
+fn mask_rle_json(mask: &mvm_core::InstanceMask) -> serde_json::Value {
+    let mut rle: Vec<u32> = Vec::new();
+    let mut cur: u8 = 0; // runs start counting the 0 symbol
+    let mut run: u32 = 0;
+    for &b in mask.bits() {
+        let v = (b != 0) as u8;
+        if v == cur {
+            run += 1;
+        } else {
+            rle.push(run);
+            cur = v;
+            run = 1;
+        }
+    }
+    rle.push(run);
+    serde_json::json!({
+        "res": mvm_core::MASK_RES,
+        "coverage": mask.frame_coverage(),
+        "rle": rle,
+    })
 }
 
 /// Label-status of a person's posture (§16.0.2). `observed` when present;
@@ -349,6 +380,49 @@ mod tests {
             obs.provenance.iter().any(|p| p.model == "mvm-dataset:router" && p.source == "router"),
             "router must stamp observation-level provenance"
         );
+    }
+
+    #[test]
+    fn object_mask_is_rle_encoded_and_reversible() {
+        use mvm_core::mask::{InstanceMask, MASK_RES};
+        // A mask with the top-left 8×8 block set.
+        let mut bits = vec![0u8; MASK_RES * MASK_RES];
+        for gy in 0..8 {
+            for gx in 0..8 {
+                bits[gy * MASK_RES + gx] = 1;
+            }
+        }
+        let mask = InstanceMask::from_bits(bits.clone());
+
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        let mut o = bare_object(10001, "cup", now);
+        o.mask = Some(mask);
+        world.objects.push(o);
+        let obs = route(&world, &ctx());
+
+        let mj = &obs.entities[0].attributes["mask"];
+        assert_eq!(mj["res"].as_u64().unwrap() as usize, MASK_RES);
+        assert!((mj["coverage"].as_f64().unwrap() - 64.0 / (MASK_RES * MASK_RES) as f64).abs() < 1e-6);
+
+        // Decode the RLE and confirm it reproduces the original grid exactly.
+        let rle: Vec<u32> = mj["rle"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as u32).collect();
+        let mut decoded = Vec::with_capacity(MASK_RES * MASK_RES);
+        let mut sym = 0u8;
+        for run in rle {
+            decoded.extend(std::iter::repeat(sym).take(run as usize));
+            sym ^= 1;
+        }
+        assert_eq!(decoded, bits, "RLE must round-trip the mask grid");
+    }
+
+    #[test]
+    fn no_mask_key_when_object_has_no_mask() {
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.objects.push(bare_object(10001, "cup", now)); // mask: None
+        let obs = route(&world, &ctx());
+        assert!(obs.entities[0].attributes.get("mask").is_none());
     }
 
     #[test]
