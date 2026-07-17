@@ -197,6 +197,9 @@ struct CommonFlags {
     /// --dump-full-graph: include object↔object `near` edges (phase 12.A3 opt-in;
     /// off by default — static desk geometry).
     dump_full_graph: bool,
+    /// --record: enable the Dataset Factory recorder (phase 16.1.2b). Overrides
+    /// `[dataset].enabled = false`; every N-th frame is saved with full labels.
+    record: bool,
 }
 
 /// Try to consume the flag at `raw[*i]` as a common flag. Returns `true` if it
@@ -210,6 +213,7 @@ fn parse_common(raw: &[String], i: &mut usize, c: &mut CommonFlags) -> bool {
         "--masks" => c.masks = true,
         "--dump-distributions" => c.dump_distributions = true,
         "--dump-full-graph" => c.dump_full_graph = true,
+        "--record" => c.record = true,
         "--scene-log" => {
             if *i + 1 < raw.len() {
                 c.scene_log = Some(PathBuf::from(&raw[*i + 1]));
@@ -643,6 +647,8 @@ fn build_live_mesh(
     let mut config = mvm_core::Config::default();
     config.models_path = product.models_dir.clone();
     config.face_height_m = config.face_height_m_yunet; // YuNet-calibrated 3D
+    // Dataset Factory session grouper reads its timeout from the core Config.
+    config.session_timeout_secs = product.dataset.session_timeout_secs;
 
     // First-launch auto-setup (phase 14.1c): if required models are absent,
     // fetch them once before starting — so "поставил → mvm run → работает"
@@ -747,6 +753,21 @@ fn build_live_mesh(
     }
     mesh.add(Box::new(agents::FusionAgent::new(config.clone(), depth_slot.clone())));
     mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.common.dump_json, interval, None, scene_log, events_log, journal)));
+
+    // Dataset Factory recorder (phase 16.1.2b) — opt-in via [dataset].enabled or
+    // the --record flag. Reads WorldState like any other sink; the vision core is
+    // untouched. Off by default → zero cost.
+    if product.dataset.enabled || args.common.record {
+        let root = PathBuf::from(&product.dataset.dir);
+        paths::ensure_dir_private(&root)?;
+        eprintln!(
+            "  dataset: recording ENABLED → {} (cadence {}, privacy {:?})",
+            root.display(),
+            product.dataset.frame_cadence.max(1),
+            product.dataset.privacy,
+        );
+        mesh.add(Box::new(agents::DatasetWriterAgent::new(product.dataset.clone(), root)));
+    }
 
     Ok(mesh)
 }

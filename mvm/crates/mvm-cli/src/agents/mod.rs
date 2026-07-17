@@ -14,6 +14,7 @@
 //! → no cycle).
 
 mod capture;
+mod dataset_writer;
 mod depth;
 mod fusion;
 /// Golden-scenario CI gate (phase 15.4): replays compiled scenarios through the
@@ -25,6 +26,7 @@ mod scene;
 mod statefile;
 
 pub(crate) use capture::CaptureAgent;
+pub(crate) use dataset_writer::DatasetWriterAgent;
 pub(crate) use depth::{DepthAgent, DepthSlot};
 pub(crate) use fusion::{infer_activities, FusionAgent};
 pub(crate) use human::HumanAgent;

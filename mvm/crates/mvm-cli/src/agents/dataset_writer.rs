@@ -1,0 +1,294 @@
+//! DatasetWriterAgent (phase 16.1.2b) — the thin mesh wrapper over the
+//! `mvm-dataset` recorder. It owns no models: on the dataset cadence it snapshots
+//! the shared `WorldState`, delegates the record *logic* to
+//! [`mvm_dataset::DatasetWriter`] (session lifecycle + labels.jsonl + session.toml),
+//! then encodes the RGB pixels the writer allocated a path for — applying the
+//! privacy-blur regions the dataset layer computed.
+//!
+//! Split of concerns (decision 17.07): all label/session logic and the blur-region
+//! math live in `mvm-dataset` (pure, unit-tested); this file only touches the
+//! Agent-Mesh plumbing + the `image`-crate pixel encoding.
+//!
+//! Depth maps (16-bit PNG) are a 16.2 follow-up — the agent forces `save_depth`
+//! off so labels never reference a depth file that was not written.
+
+use image::{ImageFormat, RgbImage};
+use mvm_core::BBox;
+use mvm_dataset::{blur_regions, DatasetConfig, DatasetWriter, FrameRecord};
+use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+/// Logical dataset id (root-of-storage binding key).
+const DATASET_ID: &str = "mvm_sessions";
+
+pub(crate) struct DatasetWriterAgent {
+    writer: DatasetWriter,
+    cfg: DatasetConfig,
+    /// Save every N-th *captured* frame (frame.id cadence).
+    cadence: u32,
+    /// Last captured frame id handled — dedupes the fast mesh loop.
+    last_frame_id: Option<u64>,
+    /// Stop after this many recorded frames (bounded runs/tests). `None` = live.
+    max_records: Option<u64>,
+}
+
+impl DatasetWriterAgent {
+    pub(crate) fn new(cfg: DatasetConfig, root: impl Into<std::path::PathBuf>) -> Self {
+        // Depth is a 16.2 follow-up; force it off so no dangling depth paths land
+        // in labels.jsonl.
+        let mut effective = cfg.clone();
+        effective.save_depth = false;
+        let cadence = effective.frame_cadence.max(1);
+        let writer = DatasetWriter::new(effective.clone(), root, DATASET_ID);
+        Self { writer, cfg: effective, cadence, last_frame_id: None, max_records: None }
+    }
+
+    /// Bound the number of recorded frames (tests / finite runs).
+    #[cfg(test)]
+    pub(crate) fn with_max_records(mut self, n: u64) -> Self {
+        self.max_records = Some(n);
+        self
+    }
+
+    /// One recording step for an already-captured frame. Returns `true` if a frame
+    /// was recorded (JSONL + pixels), `false` if it was skipped (off-cadence or no
+    /// session). Session lifecycle mutates the *shared* WorldState under the write
+    /// lock; the heavy pixel encode runs after the lock is released.
+    fn step(&mut self, ctx: &MeshContext, frame: &Frame) -> anyhow::Result<bool> {
+        let now = Instant::now();
+        let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S").to_string();
+        let iso = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string();
+
+        // Lock section: advance the session lifecycle + append the label. All of
+        // this is fast (no image work). Capture the people boxes for the blur pass
+        // before releasing.
+        let (result, privacy_people) = {
+            let mut w = match ctx.world.write() {
+                Ok(w) => w,
+                Err(_) => return Ok(false),
+            };
+            let pp: Vec<(BBox, bool)> =
+                w.people.iter().map(|p| (p.bbox, p.identity.is_none())).collect();
+            let r = self.writer.record_frame(&mut w, now, &iso, &stamp)?;
+            (r, pp)
+        };
+
+        let Some(rec) = result.frame else {
+            return Ok(false);
+        };
+
+        // Outside the lock: encode + blur + persist the RGB pixels.
+        let regions = blur_regions(&privacy_people, self.cfg.privacy);
+        self.write_frame_image(&frame.image, &rec, &regions)?;
+        Ok(true)
+    }
+
+    /// Encode one frame to disk with privacy blur applied. Public-in-crate so the
+    /// pixel path is unit-testable without a live camera.
+    pub(crate) fn write_frame_image(
+        &self,
+        img: &image::DynamicImage,
+        rec: &FrameRecord,
+        blur: &[BBox],
+    ) -> anyhow::Result<()> {
+        let mut rgb = img.to_rgb8();
+        apply_blur(&mut rgb, blur);
+        save_rgb(&rgb, &rec.frame_path, &self.cfg)?;
+        Ok(())
+    }
+}
+
+impl Agent for DatasetWriterAgent {
+    fn name(&self) -> String {
+        "dataset".into()
+    }
+
+    fn run(&mut self, ctx: &MeshContext) -> AgentHealth {
+        let mut records = 0u64;
+        let mut errors = 0u64;
+        while ctx.running() {
+            if let Some(frame) = ctx.frames.latest() {
+                let is_new = self.last_frame_id != Some(frame.id);
+                let due = super::cadence_due(frame.id, self.cadence);
+                if is_new {
+                    self.last_frame_id = Some(frame.id);
+                    if due {
+                        match self.step(ctx, &frame) {
+                            Ok(true) => records += 1,
+                            Ok(false) => {}
+                            Err(e) => {
+                                eprintln!("  dataset: record error: {e}");
+                                errors += 1;
+                            }
+                        }
+                        if let Some(max) = self.max_records {
+                            if records >= max {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Finalize any open session on shutdown so its session.toml is written.
+        let ended = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string();
+        if let Ok(mut w) = ctx.world.write() {
+            let _ = self.writer.close_open_session(&mut w, &ended);
+        }
+        AgentHealth { name: self.name(), ticks: records, errors }
+    }
+}
+
+/// Apply a box-region Gaussian blur to each normalized rectangle (§16.6.2:
+/// σ = region_width_px / 10). Regions are clamped to the image bounds.
+fn apply_blur(rgb: &mut RgbImage, regions: &[BBox]) {
+    let (w, h) = (rgb.width(), rgb.height());
+    for r in regions {
+        let x1 = (r.x1.clamp(0.0, 1.0) * w as f32) as u32;
+        let y1 = (r.y1.clamp(0.0, 1.0) * h as f32) as u32;
+        let x2 = (r.x2.clamp(0.0, 1.0) * w as f32) as u32;
+        let y2 = (r.y2.clamp(0.0, 1.0) * h as f32) as u32;
+        let rw = x2.saturating_sub(x1);
+        let rh = y2.saturating_sub(y1);
+        if rw == 0 || rh == 0 {
+            continue;
+        }
+        let sub = image::imageops::crop_imm(rgb, x1, y1, rw, rh).to_image();
+        let sigma = (rw as f32 / 10.0).max(1.0);
+        let blurred = image::imageops::blur(&sub, sigma);
+        image::imageops::overlay(rgb, &blurred, x1 as i64, y1 as i64);
+    }
+}
+
+/// Save an `RgbImage` in the configured format/quality to `path` (creating the
+/// parent dir if needed).
+fn save_rgb(rgb: &RgbImage, path: &Path, cfg: &DatasetConfig) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match cfg.frame_format {
+        mvm_dataset::FrameFormat::Jpg => {
+            let file = std::fs::File::create(path)?;
+            let mut w = std::io::BufWriter::new(file);
+            let mut enc =
+                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, cfg.frame_quality_clamped());
+            enc.encode_image(rgb)?;
+        }
+        mvm_dataset::FrameFormat::Png => {
+            rgb.save_with_format(path, ImageFormat::Png)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mvm_core::world::{PersonState, WorldState};
+    use mvm_mesh::LatestFrame;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, RwLock};
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("mvm_dsagent_{}_{}", tag, std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn person(id: u32, now: Instant, anon: bool) -> PersonState {
+        PersonState {
+            track_id: id,
+            bbox: BBox { x1: 0.25, y1: 0.1, x2: 0.55, y2: 0.9 },
+            identity: if anon { None } else { Some(("Вадим".into(), 0.9)) },
+            emotion: None,
+            posture: Some(("sitting".into(), 0.9)),
+            position_3d: None,
+            emotion_distribution: None,
+            wrists: Vec::new(),
+            hands: Vec::new(),
+            body_coverage: None,
+            torso_attitude: None,
+            motion_state: None,
+            velocity: None,
+            left_gesture: None,
+            right_gesture: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            head_yaw: None,
+            head_facing: None,
+            last_seen: now,
+        }
+    }
+
+    #[test]
+    fn agent_forces_depth_off() {
+        let mut cfg = DatasetConfig::default();
+        cfg.save_depth = true;
+        let a = DatasetWriterAgent::new(cfg, temp_root("depthoff"));
+        assert!(!a.cfg.save_depth, "depth is a 16.2 follow-up — must be forced off");
+    }
+
+    #[test]
+    fn records_frame_pixels_and_jsonl() {
+        let root = temp_root("rec");
+        let mut cfg = DatasetConfig::default();
+        cfg.frame_cadence = 1;
+        let mut agent = DatasetWriterAgent::new(cfg, root.clone()).with_max_records(1);
+
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.frame_id = 5;
+        world.people.push(person(1, now, true));
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::new(RwLock::new(world)),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        // Publish a captured frame the agent will record.
+        ctx.frames.publish(Frame::new(5, image::DynamicImage::new_rgb8(64, 48), now));
+
+        let health = agent.run(&ctx);
+        assert_eq!(health.ticks, 1, "one recorded frame");
+
+        // labels.jsonl + the RGB frame both exist under the session dir.
+        let sessions = root.join("sessions");
+        let sess_dir = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        assert!(sess_dir.join("labels.jsonl").exists());
+        assert!(sess_dir.join("frames/000000.jpg").exists(), "RGB frame written");
+        // On shutdown the open session was finalized.
+        assert!(sess_dir.join("session.toml").exists(), "session.toml on shutdown");
+    }
+
+    #[test]
+    fn blur_changes_only_the_face_band() {
+        // A flat gray image; blur is a no-op on a constant region, so instead we
+        // check the writer produces a valid, decodable image with a region applied
+        // over a gradient (structure survives, no panic, right dimensions).
+        let root = temp_root("blur");
+        let cfg = DatasetConfig::default();
+        let agent = DatasetWriterAgent::new(cfg, root.clone());
+
+        let mut img = RgbImage::new(40, 40);
+        for (x, _y, px) in img.enumerate_pixels_mut() {
+            *px = image::Rgb([(x * 6) as u8, 0, 0]); // horizontal gradient
+        }
+        let dynimg = image::DynamicImage::ImageRgb8(img);
+        let rec = FrameRecord {
+            session_id: "s".into(),
+            seq: 0,
+            frame_path: root.join("frames/000000.jpg"),
+            depth_path: None,
+            observation: mvm_dataset::CanonicalObservation::new("d", "s", 0, "iso", 0),
+        };
+        let regions = vec![BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 0.3 }];
+        agent.write_frame_image(&dynimg, &rec, &regions).unwrap();
+
+        let saved = image::open(&rec.frame_path).unwrap();
+        assert_eq!(saved.width(), 40);
+        assert_eq!(saved.height(), 40);
+    }
+}

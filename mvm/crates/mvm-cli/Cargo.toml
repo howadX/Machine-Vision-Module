@@ -26,6 +26,7 @@ mvm-hands = { path = "../mvm-hands" }
 mvm-pipeline = { path = "../mvm-pipeline" }
 mvm-fusion = { path = "../mvm-fusion" }
 mvm-mesh = { path = "../mvm-mesh" }
+mvm-dataset = { path = "../mvm-dataset" }
 anyhow = "1"
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
