@@ -8,13 +8,17 @@
 //! Модули:
 //! - [`observation`] — Canonical Observation: стабильная схема наблюдения,
 //!   статусы разметки, provenance, ключи связывания (§16.0.1–16.0.2).
+//! - [`router`] — Semantic Group Router: чистое детерминированное отображение
+//!   снимка [`mvm_core::WorldState`] в наблюдение по ветвям G₁–G₅ (§16.0.3).
 //!
 //! ML-фреймворки (PyTorch/TF) сюда не протекают — экспорт в ML-форматы живёт
 //! в Python-утилитах (`prototype/pipeline/dataset/`).
 
 pub mod observation;
+pub mod router;
 
 pub use observation::{
     CanonicalObservation, EntityRecord, FrameMeta, Label, LabelStatus, Provenance, QualityBlock,
     SemanticGroup, SessionRef, SCHEMA_VERSION,
 };
+pub use router::{route, RouteContext};
