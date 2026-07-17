@@ -11,6 +11,7 @@ members = [
     "crates/mvm-fusion",
     "crates/mvm-mesh",
     "crates/mvm-pipeline",
+    "crates/mvm-dataset",
     "crates/mvm-cli",
     "xtask",
 ]
