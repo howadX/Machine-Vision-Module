@@ -28,10 +28,7 @@ pub fn run_dataset(product: &ProductConfig, raw: &[String]) -> anyhow::Result<()
         Some("stats") => cmd_stats(&root),
         Some("prune") => cmd_prune(&root, raw),
         Some("export") => {
-            println!(
-                "export: convert sessions with the Python exporters in \
-                 prototype/pipeline/dataset/ (phase 16.4)."
-            );
+            cmd_export(&root);
             Ok(())
         }
         _ => {
@@ -182,6 +179,21 @@ fn cmd_prune(root: &Path, raw: &[String]) -> anyhow::Result<()> {
     }
     println!("Pruned {} session(s).", remove.len());
     Ok(())
+}
+
+/// ML export lives in Python (PyTorch/TF ecosystems); Rust never links them
+/// (invariant #2). Print ready-to-run commands with the real dataset dir filled in.
+fn cmd_export(root: &Path) {
+    let root = root.display();
+    println!("ML export runs in Python (prototype/pipeline/dataset/) — Rust core stays framework-free.\n");
+    println!("From the repo:\n  cd prototype/pipeline/dataset\n");
+    println!("PyTorch (smoke-iterate the dataset):");
+    println!("  python export_pytorch.py {root} --config dataset_config.yaml --limit 8\n");
+    println!("WebDataset shards (no extra deps to write):");
+    println!("  python export_webdataset.py {root} /tmp/mvm_wds --config dataset_config.yaml\n");
+    println!("TFRecord shards (needs tensorflow):");
+    println!("  python export_tfrecord.py {root} /tmp/mvm_tfr --config dataset_config.yaml\n");
+    println!("Filters (task presets) live in dataset_config.yaml. See the README there.");
 }
 
 /// Parse `--keep` value: `5` → keep last 5; `7d` → keep sessions on/after today−7d.
