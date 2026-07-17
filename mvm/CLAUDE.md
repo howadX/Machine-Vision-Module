@@ -8,20 +8,22 @@
 
 ## Статус
 
-- **Версия `v0.2.0` подготовлена (ветка `kaggle`, порт 15.6 P0–P8 закрыт по коду)** — `Cargo.toml`
-  bump 0.1.0→0.2.0, паспорт/CHANGELOG/контракт-изменения записаны; **релиз ждёт owner-пуша тега `v0.2.0`**
-  (CI триггерится тегом, версия из тега). Опубликованный прод пока `v0.1.0`.
-- **Ветка `master`** (продакшн после слияния `rust-core`); порт 15.6 идёт на `kaggle`. **12 крейтов, 608 тестов**
-  (1 ignored — live-камера).
-- **Фаза 14 «Продукт» — ЗАКРЫТА целиком** (2026-07-06, live-провалидирована с нуля: `git clone` → `cargo build`
-  → `mvm setup` 9/9 → `serve --with-camera` → MCP-снапшот отдал живой срез). Оболочка «поставил → само нашлось
-  и заработало»: XDG-пути + `config.toml`, авто-детект камеры, `mvm setup` (fetch моделей + sha256-verify),
-  watched-галерея (`gallery/<Имя>/`), `serve --with-camera` (продюсер+MCP), `mvm mcp install`, `mvm service`
-  (systemd user), дистрибуция через GitHub Releases.
+- **Фаза 15 (ML Refactor → v0.2.0) ЗАКРЫТА по коду; Фаза 16 (Dataset Factory) в работе — 16.0–16.4
+  закрыты и live-провалидированы (ветка `kaggle`). 13 крейтов, 657 Rust-тестов** (1 ignored — live-камера)
+  + 6 Python-групп (экспортёры).
+- **Версия `v0.2.0` подготовлена** — `Cargo.toml` bump 0.1.0→0.2.0, паспорт/CHANGELOG/контракт-изменения
+  записаны; **релиз ждёт owner-пуша тега `v0.2.0`** (CI триггерится тегом, версия из тега). Опубликованный
+  прод пока `v0.1.0`. `master` — прод после слияния `rust-core`; вся 15.6+16 разработка на `kaggle`.
+- **Фаза 14 «Продукт» — ЗАКРЫТА целиком** (2026-07-06, live с нуля: `git clone` → `cargo build` →
+  `mvm setup` 9/9 → `serve --with-camera` → MCP-снапшот): XDG-пути + `config.toml`, авто-детект камеры,
+  `mvm setup` (fetch+sha256), watched-галерея, `serve --with-camera`, `mvm mcp install`, `mvm service`,
+  дистрибуция через GitHub Releases.
 - **Что живо:** `mvm run` (Agent-Mesh, чистый Rust, ~16 fps с человеком) пишет метрич. 3D scene-graph +
   `snapshot`/`recap`/`journal` в `~/.local/share/mvm`; `mvm serve --mcp` отдаёт это LLM read-only.
+  **Фаза 16:** `mvm run --record` копит сессии-датасеты (RGB+depth+masks+labels, privacy-safe),
+  `mvm dataset list/info/stats/prune`, Python-экспортёры в `prototype/pipeline/dataset/`.
 - **История фаз — таблица Roadmap ниже. Детальные runbook'и закрытых фаз — `mvm/docs/phase-*.md`.**
-- **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь.
+- **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь; пуш тега `v0.2.0` для релиза.
 
 ## Три инварианта (любая фича обязана им соответствовать)
 
@@ -67,13 +69,18 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 597 тестов
+cargo test --workspace         # 657 тестов
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
 # Фаза 14.0: камера авто-детект, state+логи+journal → ~/.local/share/mvm (XDG), конфиг ~/.config/mvm/config.toml
 cargo run --release -- run --dump-json                       # живой (камера + все модели); `mesh` = алиас
 cargo run --release -- run --stub --max-frames 100           # model-free CI-smoke
+
+# Dataset Factory (фаза 16): запись сессий + инспекция
+cargo run --release -- run --record                          # копить датасет (RGB+depth+labels; privacy-safe)
+cargo run --release -- dataset list                          # сессии на диске (info/stats/prune/export)
+# Python-экспортёры (PyTorch/TFRecord/WebDataset) — prototype/pipeline/dataset/
 
 # Синхронные пути (живы)
 cargo run --release -- --native-camera --once --dump-interval 1   # pure-Rust hot-path (без mesh)
@@ -87,11 +94,11 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 
 ---
 
-## Крейты (12)
+## Крейты (13)
 
 | Крейт | Содержимое |
 |-------|------------|
-| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator` 11.D1), EMOTION fuse (PoE), **WorldState** (блэкборд, 8.A/8.B), `assignment` (Hungarian/Kuhn–Munkres, 9.10), `activity` (FSM+journal 11.C), `anomaly` (v2 scorer 11.B2), `mask` (`InstanceMask` 11.A1) |
+| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator` 11.D1), EMOTION fuse (PoE), **WorldState** (блэкборд, 8.A/8.B; +session-grouper 16.1.3), `assignment` (Hungarian/Kuhn–Munkres, 9.10), `activity` (FSM+journal 11.C), `anomaly` (v2 scorer 11.B2), `mask` (`InstanceMask` 11.A1) |
 | **mvm-detect** | YuNet ONNX (228KB, embed, multi-stride NMS) — лицо |
 | **mvm-identity** | SFace ONNX (37MB, 128d L2-эмбеддинг, gallery, `embed()`) |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |
@@ -102,7 +109,8 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-hands** | MediaPipe handpose ONNX (4МБ), 21 lm/рука, ROI из запястий BlazePose [8.E.4] |
 | **mvm-mesh** | Agent trait + `LatestFrame` (single-slot latest-wins) + `AgentMesh` оркестратор на std::thread [8.C] |
 | **mvm-pipeline** | Camera (Python bridge subprocess) + NativeCamera (v4l2 MJPG) |
-| **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`; `pipeline.rs` (BodyPrimaryPipeline), `agents/`, `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
+| **mvm-dataset** | ★ **Dataset Factory (фаза 16)** — чистый потребитель WorldState. `observation` (Canonical Observation, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания), `router` (Semantic Router G₁–G₅), `config` (`DatasetConfig`), `writer` (`DatasetWriter`: сессии+JSONL+session.toml), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`). Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
+| **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`/**`dataset`**; `pipeline.rs` (BodyPrimaryPipeline), `agents/` (+`dataset_writer` 16.1.2b), `dataset_cmd.rs` (16.3), `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
 
 > Модели ONNX (YuNet/SFace/EmotiEffLib/BlazePose/YOLO26n/Depth-Anything/handpose) — единый **манифест**
 > `mvm-cli/src/manifest.rs` (URL+sha256+size, проверены 2026-07-06). `mvm setup` тянет их в models-dir
@@ -169,15 +177,23 @@ Machine Vision Module/           ← корень (cwd при запуске)
 
 ## Известные открытые хвосты
 
+**Открытые (🟡):**
+
 | # | Проблема | Статус |
 |---|----------|--------|
-| 1 | Эмоция near-chance — **КОРЕНЬ НАЙДЕН, ЗАКРЫТ И LIVE-ВАЛИДИРОВАН (10.1)**: препроцесс писал HWC-interleaved в NCHW-тензор → модель видела скремблированные каналы → near-uniform softmax на любом лице (жило с порта фазы 6). Фикс planar-CHW + regression-тест на layout; вдобавок кроп выравнивается по 5 лендмаркам YuNet (Umeyama→ArcFace-шаблон). **Live (mesh, свет, 1 чел., 2026-07-02): Neutral conf 0.82–0.93, энтропия H=0.12–0.24** (было ≈0.96, peak 0.16–0.22) — метка проходит гейт 0.90, distribution резко пиковое (0.93 на Neutral). Прежний симптом «47/48 подавлено» снят по корню | ✅ (live-validated) |
-| 2 | Поза: старый `standing↔sitting_at_desk` флип **закрыт по корню** (GRIP, `9308783c`). Остаточный desk-гэп (публичная модель читала desk-sitting как `lying`, ноги под столом) **закрыт архитектурно, occlusion-aware, БЕЗ файн-тюна**: `BodyCoverage`+2D-attitude → метка withheld в Upper-режиме, `lying`+upright отвергается, fusion даёт `seated_at_workstation` реляционно; оракул переписан и включён. | ✅ (occlusion-aware; файн-тюн отменён как ненужный) |
-| 3 | `torso_length_m=0.5` не откалиброван рулеткой (абсолют 3D приблизителен) | 🟡 |
+| 3 | `torso_length_m=0.5` не откалиброван рулеткой (абсолют 3D приблизителен; ординал ок) | 🟡 |
 | 4 | `fps` в StateFile = темп доставки, не обработки | 🟡 (семантика) |
-| 5 | Hand-ROI из запястья требует чёткого жеста — **закрыт (10.2)**: vis-floor 0.5→0.2, score честно downweight'ится ×(vis/0.5), presence-гейт модели сохранён; кисти за столом/у края кадра возвращаются в поток | ✅ |
-| 6 | Объекты видно с ракурса человеческого роста | 🟡 |
-| — | Ре-валидация стабилизации 8.0.4 на 3 людях; 8.E.3 audio (YAMNet) — новая dep против минимализма, вне ядра | 🔜 опц. |
+| 6 | Объекты видно с ракурса человеческого роста (eye-level камера) | 🟡 |
+
+**Закрытые по корню (историческая справка; детали — в `docs/phase-*.md` и git):** эмоция near-chance
+(10.1 — HWC→NCHW layout-баг + landmark-align; live: Neutral 0.82–0.93, H=0.12–0.24) ✅ · поза desk-гэп
+(GRIP + occlusion-aware withhold, БЕЗ файн-тюна) ✅ · hand-ROI vis-floor (10.2) ✅ · SFace unaligned-кроп
+(15.6 P5 align-фикс +19.5 п.п.) ✅.
+
+> **Фаза 16 (Dataset Factory) хвостов в ядро не внесла** — `mvm-dataset` чистый потребитель WorldState
+> (как StateFileWriter), детекторы/fusion/mesh не тронуты. Единственная неточность dataset-слоя:
+> privacy-blur лица — консервативная аппроксимация (верх bbox тела), точный YuNet-face-bbox — в 16.5.
+> Опционально: аудио (YAMNet, G₄) — deferred (новая dep против минимализма, вне ядра).
 
 ### Ledger отложенных сигналов (10.5 — явная диспозиция, чтобы «не забыли»)
 
@@ -213,11 +229,12 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **8** | ✅ | Body-primary + Agent-Mesh (`mesh`) + fusion (activities/anomaly), live 0/1/2 чел. |
 | **9** | ✅ | Tracker: кинематика + ByteTrack/OCM + lifecycle + cadenced SFace/emotion + Hungarian assignment, +0 ONNX |
 | **10** | ✅ | Full Data Collection (SUPREME-validated, 3 чел.+собака) + сегментация YOLO-seg (`--masks`, +1 ONNX) |
-| **11** | 🔨 | Fusion-полировка (+0 ONNX): mask-контакт, activity-FSM+journal, зоны-persistence, anomaly v2, self-calib, object-permanence, person-маски |
+| **11** | ✅ | Fusion-полировка (+0 ONNX): mask-контакт, activity-FSM+journal, зоны-persistence, anomaly v2, self-calib, object-permanence, person-маски |
 | **12** | ✅ | LLM-render (+0 ONNX/+0 deps): pull-модель snapshot/recap/inspect, токен-диета, MCP stdio-сервер |
 | **13** | ✅ | Agent Tools/Skills Polishing: когерентное CLI-дерево + `--help`, `mvm/AGENT.md`, само-докум. MCP |
 | **14** | ✅ | Продукт: XDG/config, `setup`/`doctor`, watched-галерея, `serve --with-camera`, `mcp install`, `service`, дистрибуция v0.1.0 |
-| **15** | 🔨 | ML Refactor → v0.2.0 (ветка `kaggle`, lab-first): **15.0 ✅** лаборатория+бенч-протокол (LJ0), **15.1 ✅** поза (2D-GRIP z-free, mocap как train-актив, flexion, Mahalanobis↔VAE; footprint −79%, LJ1), **15.2 ✅** переходы (матрица переходов CMU; prior vs dwell — агрегатный wash не подтверждён, ships гибрид dwell+SL-вето → ложный fall-флип в 0 под стрессом; E2 fall-правило «пол+скорость таза ≳1.1 м/с» AUROC 1.000; LJ2), **15.3 ✅** трекер (world-translation CMU-траектории, Python-порт `associate_core`; walking-фрагментация воспроизведена, корень — структурная re-link dead-zone устаревшей identity = 57%; фикс `center-relink через stale identity` established med Δ−4.70/heavy Δ−8.25, idle 0/0; Kalman-Q-калибровка опровергнута → gate/Kalman без изменений; LJ3), **15.4 ✅** симулятор golden-сценариев (28 CMU-инстансов G1–G6, инжекция после детекторов; FLOOR event-P/R 1.000/1.000; стресс-фрагментацию рвёт FSM exit-dwell → sweep 5/8→12/15 P 0.133→0.667; fall-правило: прод per-id = 3/10 FA + пропуски от id-churn → ships E2 scene-level @≈1.05 15fps = 0 FA + 6/6; VRD-аудит: typing/using_mouse/watching_tv = 0 инстансов → словарь v2 `using_object(class)`; CI-гейт `agents::golden` 597+2 зелёные; LJ4), **15.5 ✅** паспорт внешних экспертов + диета (человеко-цепочка YuNet+SFace+emotion+BlazePose-пара = 16.7 мс all-cores <50 PASS; ONNX 121.7 MiB, доминант SFace 36.9; emotion RAF-DB held-out 0.665 balanced healthy (neg-control взят, баг 10.1 не воспроизводится); ⭐ находка: прод шлёт в SFace НЕвыровненный bbox-кроп (`pipeline.rs:470`) — LFW unaligned 0.7833 vs aligned 0.9783 = align-фикс +19.5 п.п. за +0 вес/latency → топ-порт 15.6; detect кросс-домен OI: YuNet face 0.805, YOLO26n объект-ядро 0.6–0.8; диета: SFace INT8 измеренный НЕГАТИВ (acc lossless, latency ×6) → REJECT, VAE DROP + forest 220КБ = арифметика 1068→222 КБ (−79%), все ONNX KEEP; гейт вес/latency ≤ v0.1.0 MET; LJ5). **15.6 ✅ по коду** — Rust-порт победивших решений (P0 parity-фикстуры + maha-order · P1 поза 2D-GRIP-12/forest-v2/Mahalanobis↔VAE/flexion · P2 tracker stale-relink · P3 SL-вето · P4 E2 scene-level fall + `camera_height_m` · P5 SFace align-fikс · P6 словарь v2 `using_object(class)`/drop watching_tv · P7 FSM exit-dwell sweep = defer · P8 bump 0.2.0 + паспорт/CHANGELOG/контракт-изменения); **608 тестов**; релиз v0.2.0 ждёт owner-пуша тега. План — `docs/phase-15-plan.md`, runbook порта — `docs/phase-15.6-port-plan.md` |
+| **15** | ✅ по коду | ML Refactor → v0.2.0 (`kaggle`, lab-first, журналы LJ0–LJ6): 15.0 лаб+бенч · 15.1 поза (2D-GRIP z-free, flexion, Mahalanobis↔VAE, footprint −79%) · 15.2 переходы (E2 fall «пол+скорость таза», AUROC 1.000) · 15.3 трекер (stale-relink фикс) · 15.4 golden-симулятор + словарь v2 `using_object(class)` · 15.5 паспорт+диета (⭐ SFace align +19.5 п.п.) · 15.6 Rust-порт P0–P8. Релиз v0.2.0 ждёт owner-тега. Детали — `docs/phase-15-plan.md`, `docs/phase-15.6-port-plan.md` |
+| **16** | 🔨 | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`, privacy-blur) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data (posture_status, emotion_entropy) · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset, `prototype/pipeline/dataset/`). Всё live-провалидировано (запись→PyTorch DataLoader). **Осталось:** 16.5 (точный YuNet-face-bbox privacy), 16.6 (интеграция с тренерами + quality gates). План — `docs/phase-16-plan.md` |
 
 ## Терминология
 

@@ -1,6 +1,7 @@
 # Machine Vision Module
 
-*Structured Decomposed Picture-to-Text — гибридный Python+Rust проект. Продакшн v0.1.0 (GitHub Releases).*
+*Structured Decomposed Picture-to-Text — гибридный Python+Rust проект. Опубликованный прод v0.1.0
+(GitHub Releases); v0.2.0 подготовлена по коду (ждёт owner-тега). Активная разработка — ветка `kaggle`.*
 
 ## Структура
 
@@ -10,8 +11,8 @@
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (12 крейтов, 597 тестов; фаза 14 «Продукт» закрыта целиком)
-│   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, cli
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (13 крейтов, 657 тестов; фазы 5–15 закрыты, 16 в работе)
+│   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, dataset, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   └── CLAUDE.md   #   ← детальный контекст Rust-части (source of truth)
 ├── install.sh      # curl|sh установщик релизного бинаря (GitHub Releases, x86_64/aarch64)
@@ -20,7 +21,7 @@ Machine Vision Module/
 ├── models/         # Веса: ONNX/MediaPipe (.task), references/ (крупные gitignored, тянутся `mvm setup`)
 ├── src/            # sightd (legacy Rust daemon, заменён на mvm/)
 ├── spike_pose/     # Питон-спайки тренировки позы (GRIP)
-└── prototype/      # ⚙ Python-ПРОТОТИП (архив): sight.py, pipeline/ (обучение), data/, legacy/, tests/, assets/
+└── prototype/      # ⚙ Python-ПРОТОТИП (архив) + pipeline/dataset/ — экспортёры Dataset Factory (фаза 16)
 ```
 
 ## Как работает
@@ -50,36 +51,24 @@ cd mvm && target/release/mvm --native --once --dump-json
 
 ## Актуальная ветка
 
-`master` — продакшн и основная ветка разработки (после слияния `rust-core`→`master` 2026-07-02).
+`kaggle` — активная разработка (фаза 15.6-порт + фаза 16). `master` — опубликованный прод v0.1.0
+(после слияния `rust-core`→`master` 2026-07-02). Мёрж `kaggle`→`master` — вместе с релизом v0.2.0.
 
 ## Текущая фаза
 
-**Фаза 14 — Продукт (ЗАКРЫТА по коду 2026-07-06):** оболочка «поставил → само нашлось и заработало» —
-XDG-пути/`config.toml`, авто-детект камеры, `mvm setup` (fetch моделей + sha256), watched-галерея
-(`gallery/<Имя>/`), `mvm serve --with-camera`, `mvm mcp install`, `mvm service` (systemd user-юнит),
-дистрибуция через GitHub Releases + `install.sh`. Репо публичное, релиз `v0.1.0` собран CI, `install.sh`
-анонимно ставит `mvm 0.1.0` — live-провалидировано. 12 крейтов, 597 тестов. Детальный статус —
-`mvm/CLAUDE.md`, план — `mvm/docs/phase-14-plan.md`.
+**Фазы 5–14 ✅** (детекторы, 3D scene-graph, трекер, fusion-полировка, LLM-render/MCP, продукт-оболочка
+v0.1.0). **Фаза 15 (ML Refactor → v0.2.0) ✅ по коду** — lab-first пересмотр всей ML-логики (журналы
+LJ0–LJ6): 2D-GRIP-поза, E2 scene-level fall, stale-relink трекер, golden-симулятор + словарь v2
+`using_object(class)`, ⭐ SFace align-фикс +19.5 п.п.; footprint позы −79%. v0.2.0 ждёт owner-тега.
 
-**Фаза 15 — ML Refactor → v0.2.0 (В РАБОТЕ, ветка `kaggle`):** лабораторный пересмотр всей ML-логики
-на эталонной паре (CMU mocap + OpenImages), три оси — скорость/точность/вес. **15.0 ✅** (лаборатория +
-замороженный бенч-протокол), **15.1 ✅** (поза: 2D-GRIP z-free, mocap как тренировочный актив,
-flexion-канал, Mahalanobis вместо VAE; footprint позы −79%, gold R3 0.894), **15.2 ✅** (переходы:
-prior vs dwell — агрегатный wash не подтверждён, ships гибрид dwell+SL-вето → ложный fall-флип в 0
-под стрессом established; E2 fall-правило «пол + скорость таза ≳1.1 м/с», AUROC 1.000), **15.3 ✅**
-(трекер: walking-фрагментация воспроизведена на истинных CMU-траекториях, корень — структурная re-link
-dead-zone устаревшей identity = 57%; фикс `center-relink через stale identity` established
-med Δ−4.70/heavy Δ−8.25, idle 0/0; Kalman-Q-калибровка опровергнута → gate/Kalman без изменений)
-**15.4 ✅** (симулятор golden-сценариев: FLOOR event-P/R 1.000; стресс рвёт FSM exit-dwell →
-sweep-кандидат 15.6; fall-правило прода = 3/10 FA + пропуски от id-churn → ships E2 scene-level;
-VRD-аудит: typing/using_mouse/watching_tv = 0 инстансов → словарь v2; CI-гейт golden в mvm-cli)
-и **15.5 ✅** (паспорт внешних экспертов + диета: человеко-цепочка 16.7 мс <50 PASS, ONNX 121.7 MiB;
-emotion RAF-DB 0.665 healthy; ⭐ прод шлёт в SFace невыровненный кроп (`pipeline.rs:470`) —
-align-фикс +19.5 п.п. за $0 → топ-порт 15.6; SFace INT8 = измеренный негатив (acc lossless, latency ×6)
-→ REJECT; арифметика 1068→222 КБ)
-закрыты и опубликованы как Kaggle-журналы LJ0–LJ5 (Run-All COMPLETE). Каждый этап гейтится нарративным
-журналом (LJ0–LJ6). **Прод-Rust пока v0.1.0** — порт победивших решений будет в 15.6. Следующее —
-**15.6** (Rust-порт + релиз v0.2.0). План — `mvm/docs/phase-15-plan.md`.
+**Фаза 16 — Dataset Factory (В РАБОТЕ, `kaggle`):** MVM из «источника для LLM» → двухпотребительская
+архитектура (LLM/MCP + накопительная память-датасет). Новый крейт `mvm-dataset` — чистый потребитель
+WorldState. **16.0–16.4 ✅ и live-провалидированы:** Semantic Contract (Canonical Observation +
+статусы + Router G₁–G₅) → инфра (`mvm run --record`, session-grouper, privacy-blur) → сырьё
+(RGB+depth-16bit+masks-RLE) + quality-as-data → CLI `mvm dataset` → Python-экспортёры
+(`prototype/pipeline/dataset/`, PyTorch/TFRecord/WebDataset). Сквозной путь запись→PyTorch DataLoader
+проверен на живой камере. **Осталось:** 16.5 (точный YuNet-face-bbox privacy), 16.6 (интеграция с
+тренерами + quality gates). Детали — `mvm/CLAUDE.md`, план — `mvm/docs/phase-16-plan.md`.
 
 ## Для Agents
 

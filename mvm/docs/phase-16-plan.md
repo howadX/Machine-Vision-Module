@@ -6,6 +6,27 @@
 > Фабрика не сжимает наблюдение преждевременно в непрозрачный общий вектор: она маршрутизирует данные по семантическим ветвям, связывает их общими идентификаторами и сохраняет provenance, quality и интерпретируемость.
 > Ядро зрения готово (фазы 5–14); эта фаза добавляет **семантический экспортный слой**, не меняя детекторы и fusion.
 
+## Статус реализации (чекпоинт 2026-07-17)
+
+**16.0–16.4 закрыты по коду и live-провалидированы** (ветка `kaggle`; 657 Rust-тестов + 6 Python-групп):
+
+| Шаг | Статус | Что реализовано |
+|-----|--------|-----------------|
+| **16.0** | ✅ | Semantic Contract: `mvm-dataset` крейт, Canonical Observation (JSONL, ключи связывания, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance), Semantic Router G₁–G₅ |
+| **16.1** | ✅ | Инфра: session-grouper в WorldState (+2 поля, чистая арифметика), `DatasetConfig`, `DatasetWriter` + mesh-агент, флаг `--record`, privacy-blur |
+| **16.2** | ✅ | Сырьё: RGB (jpg/png), depth (16-bit PNG, min-max + `depth_range`, обратимо), masks (RLE в JSONL); quality-as-data (`posture_status`, `emotion_entropy`, счётчики, anomaly) |
+| **16.3** | ✅ | CLI `mvm dataset list/info/stats/prune` (prune — dry-run по умолчанию); публичный `session.rs` ридер |
+| **16.4** | ✅ | Python-экспортёры в `prototype/pipeline/dataset/` (PyTorch `IterableDataset` / TFRecord / WebDataset), фильтры `dataset_config.yaml`, README, тесты. Сквозной путь запись→PyTorch DataLoader(num_workers=2) live-провалиден |
+| **16.5** | ⏳ | Privacy: заменить консервативную полосу (верх bbox тела) точным YuNet-face-bbox |
+| **16.6** | ⏳ | Интеграция с тренерами `prototype/pipeline` + measured quality gates |
+
+Отклонения от плана (зафиксированы): (1) session-lifecycle драйвит **DatasetWriter** (recording-gated),
+а не FusionAgent — ноль стоимости когда запись выключена; (2) пиксельное кодирование/blur — в mesh-агенте
+(`mvm-cli`), логика — в `mvm-dataset` (крейт без image-зависимостей, полностью unit-тестируем);
+(3) depth-нормализация — min-max + `depth_range` вместо наивного «×10000» (реальные значения до ~9 →
+переполнили бы u16; поймано на live-данных); (4) типизированный `Label<T>` group-encoding отложен в 16.4
+(Python-экспортёры парсят текущий JSON атрибутов). `mvm dataset export` печатает готовые команды к экспортёрам.
+
 ## Обещания пользователю (вайб)
 
 1. MVM не просто «видит и забывает» — он **копит данные** для будущих моделей.
