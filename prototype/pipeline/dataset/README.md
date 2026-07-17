@@ -53,6 +53,11 @@ for sample in torch.utils.data.DataLoader(ds, batch_size=None, num_workers=2):
     ...
 ```
 
+> **Multi-worker note.** With `num_workers > 0`, wrap your entry point in
+> `if __name__ == "__main__":` — Python 3.14's default `forkserver`/`spawn`
+> re-imports your module in each worker (standard multiprocessing requirement).
+> The dataset itself is picklable and worker-shards each frame exactly once.
+
 Smoke it without writing code:
 
 ```bash

@@ -125,7 +125,9 @@ class Record:
         from PIL import Image
 
         with Image.open(self.frame_path) as im:
-            return np.asarray(im.convert("RGB"))
+            # np.array (not asarray) → a writable copy: torch.as_tensor warns on
+            # PIL's read-only buffer and forbids writing to it.
+            return np.array(im.convert("RGB"), dtype=np.uint8)
 
     def load_depth(self) -> Optional[np.ndarray]:
         """Relative depth as a ``H×W`` float32 array, de-normalized via
@@ -136,7 +138,7 @@ class Record:
         from PIL import Image
 
         with Image.open(self.depth_path) as im:
-            u16 = np.asarray(im, dtype=np.float32)  # 0..65535
+            u16 = np.array(im, dtype=np.float32)  # 0..65535 (writable copy)
         lo, hi = self.depth_range if self.depth_range else (0.0, 1.0)
         return lo + (u16 / 65535.0) * (hi - lo)
 

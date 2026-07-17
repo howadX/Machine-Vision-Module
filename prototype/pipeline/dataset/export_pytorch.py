@@ -27,6 +27,14 @@ from typing import Callable, Optional
 from filters import Filters
 from records import Record, iter_dataset, iter_session
 
+# Subclass torch's IterableDataset when available (so it drops into a DataLoader,
+# incl. multi-worker), else a plain object. Defined at module scope — a *local*
+# subclass isn't picklable, which breaks DataLoader workers under forkserver.
+try:
+    from torch.utils.data import IterableDataset as _Base
+except Exception:  # torch optional
+    _Base = object
+
 
 def record_to_labels(rec: Record) -> dict:
     """Flatten a record's structured labels into a JSON-friendly dict. Preserves
@@ -67,12 +75,13 @@ def record_to_sample(rec: Record, with_frame: bool = True, with_depth: bool = Tr
     return sample
 
 
-class MVMSessionDataset:
-    """An ``IterableDataset`` (subclassed lazily so torch is a soft dependency).
+class MVMSessionDataset(_Base):
+    """An ``IterableDataset`` over MVM sessions (torch is a soft dependency).
 
     Point it at a whole dataset ``root`` (all sessions) or a single ``session_dir``.
     Multi-worker ``DataLoader`` is supported: records are round-robin sharded by
-    worker so each frame is emitted exactly once.
+    worker so each frame is emitted exactly once. Picklable → works under the
+    ``forkserver`` start method (Python 3.14+ default).
     """
 
     def __init__(
@@ -123,25 +132,10 @@ class MVMSessionDataset:
             yield sample
 
 
-def _as_iterable_dataset(ds: MVMSessionDataset):
-    """Wrap into a real ``torch.utils.data.IterableDataset`` when torch is present,
-    so it drops straight into a ``DataLoader``. Falls back to the plain object."""
-    try:
-        from torch.utils.data import IterableDataset
-    except Exception:
-        return ds
-
-    class _Wrapped(IterableDataset):
-        def __iter__(self_inner):
-            return iter(ds)
-
-    return _Wrapped()
-
-
-def build_dataset(root: str | Path, config: Optional[str | Path] = None, **kw):
+def build_dataset(root: str | Path, config: Optional[str | Path] = None, **kw) -> MVMSessionDataset:
     """Convenience: dataset over ``root`` with filters from a YAML config."""
     filters = Filters.from_yaml(config) if config else None
-    return _as_iterable_dataset(MVMSessionDataset(root=root, filters=filters, **kw))
+    return MVMSessionDataset(root=root, filters=filters, **kw)
 
 
 def _main() -> int:

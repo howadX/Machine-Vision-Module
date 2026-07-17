@@ -139,6 +139,8 @@ def test_pixel_loaders(sdir: Path):
     r0 = next(iter_session(sdir))
     frame = r0.load_frame()
     assert frame.shape == (48, 64, 3) and frame.dtype == np.uint8
+    # Writable → torch.as_tensor won't warn / forbid writes (caught in live e2e).
+    assert frame.flags.writeable
     depth = r0.load_depth()
     assert depth is not None and depth.shape == (48, 64)
     # de-normalized to [min,max] = [0.5, 9.0]
@@ -195,6 +197,22 @@ def test_pytorch_dataset(sdir: Path):
     ds2 = MVMSessionDataset(session_dir=sdir, with_frame=False, with_depth=False)
     s2 = next(iter(ds2))
     assert "frame" not in s2 and "depth" not in s2 and "labels" in s2
+
+    # Picklable → survives DataLoader workers under forkserver (Python 3.14+).
+    # (A local IterableDataset subclass would fail here.)
+    import pickle
+
+    reloaded = pickle.loads(pickle.dumps(ds))
+    assert len(list(iter(reloaded))) == 2
+
+    # Real DataLoader (single-process is enough to exercise the integration).
+    import torch
+
+    from torch.utils.data import IterableDataset
+
+    assert isinstance(ds, IterableDataset), "must subclass IterableDataset when torch present"
+    batches = list(torch.utils.data.DataLoader(ds, batch_size=None, num_workers=0))
+    assert len(batches) == 2
 
 
 def main() -> int:
