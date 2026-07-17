@@ -74,6 +74,11 @@ pub fn route(world: &WorldState, ctx: &RouteContext) -> CanonicalObservation {
 
     obs.semantic_groups = active_groups(world);
 
+    // G₅ Quality — «quality is data»: счётчики + anomaly кадра из наблюдений.
+    obs.quality.people_count = world.people.len() as u32;
+    obs.quality.object_count = world.objects.len() as u32;
+    obs.quality.anomaly_score = world.anomaly_score;
+
     // Provenance: этот кадр собран роутером (принцип «Provenance is mandatory»).
     obs.provenance.push(Provenance {
         model: "mvm-dataset:router".to_string(),
@@ -129,6 +134,14 @@ fn person_attributes(p: &PersonState) -> serde_json::Value {
     if let Some((label, c)) = &p.posture {
         m.insert("posture".into(), serde_json::json!({ "label": label, "confidence": c }));
     }
+    // Posture status is data (§16.0.2): a missing posture under upper-body
+    // occlusion is *withheld*, not a negative label — mark it explicitly so the
+    // exporter never treats absence as a class.
+    m.insert("posture_status".into(), serde_json::json!(posture_status(p)));
+    // Emotion entropy (G₅ quality): near-chance predictions carry high entropy.
+    if let Some(dist) = &p.emotion_distribution {
+        m.insert("emotion_entropy".into(), serde_json::json!(mvm_core::emotion_entropy(dist)));
+    }
     if let Some(pos) = &p.position_3d {
         m.insert(
             "position_3d".into(),
@@ -174,6 +187,19 @@ fn object_attributes(o: &ObjectState) -> serde_json::Value {
         );
     }
     serde_json::Value::Object(m)
+}
+
+/// Label-status of a person's posture (§16.0.2). `observed` when present;
+/// `withheld` when the lower body is occluded (honest gap, not a negative);
+/// `unknown` otherwise.
+fn posture_status(p: &PersonState) -> &'static str {
+    if p.posture.is_some() {
+        "observed"
+    } else if matches!(p.body_coverage, Some("upper") | Some("head")) {
+        "withheld"
+    } else {
+        "unknown"
+    }
 }
 
 fn insert_opt(m: &mut serde_json::Map<String, serde_json::Value>, key: &str, v: Option<&str>) {
@@ -323,6 +349,59 @@ mod tests {
             obs.provenance.iter().any(|p| p.model == "mvm-dataset:router" && p.source == "router"),
             "router must stamp observation-level provenance"
         );
+    }
+
+    #[test]
+    fn quality_block_carries_counts_and_anomaly() {
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.people.push(bare_person(1, now));
+        world.objects.push(bare_object(10001, "cup", now));
+        world.anomaly_score = 0.42;
+        let obs = route(&world, &ctx());
+        assert_eq!(obs.quality.people_count, 1);
+        assert_eq!(obs.quality.object_count, 1);
+        assert!((obs.quality.anomaly_score - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
+    fn posture_status_reflects_occlusion_honesty() {
+        let now = Instant::now();
+        // Observed posture.
+        let mut seated = bare_person(1, now);
+        seated.posture = Some(("sitting".into(), 0.9));
+        // Occluded lower body, posture withheld upstream.
+        let mut occluded = bare_person(2, now);
+        occluded.posture = None;
+        occluded.body_coverage = Some("upper");
+        // No posture, no occlusion info → unknown.
+        let bare = bare_person(3, now);
+
+        let mut world = WorldState::new(now);
+        world.people = vec![seated, occluded, bare];
+        let obs = route(&world, &ctx());
+        let status = |eid: &str| {
+            obs.entities.iter().find(|e| e.entity_id == eid).unwrap().attributes["posture_status"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(status("p1"), "observed");
+        assert_eq!(status("p2"), "withheld");
+        assert_eq!(status("p3"), "unknown");
+    }
+
+    #[test]
+    fn emotion_entropy_emitted_when_distribution_present() {
+        let now = Instant::now();
+        let mut p = bare_person(1, now);
+        // Uniform distribution → maximal entropy (1.0 after normalization).
+        p.emotion_distribution = Some([0.125; 8]);
+        let mut world = WorldState::new(now);
+        world.people.push(p);
+        let obs = route(&world, &ctx());
+        let ent = obs.entities[0].attributes["emotion_entropy"].as_f64().unwrap();
+        assert!(ent > 0.99, "uniform softmax → entropy ≈ 1.0, got {ent}");
     }
 
     #[test]

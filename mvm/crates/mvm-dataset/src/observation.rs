@@ -191,6 +191,11 @@ pub struct FrameMeta {
     /// Относительный путь к карте глубины (`depth/XXXXXX.png`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth_path: Option<String>,
+    /// `[min, max]` сырой относительной глубины, отображённой в 16-битный PNG
+    /// (§16.2.2). Делает нормализацию обратимой: `raw = min + (u16/65535)·(max−min)`.
+    /// Глубина affine-relative (не метры), поэтому диапазон — на кадр.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth_range: Option<[f32; 2]>,
 }
 
 /// Привязка кадра к сессии.
@@ -218,11 +223,18 @@ pub struct EntityRecord {
     pub attributes: serde_json::Value,
 }
 
-/// Quality-блок наблюдения (§16.0.1, группа G₅). Уточняется в §16.2–16.3.
+/// Quality-блок наблюдения (§16.0.1, группа G₅) — «quality is data». Заполняется
+/// роутером из уже наблюдённых сигналов.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QualityBlock {
     /// Кадр пригоден (не пустой/не битый).
     pub frame_ok: bool,
+    /// Сколько людей в кадре (после трекера).
+    pub people_count: u32,
+    /// Сколько объектов-узлов в кадре.
+    pub object_count: u32,
+    /// Anomaly-score кадра (decaying peak, §11.B2).
+    pub anomaly_score: f32,
     /// Свободная заметка о качестве кадра.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
@@ -285,6 +297,7 @@ impl CanonicalObservation {
                 timestamp: timestamp.into(),
                 frame_path: None,
                 depth_path: None,
+                depth_range: None,
             },
             session: SessionRef { seq_in_session },
             entities: Vec::new(),
@@ -294,6 +307,9 @@ impl CanonicalObservation {
             derived_targets: serde_json::Value::Null,
             quality: QualityBlock {
                 frame_ok: true,
+                people_count: 0,
+                object_count: 0,
+                anomaly_score: 0.0,
                 notes: None,
             },
             provenance: Vec::new(),
