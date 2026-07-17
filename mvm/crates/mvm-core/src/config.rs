@@ -116,6 +116,12 @@ pub struct Config {
     /// is heavy (~230ms CPU) and the scene depth changes slowly, so run it every
     /// Nth frame and reuse the last map. Much sparser than `object_cadence`.
     pub depth_cadence: u32,
+    /// Dataset Factory session timeout (phase 16.1.3): a gap longer than this many
+    /// seconds with no tracked people closes the current recording session; the
+    /// next person opens a new one. Pure `Instant` arithmetic in [`crate::WorldState`]
+    /// — the id string (`YYYY-MM-DD_HHMMSS`) is assigned by the recorder (wall-clock
+    /// lives outside core). Default 30 s. Consumed only when recording is enabled.
+    pub session_timeout_secs: u64,
 }
 
 impl Default for Config {
@@ -146,6 +152,7 @@ impl Default for Config {
             object_min_area: 0.0015, // phase 8.E filter D: ceiling-cam → small subtended angle
             object_track_timeout: 15, // phase 8.E filter B: persist ~2s across brief occlusion
             depth_cadence: 30, // phase 8.E.2: heavy depth, run sparsely (~every 1.5s)
+            session_timeout_secs: 30, // phase 16.1.3: >30s without people → new session
         }
     }
 }

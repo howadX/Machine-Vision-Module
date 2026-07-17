@@ -228,6 +228,14 @@ pub struct WorldState {
     /// `activities` stays the flat compat list.
     pub activity_instances: Vec<crate::activity::ActivityInstance>,
     pub anomaly_score: f32,
+    /// Dataset Factory session id of the currently-open recording session
+    /// (phase 16.1.3), `None` when no session is active. The string
+    /// (`YYYY-MM-DD_HHMMSS`) is assigned by the recorder — wall-clock lives outside
+    /// core; `WorldState` only owns the lifecycle state and its `Instant` arithmetic.
+    pub current_session_id: Option<String>,
+    /// Instant a tracked person was last present (phase 16.1.3). Drives the
+    /// no-people timeout that closes a session. `None` until first presence.
+    pub last_people_seen: Option<Instant>,
 }
 
 impl WorldState {
@@ -244,6 +252,60 @@ impl WorldState {
             events: Vec::new(),
             activity_instances: Vec::new(),
             anomaly_score: 0.0,
+            current_session_id: None,
+            last_people_seen: None,
+        }
+    }
+
+    // --- Dataset Factory session grouper (phase 16.1.3) ---
+    //
+    // A session = a continuous interval with at least one tracked person; a gap
+    // longer than `session_timeout_secs` with no people closes it, and the next
+    // person opens a new one. Pure `Instant` arithmetic, zero new deps. Only the
+    // recorder (DatasetWriter) drives these when recording is enabled — the core
+    // pipeline never calls them, so there is no cost when recording is off.
+
+    /// Whether a recording session is currently open.
+    pub fn session_active(&self) -> bool {
+        self.current_session_id.is_some()
+    }
+
+    /// Note that a tracked person is present this frame — advances the presence
+    /// clock the timeout is measured from.
+    pub fn mark_people_seen(&mut self, now: Instant) {
+        self.last_people_seen = Some(now);
+    }
+
+    /// Open a session with the recorder-supplied id (wall-clock lives outside
+    /// core). No-op if one is already open. Stamps the presence clock.
+    pub fn open_session(&mut self, id: String, now: Instant) {
+        if self.current_session_id.is_none() {
+            self.current_session_id = Some(id);
+            self.last_people_seen = Some(now);
+        }
+    }
+
+    /// Whether an open session has exceeded the no-people `timeout`. False when no
+    /// session is open or nobody has been seen yet.
+    pub fn session_expired(&self, now: Instant, timeout: std::time::Duration) -> bool {
+        match (self.current_session_id.as_ref(), self.last_people_seen) {
+            (Some(_), Some(last)) => now.duration_since(last) > timeout,
+            _ => false,
+        }
+    }
+
+    /// Close the current session if it has timed out; returns the closed session
+    /// id so the recorder can finalize `session.toml`. `None` if nothing closed.
+    pub fn maybe_close_session(
+        &mut self,
+        now: Instant,
+        timeout: std::time::Duration,
+    ) -> Option<String> {
+        if self.session_expired(now, timeout) {
+            self.last_people_seen = None;
+            self.current_session_id.take()
+        } else {
+            None
         }
     }
 
@@ -402,5 +464,61 @@ mod tests {
             .map(|o| o.id)
             .collect();
         assert_eq!(ids, vec![10001], "only the fresh object within 100ms");
+    }
+
+    // --- session grouper (phase 16.1.3) ---
+    use std::time::Duration;
+
+    #[test]
+    fn session_starts_inactive() {
+        let w = WorldState::new(Instant::now());
+        assert!(!w.session_active());
+        assert!(w.current_session_id.is_none());
+        assert!(w.last_people_seen.is_none());
+    }
+
+    #[test]
+    fn open_session_is_idempotent() {
+        let t0 = Instant::now();
+        let mut w = WorldState::new(t0);
+        w.open_session("2026-07-17_153000".into(), t0);
+        assert!(w.session_active());
+        assert_eq!(w.current_session_id.as_deref(), Some("2026-07-17_153000"));
+        // A second open must not overwrite the live session.
+        w.open_session("2026-07-17_154000".into(), t0 + Duration::from_secs(5));
+        assert_eq!(w.current_session_id.as_deref(), Some("2026-07-17_153000"));
+    }
+
+    #[test]
+    fn session_closes_only_after_timeout_without_people() {
+        let t0 = Instant::now();
+        let timeout = Duration::from_secs(30);
+        let mut w = WorldState::new(t0);
+        w.open_session("s1".into(), t0);
+
+        // People keep being seen → clock advances → never expires.
+        w.mark_people_seen(t0 + Duration::from_secs(20));
+        assert!(!w.session_expired(t0 + Duration::from_secs(40), timeout));
+        assert!(w.maybe_close_session(t0 + Duration::from_secs(45), timeout).is_none());
+        assert!(w.session_active());
+
+        // 29s after last presence: still inside the window.
+        assert!(!w.session_expired(t0 + Duration::from_secs(49), timeout));
+        // 31s after last presence: expired → closes and yields the id.
+        assert!(w.session_expired(t0 + Duration::from_secs(51), timeout));
+        let closed = w.maybe_close_session(t0 + Duration::from_secs(51), timeout);
+        assert_eq!(closed.as_deref(), Some("s1"));
+        assert!(!w.session_active());
+        assert!(w.last_people_seen.is_none());
+    }
+
+    #[test]
+    fn no_session_never_expires() {
+        let t0 = Instant::now();
+        let mut w = WorldState::new(t0);
+        w.mark_people_seen(t0);
+        // No session open → nothing to expire or close.
+        assert!(!w.session_expired(t0 + Duration::from_secs(600), Duration::from_secs(30)));
+        assert!(w.maybe_close_session(t0 + Duration::from_secs(600), Duration::from_secs(30)).is_none());
     }
 }
