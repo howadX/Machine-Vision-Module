@@ -11,6 +11,7 @@
 //! - [`router`] — Semantic Group Router: чистое детерминированное отображение
 //!   снимка [`mvm_core::WorldState`] в наблюдение по ветвям G₁–G₅ (§16.0.3).
 //! - [`config`] — [`DatasetConfig`]: секция `[dataset]` конфига (§16.1.1).
+//! - [`writer`] — [`DatasetWriter`]: оркестрация сессий, JSONL labels, session.toml (§16.1.2).
 //!
 //! ML-фреймворки (PyTorch/TF) сюда не протекают — экспорт в ML-форматы живёт
 //! в Python-утилитах (`prototype/pipeline/dataset/`).
@@ -18,6 +19,7 @@
 pub mod config;
 pub mod observation;
 pub mod router;
+pub mod writer;
 
 pub use config::{DatasetConfig, ExportConfig, ExportFormat, FrameFormat, Privacy};
 pub use observation::{
@@ -25,3 +27,4 @@ pub use observation::{
     SemanticGroup, SessionRef, SCHEMA_VERSION,
 };
 pub use router::{route, RouteContext};
+pub use writer::{DatasetWriter, FrameRecord, RecordResult};
