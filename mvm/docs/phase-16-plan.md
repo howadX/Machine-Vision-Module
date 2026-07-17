@@ -1,9 +1,10 @@
-# Фаза 16 — Dataset Factory: фабрика данных для будущих ML-моделей
+# Фаза 16 — Dataset Factory: семантически структурированная фабрика данных
 
-> **Версия:** 0.2 (перенумерована 15→16 15 июля 2026: фаза 15 отдана ML-рефакторингу v0.2.0,
-> см. `phase-15-plan.md` — фабрике нужна доведённая до production-качества ML-логика как фундамент).
-> **Цель фазы:** превратить MVM из источника данных «только для LLM» в **двухпотребительскую архитектуру**: LLM (MCP) + Dataset Factory (накопительный слой для будущего обучения).
-> Ядро зрения готово (фазы 5–14); эта фаза добавляет **экспортный слой**, не трогая зрение.
+> **Версия:** 0.3.1 (Dendritron-inspired semantic routing + фиксация решений: 13-й крейт `mvm-dataset`, старт на `kaggle`/v0.2.0; 17 июля 2026).
+> **Основание:** фаза 15 отдана ML-рефакторингу v0.2.0; фабрике нужна доведённая до production-качества ML-логика как фундамент.
+> **Цель фазы:** превратить MVM из источника данных «только для LLM» в **двухпотребительскую архитектуру**: LLM (MCP) + Dataset Factory (структурированная накопительная память для будущего обучения).
+> Фабрика не сжимает наблюдение преждевременно в непрозрачный общий вектор: она маршрутизирует данные по семантическим ветвям, связывает их общими идентификаторами и сохраняет provenance, quality и интерпретируемость.
+> Ядро зрения готово (фазы 5–14); эта фаза добавляет **семантический экспортный слой**, не меняя детекторы и fusion.
 
 ## Обещания пользователю (вайб)
 
@@ -13,16 +14,47 @@
 4. Одна команда конвертирует накопленное в датасет: `mvm dataset export --format pytorch`.
 5. Всё локально, приватно, $0. Ничего не утекает наружу.
 
+## Архитектурная идея фазы
+
+Dataset Factory — не архив кадров и не простой dump `WorldState`. Это **компилятор наблюдений в обучающие представления**:
+
+```text
+WorldState → Canonical Observation → Semantic Router
+    ├── G₁ Human       → pose / identity / emotion / landmarks
+    ├── G₂ Scene       → objects / depth / zones / permanence
+    ├── G₃ Interaction → hands / gestures / contacts / activities
+    ├── G₄ Temporal    → transitions / episodes / prediction targets
+    └── G₅ Quality     → confidence / entropy / OOD / provenance
+                         ↓
+              Canonical records + Dataset Views
+```
+
+### Dendritron-inspired principles
+
+1. **Local branches first.** Семантические группы обрабатываются независимо и не теряют локальную структуру.
+2. **Selective routing.** Кадр попадает только в релевантные ветви: руки — в Interaction, переходы — в Temporal, низкая уверенность — в Quality/Review.
+3. **Compositional binding.** Ветви связываются через `dataset_id`, `session_id`, `frame_id`, `entity_id` и `track_id`.
+4. **Memory as operation.** Фабрика выполняет `register → route → encode → validate → bind → index → export`, а не только пишет файлы.
+5. **Interpretable encoding.** Любая метка хранит значение, статус, confidence, источник, версию схемы и ссылку на исходный сигнал.
+6. **No premature collapse.** Нельзя заменять структурированную сцену одним embedding до сохранения сущностей, отношений, временных связей и provenance.
+
+Dendritron здесь используется как источник design principles, а не как утверждение о доказанной универсальности конкретной модели.
+
 ## Управляющие принципы (сквозные для всей фазы)
 
 1. **Инварианты ядра целы.** Детекторы, классификаторы, трекер, fusion — **0 изменений**. Dataset-слой — чистый потребитель WorldState, как и StateFileWriter.
-2. **Dataset deps живут ТОЛЬКО в новом крейте `mvm-dataset` + Python-утилитах.** Ни ONNX, ни PyTorch, ни TF не протекают в ядро.
+2. **Dataset deps живут ТОЛЬКО в новом 13-м крейте `mvm-dataset` + Python-утилитах.** Ни ONNX, ни PyTorch, ни TF не протекают в ядро. `mvm-dataset` = библиотека (Canonical Observation, Semantic Router, encoding/JSONL, privacy-blur); он же — будущий дом для MVM-SRM. `mvm-cli` держит лишь тонкую обвязку: mesh-агент + CLI-диспетч.
 3. **Pull-модель, не push.** DatasetWriter читает WorldState (Arc<RwLock<>>) — не требует изменений в агентах-продюсерах.
 4. **Структура на диске = self-describing.** Папка сессии содержит кадры + `labels.jsonl` — самодостаточна, можно скопировать на другую машину и использовать.
 5. **Privacy-first.** Сохранение лиц с identity — только для галерейных персон (по умолчанию); анонимы — с маскированными лицами или bbox-only. Настраивается в конфиге.
+6. **Semantic-first.** Canonical record сохраняет полное наблюдение, а Dataset Views строятся поверх него по группам и задачам.
+7. **Quality is data.** Confidence, entropy, OOD, visibility, missing и withheld — часть разметки, а не служебный шум.
+8. **Provenance is mandatory.** Для каждой derived/weak метки известны модель, версия, источник и правило вывода.
 
 ## Решения (зафиксированы с владельцем)
 
+- **Новый 13-й крейт `mvm-dataset`** (решение 17.07). Изолирует dataset-логику и будущие ML-deps экспортёров от ядра и `mvm-cli`. Содержит: типы Canonical Observation, Semantic Group Router, encoding/JSONL-сериализацию, privacy-blur, session-логику записи. Зависит от `mvm-core` (типы WorldState), но **не** от detect/identity/emotion/posture/scene/depth/hands. `mvm-cli` получает лишь thin mesh-агент (`agents/dataset_writer.rs`) и CLI-модуль (`dataset_cmd.rs`), делегирующие в `mvm-dataset`.
+- **Старт фазы — на ветке `kaggle` поверх незарелиженного v0.2.0** (решение 17.07). Код v0.2.0 закрыт (608 тестов); пуш тега `v0.2.0` — независимое owner-действие, фазу 16 не блокирует.
 - **DatasetWriter — агент Agent Mesh.** Работает на своём потоке, читает WorldState с настраиваемым cadence (по умолчанию — каждый N-й кадр, N=30 для 1 fps при 30 fps камере).
 - **Формат хранения:**
   - Кадры: JPEG (сжатие 85%) в `sessions/<session_id>/frames/XXXXXX.jpg`
@@ -36,9 +68,53 @@
 
 ---
 
-## 15.0 — Инфраструктура датасет-слоя
+## 16.0 — Semantic Dataset Contract
 
-### 15.0.1 — Конфиг `[dataset]` в `config.toml`
+### 16.0.1 — Canonical Observation
+
+Вводится стабильная внутренняя схема наблюдения, не зависящая от PyTorch/TF:
+
+```text
+Observation
+ ├── frame
+ ├── session
+ ├── entities
+ ├── relations
+ ├── events
+ ├── semantic_groups
+ ├── derived_targets
+ ├── quality
+ └── provenance
+```
+
+Минимальные ключи связывания: `dataset_id`, `schema_version`, `session_id`, `frame_id`, `entity_id`, `track_id`, `group`.
+
+### 16.0.2 — Статусы разметки
+
+Каждое значение получает явный статус:
+
+| Статус | Значение |
+|---|---|
+| `observed` | непосредственно получено детектором/экспертом |
+| `derived` | вычислено Fusion или правилом над наблюдениями |
+| `temporal` | выведено из последовательности кадров |
+| `weak` | pseudo-label или эвристика, требующая аудита |
+| `withheld` | данных недостаточно, утверждение намеренно не делается |
+| `unknown` | свойство не наблюдалось или не включено |
+
+Критическое правило: `withheld` и `unknown` нельзя автоматически превращать в отрицательный класс.
+
+### 16.0.3 — Semantic Group Router
+
+```text
+WorldState → Snapshot → SemanticGroupRouter → GroupWriters
+```
+
+Router не меняет WorldState, не вызывает модели и не добавляет вычисления в hot path. Он маршрутизирует уже полученные сигналы и сохраняет их provenance.
+
+## 16.1 — Инфраструктура датасет-слоя
+
+### 16.1.1 — Конфиг `[dataset]` в `config.toml`
 
 ```toml
 [dataset]
@@ -60,9 +136,9 @@ session_timeout_secs = 30        # разрыв >N секунд без люде�
 default_format = "pytorch"       # pytorch | tfrecord | webdataset
 ```
 
-### 15.0.2 — DatasetWriter: агент Agent Mesh
+### 16.1.2 — DatasetWriter: агент Agent Mesh
 
-Новый агент в `mvm-cli/agents/dataset_writer.rs`:
+Логика записи (routing, encoding, JSONL, session-close, privacy-blur) живёт в крейте **`mvm-dataset`** как `DatasetWriter`. В `mvm-cli/agents/dataset_writer.rs` — **тонкий mesh-агент-обёртка**: держит `Arc<RwLock<WorldState>>`, на своём потоке дёргает cadence и делегирует в `mvm-dataset`. Обёртка:
 
 - **Вход:** `Arc<RwLock<WorldState>>` (читает после FusionAgent)
 - **Cadence:** сохраняет каждый N-й кадр (`dataset.frame_cadence`)
@@ -108,7 +184,7 @@ default_format = "pytorch"       # pytorch | tfrecord | webdataset
 }
 ```
 
-### 15.0.3 — Session grouper в WorldState
+### 16.1.3 — Session grouper в WorldState
 
 Добавить в `mvm-core/src/world.rs` (WorldState):
 
@@ -121,37 +197,37 @@ default_format = "pytorch"       # pytorch | tfrecord | webdataset
 
 ---
 
-## 15.1 — Сохранение сырых данных
+## 16.2 — Сохранение сырых данных
 
-### 15.1.1 — RGB frames
+### 16.2.1 — RGB frames
 
 - Формат: JPEG (по умолчанию, качество 85%) или PNG (lossless)
 - Именование: `sessions/<session_id>/frames/<frame_id:06d>.jpg`
 - Сжатие через `image` крейт (уже есть в зависимостях) или `turbojpeg` (быстрее, опционально)
 
-### 15.1.2 — Depth maps
+### 16.2.2 — Depth maps
 
 - Формат: 16-bit grayscale PNG
 - Значение: inverse depth × 10000 (сохраняет точность)
 - Именование: `sessions/<session_id>/depth/<frame_id:06d>.png`
 - Только если `save_depth = true` и DepthAgent активен
 
-### 15.1.3 — Instance masks (опционально)
+### 16.2.3 — Instance masks (опционально)
 
 - Формат: 8-bit indexed PNG (class id → цвет) ИЛИ RLE в JSONL
 - Только если `--masks` активен при `mvm run`/`record` + `save_masks = true`
 
 ---
 
-## 15.2 — Сохранение разметки
+## 16.3 — Сохранение разметки и provenance
 
-### 15.2.1 — Per-frame labels (JSONL)
+### 16.3.1 — Per-frame labels (JSONL)
 
-Файл `sessions/<session_id>/labels.jsonl` — одна JSON-строка на сохранённый кадр. Полный дамп WorldState в self-describing формате (см. 15.0.2).
+Файл `sessions/<session_id>/labels.jsonl` — одна JSON-строка на сохранённый кадр. Canonical Observation в self-describing формате (см. §16.0 и §16.1.2).
 
 **Ключевое решение:** JSONL, а не один большой JSON — позволяет потоковое чтение и дозапись без перезаписи всего файла.
 
-### 15.2.2 — Session metadata (TOML)
+### 16.3.2 — Session metadata (TOML)
 
 При закрытии сессии — сводный файл `session.toml`:
 
@@ -184,9 +260,9 @@ top = ["keyboard", "cell phone", "cup", "book", "chair"]
 
 ---
 
-## 15.3 — Экспорт в ML-форматы
+## 16.4 — Семантические Dataset Views и экспорт в ML-форматы
 
-### 15.3.1 — Архитектура экспорта
+### 16.4.1 — Архитектура экспорта
 
 Экспорт — **Python-скрипты**, не Rust. Причины:
 - PyTorch/TF — Python-экосистема; Rust-биндинги хрупкие
@@ -204,7 +280,7 @@ prototype/pipeline/dataset/
 └── README.md
 ```
 
-### 15.3.2 — PyTorch Dataset
+### 16.4.2 — PyTorch Dataset
 
 ```python
 # prototype/pipeline/dataset/export_pytorch.py
@@ -234,7 +310,7 @@ filters:
   activities: [typing]        # только кадры с этой активностью
 ```
 
-### 15.3.3 — CLI: `mvm dataset export`
+### 16.4.3 — CLI: `mvm dataset export`
 
 ```bash
 # Экспорт последней сессии в PyTorch
@@ -245,6 +321,12 @@ mvm dataset export --format pytorch --date 2026-07-14
 
 # Экспорт с фильтрами
 mvm dataset export --format pytorch --privacy safe --min-confidence 0.8
+
+# Семантические views
+mvm dataset export --group human --task posture
+mvm dataset export --group interaction --task hand_object_contact
+mvm dataset export --group temporal --task next_activity
+mvm dataset export --hard-examples
 
 # Вывод пути к экспортированному датасету
 mvm dataset export --format pytorch
@@ -260,9 +342,9 @@ mvm dataset export --format pytorch
 
 ---
 
-## 15.4 — Интеграция с ML-лабораторией
+## 16.5 — Интеграция с ML-лабораторией
 
-### 15.4.1 — Связка с prototype/pipeline
+### 16.5.1 — Связка с prototype/pipeline
 
 Существующие скрипты тренировки в `prototype/pipeline/` тренируются на публичных датасетах. Dataset Factory даёт им **собственные данные**:
 
@@ -274,7 +356,7 @@ mvm dataset export --format pytorch
 | `distill_emotion.py` | Knowledge distillation: ансамбль → одна модель, на своих данных |
 | `self_supervised.py` | Depth prediction по RGB (есть ground truth от Depth-Anything) |
 
-### 15.4.2 — Active learning loop (фаза 15+, будущее)
+### 16.5.2 — Active learning loop (будущее)
 
 ```
 MVM record → dataset → train model → deploy model в MVM → MVM record с новой моделью → ...
@@ -284,9 +366,9 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 
 ---
 
-## 15.5 — Privacy-слой (детально)
+## 16.6 — Privacy-слой (детально)
 
-### 15.5.1 — Режимы
+### 16.6.1 — Режимы
 
 | Режим | Лица галерейных | Лица анонимов | Identity-метки | Эмбеддинги |
 |-------|----------------|---------------|----------------|-----------|
@@ -294,7 +376,7 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 | `safe` (default) | Сохраняются | Размыты (Gaussian blur) | Только галерейные | Только галерейные |
 | `anonymous` | Размыты | Размыты | Нет | Нет |
 
-### 15.5.2 — Реализация
+### 16.6.2 — Реализация
 
 Размытие лиц — на уровне DatasetWriter при сохранении кадра:
 - YuNet bbox → Gaussian blur region (σ = bbox_width / 10)
@@ -306,14 +388,18 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 
 | Файл | Роль |
 |------|------|
-| `crates/mvm-cli/src/config_file.rs` | + `[dataset]` секция (изменение) |
-| `crates/mvm-cli/src/agents/dataset_writer.rs` | **Новый** — агент DatasetWriter |
-| `crates/mvm-cli/src/dataset_cmd.rs` | **Новый** — подкоманда `mvm dataset` |
+| `crates/mvm-dataset/` | **Новый 13-й крейт** — вся dataset-логика (см. ниже) |
+| `crates/mvm-dataset/src/observation.rs` | **Новый** — Canonical Observation + статусы разметки + provenance |
+| `crates/mvm-dataset/src/router.rs` | **Новый** — Semantic Group Router (G₁–G₅) |
+| `crates/mvm-dataset/src/writer.rs` | **Новый** — `DatasetWriter`: routing → encode → JSONL/TOML → privacy-blur |
+| `crates/mvm-dataset/src/config.rs` | **Новый** — `DatasetConfig` (парсинг `[dataset]`, CLI-override) |
+| `crates/mvm-cli/src/agents/dataset_writer.rs` | **Новый** — тонкий mesh-агент-обёртка над `mvm-dataset` |
+| `crates/mvm-cli/src/dataset_cmd.rs` | **Новый** — подкоманда `mvm dataset` (делегирует в `mvm-dataset`) |
+| `crates/mvm-cli/src/config_file.rs` | + подключение `[dataset]` секции (изменение) |
 | `crates/mvm-core/src/world.rs` | + session tracking (изменение, минимальное) |
-| `crates/mvm-core/src/config.rs` | + `DatasetConfig` (изменение, +1 struct) |
 | `crates/mvm-cli/src/main.rs` | + диспетч `dataset`, + `--record` флаг для `run` |
 | `prototype/pipeline/dataset/` | **Новая** директория — Python-экспортёры |
-| `mvm/docs/phase-15-plan.md` | Этот документ |
+| `mvm/docs/phase-16-plan.md` | Этот документ и контракт фазы |
 
 ---
 
@@ -321,6 +407,10 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 
 ### Unit-тесты (Rust)
 
+- Canonical Observation — round-trip JSONL и обязательные ключи связывания
+- Semantic Group Router — детерминированная маршрутизация по группам
+- Label status — `observed/derived/temporal/weak/withheld/unknown`
+- Provenance — источник и версия сохраняются для derived-меток
 - `DatasetConfig` — парсинг из TOML, CLI-override
 - Session grouper — открытие/закрытие сессии по таймауту
 - DatasetWriter — запись JSONL (мок WorldState)
@@ -330,6 +420,8 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 ### Интеграционные тесты
 
 - `mvm run --record --stub --max-frames 100` → создана сессия, файлы на диске
+- один canonical frame → ожидаемые Human/Scene/Interaction/Quality views
+- низкая confidence или occlusion → `withheld`, а не ложный отрицательный label
 - `mvm dataset export --session latest` → PyTorch Dataset загружается без ошибок
 - `mvm dataset prune --keep 7d` → старые сессии удалены
 
@@ -340,22 +432,22 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 
 ---
 
-## Roadmap: что в 15.0, что потом
+## Roadmap фазы 16
 
 | Шаг | Что | Опирается на |
 |-----|-----|--------------|
-| **15.0** | Инфраструктура: `[dataset]` конфиг, `DatasetConfig`, session grouper в WorldState, каркас DatasetWriter | Фаза 14 (XDG, config.toml) |
-| **15.1** | DatasetWriter: сохранение RGB + depth + masks на диск | 15.0 |
-| **15.2** | Сохранение разметки: JSONL labels + session TOML | 15.0, 15.1 |
-| **15.3** | CLI `mvm dataset` (list/info/export/prune/stats) + `--record` флаг | 15.1, 15.2 |
-| **15.4** | Privacy-слой: размытие лиц, режимы safe/full/anonymous | 15.1 |
-| **15.5** | Python-экспортёры: PyTorch Dataset, TFRecord, WebDataset | 15.2, 15.3 |
-| **15.6** | Интеграция с prototype/pipeline: скрипты тренировки на своих данных | 15.5 |
-| **later** | Active learning loop (MVM → dataset → train → deploy → repeat) | 15.6 |
-| **later** | Pattern miner: автоматическое выявление повторяющихся паттернов в journal | 15.2 |
-| **later** | Dataset versioning: DVC-совместимые чекпойнты, сравнение версий датасета | 15.2 |
+| **16.0** | Semantic Dataset Contract: canonical record, group keys, label status, provenance | Фаза 14, WorldState |
+| **16.1** | `[dataset]` конфиг, session grouper, DatasetWriter, запись RGB/depth/masks | 16.0 |
+| **16.2** | JSONL labels + session TOML + quality-aware provenance | 16.0, 16.1 |
+| **16.3** | CLI `mvm dataset` и Semantic Group Router | 16.1, 16.2 |
+| **16.4** | Dataset Views и экспорт PyTorch/TFRecord/WebDataset по группам и задачам | 16.3 |
+| **16.5** | Privacy-слой и проверка отсутствия утечек identity | 16.1, 16.2 |
+| **16.6** | Интеграция с prototype/pipeline и measured quality gates | 16.4, фаза 15 |
+| **later** | Active learning loop (MVM → dataset → train → deploy → repeat) | 16.6 |
+| **later** | Pattern miner: автоматическое выявление повторяющихся паттернов в journal | 16.3 |
+| **later** | Dataset versioning: DVC-совместимые чекпойнты, сравнение версий датасета | 16.3 |
 
-Порядок внутри 15.0: **конфиг → session grouper → DatasetWriter → JSONL → CLI → privacy → экспортёры**.
+Порядок внутри фазы 16: **canonical contract → semantic router → конфиг → session grouper → DatasetWriter → JSONL/provenance → CLI → Dataset Views → privacy → экспортёры → quality gates**.
 
 ---
 
@@ -366,14 +458,15 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 | mvm-detect, mvm-identity, mvm-emotion, mvm-posture, mvm-scene, mvm-depth, mvm-hands | **0** |
 | mvm-fusion | **0** |
 | mvm-mesh, mvm-pipeline | **0** |
-| mvm-core | **+2 поля в WorldState** (session tracking) + **+1 struct** (DatasetConfig) |
-| mvm-cli | **+1 агент** (DatasetWriter), **+1 модуль** (dataset_cmd), **+диспетч** |
+| **mvm-dataset** (новый 13-й крейт) | **вся dataset-логика**: Canonical Observation, Semantic Router, `DatasetWriter`, `DatasetConfig`, privacy |
+| mvm-core | **+2 поля в WorldState** (session tracking) + **+1 скаляр в Config** (`session_timeout_secs`) |
+| mvm-cli | **+1 тонкий агент-обёртка** (dataset_writer), **+1 модуль** (dataset_cmd), **+диспетч** |
 
 **Строк кода (оценка):**
-- Rust: ~800–1200 строк (DatasetWriter 200, dataset_cmd 300, config 100, privacy 150, session grouper 50, тесты 200)
+- Rust: ~800–1200 строк, из них ~700–900 в новом крейте `mvm-dataset` (observation/router/writer/config/privacy + тесты), ~150 в `mvm-cli` (тонкий агент + dataset_cmd + диспетч), ~50 в `mvm-core` (session grouper)
 - Python: ~300–500 строк (3 экспортёра + конфиг)
 - Документация: ~200 строк
 
 ---
 
-*Ядро зрения (фазы 5–14) не трогается. Инварианты №1–3 целы. Dataset-слой — чистый потребитель WorldState, как и StateFileWriter.*
+*Ядро зрения (фазы 5–14) не трогается. Инварианты №1–3 целы. Dataset-слой — чистый потребитель WorldState, как и StateFileWriter. Dendritron используется как источник принципов структурной маршрутизации, compositional binding и сохранения локальной интерпретируемости.*
