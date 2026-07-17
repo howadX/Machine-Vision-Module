@@ -29,6 +29,7 @@ mod help;
 mod scene_debug;
 mod pipeline;
 mod agents;
+mod dataset_cmd;
 
 use anyhow::{Context, Result};
 use mvm_core::Module;
@@ -891,6 +892,11 @@ fn main() -> Result<()> {
     if sub == Some("service") {
         // `mvm service <install [--now]|uninstall|status>` (phase 14.5).
         return service::run_service(&raw);
+    }
+    if sub == Some("dataset") {
+        // `mvm dataset <list|info|stats|prune|export>` (phase 16.3).
+        let product = config_file::load()?;
+        return dataset_cmd::run_dataset(&product, &raw);
     }
 
     let args = parse_args(&raw);

@@ -13,8 +13,10 @@
 use crate::config::DatasetConfig;
 use crate::observation::CanonicalObservation;
 use crate::router::{route, RouteContext};
+use crate::session::{
+    AnomaliesBlock, ObjectsBlock, ParticipantsBlock, SessionBlock, SessionMeta,
+};
 use mvm_core::world::WorldState;
-use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -123,41 +125,6 @@ impl SessionStats {
             objects: ObjectsBlock { top },
         }
     }
-}
-
-/// Сериализуемая сводка `session.toml`.
-#[derive(Debug, Serialize)]
-struct SessionMeta {
-    session: SessionBlock,
-    participants: ParticipantsBlock,
-    activities: BTreeMap<String, u32>,
-    anomalies: AnomaliesBlock,
-    objects: ObjectsBlock,
-}
-
-#[derive(Debug, Serialize)]
-struct SessionBlock {
-    id: String,
-    started: String,
-    ended: String,
-    saved_frames: u64,
-}
-
-#[derive(Debug, Serialize)]
-struct ParticipantsBlock {
-    known: Vec<String>,
-    anonymous: u32,
-}
-
-#[derive(Debug, Serialize)]
-struct AnomaliesBlock {
-    max: f32,
-    mean: f32,
-}
-
-#[derive(Debug, Serialize)]
-struct ObjectsBlock {
-    top: Vec<String>,
 }
 
 /// Оркестратор записи. Один writer на процесс записи; держит корень хранилища,
