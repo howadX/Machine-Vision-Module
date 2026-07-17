@@ -12,6 +12,7 @@
 //! Depth maps (16-bit PNG) are a 16.2 follow-up — the agent forces `save_depth`
 //! off so labels never reference a depth file that was not written.
 
+use super::DepthSlot;
 use image::{ImageFormat, RgbImage};
 use mvm_core::BBox;
 use mvm_dataset::{blur_regions, DatasetConfig, DatasetWriter, FrameRecord};
@@ -27,6 +28,9 @@ pub(crate) struct DatasetWriterAgent {
     cfg: DatasetConfig,
     /// Save every N-th *captured* frame (frame.id cadence).
     cadence: u32,
+    /// Shared relative-depth slot (§16.2.2). `None` when depth is off or its agent
+    /// isn't running; the recorder then records no depth path.
+    depth: Option<DepthSlot>,
     /// Last captured frame id handled — dedupes the fast mesh loop.
     last_frame_id: Option<u64>,
     /// Stop after this many recorded frames (bounded runs/tests). `None` = live.
@@ -34,14 +38,14 @@ pub(crate) struct DatasetWriterAgent {
 }
 
 impl DatasetWriterAgent {
-    pub(crate) fn new(cfg: DatasetConfig, root: impl Into<std::path::PathBuf>) -> Self {
-        // Depth is a 16.2 follow-up; force it off so no dangling depth paths land
-        // in labels.jsonl.
-        let mut effective = cfg.clone();
-        effective.save_depth = false;
-        let cadence = effective.frame_cadence.max(1);
-        let writer = DatasetWriter::new(effective.clone(), root, DATASET_ID);
-        Self { writer, cfg: effective, cadence, last_frame_id: None, max_records: None }
+    pub(crate) fn new(
+        cfg: DatasetConfig,
+        root: impl Into<std::path::PathBuf>,
+        depth: Option<DepthSlot>,
+    ) -> Self {
+        let cadence = cfg.frame_cadence.max(1);
+        let writer = DatasetWriter::new(cfg.clone(), root, DATASET_ID);
+        Self { writer, cfg, cadence, depth, last_frame_id: None, max_records: None }
     }
 
     /// Bound the number of recorded frames (tests / finite runs).
@@ -60,6 +64,15 @@ impl DatasetWriterAgent {
         let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S").to_string();
         let iso = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string();
 
+        // Snapshot the latest relative depth map (if enabled + available) BEFORE
+        // the lock, so its [min,max] range can go into the label the writer builds.
+        let depth_map = if self.cfg.save_depth {
+            self.depth.as_ref().and_then(|s| s.lock().ok().and_then(|g| g.clone()))
+        } else {
+            None
+        };
+        let depth_range = depth_map.as_ref().and_then(|m| depth_minmax(&m.data));
+
         // Lock section: advance the session lifecycle + append the label. All of
         // this is fast (no image work). Capture the people boxes for the blur pass
         // before releasing.
@@ -70,7 +83,7 @@ impl DatasetWriterAgent {
             };
             let pp: Vec<(BBox, bool)> =
                 w.people.iter().map(|p| (p.bbox, p.identity.is_none())).collect();
-            let r = self.writer.record_frame(&mut w, now, &iso, &stamp)?;
+            let r = self.writer.record_frame(&mut w, now, &iso, &stamp, depth_range)?;
             (r, pp)
         };
 
@@ -81,6 +94,14 @@ impl DatasetWriterAgent {
         // Outside the lock: encode + blur + persist the RGB pixels.
         let regions = blur_regions(&privacy_people, self.cfg.privacy);
         self.write_frame_image(&frame.image, &rec, &regions)?;
+
+        // Depth (§16.2.2): the writer only set a depth path when we passed a range,
+        // so path.is_some() ⇔ depth_map.is_some().
+        if let (Some(path), Some(map), Some(range)) =
+            (rec.depth_path.as_ref(), depth_map.as_ref(), depth_range)
+        {
+            write_depth_png(map, range, path)?;
+        }
         Ok(true)
     }
 
@@ -162,6 +183,45 @@ fn apply_blur(rgb: &mut RgbImage, regions: &[BBox]) {
     }
 }
 
+/// `[min, max]` of the finite depth values, or `None` if there are none.
+fn depth_minmax(data: &[f32]) -> Option<[f32; 2]> {
+    let mut it = data.iter().copied().filter(|v| v.is_finite());
+    let first = it.next()?;
+    let (mut lo, mut hi) = (first, first);
+    for v in it {
+        if v < lo {
+            lo = v;
+        }
+        if v > hi {
+            hi = v;
+        }
+    }
+    Some([lo, hi])
+}
+
+/// Encode a relative depth map to a 16-bit grayscale PNG (§16.2.2), min-max
+/// normalized over `range` so the mapping is reversible via `frame.depth_range`.
+fn write_depth_png(map: &mvm_depth::DepthMap, range: [f32; 2], path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let [min, max] = range;
+    let span = (max - min).max(f32::EPSILON);
+    let buf: Vec<u16> = map
+        .data
+        .iter()
+        .map(|&v| (((v - min) / span).clamp(0.0, 1.0) * 65535.0).round() as u16)
+        .collect();
+    let img = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(
+        map.w as u32,
+        map.h as u32,
+        buf,
+    )
+    .ok_or_else(|| anyhow::anyhow!("depth buffer {}×{} mismatch", map.w, map.h))?;
+    img.save_with_format(path, ImageFormat::Png)?;
+    Ok(())
+}
+
 /// Save an `RgbImage` in the configured format/quality to `path` (creating the
 /// parent dir if needed).
 fn save_rgb(rgb: &RgbImage, path: &Path, cfg: &DatasetConfig) -> anyhow::Result<()> {
@@ -225,11 +285,29 @@ mod tests {
     }
 
     #[test]
-    fn agent_forces_depth_off() {
-        let mut cfg = DatasetConfig::default();
-        cfg.save_depth = true;
-        let a = DatasetWriterAgent::new(cfg, temp_root("depthoff"));
-        assert!(!a.cfg.save_depth, "depth is a 16.2 follow-up — must be forced off");
+    fn no_depth_slot_records_no_depth() {
+        // save_depth on but no slot wired → no depth path/range, no panic.
+        let cfg = DatasetConfig::default();
+        assert!(cfg.save_depth);
+        let a = DatasetWriterAgent::new(cfg, temp_root("nodepth"), None);
+        assert!(a.depth.is_none());
+    }
+
+    #[test]
+    fn depth_png_is_16bit_and_reversible() {
+        let root = temp_root("depthpng");
+        let map = mvm_depth::DepthMap { data: vec![0.0, 1.0, 2.0, 4.0], w: 2, h: 2 };
+        let range = depth_minmax(&map.data).unwrap();
+        assert_eq!(range, [0.0, 4.0]);
+        let path = root.join("depth/000000.png");
+        write_depth_png(&map, range, &path).unwrap();
+
+        let img = image::open(&path).unwrap();
+        // 16-bit grayscale: max value maps to 65535, min to 0.
+        let g16 = img.to_luma16();
+        assert_eq!(g16.dimensions(), (2, 2));
+        assert_eq!(g16.get_pixel(0, 0).0[0], 0, "min → 0");
+        assert_eq!(g16.get_pixel(1, 1).0[0], 65535, "max → 65535");
     }
 
     #[test]
@@ -237,7 +315,7 @@ mod tests {
         let root = temp_root("rec");
         let mut cfg = DatasetConfig::default();
         cfg.frame_cadence = 1;
-        let mut agent = DatasetWriterAgent::new(cfg, root.clone()).with_max_records(1);
+        let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None).with_max_records(1);
 
         let now = Instant::now();
         let mut world = WorldState::new(now);
@@ -270,7 +348,7 @@ mod tests {
         // over a gradient (structure survives, no panic, right dimensions).
         let root = temp_root("blur");
         let cfg = DatasetConfig::default();
-        let agent = DatasetWriterAgent::new(cfg, root.clone());
+        let agent = DatasetWriterAgent::new(cfg, root.clone(), None);
 
         let mut img = RgbImage::new(40, 40);
         for (x, _y, px) in img.enumerate_pixels_mut() {

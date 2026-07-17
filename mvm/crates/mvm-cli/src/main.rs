@@ -761,12 +761,19 @@ fn build_live_mesh(
         let root = PathBuf::from(&product.dataset.dir);
         paths::ensure_dir_private(&root)?;
         eprintln!(
-            "  dataset: recording ENABLED → {} (cadence {}, privacy {:?})",
+            "  dataset: recording ENABLED → {} (cadence {}, privacy {:?}, depth {})",
             root.display(),
             product.dataset.frame_cadence.max(1),
             product.dataset.privacy,
+            product.dataset.save_depth,
         );
-        mesh.add(Box::new(agents::DatasetWriterAgent::new(product.dataset.clone(), root)));
+        // Wire the shared depth slot so the recorder can save 16-bit depth PNGs
+        // (empty until DepthAgent warms up → no depth path recorded meanwhile).
+        mesh.add(Box::new(agents::DatasetWriterAgent::new(
+            product.dataset.clone(),
+            root,
+            Some(depth_slot.clone()),
+        )));
     }
 
     Ok(mesh)

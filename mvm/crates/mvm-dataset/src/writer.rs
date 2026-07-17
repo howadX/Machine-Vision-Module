@@ -195,12 +195,17 @@ impl DatasetWriter {
     /// - `wallclock_iso` — ISO-8601 timestamp кадра (стенные часы вызывающего).
     /// - `new_session_stamp` — id для НОВОЙ сессии (`YYYY-MM-DD_HHMMSS`), если
     ///   на этом кадре нужно открыть сессию.
+    /// `depth_range` — `Some([min,max])` of the relative depth map the caller is
+    /// about to write for this frame, or `None` when no depth is available. The
+    /// depth path is recorded **only** when `save_depth` is on *and* a range is
+    /// given → labels never point at a depth file that was not written.
     pub fn record_frame(
         &mut self,
         world: &mut WorldState,
         now: Instant,
         wallclock_iso: &str,
         new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
     ) -> anyhow::Result<RecordResult> {
         let mut res = RecordResult::default();
         let has_people = !world.people.is_empty();
@@ -226,10 +231,11 @@ impl DatasetWriter {
         if let Some(sid) = world.current_session_id.clone() {
             let seq = self.seq_in_session;
             let frame_rel = format!("frames/{:06}.{}", seq, self.cfg.frame_format.ext());
-            let depth_rel = if self.cfg.save_depth {
-                Some(format!("depth/{seq:06}.png"))
-            } else {
-                None
+            // Record a depth path only when depth is enabled AND actually available
+            // this frame (range given) — otherwise the label would dangle.
+            let depth_rel = match (self.cfg.save_depth, depth_range) {
+                (true, Some(_)) => Some(format!("depth/{seq:06}.png")),
+                _ => None,
             };
 
             let ctx = RouteContext {
@@ -241,6 +247,7 @@ impl DatasetWriter {
             let mut obs = route(world, &ctx);
             obs.frame.frame_path = Some(frame_rel.clone());
             obs.frame.depth_path = depth_rel.clone();
+            obs.frame.depth_range = depth_rel.as_ref().and(depth_range);
 
             self.append_label(&sid, &obs)?;
             if let Some(stats) = self.stats.as_mut() {
@@ -372,7 +379,7 @@ mod tests {
         world.frame_id = 100;
         world.people.push(person(1, t0));
 
-        let r = w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000").unwrap();
+        let r = w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
         assert_eq!(r.opened.as_deref(), Some("2026-07-17_153000"));
         let frame = r.frame.expect("frame recorded");
         assert_eq!(frame.seq, 0);
@@ -399,7 +406,7 @@ mod tests {
         for i in 0..3u64 {
             world.frame_id = i;
             let t = t0 + Duration::from_secs(i);
-            let r = w.record_frame(&mut world, t, "2026-07-17T15:30:00.000", "2026-07-17_153000").unwrap();
+            let r = w.record_frame(&mut world, t, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
             // Session opened only on the first frame.
             assert_eq!(r.opened.is_some(), i == 0);
             assert_eq!(r.frame.unwrap().seq, i);
@@ -432,7 +439,7 @@ mod tests {
         });
         world.activities.push(Activity { label: "typing".into(), confidence: 0.8, participants: vec![1] });
         world.anomaly_score = 0.4;
-        w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000").unwrap();
+        w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
 
         // People leave.
         world.people.clear();
@@ -440,11 +447,11 @@ mod tests {
         world.activities.clear();
 
         // A frame 20s later — inside the window, no close.
-        let r = w.record_frame(&mut world, t0 + Duration::from_secs(20), "iso", "unused").unwrap();
+        let r = w.record_frame(&mut world, t0 + Duration::from_secs(20), "iso", "unused", None).unwrap();
         assert!(r.closed.is_none());
 
         // A frame 31s after last presence — session closes.
-        let r = w.record_frame(&mut world, t0 + Duration::from_secs(31), "2026-07-17T15:30:31.000", "unused").unwrap();
+        let r = w.record_frame(&mut world, t0 + Duration::from_secs(31), "2026-07-17T15:30:31.000", "unused", None).unwrap();
         assert_eq!(r.closed.as_deref(), Some("2026-07-17_153000"));
         assert!(!world.session_active());
 
@@ -458,12 +465,37 @@ mod tests {
     }
 
     #[test]
+    fn depth_path_recorded_only_when_available() {
+        let root = temp_root();
+        let mut cfg = DatasetConfig::default();
+        cfg.session_timeout_secs = 30; // save_depth stays default true
+        let mut w = DatasetWriter::new(cfg, root.to_path_buf(), "mvm_sessions");
+        let t0 = Instant::now();
+        let mut world = WorldState::new(t0);
+        world.people.push(person(1, t0));
+
+        // Frame 0: no depth available → no depth path/range even though save_depth=true.
+        let r = w.record_frame(&mut world, t0, "iso", "2026-07-17_170000", None).unwrap();
+        let obs0 = &r.frame.unwrap().observation;
+        assert!(obs0.frame.depth_path.is_none(), "no dangling depth path without depth");
+        assert!(obs0.frame.depth_range.is_none());
+
+        // Frame 1: depth available → path + range recorded.
+        let r = w
+            .record_frame(&mut world, t0 + Duration::from_secs(1), "iso", "unused", Some([0.2, 3.5]))
+            .unwrap();
+        let obs1 = &r.frame.unwrap().observation;
+        assert_eq!(obs1.frame.depth_path.as_deref(), Some("depth/000001.png"));
+        assert_eq!(obs1.frame.depth_range, Some([0.2, 3.5]));
+    }
+
+    #[test]
     fn no_people_no_session_writes_nothing() {
         let root = temp_root();
         let mut w = writer(&root);
         let t0 = Instant::now();
         let mut world = WorldState::new(t0);
-        let r = w.record_frame(&mut world, t0, "iso", "stamp").unwrap();
+        let r = w.record_frame(&mut world, t0, "iso", "stamp", None).unwrap();
         assert!(r.opened.is_none() && r.frame.is_none() && r.closed.is_none());
         assert!(!root.join("sessions/stamp").exists());
     }
@@ -475,7 +507,7 @@ mod tests {
         let t0 = Instant::now();
         let mut world = WorldState::new(t0);
         world.people.push(person(1, t0));
-        w.record_frame(&mut world, t0, "iso", "2026-07-17_160000").unwrap();
+        w.record_frame(&mut world, t0, "iso", "2026-07-17_160000", None).unwrap();
         assert!(world.session_active());
 
         let closed = w.close_open_session(&mut world, "2026-07-17_160500").unwrap();
