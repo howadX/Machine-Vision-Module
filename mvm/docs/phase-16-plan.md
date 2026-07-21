@@ -17,7 +17,7 @@
 | **16.2** | ✅ | Сырьё: RGB (jpg/png), depth (16-bit PNG, min-max + `depth_range`, обратимо), masks (RLE в JSONL); quality-as-data (`posture_status`, `emotion_entropy`, счётчики, anomaly) |
 | **16.3** | ✅ | CLI `mvm dataset list/info/stats/prune` (prune — dry-run по умолчанию); публичный `session.rs` ридер |
 | **16.4** | ✅ | Python-экспортёры в `prototype/pipeline/dataset/` (PyTorch `IterableDataset` / TFRecord / WebDataset), фильтры `dataset_config.yaml`, README, тесты. Сквозной путь запись→PyTorch DataLoader(num_workers=2) live-провалиден |
-| **16.5** | ⏳ | Privacy: заменить консервативную полосу (верх bbox тела) точным YuNet-face-bbox |
+| **16.5** | ✅ | Privacy: точный YuNet-face-bbox (padded 18%) вместо полосы; `face_bbox` на BodyData/PersonState + как dataset-лейбл; fallback-полоса 50% при недетекте (privacy-first); флаг `--privacy`. Live: точный блюр детектнутого лица, щедрый fallback покрывает зону глаз. Ограничение: fallback — геометрическая эвристика |
 | **16.6** | ⏳ | Интеграция с тренерами `prototype/pipeline` + measured quality gates |
 
 Отклонения от плана (зафиксированы): (1) session-lifecycle драйвит **DatasetWriter** (recording-gated),

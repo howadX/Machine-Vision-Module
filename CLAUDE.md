@@ -66,9 +66,10 @@ LJ0–LJ6): 2D-GRIP-поза, E2 scene-level fall, stale-relink трекер, go
 WorldState. **16.0–16.4 ✅ и live-провалидированы:** Semantic Contract (Canonical Observation +
 статусы + Router G₁–G₅) → инфра (`mvm run --record`, session-grouper, privacy-blur) → сырьё
 (RGB+depth-16bit+masks-RLE) + quality-as-data → CLI `mvm dataset` → Python-экспортёры
-(`prototype/pipeline/dataset/`, PyTorch/TFRecord/WebDataset). Сквозной путь запись→PyTorch DataLoader
-проверен на живой камере. **Осталось:** 16.5 (точный YuNet-face-bbox privacy), 16.6 (интеграция с
-тренерами + quality gates). Детали — `mvm/CLAUDE.md`, план — `mvm/docs/phase-16-plan.md`.
+(`prototype/pipeline/dataset/`, PyTorch/TFRecord/WebDataset) → 16.5 точный YuNet-face-bbox privacy
+(`--privacy` флаг). Сквозной путь запись→PyTorch DataLoader и precise-блюр проверены на живой камере.
+**Осталось:** 16.6 (интеграция с тренерами + quality gates). Детали — `mvm/CLAUDE.md`, план —
+`mvm/docs/phase-16-plan.md`.
 
 ## Для Agents
 
