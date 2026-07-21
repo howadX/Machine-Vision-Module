@@ -148,6 +148,11 @@ fn person_attributes(p: &PersonState) -> serde_json::Value {
             serde_json::json!({ "x": pos.x, "y": pos.y, "z": pos.z, "confidence": pos.confidence }),
         );
     }
+    // This frame's matched YuNet face bbox (normalized [x1,y1,x2,y2]) — a face-crop
+    // dataset label (§16.5.1 train_identity). Absent when no face matched.
+    if let Some(fb) = &p.face_bbox {
+        m.insert("face_bbox".into(), serde_json::json!([fb.x1, fb.y1, fb.x2, fb.y2]));
+    }
     insert_opt(&mut m, "motion_state", p.motion_state);
     if let Some(v) = p.velocity {
         m.insert("velocity".into(), serde_json::json!(v));
@@ -259,6 +264,7 @@ mod tests {
         PersonState {
             track_id,
             bbox: BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+            face_bbox: None,
             identity: None,
             emotion: None,
             posture: None,
@@ -423,6 +429,27 @@ mod tests {
         world.objects.push(bare_object(10001, "cup", now)); // mask: None
         let obs = route(&world, &ctx());
         assert!(obs.entities[0].attributes.get("mask").is_none());
+    }
+
+    #[test]
+    fn face_bbox_emitted_as_label_when_matched() {
+        let now = Instant::now();
+        let mut with_face = bare_person(1, now);
+        with_face.face_bbox = Some(BBox { x1: 0.4, y1: 0.15, x2: 0.52, y2: 0.30 });
+        let without = bare_person(2, now); // face_bbox None
+        let mut world = WorldState::new(now);
+        world.people = vec![with_face, without];
+        let obs = route(&world, &ctx());
+
+        let p1 = obs.entities.iter().find(|e| e.entity_id == "p1").unwrap();
+        let fb: Vec<f64> = p1.attributes["face_bbox"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        let want = [0.4, 0.15, 0.52, 0.30];
+        assert_eq!(fb.len(), 4);
+        for (g, w) in fb.iter().zip(want) {
+            assert!((g - w).abs() < 1e-6, "face_bbox {g} ≉ {w}");
+        }
+        let p2 = obs.entities.iter().find(|e| e.entity_id == "p2").unwrap();
+        assert!(p2.attributes.get("face_bbox").is_none(), "no face → no label");
     }
 
     #[test]

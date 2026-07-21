@@ -242,6 +242,7 @@ mod tests {
         PersonState {
             track_id,
             bbox: BBox { x1: 0.3, y1: 0.2, x2: 0.5, y2: 0.7 },
+            face_bbox: None,
             identity: None,
             emotion: None,
             posture: posture.map(|l| (l.to_string(), 0.9)),

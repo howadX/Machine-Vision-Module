@@ -136,6 +136,7 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
             people.push(PersonState {
                 track_id: tracker.all().get(&id).map(|t| t.display_id).unwrap_or(id),
                 bbox: BBox { x1: b[0], y1: b[1], x2: b[2], y2: b[3] },
+                face_bbox: None,
                 identity: None,
                 emotion: None,
                 posture: committed.map(|l| (l, conf)),

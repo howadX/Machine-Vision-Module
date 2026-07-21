@@ -63,6 +63,7 @@ pub(crate) fn project_people(
             if let Some(b) = best_body_for_bbox(&p.bbox, bodies) {
                 p.wrists = b.wrists.clone();
                 p.hands = b.hands.clone();
+                p.face_bbox = b.face_bbox; // this frame's matched face (16.5 privacy)
             }
             p
         })

@@ -53,6 +53,12 @@ pub struct PersonState {
     /// Shown id (reserved 0–9 for gallery users, ≥10 ephemeral) — `PersonTrack::display_id`.
     pub track_id: u32,
     pub bbox: BBox,
+    /// This frame's matched YuNet face bbox (normalized), if a frontal face was
+    /// associated to this body by nose landmark. **Current-frame only** (not a
+    /// stale snapshot) — it is the precise privacy-blur target (phase 16.5) and a
+    /// face-crop dataset label. `None` when no face matched (turned away / occluded).
+    /// Attached post-tracking from the per-frame body data, like `wrists`/`hands`.
+    pub face_bbox: Option<BBox>,
     /// `(name, confidence)` only when a recognised gallery user holds this track.
     pub identity: Option<(String, f32)>,
     pub emotion: Option<(String, f32)>,
@@ -127,6 +133,9 @@ impl PersonState {
         Self {
             track_id: t.display_id,
             bbox: t.bbox,
+            // Face bbox is per-frame, attached by the agent from body data (like
+            // wrists/hands) — not carried on the track. `from_track` leaves it None.
+            face_bbox: None,
             identity: t
                 .shown_identity()
                 .map(|n| (n.clone(), t.identity_confidence.unwrap_or(0.0))),

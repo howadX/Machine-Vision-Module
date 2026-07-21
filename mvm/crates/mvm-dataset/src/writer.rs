@@ -311,6 +311,7 @@ mod tests {
         PersonState {
             track_id,
             bbox: BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
+            face_bbox: None,
             identity: None,
             emotion: None,
             posture: Some(("sitting".into(), 0.9)),

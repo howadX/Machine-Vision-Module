@@ -79,6 +79,8 @@ FLAGS:
                             mask-contact + mask-median depth (opt-in)
     --record                Record a Dataset Factory session (RGB + depth + labels
                             → [dataset].dir; privacy-safe by default). See mvm dataset.
+    --privacy <MODE>        Override [dataset].privacy for this run: safe (blur anon
+                            faces) | anonymous (blur all) | full (blur none)
     --interval-ms <MS>      StateFile snapshot interval, milliseconds
                             (default: [cadence] snapshot_ms in config.toml, 1000)
     --max-frames <N>        Stop after N frames (default: run until Ctrl-C)

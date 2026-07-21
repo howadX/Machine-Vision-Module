@@ -201,6 +201,9 @@ struct CommonFlags {
     /// --record: enable the Dataset Factory recorder (phase 16.1.2b). Overrides
     /// `[dataset].enabled = false`; every N-th frame is saved with full labels.
     record: bool,
+    /// --privacy <safe|full|anonymous>: override `[dataset].privacy` for this run
+    /// (phase 16.5). Raw string; parsed at mesh build.
+    privacy: Option<String>,
 }
 
 /// Try to consume the flag at `raw[*i]` as a common flag. Returns `true` if it
@@ -215,6 +218,12 @@ fn parse_common(raw: &[String], i: &mut usize, c: &mut CommonFlags) -> bool {
         "--dump-distributions" => c.dump_distributions = true,
         "--dump-full-graph" => c.dump_full_graph = true,
         "--record" => c.record = true,
+        "--privacy" => {
+            if *i + 1 < raw.len() {
+                c.privacy = Some(raw[*i + 1].clone());
+                *i += 1;
+            }
+        }
         "--scene-log" => {
             if *i + 1 < raw.len() {
                 c.scene_log = Some(PathBuf::from(&raw[*i + 1]));
@@ -613,6 +622,17 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
     Ok(())
 }
 
+/// Parse a `--privacy` value into a [`mvm_dataset::Privacy`]; `None` on anything
+/// unrecognised (the file/default value is kept).
+fn parse_privacy(s: &str) -> Option<mvm_dataset::Privacy> {
+    match s.to_ascii_lowercase().as_str() {
+        "safe" => Some(mvm_dataset::Privacy::Safe),
+        "full" => Some(mvm_dataset::Privacy::Full),
+        "anonymous" | "anon" => Some(mvm_dataset::Privacy::Anonymous),
+        _ => None,
+    }
+}
+
 /// Assemble the full live production mesh (state/logs/journal + camera + every
 /// model + writer) from the resolved config. Shared by `run` and
 /// `serve --with-camera` (14.3), which spawns it in a background thread while it
@@ -757,24 +777,26 @@ fn build_live_mesh(
 
     // Dataset Factory recorder (phase 16.1.2b) — opt-in via [dataset].enabled or
     // the --record flag. Reads WorldState like any other sink; the vision core is
-    // untouched. Off by default → zero cost.
-    if product.dataset.enabled || args.common.record {
-        let root = PathBuf::from(&product.dataset.dir);
+    // untouched. Off by default → zero cost. CLI overrides win over the file.
+    let mut ds_cfg = product.dataset.clone();
+    ds_cfg.apply_cli_overrides(
+        args.common.record.then_some(true),
+        None,
+        args.common.privacy.as_deref().and_then(parse_privacy),
+    );
+    if ds_cfg.enabled {
+        let root = PathBuf::from(&ds_cfg.dir);
         paths::ensure_dir_private(&root)?;
         eprintln!(
             "  dataset: recording ENABLED → {} (cadence {}, privacy {:?}, depth {})",
             root.display(),
-            product.dataset.frame_cadence.max(1),
-            product.dataset.privacy,
-            product.dataset.save_depth,
+            ds_cfg.frame_cadence.max(1),
+            ds_cfg.privacy,
+            ds_cfg.save_depth,
         );
         // Wire the shared depth slot so the recorder can save 16-bit depth PNGs
         // (empty until DepthAgent warms up → no depth path recorded meanwhile).
-        mesh.add(Box::new(agents::DatasetWriterAgent::new(
-            product.dataset.clone(),
-            root,
-            Some(depth_slot.clone()),
-        )));
+        mesh.add(Box::new(agents::DatasetWriterAgent::new(ds_cfg, root, Some(depth_slot.clone()))));
     }
 
     Ok(mesh)

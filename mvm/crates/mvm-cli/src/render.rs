@@ -361,6 +361,7 @@ mod tests {
         PersonState {
             track_id: id,
             bbox,
+            face_bbox: None,
             identity: None,
             emotion: None,
             posture: None,

@@ -15,7 +15,7 @@
 use super::DepthSlot;
 use image::{ImageFormat, RgbImage};
 use mvm_core::BBox;
-use mvm_dataset::{blur_regions, DatasetConfig, DatasetWriter, FrameRecord};
+use mvm_dataset::{blur_regions, DatasetConfig, DatasetWriter, FrameRecord, PrivacyPerson};
 use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -81,8 +81,15 @@ impl DatasetWriterAgent {
                 Ok(w) => w,
                 Err(_) => return Ok(false),
             };
-            let pp: Vec<(BBox, bool)> =
-                w.people.iter().map(|p| (p.bbox, p.identity.is_none())).collect();
+            let pp: Vec<PrivacyPerson> = w
+                .people
+                .iter()
+                .map(|p| PrivacyPerson {
+                    body: p.bbox,
+                    face: p.face_bbox,
+                    is_anon: p.identity.is_none(),
+                })
+                .collect();
             let r = self.writer.record_frame(&mut w, now, &iso, &stamp, depth_range)?;
             (r, pp)
         };
@@ -262,6 +269,7 @@ mod tests {
         PersonState {
             track_id: id,
             bbox: BBox { x1: 0.25, y1: 0.1, x2: 0.55, y2: 0.9 },
+            face_bbox: None,
             identity: if anon { None } else { Some(("Вадим".into(), 0.9)) },
             emotion: None,
             posture: Some(("sitting".into(), 0.9)),

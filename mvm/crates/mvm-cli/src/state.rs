@@ -1643,6 +1643,7 @@ mod tests {
         tracker.tick(&[d]);
         let body = crate::pipeline::BodyData {
             bbox: mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.7 },
+            face_bbox: None,
             wrists: vec![[0.4, 0.5]],
             hands: vec![mvm_core::HandState {
                 landmarks: vec![[0.41, 0.5]],
@@ -1696,6 +1697,7 @@ mod tests {
         t2.tick(&[d]);
         let body = crate::pipeline::BodyData {
             bbox: mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.7 },
+            face_bbox: None,
             wrists: vec![[0.6, 0.6]],
             hands: vec![],
         };
@@ -1791,6 +1793,7 @@ mod tests {
         // A body far from the track (no IoU) → its hands must NOT leak onto it.
         let body = crate::pipeline::BodyData {
             bbox: mvm_core::BBox { x1: 0.8, y1: 0.8, x2: 0.95, y2: 0.95 },
+            face_bbox: None,
             wrists: vec![[0.9, 0.9]],
             hands: vec![],
         };
@@ -1908,6 +1911,7 @@ mod tests {
         mvm_core::PersonState {
             track_id: id,
             bbox,
+            face_bbox: None,
             identity: None,
             emotion: None,
             posture: None,

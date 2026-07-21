@@ -87,6 +87,9 @@ pub(crate) struct BodyData {
     pub wrists: Vec<[f32; 2]>,
     /// Hands for this body (landmarks + presence + side, one per detected hand).
     pub hands: Vec<mvm_core::HandState>,
+    /// This frame's matched YuNet face bbox (normalized), `None` if no frontal
+    /// face was associated to this body — the precise privacy-blur target (16.5).
+    pub face_bbox: Option<mvm_core::BBox>,
 }
 
 /// Per-frame output of [`BodyPrimaryPipeline::process`].
@@ -696,7 +699,7 @@ fn build_body_primary(
             }
             overlay.hands.extend(hands); // flat list still feeds --scene-debug
         }
-        bodies_out.push(BodyData { bbox: *b, wrists, hands: body_hands });
+        bodies_out.push(BodyData { bbox: *b, wrists, hands: body_hands, face_bbox: None });
         // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
         // emotion (optional). Keypoint-in-bbox ties the face to the body whose
         // head is in it, so overlapping person bboxes never swap identities.
@@ -704,6 +707,8 @@ fn build_body_primary(
         if let Some(fi) = best_face_for_nose(&faces, &face_used, nose) {
             face_used[fi] = true;
             let fb = faces[fi].bbox;
+            // Carry the matched face bbox on this body (phase 16.5 privacy label).
+            bodies_out.last_mut().unwrap().face_bbox = Some(fb);
             let idx = dets.len();
             // Cadence (phase 9.6/9.7): skip SFace only for this locked track's own
             // continuation (precomputed in id_flags); skip emotion when covered by
