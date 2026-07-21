@@ -1,6 +1,7 @@
 # Фаза 16 — Dataset Factory: семантически структурированная фабрика данных
 
-> **Версия:** 0.3.1 (Dendritron-inspired semantic routing + фиксация решений: 13-й крейт `mvm-dataset`, старт на `kaggle`/v0.2.0; 17 июля 2026).
+> **Версия:** 0.4 (2026-07-21): 16.0–16.5 закрыты и live-провалидированы; §16.6 пересмотрен под честную
+> декомпозицию A+B (self-labeling reality-check). Основа — 0.3.1 (Dendritron-routing + 13-й крейт `mvm-dataset`).
 > **Основание:** фаза 15 отдана ML-рефакторингу v0.2.0; фабрике нужна доведённая до production-качества ML-логика как фундамент.
 > **Цель фазы:** превратить MVM из источника данных «только для LLM» в **двухпотребительскую архитектуру**: LLM (MCP) + Dataset Factory (структурированная накопительная память для будущего обучения).
 > Фабрика не сжимает наблюдение преждевременно в непрозрачный общий вектор: она маршрутизирует данные по семантическим ветвям, связывает их общими идентификаторами и сохраняет provenance, quality и интерпретируемость.
@@ -18,7 +19,7 @@
 | **16.3** | ✅ | CLI `mvm dataset list/info/stats/prune` (prune — dry-run по умолчанию); публичный `session.rs` ридер |
 | **16.4** | ✅ | Python-экспортёры в `prototype/pipeline/dataset/` (PyTorch `IterableDataset` / TFRecord / WebDataset), фильтры `dataset_config.yaml`, README, тесты. Сквозной путь запись→PyTorch DataLoader(num_workers=2) live-провалиден |
 | **16.5** | ✅ | Privacy: точный YuNet-face-bbox (padded 18%) вместо полосы; `face_bbox` на BodyData/PersonState + как dataset-лейбл; fallback-полоса 50% при недетекте (privacy-first); флаг `--privacy`. Live: точный блюр детектнутого лица, щедрый fallback покрывает зону глаз. Ограничение: fallback — геометрическая эвристика |
-| **16.6** | ⏳ | Интеграция с тренерами `prototype/pipeline` + measured quality gates |
+| **16.6** | ⏳ (пересмотрен) | **A** data-quality gates + **B** hard-example mining. Descope: наивный supervised fine-tune (self-labeling-ловушка). См. §16.6-ML ниже |
 
 Отклонения от плана (зафиксированы): (1) session-lifecycle драйвит **DatasetWriter** (recording-gated),
 а не FusionAgent — ноль стоимости когда запись выключена; (2) пиксельное кодирование/blur — в mesh-агенте
@@ -363,45 +364,64 @@ mvm dataset export --format pytorch
 
 ---
 
-## 16.5 — Интеграция с ML-лабораторией
+## 16.5-Privacy — Privacy-слой ✅ (реализовано, live-провалидировано)
 
-### 16.5.1 — Связка с prototype/pipeline
+> Порядок реализации: privacy сделан как **roadmap-шаг 16.5** (раньше интеграции).
 
-Существующие скрипты тренировки в `prototype/pipeline/` тренируются на публичных датасетах. Dataset Factory даёт им **собственные данные**:
-
-| Скрипт тренировки | Что может использовать из Dataset Factory |
-|-------------------|-------------------------------------------|
-| `train_emotion.py` | Эмоции на реальных лицах (не VGAF/AffectNet) — другой домен, другие ракурсы |
-| `train_posture.py` | Позы с occlusion-метками (BodyCoverage) — desk-гэп на своих данных |
-| `train_identity.py` | Эмбеддинги лиц в реальных условиях (освещение, ракурсы) |
-| `distill_emotion.py` | Knowledge distillation: ансамбль → одна модель, на своих данных |
-| `self_supervised.py` | Depth prediction по RGB (есть ground truth от Depth-Anything) |
-
-### 16.5.2 — Active learning loop (будущее)
-
-```
-MVM record → dataset → train model → deploy model в MVM → MVM record с новой моделью → ...
-```
-
-Самоулучшающаяся петля: чем больше MVM работает, тем больше данных, тем лучше модели, тем лучше MVM.
-
----
-
-## 16.6 — Privacy-слой (детально)
-
-### 16.6.1 — Режимы
+### Режимы
 
 | Режим | Лица галерейных | Лица анонимов | Identity-метки | Эмбеддинги |
 |-------|----------------|---------------|----------------|-----------|
 | `full` | Сохраняются | Сохраняются | Все | Все |
-| `safe` (default) | Сохраняются | Размыты (Gaussian blur) | Только галерейные | Только галерейные |
+| `safe` (default) | Сохраняются | Размыты | Только галерейные | Только галерейные |
 | `anonymous` | Размыты | Размыты | Нет | Нет |
 
-### 16.6.2 — Реализация
+### Реализация (как сделано)
 
-Размытие лиц — на уровне DatasetWriter при сохранении кадра:
-- YuNet bbox → Gaussian blur region (σ = bbox_width / 10)
-- `image` крейт (уже есть) или простая свёртка
+- **Точный YuNet-face-bbox** (padded 18%) когда лицо сопоставлено телу по носу; `face_bbox` течёт
+  `BodyData → PersonState` (per-frame) и эмитится как dataset-лейбл. Флаг `mvm run --privacy <mode>`.
+- **Fallback:** верхняя полоса тела (50%, privacy-first) когда YuNet лицо не детектнул.
+- **Ограничение (честно):** fallback — геометрическая эвристика; точно там, где YuNet видит лицо,
+  best-effort (зона глаз) где нет. Апгрейд — только при появлении реального требования.
+
+---
+
+## 16.6-ML — Интеграция с ML-лабораторией (пересмотр 2026-07-21)
+
+> **Пересмотр после реализации 16.0–16.5.** Буквальная трактовка («дообучать тренеры на своих данных
+> + гейты») оказалась одновременно **преждевременной** и **обманчивой** — см. три reality-check'а.
+
+### Три reality-check'а (почему не «просто дообучить»)
+
+1. **Лейблы = предсказания самих моделей** (поза от RF, эмоция от EmotiEffLib, identity от SFace,
+   маски от YOLO-seg). Supervised-обучение на них = **self-distillation** → закрепляет ошибки, не чинит.
+   Честная польза требует одного из: человек-в-петле (active learning) · self-supervised (лейблы не
+   нужны, north-star 7.A) · held-out валидация (нужна GT-разметка).
+2. **Данных нет** — реальная польза = часы `mvm run --record` во время активности (owner-время, не код).
+3. **Тренеры устарели** относительно прод-стека фазы 15: `train_pose_classifier.py` жрёт CSV+VAE (VAE
+   выкинут → GRIP-RF), `train_emotion.py` учит EfficientNet на FER2013 (прод — EmotiEffLib).
+
+### Пересмотренный скоуп 16.6 = **A + B** (~2–3 сессии кода)
+
+| # | Задача | Объём | Зависит от |
+|---|--------|-------|-----------|
+| **A** | **Data-quality gates** — Python `validate.py` + `mvm dataset check`: целостность (пути/RLE/depth_range/provenance/ключи связывания), privacy-leak чек, баланс классов, withheld-rate → отчёт + exit-code (CI-гейтуемо) | **S** | ничего (любая сессия) |
+| **B** | **Hard-example mining** — `mvm dataset export --hard-examples` / view поверх quality-as-data (высокая entropy, низкий conf, withheld, OOD, anomaly) → курированный set для разметки человеком. Окупает 16.2. | **M** | накопленные данные |
+
+### Descope / отложено (осознанно)
+
+- **D. Наивный supervised fine-tune** — self-labeling-ловушка (reality-check #1). Откладывается до
+  появления human-corrected лейблов из B.
+- **C. Cross-domain validation harness** — прогон lab-моделей по held-out сессии vs бенчи (RAF-DB/CMU).
+  Ценно, но **нужна GT-разметка** held-out (человек) → держим как заготовку.
+- **E. Накопить данные** — owner-пререквизит (часы записи), не код.
+- **F. MVM-SRM / active-learning loop** — ⭐ endgame, но **отдельная north-star-фаза** (7.A):
+  self-supervised снимает проблему лейблов (#1) в принципе. Не «16.6».
+
+```
+MVM record → dataset → (A gate + B mine) → human labels → SRM/train → deploy → record …
+                                            └── честная петля закрывается ЧЕЛОВЕКОМ, не авто
+```
 
 ---
 
@@ -455,20 +475,20 @@ MVM record → dataset → train model → deploy model в MVM → MVM record с
 
 ## Roadmap фазы 16
 
-| Шаг | Что | Опирается на |
-|-----|-----|--------------|
-| **16.0** | Semantic Dataset Contract: canonical record, group keys, label status, provenance | Фаза 14, WorldState |
-| **16.1** | `[dataset]` конфиг, session grouper, DatasetWriter, запись RGB/depth/masks | 16.0 |
-| **16.2** | JSONL labels + session TOML + quality-aware provenance | 16.0, 16.1 |
-| **16.3** | CLI `mvm dataset` и Semantic Group Router | 16.1, 16.2 |
-| **16.4** | Dataset Views и экспорт PyTorch/TFRecord/WebDataset по группам и задачам | 16.3 |
-| **16.5** | Privacy-слой и проверка отсутствия утечек identity | 16.1, 16.2 |
-| **16.6** | Интеграция с prototype/pipeline и measured quality gates | 16.4, фаза 15 |
-| **later** | Active learning loop (MVM → dataset → train → deploy → repeat) | 16.6 |
-| **later** | Pattern miner: автоматическое выявление повторяющихся паттернов в journal | 16.3 |
-| **later** | Dataset versioning: DVC-совместимые чекпойнты, сравнение версий датасета | 16.3 |
+| Шаг | Что | Статус |
+|-----|-----|--------|
+| **16.0** | Semantic Dataset Contract: canonical record, group keys, label status, provenance | ✅ |
+| **16.1** | `[dataset]` конфиг, session grouper, DatasetWriter, запись RGB | ✅ |
+| **16.2** | JSONL labels + session TOML + depth/masks + quality-as-data | ✅ |
+| **16.3** | CLI `mvm dataset` (list/info/stats/prune) | ✅ |
+| **16.4** | Python-экспортёры PyTorch/TFRecord/WebDataset + фильтры | ✅ |
+| **16.5** | Privacy-слой (точный YuNet-face-bbox + `--privacy`) | ✅ live |
+| **16.6** | **Пересмотрен → A** data-quality gates **+ B** hard-example mining (см. §16.6-ML) | ⏳ |
+| **later** | **MVM-SRM / active-learning loop** — self-supervised, отдельная north-star-фаза (7.A) | ⏸ |
+| **later** | Pattern miner: авто-выявление паттернов в journal · Dataset versioning (DVC) | ⏸ |
 
-Порядок внутри фазы 16: **canonical contract → semantic router → конфиг → session grouper → DatasetWriter → JSONL/provenance → CLI → Dataset Views → privacy → экспортёры → quality gates**.
+Порядок внутри фазы 16 (факт): **contract → router → конфиг → session grouper → DatasetWriter →
+JSONL/quality → CLI → экспортёры → privacy → (16.6: quality gates + hard-example mining)**.
 
 ---
 
