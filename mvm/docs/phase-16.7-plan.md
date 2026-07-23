@@ -1,7 +1,7 @@
 # Фаза 16.7 — Semantic Session Log: конвергенция vision-логов
 
-> **Версия:** 1.0 (2026-07-24; Фазы 1 + 1.5 + 2 + 3 закрыты — осталась только live-камера валидация за
-> владельцем). Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0).
+> **Версия:** 1.1 (2026-07-24; Фазы 1 + 1.5 + 2 + 3 закрыты и **live-провалидированы** на камере).
+> Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0). **Фаза 16.7 полностью завершена.**
 > **Цель фазы:** свести два параллельных стора истории сцены в **один семантический session-лог**.
 > Сегодня MVM пишет vision-историю как плоские `scene-YYYY-MM-DD.jsonl` / `events-YYYY-MM-DD.jsonl`
 > (по дню, без session-дисциплины, без prune), а Dataset Factory пишет session-организованные
@@ -167,7 +167,11 @@ text-only их не касается.
 - ✅ Agent e2e (model-free): дефолтный recorder пишет `labels.jsonl`+`session.toml`, **без** `frames/`.
 - ✅ Live stub-smoke: `mvm run --stub` пишет только `current_state.md`, `scene-*.jsonl` **не** создаётся.
 - ✅ Recap/inspect/snapshot на дефолтном пути — через resolver Фазы 2 (data_dir→сессии).
-- ⏳ **Live-камера 3–5 мин → сессия → recap/snapshot** — за владельцем (нет камеры в CI-среде).
+- ✅ **Live-камера (2026-07-24, ~4 мин, Вадим в кадре):** старт-лог «dataset: text-only vision log»,
+  сессия 199 записей + 45 эпизодов, `frame_path:None`, relations/activities/events заполнены (schema
+  16.7.0), `session.toml` финализирован, **плоские логи не создались**; `dataset check` exit 0 (0 err/warn);
+  `recap`/`inspect` над сессией дают корректный свод (активности-роллап, зоны, фантом-⚠️). Sandbox
+  XDG+config, модели/галерея реальные.
 
 > **Миграция:** старые `scene-*.jsonl` на диске в data_dir теневят сессии в recap/journal (resolver
 > предпочитает плоские логи). Рекомендация — clean cut: удалить старые плоские логи вручную один раз.
