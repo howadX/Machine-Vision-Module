@@ -3,6 +3,56 @@
 All notable changes to MVM. Format loosely follows [Keep a Changelog]; versions
 are the `mvm` binary / workspace version.
 
+## [0.3.0] — 2026-07-23 — Dataset Factory (phase 16)
+
+MVM grows a second consumer. Until now every observation flowed to one place — an
+LLM, via the MCP pull-model. This release adds an **accumulating structured memory**:
+a semantic export layer that compiles each frame's WorldState into an interpretable,
+provenance-tagged training record. The vision core (phases 5–14) and the measured ML
+layer (phase 15) are untouched — the factory is a **pure WorldState consumer**, like
+StateFileWriter. New 13th crate `mvm-dataset`; zero ML frameworks leak into the core
+(exporters live in Python). +0 runtime cost when recording is off.
+
+### Added
+- **`mvm-dataset` crate** — the Dataset Factory. Canonical Observation (stable JSONL
+  schema, binding keys, provenance) + honesty statuses `observed/derived/temporal/weak/
+  withheld/unknown` (a `withheld` value is *never* auto-coerced to a negative class) +
+  Semantic Router G₁–G₅ (selective routing, no hot-path compute). Deps: serde/toml only.
+- **`mvm run --record`** — opt-in session recording. A mesh agent snapshots WorldState at
+  a configurable cadence and writes self-describing sessions: `frames/` (JPEG, privacy-
+  blurred) + `depth/` (16-bit reversible PNG) + instance masks (RLE) + `labels.jsonl`
+  (one Canonical Observation per frame) + `session.toml` summary. `[dataset]` config
+  section; sessions group by human presence (a >N s gap opens a new one).
+- **`mvm dataset`** CLI — `list` / `info` / `stats` / `prune` (dry-run unless `--yes`) /
+  `export` (prints ready-to-run Python commands) / **`check`** (see below).
+- **Privacy layer** — precise YuNet face-bbox blur (matched to the body by nose), emitted
+  as a `face_bbox` label; `full` / `safe` (default) / `anonymous` modes via `--privacy`.
+  Anonymous faces are blurred in `safe`; gallery identities kept clear.
+- **Python exporters** (`prototype/pipeline/dataset/`) — PyTorch `IterableDataset` /
+  TFRecord / WebDataset views over recorded sessions, with quality-aware filters
+  (`withheld` never satisfies a posture requirement). Own-domain data feeds the trainers.
+- **Data-quality gates (16.6-A)** — two complementary CI exit-code gates. `mvm dataset
+  check [session] [--strict]` is authoritative for *structure* (binding keys, referenced-
+  file existence, mask-RLE cell counts, depth ranges, **privacy embedding-leak**) + folds
+  quality stats; no image deps. Python `validate.py` does the pixel side Rust can't:
+  decodes every frame / depth / mask the exporter is about to feed a trainer.
+
+### Notes / honest limits
+- The factory infrastructure is complete and live-validated (record → PyTorch DataLoader;
+  precise blur; both gates exit 0/1) — but **no dataset is accumulated yet**. Filling it
+  is owner record-time, not code. **16.6-B** (hard-example mining over quality-as-data →
+  curated set for *human* labeling) remains, and depends on that accumulated data.
+- Naive supervised fine-tuning on recorded labels is **deliberately descoped**: the labels
+  *are* the models' own predictions (pose/emotion/identity/masks), so training on them is
+  self-distillation. The honest loop closes through a human, or self-supervision — a
+  separate north-star direction, not this phase.
+- The privacy blur's fallback (no YuNet face) is a geometric upper-body band — precise
+  where a face is detected, best-effort (eye region) where it isn't.
+
+### Tests
+- Workspace **670** tests green (was 608 + phase-16 additions), 1 ignored (live camera)
+  + Python exporter/validate groups. `mvm dataset check` gates a session in CI.
+
 ## [0.2.0] — 2026-07-17 — ML Refactor (phase 15)
 
 The whole ML layer was re-derived in a lab-first refactor (CMU mocap + OpenImages

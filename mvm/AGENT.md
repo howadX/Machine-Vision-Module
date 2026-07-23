@@ -15,6 +15,12 @@ segmentation) fused by plain arithmetic — **not** a VLM.
 
 You never look at an image. You call MVM and read structured text.
 
+MVM serves **two consumers**. Most of this file is consumer 1 — **you, an LLM**,
+reading the live scene through the pull model. Consumer 2 is the **Dataset Factory**
+(phase 16): the same scene graph, recorded to disk as an accumulating, interpretable
+training dataset. You rarely need it in a scene-reading loop, but you can start and
+inspect it — see [Recording a dataset](#recording-a-dataset-the-second-consumer).
+
 ## The pull model — cheap → expensive
 
 Reach for the cheapest tool that answers the question; escalate only when it
@@ -131,6 +137,33 @@ The ML refactor (phase 15, journals LJ0–LJ6) changed three things a consumer s
 3. **Pose-OOD semantics** — `plausibility` (`low`/`ok`) is now derived from a Mahalanobis
    distance, not the old VAE. The `recon_error` field is **deprecated** and always `null`
    (kept only for schema stability). Read `plausibility`, not `recon_error`.
+
+## Recording a dataset (the second consumer)
+
+Beyond answering "what's happening now", MVM can **accumulate** what it sees as a
+structured, self-describing dataset — the Dataset Factory (phase 16). This is memory,
+not an archive: each recorded frame is a Canonical Observation with provenance and
+honest label statuses, not just pixels.
+
+```
+mvm run --record            # producer + recorder (privacy=safe by default)
+mvm dataset list            # sessions on disk (frames, participants, activities)
+mvm dataset info <id>       # one session in detail
+mvm dataset stats           # dataset-wide totals
+mvm dataset check [id]      # data-quality gate — exit 1 on any error (CI-gateable)
+mvm dataset export          # → ready-to-run Python export commands (PyTorch/TFRecord/WebDataset)
+```
+
+- **Self-describing on disk.** A session is `frames/` + `depth/` + masks + `labels.jsonl`
+  (one observation per frame) + `session.toml`. Copy the folder to another machine and
+  it still works. Details: `prototype/pipeline/dataset/README.md`.
+- **Same honesty contract.** A `withheld` posture is recorded as withheld, **never** as a
+  negative class — absence is data (§16.0.2). The exporters and `check` enforce this.
+- **Privacy-first.** `safe` (default) blurs anonymous faces and keeps only gallery
+  identities; `anonymous` blurs everyone; `full` keeps all. Set `--privacy` on `run`.
+- **`mvm dataset check`** is the quality gate: it verifies integrity (binding keys,
+  referenced files, mask RLE, depth ranges), flags privacy leaks (no raw face embeddings
+  in labels), and reports class balance + withheld-rate. Run it before trusting a session.
 
 ## What MVM does NOT do
 
