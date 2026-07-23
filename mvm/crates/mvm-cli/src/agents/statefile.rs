@@ -181,6 +181,7 @@ mod tests {
         world.people.push(PersonState {
             track_id: 10,
             bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            face_bbox: None,
             identity: None,
             emotion: Some(("Neutral".into(), 0.4)),
             posture: Some(("sitting".into(), 0.9)),
@@ -196,6 +197,7 @@ mod tests {
             right_gesture: None,
             recon_error: None,
             plausibility: None,
+            torso_flexion: None,
             head_yaw: None, head_facing: None,
             last_seen: now,
         });
@@ -230,6 +232,7 @@ mod tests {
         world.people.push(PersonState {
             track_id: 0,
             bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            face_bbox: None,
             identity: Some(("Вадим".into(), 0.9)),
             emotion: None,
             posture: None,
@@ -245,6 +248,7 @@ mod tests {
             right_gesture: None,
             recon_error: None,
             plausibility: None,
+            torso_flexion: None,
             head_yaw: None,
             head_facing: None,
             last_seen: now,
@@ -329,6 +333,7 @@ mod tests {
         let mut p = PersonState {
             track_id: 0,
             bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            face_bbox: None,
             identity: Some(("Вадим".into(), 0.9)),
             emotion: None,
             posture: Some(("sitting".into(), 0.8)),
@@ -344,6 +349,7 @@ mod tests {
             right_gesture: None,
             recon_error: None,
             plausibility: None,
+            torso_flexion: None,
             head_yaw: None,
             head_facing: None,
             last_seen: now,

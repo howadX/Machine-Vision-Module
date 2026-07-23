@@ -404,6 +404,15 @@ impl PersonTracker {
             matched_ids.push(id);
         }
 
+        // Names actively claimed by a CONFIDENT identity on some detection this frame
+        // (LJ3): the anonymous geometric re-link must never steal an identified track
+        // whose person is being recognised elsewhere this very frame.
+        let claimed_names: Vec<&str> = high
+            .iter()
+            .filter(|d| d.identity_confidence.is_some_and(|c| c >= self.relink_min_conf))
+            .filter_map(|d| d.identity.as_deref())
+            .collect();
+
         for (d, det) in high.iter().enumerate() {
             let mut best_id = primary_track[d];
 
@@ -454,15 +463,28 @@ impl PersonTracker {
             // dropped under fast motion. Re-attach to the NEAREST recently-missed
             // track within `relink_center_dist` so a moving anonymous person keeps
             // its ephemeral id instead of churning a new one each gap.
-            if best_id.is_none() && det.embedding.is_none() && det.identity.is_none() {
+            // Entry gate (LJ3): a detection carrying only a STALE low-confidence
+            // identity (an intermittent face) may still use the geometric fallback —
+            // its weak label must not block re-link. A confident identity still routes
+            // through the label/cosine tiers above, not here.
+            let det_id_blocks = det.identity.is_some()
+                && det.identity_confidence.is_none_or(|c| c >= self.relink_min_conf);
+            if best_id.is_none() && det.embedding.is_none() && !det_id_blocks {
                 let dcx = (det.bbox.x1 + det.bbox.x2) * 0.5;
                 let dcy = (det.bbox.y1 + det.bbox.y2) * 0.5;
                 let mut best_dist = self.relink_center_dist;
                 for (&id, t) in &self.tracks {
                     if matched_ids.contains(&id) { continue; }
                     if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
-                    // Only re-link to anonymous tracks (don't steal a user's track).
-                    if t.identity.is_some() { continue; }
+                    // LJ3 stale-identity fix: an identified track is STILL eligible for
+                    // a geometric re-link — a body-primary walker gets one confident face
+                    // early, `identity` sticks, and the old blanket skip then permanently
+                    // disabled the anonymous fallback for it (every IoU gap spawned a
+                    // phantom, 57% of walk frag). It is skipped ONLY when its name is
+                    // actively claimed by a confident detection this frame.
+                    if let Some(tname) = t.identity.as_deref() {
+                        if claimed_names.contains(&tname) { continue; }
+                    }
                     // OCR (OC-SORT, phase 9.2): compare against the track's VIRTUAL
                     // position — its last *observation* extrapolated along its
                     // observation velocity across the gap — not the drifted Kalman
@@ -714,6 +736,7 @@ impl PersonTracker {
             }
             if det.recon_error.is_some() { t.recon_error = det.recon_error; }
             if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
+            if det.torso_flexion.is_some() { t.torso_flexion = det.torso_flexion; }
             if det.body_coverage.is_some() { t.body_coverage = det.body_coverage; }
             if det.torso_attitude.is_some() { t.torso_attitude = det.torso_attitude; }
             // Head orientation (phase 10.3): latest snapshot, like body_coverage.
@@ -828,7 +851,7 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -942,7 +965,7 @@ mod tests {
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1001,7 +1024,7 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1014,7 +1037,7 @@ mod tests {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1034,7 +1057,7 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1046,7 +1069,7 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1192,6 +1215,33 @@ mod tests {
     }
 
     #[test]
+    fn identified_walker_relinks_instead_of_fragmenting() {
+        // LJ3 root cause + fix. A body-primary walker gets ONE confident face early
+        // → `identity` sticks on the track. The old blanket "skip identified tracks"
+        // in the anonymous center re-link then permanently disabled the geometric
+        // fallback for it → every IoU gap spawned a phantom (57% of walk frag).
+        // Fix: an identified track re-links geometrically UNLESS a confident detection
+        // claims its name this frame (here none does — the face is turned away).
+        let mut t = PersonTracker::new();
+        // Frame 1: confident face → track id0, identity "Вадим" sticks.
+        let id_det = Detection {
+            identity: Some("Вадим".into()),
+            identity_confidence: Some(0.9),
+            ..Detection::bare(0.30, 0.30, 0.38, 0.60)
+        };
+        t.tick(std::slice::from_ref(&id_det));
+        let id0 = t.active().next().unwrap().id;
+        // Frames 2..4: face turned away → ANONYMOUS detections, each a walking step
+        // (IoU 0 vs the previous box, but center < relink_center_dist away). No
+        // detection carries "Вадим", so the stale identity must not block re-link.
+        t.tick(&det(0.42, 0.30, 0.50, 0.60)); // center 0.34→0.46 (0.12 < 0.15)
+        t.tick(&det(0.54, 0.30, 0.62, 0.60));
+        t.tick(&det(0.66, 0.30, 0.74, 0.60));
+        assert_eq!(t.track_count(), 1, "identified walker re-links, spawns no phantoms");
+        assert_eq!(t.active().next().unwrap().id, id0, "keeps its id across the walk");
+    }
+
+    #[test]
     fn center_relink_skips_when_too_far() {
         // Disjoint AND far (> relink_center_dist) → genuinely a new person/track.
         let mut t = PersonTracker::new();
@@ -1256,7 +1306,7 @@ mod tests {
             identity: None, identity_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None, emotion_distribution: None,
             embedding: None,
             head_yaw: None, head_facing: None,
@@ -1771,6 +1821,7 @@ mod tests {
             posture_confidence: Some(0.95),
             distance: Some(1.5), position_x: Some(0.1), position_y: Some(0.2), position_z: Some(1.5),
             ws_confidence: Some(0.8), recon_error: Some(0.01), plausibility: Some("normal".into()),
+            torso_flexion: Some(5.0),
             body_coverage: None, torso_attitude: None,
             head_yaw: None, head_facing: None,
             emotion_distribution: None, embedding: Some(vec![1.0, 0.0, 0.0]),

@@ -50,6 +50,16 @@ pub struct Config {
     /// the face bbox (doesn't jump when the head turns), so it is the preferred
     /// 3D source once the entity is the body. Interim anatomical default 0.5.
     pub torso_length_m: f32,
+    /// Camera mount height above the floor in metres (phase 15.6, E2 fall rule).
+    /// The camera frame is y-DOWN (`space::pixel_to_3d`), so a person's height
+    /// above the floor is `camera_height_m − position_3d.y`. This is the coarse
+    /// ground-endpoint reference the scene-level fall rule (`anomaly.rs`) needs to
+    /// tell a fall (descends AND ends on the floor) from a fast crouch (descends,
+    /// stays up). It is a *mount* prior, not a surveyed floor plane — north-star
+    /// framing: the eye *uses* the floor from body/mount priors, it doesn't survey
+    /// it. Inherits the uncalibrated 3D scale (tail #3, ±15–30%) → the 0.35 m gate
+    /// is approximate; the eye-level rig sits at ~1.75 m.
+    pub camera_height_m: f32,
     /// EMA alpha for depth smoothing. Higher = faster response; lower = smoother.
     pub depth_ema_alpha: f32,
     /// Forgetting factor (λ < 1) for temporal emotion PoE fusion. Lower = forgets
@@ -106,6 +116,12 @@ pub struct Config {
     /// is heavy (~230ms CPU) and the scene depth changes slowly, so run it every
     /// Nth frame and reuse the last map. Much sparser than `object_cadence`.
     pub depth_cadence: u32,
+    /// Dataset Factory session timeout (phase 16.1.3): a gap longer than this many
+    /// seconds with no tracked people closes the current recording session; the
+    /// next person opens a new one. Pure `Instant` arithmetic in [`crate::WorldState`]
+    /// — the id string (`YYYY-MM-DD_HHMMSS`) is assigned by the recorder (wall-clock
+    /// lives outside core). Default 30 s. Consumed only when recording is enabled.
+    pub session_timeout_secs: u64,
 }
 
 impl Default for Config {
@@ -122,6 +138,7 @@ impl Default for Config {
             face_height_m: 0.44, // empirical, 2026-06-25 (was 0.19 population frontal)
             face_height_m_yunet: 0.32, // calibrated 2026-06-25 (YuNet, tilt-balanced)
             torso_length_m: 0.5, // anatomical prior (phase 8 body-primary); recalibrate by tape
+            camera_height_m: 1.75, // eye-level rig (matches the mocap lab CAM_H); E2 floor reference
             depth_ema_alpha: 0.3,
             emotion_forget_lambda: 0.7,
             relink_window_frames: 90,
@@ -135,6 +152,7 @@ impl Default for Config {
             object_min_area: 0.0015, // phase 8.E filter D: ceiling-cam → small subtended angle
             object_track_timeout: 15, // phase 8.E filter B: persist ~2s across brief occlusion
             depth_cadence: 30, // phase 8.E.2: heavy depth, run sparsely (~every 1.5s)
+            session_timeout_secs: 30, // phase 16.1.3: >30s without people → new session
         }
     }
 }

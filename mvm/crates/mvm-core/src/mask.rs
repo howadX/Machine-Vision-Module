@@ -32,6 +32,13 @@ impl InstanceMask {
         Self { bits }
     }
 
+    /// Read-only view of the raw `MASK_RES²` occupancy grid (row-major, non-zero =
+    /// inside). For out-of-crate serializers (e.g. the Dataset Factory RLE
+    /// encoder); does not change mask behavior.
+    pub fn bits(&self) -> &[u8] {
+        &self.bits
+    }
+
     /// Number of set cells.
     pub fn count(&self) -> usize {
         self.bits.iter().filter(|&&b| b != 0).count()

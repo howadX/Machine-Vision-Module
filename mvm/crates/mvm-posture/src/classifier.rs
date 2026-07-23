@@ -1,19 +1,21 @@
-//! Hand-rolled Rust port of the pose classifier (P1 method C): raw 33×4 landmarks →
-//! `compute_features` (14 azimuth-invariant, gravity-preserving geometric features) →
-//! RandomForest soft-vote → {lying, sitting, standing}. Plus the VAE (retrained on public
-//! data) for `recon_error` and `log_prob_z` → plausibility (OOD only, Tier 0.2).
-//! Closed-form arithmetic, zero new deps. Weights from `pose_rf_forest.bin` + `pose_vae_public.bin`
-//! (exported by `spike_pose/train_pose_p1.py`, fixed order).
+//! Hand-rolled Rust port of the 2D-GRIP pose classifier (gravity-referenced pose features; formerly 'method C'): raw 33×4 landmarks →
+//! `compute_features` (12 azimuth-invariant, gravity-preserving geometric features, **z zeroed**) →
+//! RandomForest soft-vote → {lying, sitting, standing}. Plus class-conditional Mahalanobis
+//! (replaces the VAE) for the out-of-distribution flag (OOD only, Tier 0.2).
+//! Closed-form arithmetic, zero new deps. Weights from `pose_rf_2dgrip_v2.bin` + `pose_maha.bin`
+//! (phase 15.6 port of the LJ1 lab decisions; exported by `spike_pose/lj1_build_ship.py`,
+//! parity-pinned by `spike_pose/lj6_golden.py` → `pose_v2_golden.in`).
 
 /// EN class labels — MUST match the forest probability order (`rf.classes_`, alphabetical).
+/// The Mahalanobis artifact uses this *same* order (unified in 15.6, though its score is a
+/// pure min over classes so the order is functionally inert there).
 pub const POSE_LABELS: [&str; 3] = ["lying", "sitting", "standing"];
 pub const N_CLASS: usize = 3;
-pub const N_FEAT: usize = 14;
+/// 12 z-free 2D-GRIP features (was 14 = these + 2 dropped left/right asymmetry terms).
+pub const N_FEAT: usize = 12;
 
-const BN_EPS: f32 = 1e-5;
-
-static VAE_BIN: &[u8] = include_bytes!("pose_vae_public.bin");
-static FOREST_BIN: &[u8] = include_bytes!("pose_rf_forest.bin");
+static MAHA_BIN: &[u8] = include_bytes!("pose_maha.bin");
+static FOREST_BIN: &[u8] = include_bytes!("pose_rf_2dgrip_v2.bin");
 
 #[derive(Debug, Clone)]
 pub struct PoseResult {
@@ -21,8 +23,15 @@ pub struct PoseResult {
     pub label_idx: usize,
     pub confidence: f32,        // max class probability
     pub probs: [f32; N_CLASS],  // [lying, sitting, standing]
-    pub recon_error: f32,       // VAE reconstruction MSE (anomaly)
-    pub plausibility: f32,      // log_prob_z surprise; lower = more familiar
+    /// Continuous torso flexion = feature[0] `torso_inc` (2D, z-free), degrees to
+    /// gravity-up. Pure arithmetic, +0 model weight (15.6). `Some` whenever a torso
+    /// is present; the pipeline may still withhold it under `Head` coverage.
+    pub torso_flexion: Option<f32>,
+    /// Class-conditional Mahalanobis distance to the nearest posture cluster (lower =
+    /// more familiar). Replaces the VAE `log_prob_z`. See [`ood`](Self::ood).
+    pub maha_score: f32,
+    /// Out-of-distribution flag: `maha_score` exceeds the artifact's 99th-pct threshold.
+    pub ood: bool,
     /// Body-visibility regime this frame (occlusion-aware posture): which parts
     /// of the body BlazePose actually *saw*. Gates how much of the RF label the
     /// pipeline may claim — see [`BodyCoverage`].
@@ -124,54 +133,73 @@ pub fn torso_attitude_2d(lm: &[[f32; 4]; 33]) -> &'static str {
     }
 }
 
-/// A dense layer y = x·Wᵀ + b. `w` is row-major [out][in] (PyTorch convention).
-struct Linear {
-    w: Vec<f32>,
-    b: Vec<f32>,
-    nin: usize,
-    nout: usize,
+// ── Class-conditional Mahalanobis OOD (replaces the VAE) ─────────────────────
+
+/// Class-conditional Mahalanobis out-of-distribution detector. `score(f)` = the
+/// minimum over posture clusters of √((f−μ_c)ᵀ P_c (f−μ_c)); a pose is OOD iff that
+/// exceeds `thr` (the ID 99th percentile). All three live in `pose_maha.bin`,
+/// computed on the same 12 z-free features the forest consumes.
+///
+/// The class *order* is inert (the score is a pure min) — the load-bearing invariant
+/// is that each cluster's `mean` stays paired with its own `inv_cov`.
+struct MahaOod {
+    thr: f32,
+    means: Vec<[f32; N_FEAT]>,
+    inv_cov: Vec<[f32; N_FEAT * N_FEAT]>,
 }
 
-impl Linear {
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        debug_assert_eq!(x.len(), self.nin);
-        let mut out = vec![0f32; self.nout];
-        for o in 0..self.nout {
-            let mut acc = self.b[o];
-            let base = o * self.nin;
-            for i in 0..self.nin {
-                acc += self.w[base + i] * x[i];
+impl MahaOod {
+    fn load(bytes: &[u8]) -> Self {
+        let rd_u32 = |b: &[u8], p: usize| u32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]);
+        let rd_f32 = |b: &[u8], p: usize| f32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]);
+        let n_cls = rd_u32(bytes, 0) as usize;
+        let n_feat = rd_u32(bytes, 4) as usize;
+        assert_eq!(n_feat, N_FEAT, "pose_maha.bin feature count {} != {}", n_feat, N_FEAT);
+        let thr = rd_f32(bytes, 8);
+        let mut p = 12usize;
+        let mut means = Vec::with_capacity(n_cls);
+        let mut inv_cov = Vec::with_capacity(n_cls);
+        for _ in 0..n_cls {
+            let mut mu = [0f32; N_FEAT];
+            for m in mu.iter_mut() {
+                *m = rd_f32(bytes, p);
+                p += 4;
             }
-            out[o] = acc;
+            means.push(mu);
+            let mut ic = [0f32; N_FEAT * N_FEAT];
+            for v in ic.iter_mut() {
+                *v = rd_f32(bytes, p);
+                p += 4;
+            }
+            inv_cov.push(ic);
         }
-        out
+        assert_eq!(p, bytes.len(), "pose_maha.bin length mismatch (used {} of {})", p, bytes.len());
+        MahaOod { thr, means, inv_cov }
     }
-}
 
-#[inline]
-fn relu(v: &mut [f32]) {
-    for x in v.iter_mut() {
-        if *x < 0.0 {
-            *x = 0.0;
+    /// Minimum class-conditional Mahalanobis distance (lower = more familiar).
+    fn score(&self, feat: &[f32; N_FEAT]) -> f32 {
+        let mut best = f32::INFINITY;
+        for (mu, ic) in self.means.iter().zip(self.inv_cov.iter()) {
+            let mut d = [0f32; N_FEAT];
+            for i in 0..N_FEAT {
+                d[i] = feat[i] - mu[i];
+            }
+            // quadratic form dᵀ P d
+            let mut q = 0f32;
+            for i in 0..N_FEAT {
+                let mut row = 0f32;
+                for j in 0..N_FEAT {
+                    row += ic[i * N_FEAT + j] * d[j];
+                }
+                q += d[i] * row;
+            }
+            let dist = q.max(0.0).sqrt();
+            if dist < best {
+                best = dist;
+            }
         }
-    }
-}
-
-/// Sequential cursor over the flat weight buffer.
-struct Cursor<'a> {
-    f: &'a [f32],
-    pos: usize,
-}
-impl<'a> Cursor<'a> {
-    fn take(&mut self, n: usize) -> Vec<f32> {
-        let s = self.f[self.pos..self.pos + n].to_vec();
-        self.pos += n;
-        s
-    }
-    fn linear(&mut self, nout: usize, nin: usize) -> Linear {
-        let w = self.take(nout * nin);
-        let b = self.take(nout);
-        Linear { w, b, nin, nout }
+        best
     }
 }
 
@@ -251,51 +279,21 @@ impl Forest {
 }
 
 pub struct PoseHead {
-    // VAE (OOD only)
-    bn_w: Vec<f32>,
-    bn_b: Vec<f32>,
-    bn_mean: Vec<f32>,
-    bn_var: Vec<f32>,
-    enc1: Linear,      // 99→128
-    enc2: Linear,      // 128→64
-    fc_mu: Linear,     // 64→32
-    fc_logvar: Linear, // 64→32
-    dec1: Linear,      // 32→64
-    dec2: Linear,      // 64→128
-    dec3: Linear,      // 128→99
-    // classifier
     forest: Forest,
+    ood: MahaOod,
 }
 
 impl PoseHead {
     pub fn load() -> Self {
-        assert_eq!(VAE_BIN.len() % 4, 0, "pose_vae_public.bin not f32-aligned");
-        let f: Vec<f32> = VAE_BIN
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
-        let mut c = Cursor { f: &f, pos: 0 };
-        let bn_w = c.take(99);
-        let bn_b = c.take(99);
-        let bn_mean = c.take(99);
-        let bn_var = c.take(99);
-        let enc1 = c.linear(128, 99);
-        let enc2 = c.linear(64, 128);
-        let fc_mu = c.linear(32, 64);
-        let fc_logvar = c.linear(32, 64);
-        let dec1 = c.linear(64, 32);
-        let dec2 = c.linear(128, 64);
-        let dec3 = c.linear(99, 128);
-        assert_eq!(c.pos, f.len(), "pose_vae_public.bin length mismatch (got {}, used {})", f.len(), c.pos);
         Self {
-            bn_w, bn_b, bn_mean, bn_var, enc1, enc2, fc_mu, fc_logvar, dec1, dec2, dec3,
             forest: Forest::load(FOREST_BIN),
+            ood: MahaOod::load(MAHA_BIN),
         }
     }
 
     /// Full chain: landmarks (33×[x,y,z,vis], MediaPipe-normalized) → PoseResult.
     pub fn classify(&self, landmarks: &[[f32; 4]; 33]) -> PoseResult {
-        // classification: geometric features → forest soft-vote
+        // classification: 12 z-free geometric features → forest soft-vote
         let feat = compute_features(landmarks);
         let probs = self.forest.predict(&feat);
         let mut idx = 0;
@@ -305,44 +303,17 @@ impl PoseHead {
             }
         }
 
-        // VAE (OOD only): recon MSE + log_prob_z on the normalized-99 vector
-        let x99 = normalize_landmarks(landmarks);
-        let mut h = vec![0f32; 99];
-        for i in 0..99 {
-            h[i] = (x99[i] - self.bn_mean[i]) / (self.bn_var[i] + BN_EPS).sqrt() * self.bn_w[i] + self.bn_b[i];
-        }
-        let mut h1 = self.enc1.forward(&h);
-        relu(&mut h1);
-        let mut h2 = self.enc2.forward(&h1);
-        relu(&mut h2);
-        let mu = self.fc_mu.forward(&h2);
-        let logvar = self.fc_logvar.forward(&h2);
-
-        let mut d1 = self.dec1.forward(&mu);
-        relu(&mut d1);
-        let mut d2 = self.dec2.forward(&d1);
-        relu(&mut d2);
-        let recon = self.dec3.forward(&d2);
-        let mut mse = 0f32;
-        for i in 0..99 {
-            let d = recon[i] - x99[i];
-            mse += d * d;
-        }
-        mse /= 99.0;
-
-        let mut logpz = 0f32;
-        for k in 0..32 {
-            logpz += mu[k] * mu[k] + logvar[k].exp() - 1.0 - logvar[k];
-        }
-        logpz *= 0.5;
+        // OOD: class-conditional Mahalanobis on the same 12 features.
+        let maha_score = self.ood.score(&feat);
 
         PoseResult {
             label: POSE_LABELS[idx],
             label_idx: idx,
             confidence: probs[idx],
             probs,
-            recon_error: mse,
-            plausibility: logpz,
+            torso_flexion: Some(feat[0]),
+            maha_score,
+            ood: maha_score > self.ood.thr,
             coverage: coverage_from_vis(landmarks),
             attitude: torso_attitude_2d(landmarks),
         }
@@ -380,9 +351,18 @@ fn flex(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> f32 {
     d.acos().to_degrees()
 }
 
-/// 33×4 landmarks → 14 features (order matches `FEATURE_NAMES` in the trainer).
+/// The 13 GRIP joints (MediaPipe indices) `vext`/`hext` are measured over — so the
+/// cloud-shape features are reproducible on any skeleton (incl. a mocap rig with no
+/// face/hand points). Mirrors `mocap_sanity_gate.GRIP_IDX`.
+const GRIP_IDX: [usize; 13] = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+
+/// 33×4 landmarks → 12 z-free features (order matches `mocap_sanity_gate.FEATS`).
+///
+/// **2D-GRIP (z zeroed):** MediaPipe's z is a cross-domain liability (LJ1), so every
+/// coordinate is flattened to the image plane before the geometry is computed. With
+/// z=0 the radial extent collapses to |x−hip_x|. Parity-pinned by `pose_v2_golden.in`.
 pub fn compute_features(lm: &[[f32; 4]; 33]) -> [f32; N_FEAT] {
-    let p = |k: usize| [lm[k][0], lm[k][1], lm[k][2]];
+    let p = |k: usize| [lm[k][0], lm[k][1], 0.0]; // z zeroed → 2D-GRIP
     let mid = |a: usize, b: usize| {
         let (x, y) = (p(a), p(b));
         [(x[0] + y[0]) / 2.0, (x[1] + y[1]) / 2.0, (x[2] + y[2]) / 2.0]
@@ -407,11 +387,12 @@ pub fn compute_features(lm: &[[f32; 4]; 33]) -> [f32; N_FEAT] {
     let elb_l = flex(p(11), p(13), p(15));
     let elb_r = flex(p(12), p(14), p(16));
 
-    // cloud shape (azimuth-invariant): vertical extent vs horizontal radial extent
+    // cloud shape (azimuth-invariant), over the 13 GRIP joints only: vertical extent
+    // vs horizontal radial extent (z=0 ⇒ radial = |x−hip_x|).
     let mut ymin = f32::INFINITY;
     let mut ymax = f32::NEG_INFINITY;
     let mut rmax = 0f32;
-    for k in 0..33 {
+    for &k in &GRIP_IDX {
         let q = p(k);
         ymin = ymin.min(q[1]);
         ymax = ymax.max(q[1]);
@@ -430,10 +411,8 @@ pub fn compute_features(lm: &[[f32; 4]; 33]) -> [f32; N_FEAT] {
     [
         torso_inc,
         (thigh_l + thigh_r) / 2.0,
-        (thigh_l - thigh_r).abs(),
         (shank_l + shank_r) / 2.0,
         (knee_l + knee_r) / 2.0,
-        (knee_l - knee_r).abs(),
         (hip_l + hip_r) / 2.0,
         (elb_l + elb_r) / 2.0,
         vext,
@@ -445,120 +424,8 @@ pub fn compute_features(lm: &[[f32; 4]; 33]) -> [f32; N_FEAT] {
     ]
 }
 
-/// Port of `core/pose_encoder.normalize_landmarks` + flatten → [99] (for the VAE only).
-/// Translate to hip center → scale by torso length → rotate torso to vertical.
-pub fn normalize_landmarks(lm: &[[f32; 4]; 33]) -> [f32; 99] {
-    let mut pts = [[0f32; 3]; 33];
-    for k in 0..33 {
-        pts[k] = [lm[k][0], lm[k][1], lm[k][2]];
-    }
-    let vis = |k: usize| lm[k][3];
-
-    // hip center (23/24), visibility-weighted
-    let hip_vis = vis(23) + vis(24);
-    let hip = if hip_vis > 0.1 {
-        let mut h = [0f32; 3];
-        for c in 0..3 {
-            h[c] = (pts[23][c] * vis(23) + pts[24][c] * vis(24)) / hip_vis.max(1e-6);
-        }
-        h
-    } else {
-        pts[0]
-    };
-    for k in 0..33 {
-        for c in 0..3 {
-            pts[k][c] -= hip[c];
-        }
-    }
-
-    // shoulder center (11/12), already hip-relative
-    let sh_vis = vis(11) + vis(12);
-    let sh = if sh_vis > 0.1 {
-        let mut s = [0f32; 3];
-        for c in 0..3 {
-            s[c] = (pts[11][c] * vis(11) + pts[12][c] * vis(12)) / sh_vis.max(1e-6);
-        }
-        s
-    } else {
-        pts[0]
-    };
-
-    // torso length = ‖shoulder_center‖ (hip is origin)
-    let torso_vec = sh;
-    let mut torso_len = norm3(&torso_vec);
-    if torso_len < 0.01 {
-        let sw = [pts[11][0] - pts[12][0], pts[11][1] - pts[12][1], pts[11][2] - pts[12][2]];
-        torso_len = norm3(&sw).max(0.01);
-    }
-    let inv = 1.0 / torso_len.max(1e-6);
-    for k in 0..33 {
-        for c in 0..3 {
-            pts[k][c] *= inv;
-        }
-    }
-
-    // rotate torso to vertical (0,-1,0) via Rodrigues
-    if norm3(&torso_vec) > 0.01 {
-        let tn = norm3(&torso_vec).max(1e-6);
-        let td = [torso_vec[0] / tn, torso_vec[1] / tn, torso_vec[2] / tn];
-        let vertical = [0.0f32, -1.0, 0.0];
-        let dot = (td[0] * vertical[0] + td[1] * vertical[1] + td[2] * vertical[2]).clamp(-1.0, 1.0);
-        let angle = dot.acos();
-        if angle > 0.01 {
-            // axis = cross(td, vertical)
-            let mut axis = [
-                td[1] * vertical[2] - td[2] * vertical[1],
-                td[2] * vertical[0] - td[0] * vertical[2],
-                td[0] * vertical[1] - td[1] * vertical[0],
-            ];
-            let an = norm3(&axis);
-            if an > 1e-6 {
-                axis = [axis[0] / an, axis[1] / an, axis[2] / an];
-                let r = rodrigues(&axis, angle);
-                for k in 0..33 {
-                    let p = pts[k];
-                    // pts @ Rᵀ  ==  R · p  (row vector times transpose)
-                    pts[k] = [
-                        r[0][0] * p[0] + r[0][1] * p[1] + r[0][2] * p[2],
-                        r[1][0] * p[0] + r[1][1] * p[1] + r[1][2] * p[2],
-                        r[2][0] * p[0] + r[2][1] * p[1] + r[2][2] * p[2],
-                    ];
-                }
-            }
-        }
-    }
-
-    let mut out = [0f32; 99];
-    for k in 0..33 {
-        out[k * 3] = pts[k][0];
-        out[k * 3 + 1] = pts[k][1];
-        out[k * 3 + 2] = pts[k][2];
-    }
-    out
-}
-
 fn norm3(v: &[f32; 3]) -> f32 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
-}
-
-/// R = I + sin(a)·K + (1−cos(a))·K², K = skew(axis).
-fn rodrigues(axis: &[f32; 3], angle: f32) -> [[f32; 3]; 3] {
-    let (ax, ay, az) = (axis[0], axis[1], axis[2]);
-    let k = [[0.0, -az, ay], [az, 0.0, -ax], [-ay, ax, 0.0]];
-    let mut k2 = [[0f32; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            k2[i][j] = k[i][0] * k[0][j] + k[i][1] * k[1][j] + k[i][2] * k[2][j];
-        }
-    }
-    let (s, c) = (angle.sin(), 1.0 - angle.cos());
-    let mut r = [[0f32; 3]; 3];
-    for i in 0..3 {
-        for j in 0..3 {
-            r[i][j] = (if i == j { 1.0 } else { 0.0 }) + s * k[i][j] + c * k2[i][j];
-        }
-    }
-    r
 }
 
 #[cfg(test)]
@@ -567,19 +434,23 @@ mod tests {
 
     #[test]
     fn weights_load() {
-        let h = PoseHead::load(); // asserts exact VAE length + forest length consumed
+        let h = PoseHead::load(); // asserts exact forest + maha lengths consumed
         assert!(!h.forest.trees.is_empty());
+        assert_eq!(h.ood.means.len(), N_CLASS);
+        assert_eq!(h.ood.inv_cov.len(), N_CLASS);
+        assert!(h.ood.thr > 0.0);
     }
 
-    // Golden parity vectors from spike_pose/train_pose_p1.py (same RF that produced the .bin):
-    // (input_33x4, features[14], forest_probs[3], pred_label, vae_recon_mse, vae_logpz)
+    // Golden parity vectors from spike_pose/lj6_golden.py (computed FROM the shipped
+    // pose_rf_2dgrip_v2.bin + pose_maha.bin, so they pin those exact bytes):
+    // (input_33x4, features12[z=0], forest_probs3 [lying,sitting,standing], maha_score, flexion, label)
     #[allow(clippy::type_complexity)]
-    const GOLDEN: &[([[f32; 4]; 33], [f32; 14], [f32; 3], &str, f32, f32)] =
-        include!("pose_p1_golden.in");
+    const GOLDEN: &[([[f32; 4]; 33], [f32; 12], [f32; 3], f32, f32, &str)] =
+        include!("pose_v2_golden.in");
 
     #[test]
     fn features_match_python() {
-        for (input, feat_g, _, _, _, _) in GOLDEN {
+        for (input, feat_g, ..) in GOLDEN {
             let feat = compute_features(input);
             for k in 0..N_FEAT {
                 assert!((feat[k] - feat_g[k]).abs() < 1e-2,
@@ -678,15 +549,16 @@ mod tests {
     #[test]
     fn classify_matches_python_oracle() {
         let head = PoseHead::load();
-        for (input, _, probs_g, pred, recon_g, logpz_g) in GOLDEN {
+        for (input, _, probs_g, maha_g, flex_g, pred) in GOLDEN {
             let r = head.classify(input);
             assert_eq!(r.label, *pred, "label {} vs golden {}", r.label, pred);
             for k in 0..N_CLASS {
                 assert!((r.probs[k] - probs_g[k]).abs() < 5e-3,
                     "prob[{k}] {} vs golden {}", r.probs[k], probs_g[k]);
             }
-            assert!((r.recon_error - recon_g).abs() < 1e-3, "recon {} vs {}", r.recon_error, recon_g);
-            assert!((r.plausibility - logpz_g).abs() < 1e-2, "logpz {} vs {}", r.plausibility, logpz_g);
+            assert!((r.maha_score - maha_g).abs() < 1e-2, "maha {} vs {}", r.maha_score, maha_g);
+            assert!((r.torso_flexion.unwrap() - flex_g).abs() < 1e-2,
+                "flexion {:?} vs {}", r.torso_flexion, flex_g);
         }
     }
 }

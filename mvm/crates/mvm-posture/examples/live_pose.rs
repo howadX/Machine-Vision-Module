@@ -53,8 +53,8 @@ fn main() -> anyhow::Result<()> {
             let head = (lm[0][0] / w, lm[0][1] / h);
             let hip = ((lm[23][0] + lm[24][0]) / 2.0 / w, (lm[23][1] + lm[24][1]) / 2.0 / h);
             line += &format!(
-                " | P{i}: {}@{:.2} recon={:.3} plaus={:.1} head=({:.2},{:.2}) hip=({:.2},{:.2})",
-                p.label, p.confidence, p.recon_error, p.plausibility,
+                " | P{i}: {}@{:.2} maha={:.2}{} head=({:.2},{:.2}) hip=({:.2},{:.2})",
+                p.label, p.confidence, p.maha_score, if p.ood { " OOD" } else { "" },
                 head.0, head.1, hip.0, hip.1,
             );
         }

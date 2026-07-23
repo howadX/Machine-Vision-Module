@@ -1,0 +1,1144 @@
+{
+  "nb3b": {
+    "n_poses": 1035,
+    "n_groups": 26,
+    "class_by_source": {
+      "multiposture": {
+        "lying": 0,
+        "sitting": 400,
+        "standing": 0
+      },
+      "urfd": {
+        "lying": 323,
+        "sitting": 0,
+        "standing": 312
+      }
+    },
+    "feat_importance": {
+      "aspect": 0.1887,
+      "ank_below": 0.1582,
+      "torso_inc": 0.1111,
+      "hext": 0.0963,
+      "nose_above": 0.0902,
+      "vext": 0.0872,
+      "shank_inc": 0.0652,
+      "thigh_inc": 0.0602,
+      "elbow_flex": 0.0411,
+      "hip_flex": 0.0306,
+      "kn_below": 0.028,
+      "knee_flex": 0.0245,
+      "thigh_asym": 0.0107,
+      "knee_asym": 0.0078
+    },
+    "grouped_cv": {
+      "raw_coords": [
+        0.9753,
+        0.0261
+      ],
+      "grip": [
+        0.9338,
+        0.0458
+      ],
+      "vae_pca32": [
+        0.929,
+        0.0656
+      ]
+    },
+    "grouped_cv_oof": {
+      "raw_coords": 0.9729,
+      "grip": 0.9324,
+      "vae_pca32": 0.9246
+    },
+    "grouped_cv_ci": {
+      "raw_coords": [
+        0.9385,
+        0.998
+      ],
+      "grip": [
+        0.8714,
+        0.9785
+      ],
+      "vae_pca32": [
+        0.8381,
+        0.9929
+      ]
+    },
+    "adversarial_source_auc": {
+      "raw_coords": 1.0,
+      "grip": 0.9869
+    },
+    "azimuth_deg": [
+      0,
+      15,
+      30,
+      45,
+      90
+    ],
+    "azimuth_acc": {
+      "GRIP": [
+        0.9338,
+        0.9338,
+        0.9338,
+        0.9338,
+        0.9338
+      ],
+      "raw coords": [
+        0.9753,
+        0.9615,
+        0.9298,
+        0.8686,
+        0.4932
+      ]
+    },
+    "azimuth_std": {
+      "GRIP": [
+        0.0458,
+        0.0458,
+        0.0458,
+        0.0458,
+        0.0458
+      ],
+      "raw coords": [
+        0.0261,
+        0.0433,
+        0.0578,
+        0.0749,
+        0.1607
+      ]
+    },
+    "azimuth_perclass": {
+      "GRIP": {
+        "lying": [
+          0.9671,
+          0.9671,
+          0.9671,
+          0.9671,
+          0.9671
+        ],
+        "sitting": [
+          0.9783,
+          0.9783,
+          0.9783,
+          0.9783,
+          0.9783
+        ],
+        "standing": [
+          0.8787,
+          0.8787,
+          0.8787,
+          0.8787,
+          0.8787
+        ]
+      },
+      "raw coords": {
+        "lying": [
+          0.9788,
+          0.9788,
+          0.9564,
+          0.9514,
+          0.9407
+        ],
+        "sitting": [
+          1.0,
+          1.0,
+          0.9829,
+          0.831,
+          0.0
+        ],
+        "standing": [
+          0.9487,
+          0.914,
+          0.8647,
+          0.8593,
+          0.7733
+        ]
+      }
+    },
+    "ablation": [
+      {
+        "n_feats": 3,
+        "top_feats": "aspect, ank_below, torso_inc",
+        "grouped_CV": 0.9055,
+        "az_0": 0.9055,
+        "az_90": 0.9055
+      },
+      {
+        "n_feats": 5,
+        "top_feats": "aspect, ank_below, torso_inc...",
+        "grouped_CV": 0.9073,
+        "az_0": 0.9073,
+        "az_90": 0.9073
+      },
+      {
+        "n_feats": 10,
+        "top_feats": "aspect, ank_below, torso_inc...",
+        "grouped_CV": 0.9263,
+        "az_0": 0.9263,
+        "az_90": 0.9263
+      },
+      {
+        "n_feats": 14,
+        "top_feats": "aspect, ank_below, torso_inc...",
+        "grouped_CV": 0.9255,
+        "az_0": 0.9255,
+        "az_90": 0.9255
+      }
+    ],
+    "confusion": [
+      [
+        309,
+        10,
+        4
+      ],
+      [
+        2,
+        389,
+        9
+      ],
+      [
+        6,
+        39,
+        267
+      ]
+    ],
+    "recall_per_class": {
+      "lying": 0.9567,
+      "sitting": 0.9725,
+      "standing": 0.8558
+    },
+    "ece": 0.0435,
+    "calibration_by_pred_class": {
+      "lying": [
+        0.9385,
+        0.9748
+      ],
+      "sitting": [
+        0.863,
+        0.8881
+      ],
+      "standing": [
+        0.8795,
+        0.9536
+      ]
+    },
+    "hpo": {
+      "best_params": {
+        "n_estimators": 120,
+        "max_depth": 12,
+        "min_samples_split": 2
+      },
+      "best_score": 0.9338,
+      "shipped_score": 0.9338,
+      "delta_pts": 0.0
+    },
+    "forest_kb": 271.5,
+    "forest_trees": 120
+  },
+  "lj2": {
+    "kernel": "howadx/lj2-physics-of-posture-transitions",
+    "run_all": "COMPLETE (private, verified on Kaggle)",
+    "passport": {
+      "code_commit": "e0514bed",
+      "mocap_transitions_sha16": "b993e910b96fa9a1",
+      "core_sha16": "aecb97c2db5f4e0b"
+    },
+    "artifact": "mocap_transitions.npz (35 CMU trials, 60fps, true time)",
+    "transition_matrix_15fps": {
+      "note": "P(pose_t | pose_t-1); standing<->lying ~forbidden",
+      "standing": [
+        0.9721,
+        0.0266,
+        0.0013
+      ],
+      "sitting": [
+        0.0211,
+        0.9724,
+        0.0066
+      ],
+      "lying": [
+        0.0,
+        0.0267,
+        0.9733
+      ],
+      "direct_standing_lying": [
+        4,
+        7670
+      ]
+    },
+    "e1_stabilizer": {
+      "verdict": "H-prior NOT established (aggregate wash); ships as hybrid dwell+SL-veto",
+      "emitter": "2D-GRIP forest on lab+gold only (zero CMU leakage)",
+      "floor_hybrid": {
+        "flip_per_min": 6.31,
+        "sl_flip_per_min": 0.23,
+        "latency_ms": 591,
+        "delta_sl_vs_dwell3": -0.47,
+        "delta_sl_ci": [
+          -1.2,
+          0.12
+        ],
+        "established": false
+      },
+      "stress_hybrid": {
+        "flip_per_min": 4.44,
+        "sl_flip_per_min": 0.0,
+        "latency_ms": 901,
+        "delta_sl_vs_dwell3": -1.77,
+        "delta_sl_ci": [
+          -3.62,
+          -0.43
+        ],
+        "established": true
+      },
+      "ship": "PostureStabilizer = dwell + sl_dwell=12 veto on standing<->lying edge (+0 deps, port in 15.6)"
+    },
+    "e2_fall_threshold": {
+      "verdict": "CONFIRMED with ceiling; ships to anomaly",
+      "rule": "reached floor (min pelvis <=0.35m) AND peak downward pelvis velocity >= ~1.13 m/s",
+      "auroc_velocity_framingA": 0.994,
+      "auroc_endpoint_framingA": 0.96,
+      "auroc_velocity_framingB": 1.0,
+      "framingB_n": {
+        "fall": 6,
+        "controlled": 8
+      },
+      "threshold_ms": 1.13,
+      "fall_peak_down_range": [
+        1.13,
+        3.74
+      ],
+      "controlled_peak_down_range": [
+        0.01,
+        0.99
+      ],
+      "caveat": "CMU falls stunt-only -> threshold bounds clinical from above; controlled class thin"
+    }
+  },
+  "lj3": {
+    "kernel": "howadx/lj3-why-walking-people-multiply",
+    "run_all": "COMPLETE (Kaggle Run-All; numbers identical to local, data sha matches)",
+    "passport": {
+      "code_commit": "(kaggle run \u2014 no git)",
+      "data_sha256": {
+        "mocap_tracks.npz": "987e628a333473f1"
+      }
+    },
+    "artifact": "mocap_tracks.npz \u2014 24 walk + 2 idle + 2 cross seqs, world-translation-preserving bbox, 15fps",
+    "metric": "excess tracks / min walk (distinct committed ids per true person - 1)",
+    "T1a_reproduce_fix": {
+      "FLOOR": 0.0,
+      "mild": {
+        "base": 0.78,
+        "base_ci": [
+          0.0,
+          2.56
+        ],
+        "fix": 0.0,
+        "delta": -0.76,
+        "delta_ci": [
+          -2.56,
+          0.0
+        ],
+        "established": false
+      },
+      "med": {
+        "base": 5.43,
+        "base_ci": [
+          1.56,
+          9.92
+        ],
+        "fix": 0.78,
+        "delta": -4.7,
+        "delta_ci": [
+          -8.78,
+          -0.82
+        ],
+        "established": true
+      },
+      "heavy": {
+        "base": 13.95,
+        "base_ci": [
+          8.33,
+          18.88
+        ],
+        "fix": 5.43,
+        "delta": -8.25,
+        "delta_ci": [
+          -12.79,
+          -3.5
+        ],
+        "established": true
+      }
+    },
+    "T1b_deadzone_attribution": {
+      "base_face": 5.43,
+      "base_noface": 2.33,
+      "fix": 0.78,
+      "deadzone_share": 0.57
+    },
+    "T1c_honest_negatives": {
+      "real_accel_var": 0.0002,
+      "prod_Q_VEL": 0.01,
+      "calibratedQ": 7.75,
+      "gate_0.1": 2.33,
+      "verdict": "Kalman-Q calibration refuted (worse); gate/center-dist marginal; dead-zone is the cause"
+    },
+    "T2_regression": {
+      "idle_base": 0.0,
+      "idle_fix": 0.0,
+      "crossings": {
+        "cross_07_01__08_02": {
+          "base": 2,
+          "fix": 2
+        },
+        "cross_35_02__16_15": {
+          "base": 0,
+          "fix": 0
+        }
+      },
+      "verdict": "idle 0/0; no crossing-swap increase"
+    },
+    "prod_decision_15_6": "center re-link may recover an identified track through a stale identity unless that name is claimed by a confident detection this frame (+0 deps, one branch); Kalman/gate constants unchanged"
+  },
+  "lj4": {
+    "s1": {
+      "floor": {
+        "event_precision": 1.0,
+        "event_recall": 1.0,
+        "phantom_events": 0,
+        "swaps": 0,
+        "excess_per_min": 0.17,
+        "notes": "flags on FLOOR are findings: prod-anomaly FA on 3/10 controlled floor scenarios (S2); stunt fall G4_88_04 fragments tracker on clean boxes"
+      },
+      "stress": {
+        "mild": {
+          "P": 0.2,
+          "R": 0.333
+        },
+        "med": {
+          "P": 0.133,
+          "R": 0.222
+        },
+        "heavy": {
+          "P": 0.029,
+          "R": 0.111
+        },
+        "fp_split": "100% fragments, 0 foreign (all protocols)"
+      },
+      "ablations_med": "event P/R invariant to tracker fix / stabilizer hybrid / face / posture flip; excess/min 5.38->1.91 with fix15.3 (LJ3 cross-check: 5.43)",
+      "exit_dwell_sweep": {
+        "prod_5_8": {
+          "med_P": 0.133,
+          "heavy_P": 0.029
+        },
+        "8_11": {
+          "med_P": 0.333,
+          "heavy_P": 0.167
+        },
+        "10_13": {
+          "med_P": 0.5,
+          "heavy_P": 0.385
+        },
+        "12_15": {
+          "med_P": 0.667,
+          "heavy_P": 0.545
+        },
+        "verdict": "15.6 candidate: raise ACTIVITY_EXIT_DWELL toward 10-12 (cost ~+0.5s episode end latency)"
+      }
+    },
+    "s2": {
+      "floor": {
+        "prod": {
+          "g3_fa": "3/10",
+          "g4_hits": "6/6"
+        },
+        "prod_idfree": {
+          "g3_fa": "3/10",
+          "g4_hits": "6/6"
+        },
+        "e2_113": {
+          "g3_fa": "0/10",
+          "g4_hits": "5/6"
+        },
+        "e2_105": {
+          "g3_fa": "0/10",
+          "g4_hits": "6/6"
+        }
+      },
+      "stress_med": {
+        "prod": {
+          "g3_fa": "3/10",
+          "g4_hits": "4/6"
+        },
+        "prod_idfree": {
+          "g3_fa": "3/10",
+          "g4_hits": "6/6"
+        },
+        "e2_113": {
+          "g3_fa": "0/10",
+          "g4_hits": "5/6"
+        },
+        "e2_105": {
+          "g3_fa": "0/10",
+          "g4_hits": "6/6"
+        }
+      },
+      "miss_mechanism": "the fall itself churns the track id (impact occlusion); new id 'never stood' -> per-id standing memory dies at the critical moment",
+      "margin": "worst quiet vmax 0.99 vs weakest fall 1.12 m/s @15fps (thin; CMU falls are stunts -> upper bound)",
+      "ships_15_6": "E2 physics rule, scene-level (id-robust), threshold recalibrated to prod cadence (~1.05); per-id window rule retires"
+    },
+    "s3": {
+      "vrd_instances": {
+        "total": 109989,
+        "person_subject": 94380
+      },
+      "current_vocab": {
+        "typing": 0,
+        "using_mouse": 0,
+        "watching_tv": 0,
+        "using_phone": 15,
+        "reading": 24,
+        "holding_drink": 145
+      },
+      "mass_elsewhere": {
+        "holds_generic": 2153,
+        "at_table_desk": 1360,
+        "ride": 1432,
+        "plays": 618,
+        "is_walking": 3602,
+        "is_running": 2156
+      },
+      "no_lying_state_in_vrd": true,
+      "verdict": "fold specific names into using_object(class); drop watching_tv; keep holding_drink + geometric; sports/ride -> phase 16; contract change lands in 15.6"
+    },
+    "ci_gate": "6-instance FLOOR subset as cargo test in mvm workspace (agents::golden, 597+2 green); negative control verified",
+    "passport": {
+      "code_commit": "fe0bae76",
+      "golden_scenarios_sha16": "10da2afa98c6cfcf"
+    },
+    "kaggle_runall": "COMPLETE (v2, numbers bit-identical to local; VRD from mounted dataset)"
+  },
+  "lj5": {
+    "actA_latency_weight": {
+      "passport": {
+        "code_commit": "1fed0212",
+        "working_tree": "dirty",
+        "cpu": "12th Gen Intel(R) Core(TM) i7-12700K",
+        "logical_cores": 20,
+        "onnxruntime": "1.27.0",
+        "provider": "CPUExecutionProvider"
+      },
+      "warmup": 30,
+      "timed": 200,
+      "models": {
+        "face_detection_yunet_2023mar.onnx": {
+          "label": "YuNet (face detect)",
+          "role": "chain",
+          "weight_kb": 227.1,
+          "threads_all": {
+            "median_ms": 1.8760965031106025,
+            "p95_ms": 2.055518442648463,
+            "min_ms": 1.8156739533878863,
+            "input_shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          },
+          "threads_one": {
+            "median_ms": 7.28824848192744,
+            "p95_ms": 7.800577592570335,
+            "min_ms": 6.786245037801564,
+            "input_shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          }
+        },
+        "face_recognition_sface_2021dec.onnx": {
+          "label": "SFace (identity)",
+          "role": "chain",
+          "weight_kb": 37789.4,
+          "threads_all": {
+            "median_ms": 5.196837999392301,
+            "p95_ms": 5.409637681441381,
+            "min_ms": 5.030869040638208,
+            "input_shape": [
+              1,
+              3,
+              112,
+              112
+            ]
+          },
+          "threads_one": {
+            "median_ms": 17.52346003195271,
+            "p95_ms": 17.956061367294748,
+            "min_ms": 17.011467018164694,
+            "input_shape": [
+              1,
+              3,
+              112,
+              112
+            ]
+          }
+        },
+        "enet_b0_8_best_vgaf.onnx": {
+          "label": "EmotiEffLib (emotion)",
+          "role": "chain",
+          "weight_kb": 15663.7,
+          "threads_all": {
+            "median_ms": 4.559070483082905,
+            "p95_ms": 4.86764064989984,
+            "min_ms": 4.216579021885991,
+            "input_shape": [
+              1,
+              3,
+              224,
+              224
+            ]
+          },
+          "threads_one": {
+            "median_ms": 11.44169201143086,
+            "p95_ms": 11.75690796226263,
+            "min_ms": 11.020282981917262,
+            "input_shape": [
+              1,
+              3,
+              224,
+              224
+            ]
+          }
+        },
+        "person_detection_mediapipe_2023mar.onnx": {
+          "label": "BlazePose (person det)",
+          "role": "chain",
+          "weight_kb": 11709.1,
+          "threads_all": {
+            "median_ms": 2.1862904832232744,
+            "p95_ms": 2.3331572097958997,
+            "min_ms": 2.117238997016102,
+            "input_shape": [
+              1,
+              3,
+              224,
+              224
+            ]
+          },
+          "threads_one": {
+            "median_ms": 8.331214979989454,
+            "p95_ms": 8.46942710049916,
+            "min_ms": 8.097820973489434,
+            "input_shape": [
+              1,
+              3,
+              224,
+              224
+            ]
+          }
+        },
+        "pose_estimation_mediapipe_2023mar.onnx": {
+          "label": "BlazePose (pose)",
+          "role": "chain",
+          "weight_kb": 5427.0,
+          "threads_all": {
+            "median_ms": 2.8724205039907247,
+            "p95_ms": 3.1927636999171227,
+            "min_ms": 2.7192170382477343,
+            "input_shape": [
+              1,
+              256,
+              256,
+              3
+            ]
+          },
+          "threads_one": {
+            "median_ms": 7.440884510288015,
+            "p95_ms": 7.694779860321432,
+            "min_ms": 7.224678003694862,
+            "input_shape": [
+              1,
+              256,
+              256,
+              3
+            ]
+          }
+        },
+        "yolo_object_detect.onnx": {
+          "label": "YOLO26n (objects)",
+          "role": "cadenced",
+          "weight_kb": 9709.0,
+          "threads_all": {
+            "median_ms": 12.50309101305902,
+            "p95_ms": 13.22096521325875,
+            "min_ms": 11.645090009551495,
+            "input_shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          },
+          "threads_one": {
+            "median_ms": 52.72060798597522,
+            "p95_ms": 53.44746579939965,
+            "min_ms": 51.54421197948977,
+            "input_shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          }
+        },
+        "yolo_seg.onnx": {
+          "label": "YOLO-seg (masks)",
+          "role": "cadenced",
+          "weight_kb": 13517.6,
+          "threads_all": {
+            "median_ms": 21.261235495330766,
+            "p95_ms": 22.241441064397804,
+            "min_ms": 20.255951036233455,
+            "input_shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          },
+          "threads_one": {
+            "median_ms": 99.99735551537015,
+            "p95_ms": 101.05320990551263,
+            "min_ms": 98.58877002261579,
+            "input_shape": [
+              1,
+              3,
+              640,
+              640
+            ]
+          }
+        },
+        "depth_anything_v2_small.onnx": {
+          "label": "Depth-Anything (depth)",
+          "role": "cadenced",
+          "weight_kb": 26619.9,
+          "threads_all": {
+            "median_ms": 231.82495502987877,
+            "p95_ms": 240.75865086924748,
+            "min_ms": 227.9840839910321,
+            "input_shape": [
+              1,
+              3,
+              518,
+              518
+            ]
+          },
+          "threads_one": {
+            "median_ms": 939.0662554942537,
+            "p95_ms": 949.4281217164826,
+            "min_ms": 932.0677259820513,
+            "input_shape": [
+              1,
+              3,
+              518,
+              518
+            ]
+          }
+        },
+        "handpose_estimation_mediapipe_2023feb.onnx": {
+          "label": "MediaPipe (handpose)",
+          "role": "optional",
+          "weight_kb": 4003.5,
+          "threads_all": {
+            "median_ms": 0.8032530022319406,
+            "p95_ms": 0.852244466659613,
+            "min_ms": 0.7678339607082307,
+            "input_shape": [
+              1,
+              224,
+              224,
+              3
+            ]
+          },
+          "threads_one": {
+            "median_ms": 3.1363010057248175,
+            "p95_ms": 3.3104935282608494,
+            "min_ms": 3.0343690305016935,
+            "input_shape": [
+              1,
+              224,
+              224,
+              3
+            ]
+          }
+        }
+      },
+      "human_chain_sum_ms": {
+        "threads_all": 16.69,
+        "threads_one": 52.03
+      },
+      "total_onnx_weight_mb": 121.745,
+      "budget_gate_50ms_all": true
+    },
+    "actB1_emotion_rafdb": {
+      "passport": {
+        "code_commit": "1fed0212",
+        "working_tree": "dirty",
+        "data_sha256": {}
+      },
+      "n": 3068,
+      "split": "test",
+      "balanced_acc": 0.6646262298091408,
+      "ci": [
+        0.6426110717939624,
+        0.6875039963397264
+      ],
+      "overall_acc": 0.7255541069100391,
+      "per_class_recall": {
+        "Anger": 0.8148148148148148,
+        "Disgust": 0.3625,
+        "Fear": 0.7432432432432432,
+        "Happiness": 0.8430379746835444,
+        "Neutral": 0.6676470588235294,
+        "Sadness": 0.8472803347280334,
+        "Surprise": 0.3738601823708207
+      },
+      "confusion": [
+        [
+          132,
+          14,
+          9,
+          3,
+          1,
+          2,
+          1
+        ],
+        [
+          67,
+          58,
+          2,
+          5,
+          9,
+          18,
+          1
+        ],
+        [
+          8,
+          1,
+          55,
+          3,
+          1,
+          6,
+          0
+        ],
+        [
+          24,
+          28,
+          17,
+          999,
+          47,
+          38,
+          32
+        ],
+        [
+          95,
+          7,
+          7,
+          12,
+          454,
+          95,
+          10
+        ],
+        [
+          29,
+          9,
+          11,
+          3,
+          21,
+          405,
+          0
+        ],
+        [
+          13,
+          10,
+          133,
+          5,
+          29,
+          16,
+          123
+        ]
+      ],
+      "classes": [
+        "Anger",
+        "Disgust",
+        "Fear",
+        "Happiness",
+        "Neutral",
+        "Sadness",
+        "Surprise"
+      ],
+      "neg_control": {
+        "mean_maxprob": 0.7201250195503235,
+        "mean_entropy": 0.36503830552101135,
+        "contempt_sink_rate": 0.02998696219035202,
+        "healthy": true
+      },
+      "caveats": [
+        "aligned crops bypass prod YuNet+Umeyama (classifier-head passport)",
+        "no subject-id \u2192 image-level bootstrap",
+        "Fear n=74 \u2192 wide CI",
+        "held-out: model trained on AffectNet+VGAF, RAF-DB unseen"
+      ]
+    },
+    "actB2_identity_lfw_fp32": {
+      "passport": {
+        "code_commit": "1fed0212",
+        "working_tree": "dirty",
+        "data_sha256": {}
+      },
+      "n_pairs": 6000,
+      "n_unique": 7701,
+      "no_detection": 0,
+      "results": {
+        "prod_unaligned": {
+          "acc_10fold": 0.7833333333333333,
+          "acc_std": 0.021015867021530826,
+          "auc": 0.8565921111111112,
+          "tar_at_far1e-3": 0.173,
+          "far_thr": 0.5714599367976204,
+          "cos_same_mean": 0.40468355671316386,
+          "cos_diff_mean": 0.17357931460098674
+        },
+        "aligned": {
+          "acc_10fold": 0.9783333333333333,
+          "acc_std": 0.007340905181848404,
+          "auc": 0.9842283333333333,
+          "tar_at_far1e-3": 0.949,
+          "far_thr": 0.3613607599735287,
+          "cos_same_mean": 0.6109903448640058,
+          "cos_diff_mean": 0.07535635028375934
+        }
+      },
+      "align_headroom": 0.19499999999999995,
+      "caveats": [
+        "prod feeds UNALIGNED bbox crop to SFace (pipeline.rs:470) \u2014 'aligned' is the fix candidate",
+        "LFW-funneled source (congealing-aligned) \u2192 align headroom is a LOWER bound vs raw faces",
+        "cv2.FaceDetectorYN postproc (same YuNet ONNX); bilinear resize \u2248 prod Triangle"
+      ]
+    },
+    "actC_sface_int8": {
+      "note": "INT8 dynamic quant: LOSSLESS accuracy but ~6x SLOWER on CPU (CNN dynamic-quant pitfall) -> REJECTED on latency gate",
+      "weight_mib": 9.4,
+      "weight_fp32_mib": 36.9,
+      "lfw": {
+        "prod_unaligned": {
+          "acc_10fold": 0.7791666666666667,
+          "acc_std": 0.020128062223892525,
+          "auc": 0.854298,
+          "tar_at_far1e-3": 0.183,
+          "far_thr": 0.5698796293735505,
+          "cos_same_mean": 0.4093066759103288,
+          "cos_diff_mean": 0.18222221618161227
+        },
+        "aligned": {
+          "acc_10fold": 0.9789999999999999,
+          "acc_std": 0.006506407098647706,
+          "auc": 0.9855262222222223,
+          "tar_at_far1e-3": 0.9476666666666667,
+          "far_thr": 0.3649224465489393,
+          "cos_same_mean": 0.6094639846396943,
+          "cos_diff_mean": 0.07799202456185594
+        }
+      },
+      "latency_ms": {
+        "fp32_allcores": 5.1,
+        "int8_allcores": 31.63,
+        "fp32_1thread": 17.64,
+        "int8_1thread": 51.61
+      }
+    },
+    "actB3_detect_person_face": {
+      "passport": {
+        "code_commit": "1fed0212",
+        "working_tree": "dirty",
+        "data_sha256": {}
+      },
+      "split": "validation",
+      "n_images": 788,
+      "results": {
+        "yolo_person": {
+          "recall_all": 0.5234782608695652,
+          "recall_prominent": 0.6530612244897959,
+          "precision_caveated": 0.5418541854185418,
+          "n_gt": 1150,
+          "n_gt_prominent": 833,
+          "n_det": 1111
+        },
+        "yunet_face": {
+          "recall_all": 0.7717678100263852,
+          "recall_prominent": 0.8047882136279927,
+          "precision_caveated": 0.7276119402985075,
+          "n_gt": 758,
+          "n_gt_prominent": 543,
+          "n_det": 804
+        }
+      },
+      "caveats": [
+        "recall is the honest metric; precision is a LOWER BOUND (OI federated labels \u2192 real-but-unlabeled detections count as FP)",
+        "cross-domain: YuNet=WIDER FACE, YOLO26n=COCO, neither is OpenImages",
+        "prod uses BlazePose person_detection for the pose ROI, not YOLO \u2014 this is a YOLO object-recall proxy on the cleanest OI class",
+        "YOLO score_thr=0.35 (model default); IoU match 0.5, greedy by score"
+      ]
+    },
+    "actB3plus_yolo_objects": {
+      "passport": {
+        "code_commit": "1fed0212",
+        "working_tree": "dirty",
+        "data_sha256": {}
+      },
+      "split": "validation",
+      "n_images": 955,
+      "per_class": {
+        "Chair": {
+          "recall_all": 0.4124293785310734,
+          "recall_prominent": 0.5303030303030303,
+          "n_gt": 354,
+          "n_gt_prominent": 264
+        },
+        "Couch": {
+          "recall_all": 0.4166666666666667,
+          "recall_prominent": 0.4166666666666667,
+          "n_gt": 60,
+          "n_gt_prominent": 60
+        },
+        "Houseplant": {
+          "recall_all": 0.32558139534883723,
+          "recall_prominent": 0.3523809523809524,
+          "n_gt": 258,
+          "n_gt_prominent": 210
+        },
+        "Table": {
+          "recall_all": 0.18983050847457628,
+          "recall_prominent": 0.2204724409448819,
+          "n_gt": 295,
+          "n_gt_prominent": 254
+        },
+        "Television": {
+          "recall_all": 0.6904761904761905,
+          "recall_prominent": 0.6904761904761905,
+          "n_gt": 42,
+          "n_gt_prominent": 42
+        },
+        "Laptop": {
+          "recall_all": 0.7142857142857143,
+          "recall_prominent": 0.7424242424242424,
+          "n_gt": 70,
+          "n_gt_prominent": 66
+        },
+        "Computer mouse": {
+          "recall_all": 0.7391304347826086,
+          "recall_prominent": 0.7272727272727273,
+          "n_gt": 23,
+          "n_gt_prominent": 22
+        },
+        "Remote control": {
+          "recall_all": 0.7777777777777778,
+          "recall_prominent": 0.7777777777777778,
+          "n_gt": 9,
+          "n_gt_prominent": 9
+        },
+        "Computer keyboard": {
+          "recall_all": 0.5606060606060606,
+          "recall_prominent": 0.6,
+          "n_gt": 66,
+          "n_gt_prominent": 60
+        },
+        "Mobile phone": {
+          "recall_all": 0.8046875,
+          "recall_prominent": 0.8110236220472441,
+          "n_gt": 128,
+          "n_gt_prominent": 127
+        },
+        "Book": {
+          "recall_all": 0.04504504504504504,
+          "recall_prominent": 0.06569343065693431,
+          "n_gt": 222,
+          "n_gt_prominent": 137
+        },
+        "Clock": {
+          "recall_all": 0.6956521739130435,
+          "recall_prominent": 0.6818181818181818,
+          "n_gt": 23,
+          "n_gt_prominent": 22
+        },
+        "Vase": {
+          "recall_all": 0.6373626373626373,
+          "recall_prominent": 0.6744186046511628,
+          "n_gt": 91,
+          "n_gt_prominent": 86
+        },
+        "Bottle": {
+          "recall_all": 0.5089820359281437,
+          "recall_prominent": 0.5182926829268293,
+          "n_gt": 167,
+          "n_gt_prominent": 164
+        },
+        "Wine glass": {
+          "recall_all": 0.6451612903225806,
+          "recall_prominent": 0.6666666666666666,
+          "n_gt": 124,
+          "n_gt_prominent": 114
+        },
+        "Bowl": {
+          "recall_all": 0.6533333333333333,
+          "recall_prominent": 0.6619718309859155,
+          "n_gt": 75,
+          "n_gt_prominent": 71
+        },
+        "Backpack": {
+          "recall_all": 0.12903225806451613,
+          "recall_prominent": 0.12903225806451613,
+          "n_gt": 31,
+          "n_gt_prominent": 31
+        },
+        "Handbag": {
+          "recall_all": 0.08235294117647059,
+          "recall_prominent": 0.08974358974358974,
+          "n_gt": 85,
+          "n_gt_prominent": 78
+        }
+      },
+      "macro_recall": {
+        "prominent": 0.5198019386559727,
+        "all": 0.5015774078941819
+      },
+      "micro_recall": {
+        "prominent": 0.4600990643918547,
+        "all": 0.4065002355157796
+      },
+      "caveats": [
+        "recall@IoU0.5, robust to OI federated labels; cross-domain COCO\u2192OI",
+        "score_thr=0.35 (model default); prod filters A\u22650.45+HIGH_BAR downstream (trades recall for precision)",
+        "Table/dining-table and cup mappings are fuzzy across taxonomies (cup omitted)"
+      ]
+    },
+    "diet_verdicts_for_15_6": {
+      "vae_195kb": "DROP (Mahalanobis won, 15.1)",
+      "forest_873to220kb": "SHIP (15.1 sweep, gold R3 flat)",
+      "sface_int8_requant": "REJECT (lossless acc, +6x latency)",
+      "sface_align_fix": "SHIP identity crop align_face(lm5,112) -> +19.5pt LFW, +0 weight/latency",
+      "external_experts": "KEEP all as-is"
+    },
+    "gate": {
+      "weight_le_v010": true,
+      "latency_le_v010": true,
+      "chain_ms_allcores": 16.7,
+      "onnx_mib": 121.7,
+      "arithmetic_kb_v010": 1068,
+      "arithmetic_kb_v020": 222,
+      "result": "MET"
+    }
+  }
+}

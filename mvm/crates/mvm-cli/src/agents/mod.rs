@@ -14,13 +14,19 @@
 //! → no cycle).
 
 mod capture;
+mod dataset_writer;
 mod depth;
 mod fusion;
+/// Golden-scenario CI gate (phase 15.4): replays compiled scenarios through the
+/// production temporal stack — model-free, `--stub`-class.
+#[cfg(test)]
+mod golden;
 mod human;
 mod scene;
 mod statefile;
 
 pub(crate) use capture::CaptureAgent;
+pub(crate) use dataset_writer::DatasetWriterAgent;
 pub(crate) use depth::{DepthAgent, DepthSlot};
 pub(crate) use fusion::{infer_activities, FusionAgent};
 pub(crate) use human::HumanAgent;
@@ -57,6 +63,7 @@ pub(crate) fn project_people(
             if let Some(b) = best_body_for_bbox(&p.bbox, bodies) {
                 p.wrists = b.wrists.clone();
                 p.hands = b.hands.clone();
+                p.face_bbox = b.face_bbox; // this frame's matched face (16.5 privacy)
             }
             p
         })

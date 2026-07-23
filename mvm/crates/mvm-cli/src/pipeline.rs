@@ -15,14 +15,6 @@ use crate::scene_debug;
 use crate::state;
 use mvm_core::Detection;
 
-/// Tier 0.2 OOD gate threshold on the pose VAE's `log_prob_z` surprise: a pose
-/// above this is flagged `"unusual"` so the `PostureStabilizer` won't commit it.
-/// Calibrated to the public-data VAE (`pose_vae_public.bin`): in-distribution
-/// `log_prob_z` is p50≈57, p95≈121, p99≈169 — so ~p99 flags only the most
-/// surprising poses (and true garbage: empty ROI / hallucinated landmarks).
-/// The retired 14.3 belonged to the old user-data VAE and gated *everything* here.
-const POSTURE_OOD_LOGPZ: f32 = 170.0;
-
 /// Minimum body-bbox height (normalized) to classify posture at all. A body shorter
 /// than this is a fragment / far-partial detection whose landmarks are unreliable —
 /// live these bbox_h≈0.08 fragments produced confident false `lying`. Full/seated
@@ -34,15 +26,6 @@ const POSTURE_MIN_BBOX_H: f32 = 0.15;
 /// physical instance's boxes overlap heavily; 0.5 rejects a mask landing on the
 /// wrong (adjacent) object while tolerating YOLO26n↔YOLO-seg box disagreement.
 const SEG_ATTACH_IOU: f32 = 0.5;
-
-/// Tier 0.2 plausibility label from a pose's `log_prob_z`.
-fn plausibility_flag(logpz: f32) -> &'static str {
-    if logpz < POSTURE_OOD_LOGPZ {
-        "normal"
-    } else {
-        "unusual"
-    }
-}
 
 /// Occlusion-aware posture claim gate. The RF's 3-class label is a *full-body*
 /// claim; whether the pipeline may make it depends on what the camera saw:
@@ -85,8 +68,10 @@ fn posture_claimable(coverage: mvm_posture::classifier::BodyCoverage, attitude: 
 fn attach_posture(det: &mut Detection, pose: &mvm_posture::classifier::PoseResult) {
     det.body_coverage = Some(pose.coverage.as_str());
     det.torso_attitude = Some(pose.attitude);
-    det.recon_error = Some(pose.recon_error);
-    det.plausibility = Some(plausibility_flag(pose.plausibility).to_string());
+    // Posture OOD (15.6): Mahalanobis distance replaces the VAE. "low" = out-of-
+    // distribution skeleton (the `PostureStabilizer` distrusts it; anomaly nudges).
+    det.plausibility = Some(if pose.ood { "low" } else { "ok" }.to_string());
+    det.torso_flexion = pose.torso_flexion;
     if posture_claimable(pose.coverage, pose.attitude, pose.label) {
         det.posture = Some(pose.label.to_string());
         det.posture_confidence = Some(pose.confidence);
@@ -102,6 +87,9 @@ pub(crate) struct BodyData {
     pub wrists: Vec<[f32; 2]>,
     /// Hands for this body (landmarks + presence + side, one per detected hand).
     pub hands: Vec<mvm_core::HandState>,
+    /// This frame's matched YuNet face bbox (normalized), `None` if no frontal
+    /// face was associated to this body — the precise privacy-blur target (16.5).
+    pub face_bbox: Option<mvm_core::BBox>,
 }
 
 /// Per-frame output of [`BodyPrimaryPipeline::process`].
@@ -405,6 +393,22 @@ fn anchor_objects_depth(
 /// fallback. Mirrors the bridge-path enrichment so behaviour is identical.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
+/// The crop fed to SFace. LJ5 (phase 15.5) measured that production shipped the
+/// **raw bbox rectangle** — SFace merely `resize_exact`s it, so head roll/offset
+/// smears the embedding (LFW aligned 0.978 vs unaligned 0.783 → +19.5 pt;
+/// TAR@FAR=1e-3 0.949 vs 0.173). Feed the ArcFace-aligned 112 crop instead — the
+/// same 5-landmark similarity transform the emotion path already uses, at +0
+/// weight/latency. Degenerate landmarks (or none) fall back to the raw crop.
+fn identity_crop(
+    frame: &image::DynamicImage,
+    face_lm5_px: Option<&[[f32; 2]; 5]>,
+    face: &image::DynamicImage,
+) -> image::DynamicImage {
+    face_lm5_px
+        .and_then(|lm| mvm_emotion::align_face(frame, lm, 112))
+        .unwrap_or_else(|| face.clone())
+}
+
 fn enrich_face_crop(
     frame: &image::DynamicImage,
     face_bbox: &mvm_core::BBox,
@@ -469,9 +473,13 @@ fn enrich_face_crop(
     // re-check cadence or the track unlocks. Emotion above still runs every frame.
     if run_identity {
         if let Some(id) = identity_mod {
-            if let Ok((name, sim, emb)) =
-                id.identify_margin(&face, config.identity_abs_thresh, config.identity_margin_thresh)
-            {
+            // SFace align-fix (LJ5): feed the ArcFace-aligned crop, not the raw bbox.
+            let id_input = identity_crop(frame, face_lm5_px, &face);
+            if let Ok((name, sim, emb)) = id.identify_margin(
+                &id_input,
+                config.identity_abs_thresh,
+                config.identity_margin_thresh,
+            ) {
                 det.embedding = Some(emb);
                 if det.identity.is_none() && name != "unknown" {
                     det.identity = Some(name);
@@ -691,7 +699,7 @@ fn build_body_primary(
             }
             overlay.hands.extend(hands); // flat list still feeds --scene-debug
         }
-        bodies_out.push(BodyData { bbox: *b, wrists, hands: body_hands });
+        bodies_out.push(BodyData { bbox: *b, wrists, hands: body_hands, face_bbox: None });
         // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
         // emotion (optional). Keypoint-in-bbox ties the face to the body whose
         // head is in it, so overlapping person bboxes never swap identities.
@@ -699,6 +707,8 @@ fn build_body_primary(
         if let Some(fi) = best_face_for_nose(&faces, &face_used, nose) {
             face_used[fi] = true;
             let fb = faces[fi].bbox;
+            // Carry the matched face bbox on this body (phase 16.5 privacy label).
+            bodies_out.last_mut().unwrap().face_bbox = Some(fb);
             let idx = dets.len();
             // Cadence (phase 9.6/9.7): skip SFace only for this locked track's own
             // continuation (precomputed in id_flags); skip emotion when covered by
@@ -933,8 +943,9 @@ mod tests {
             label_idx: idx,
             confidence: 0.9,
             probs,
-            recon_error: 0.01,
-            plausibility: 50.0, // in-distribution → "normal"
+            torso_flexion: Some(if attitude == "horizontal" { 90.0 } else { 5.0 }),
+            maha_score: 2.0, // in-distribution → not OOD
+            ood: false,
             coverage,
             attitude,
         }
@@ -992,7 +1003,8 @@ mod tests {
         assert_eq!(det.posture, None, "hallucinated-leg lying must be withheld");
         assert_eq!(det.body_coverage, Some("upper"));
         assert_eq!(det.torso_attitude, Some("upright"));
-        assert_eq!(det.plausibility.as_deref(), Some("normal"));
+        assert_eq!(det.plausibility.as_deref(), Some("ok")); // in-distribution (maha)
+        assert_eq!(det.torso_flexion, Some(5.0)); // flexion flows even when label withheld
     }
 
     #[test]
@@ -1028,6 +1040,26 @@ mod tests {
         anchor_objects_depth(&mut objects, &depth, &tracker, &config, &frame);
         assert_eq!(objects[0].pos_3d, None);
         assert_eq!(objects[0].pos_conf, 0.0);
+    }
+
+    /// SFace align-fix (LJ5, phase 15.6 P5): with landmarks the identity crop is
+    /// the ArcFace-aligned 112×112 (not the raw bbox rectangle SFace only resizes);
+    /// degenerate/absent landmarks fall back to the raw crop without crashing.
+    #[test]
+    fn identity_crop_aligns_with_landmarks_and_falls_back_without() {
+        let frame = image::DynamicImage::new_rgb8(64, 64);
+        let face = image::DynamicImage::new_rgb8(20, 24); // raw bbox crop, distinct size
+        // Valid landmarks → aligned 112×112 crop fed to SFace (the fix).
+        let lm = [[12.0, 14.0], [40.0, 14.0], [26.0, 30.0], [16.0, 44.0], [38.0, 44.0]];
+        let aligned = identity_crop(&frame, Some(&lm), &face);
+        assert_eq!((aligned.width(), aligned.height()), (112, 112), "aligned crop feeds SFace");
+        // No landmarks → raw crop fallback.
+        let raw = identity_crop(&frame, None, &face);
+        assert_eq!((raw.width(), raw.height()), (20, 24), "no landmarks → raw crop");
+        // Degenerate (all-identical) landmarks → also the raw fallback, no crash.
+        let degen = [[5.0, 5.0]; 5];
+        let d = identity_crop(&frame, Some(&degen), &face);
+        assert_eq!((d.width(), d.height()), (20, 24), "degenerate landmarks → raw crop");
     }
 
     /// Phase 10.4: an object whose bbox straddles a near silhouette + far

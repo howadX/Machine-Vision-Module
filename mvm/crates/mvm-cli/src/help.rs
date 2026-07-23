@@ -27,6 +27,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
         "gallery" => GALLERY,
         "mcp" => MCP,
         "service" => SERVICE,
+        "dataset" => DATASET,
         _ => return None,
     })
 }
@@ -47,6 +48,7 @@ COMMANDS:
     gallery    Manage the identity gallery (add a person's photos, list people)
     mcp        Register MVM as an MCP server with an LLM host (install)
     service    Run the producer as a systemd user service (install/uninstall/status)
+    dataset    Inspect & maintain recorded Dataset Factory sessions (list/info/stats/prune)
     doctor     Check the setup: camera, models, data dir, config
 
 PULL MODEL (cheap → expensive):
@@ -75,6 +77,10 @@ FLAGS:
     --dump-json             Print one Scene-JSON line per tick to stdout
     --masks                 Run the YOLO-seg expert (+1 ONNX): instance masks →
                             mask-contact + mask-median depth (opt-in)
+    --record                Record a Dataset Factory session (RGB + depth + labels
+                            → [dataset].dir; privacy-safe by default). See mvm dataset.
+    --privacy <MODE>        Override [dataset].privacy for this run: safe (blur anon
+                            faces) | anonymous (blur all) | full (blur none)
     --interval-ms <MS>      StateFile snapshot interval, milliseconds
                             (default: [cadence] snapshot_ms in config.toml, 1000)
     --max-frames <N>        Stop after N frames (default: run until Ctrl-C)
@@ -90,6 +96,35 @@ EXAMPLES:
     mvm run --stub --max-frames 100          # CI smoke, no hardware
 
 Camera, paths and cadence come from ~/.config/mvm/config.toml (flags override).
+";
+
+pub const DATASET: &str = "\
+mvm dataset — inspect & maintain recorded Dataset Factory sessions (phase 16).
+
+Recording is opt-in: `mvm run --record` (or [dataset].enabled) saves every N-th
+frame with full labels to [dataset].dir (default ~/.local/share/mvm/datasets).
+Each session is self-describing: frames/ + depth/ + labels.jsonl + session.toml.
+
+USAGE:
+    mvm dataset list                 List recorded sessions (frames, status, people)
+    mvm dataset info <session_id>    Details for one session
+    mvm dataset stats                Dataset-wide totals (frames, participants, activities)
+    mvm dataset check [session_id]   Data-quality gate: integrity, privacy, balance
+                                     (--strict also fails on warnings; non-zero exit → CI)
+    mvm dataset prune --keep <N|Nd>  Remove old sessions — keep last N, or on/after today−Nd
+                                     (dry-run unless --yes)
+    mvm dataset export ...           Convert to PyTorch/TFRecord/WebDataset (Python, phase 16.4)
+
+EXAMPLES:
+    mvm dataset list
+    mvm dataset info 2026-07-17_153721
+    mvm dataset check                     # gate the whole dataset (exit 1 on any error)
+    mvm dataset check 2026-07-17_153721 --strict
+    mvm dataset prune --keep 7d            # dry-run: what falls outside the last 7 days
+    mvm dataset prune --keep 5 --yes       # actually keep the 5 newest, delete the rest
+
+Privacy: `safe` (default) blurs anonymous faces, keeps gallery people clear;
+`anonymous` blurs everyone; `full` saves everything. Set [dataset].privacy.
 ";
 
 pub const SNAPSHOT: &str = "\

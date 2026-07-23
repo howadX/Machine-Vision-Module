@@ -52,6 +52,9 @@ pub struct Detection {
     // Posture quality
     pub recon_error: Option<f32>,
     pub plausibility: Option<String>,
+    /// Continuous torso flexion (degrees to gravity-up, 2D z-free), phase 15.6 —
+    /// feature[0] `torso_inc`, pure arithmetic. Latest snapshot like `plausibility`.
+    pub torso_flexion: Option<f32>,
     /// Body-visibility regime ("full"/"upper"/"head") — occlusion-aware posture.
     /// `upper`/`head` mean the lower body was NOT seen (desk, furniture, frame
     /// edge), so `posture` is withheld upstream and downstream must not assume a
@@ -91,7 +94,7 @@ impl Detection {
             emotion: None, emotion_confidence: None,
             posture: None, posture_confidence: None,
             distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
             body_coverage: None, torso_attitude: None,
             emotion_distribution: None,
             embedding: None,
@@ -230,6 +233,8 @@ pub struct PersonTrack {
     /// Posture quality.
     pub recon_error: Option<f32>,
     pub plausibility: Option<String>,
+    /// Latest continuous torso flexion (degrees, 2D z-free) — phase 15.6.
+    pub torso_flexion: Option<f32>,
     /// Latest body-visibility regime ("full"/"upper"/"head") — see
     /// [`Detection::body_coverage`]. Latest snapshot, like `plausibility`.
     pub body_coverage: Option<&'static str>,
@@ -313,6 +318,7 @@ impl PersonTrack {
             ws_confidence: None,
             recon_error: None,
             plausibility: None,
+            torso_flexion: None,
             body_coverage: None,
             torso_attitude: None,
             depth_ema: None,

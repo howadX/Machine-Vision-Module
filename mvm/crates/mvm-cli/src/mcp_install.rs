@@ -242,6 +242,7 @@ mod tests {
             models_dir: PathBuf::from("/d/models"),
             gallery_dir: PathBuf::from("/g"),
             snapshot_ms: 1000,
+            dataset: mvm_dataset::DatasetConfig::default(),
         };
         let a = server_args(&product, false);
         assert_eq!(a, vec!["serve", "--mcp", "--logs", "/d", "--state", "/d/current_state.md"]);

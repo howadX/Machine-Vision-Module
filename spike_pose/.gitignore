@@ -5,9 +5,19 @@ ceiling_test/
 # Reproduce with: python spike_data.py && python train_pose_p1.py
 # (the crate keeps its own committed copies under mvm-posture/src/).
 data_probe/
+
+# CMU mocap BVH cache (phase 15.0.1); reproduce via mocap_to_views.py (pulls per-subject from GitHub).
+mocap_bvh/
 pose_p1_weights.bin
 pose_rf_forest.bin
 pose_vae_public.bin
 pose_p1_config.json
 pose_p1_golden.in
 golden_pose_p1.json
+
+# OpenImages pose pilot: image + CSV cache (regenerable via openimages_fetch.py / _relations.py).
+oi_images/
+oi_meta/
+
+# LJ1 ship artifacts (regenerable via lj1_build_ship.py)
+ship/

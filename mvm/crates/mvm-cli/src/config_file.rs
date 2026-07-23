@@ -26,6 +26,10 @@ pub struct FileConfig {
     pub gallery: GallerySection,
     #[serde(default)]
     pub cadence: CadenceSection,
+    /// Dataset Factory `[dataset]` section (phase 16.1.1). The struct lives in
+    /// `mvm-dataset`; here it is just deserialized and its `dir` tilde-expanded.
+    #[serde(default)]
+    pub dataset: mvm_dataset::DatasetConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -77,6 +81,8 @@ pub struct ProductConfig {
     pub models_dir: PathBuf,
     pub gallery_dir: PathBuf,
     pub snapshot_ms: u64,
+    /// Dataset Factory config (phase 16.1). `dataset.dir` is already tilde-expanded.
+    pub dataset: mvm_dataset::DatasetConfig,
 }
 
 type EnvFn<'a> = &'a dyn Fn(&str) -> Option<String>;
@@ -158,6 +164,11 @@ pub(crate) fn resolve(
         .or(file.cadence.snapshot_ms)
         .unwrap_or(1000);
 
+    // Dataset Factory (phase 16.1): the section comes wholesale from the file
+    // (serde defaults fill the rest); only its storage dir needs tilde expansion.
+    let mut dataset = file.dataset;
+    dataset.dir = expand_tilde(&dataset.dir, &home).to_string_lossy().into_owned();
+
     ProductConfig {
         camera_device,
         camera_width,
@@ -167,6 +178,7 @@ pub(crate) fn resolve(
         models_dir,
         gallery_dir,
         snapshot_ms,
+        dataset,
     }
 }
 

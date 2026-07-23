@@ -1,0 +1,15 @@
+[package]
+name = "mvm-dataset"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MVM Dataset Factory — semantic export layer (Canonical Observation, Semantic Router, DatasetWriter)"
+
+[dependencies]
+mvm-core = { path = "../mvm-core" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Session metadata is written as TOML; also used to parse the [dataset] section
+# in tests. Not an ML framework — allowed dataset-layer dep (invariant #2).
+toml = "0.8"

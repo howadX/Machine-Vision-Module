@@ -6,8 +6,9 @@
 
 Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо.
 
-![phase](https://img.shields.io/badge/phase-14%20closed-8A2BE2)
-![tests](https://img.shields.io/badge/tests-597%20green-brightgreen)
+![version](https://img.shields.io/badge/version-0.2.0-8A2BE2)
+![phase](https://img.shields.io/badge/phase-15.6%20ML--refactor-8A2BE2)
+![tests](https://img.shields.io/badge/tests-608%20green-brightgreen)
 ![crates](https://img.shields.io/badge/crates-12-informational)
 ![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
 ![fusion](https://img.shields.io/badge/fusion-%2B0%20deps-success)
@@ -39,10 +40,10 @@ Zone «workstation»: Вадим(0), laptop(10001), mouse(10002)
 
 | id | who     | dist | posture        | motion | emotion        | head   | hands       |
 |----|---------|------|----------------|--------|----------------|--------|-------------|
-| 0  | Вадим ✓ | 0.8m | sitting (high) | idle   | Neutral (high) | camera | using_mouse |
+| 0  | Вадим ✓ | 0.8m | sitting (high) | idle   | Neutral (high) | camera | using_object(mouse) |
 | 10 | anon    | 1.0m | standing (med) | idle   | —              | —      | —           |
 
-Active: seated_at_workstation · using_mouse
+Active: seated_at_workstation · using_object(mouse)
 
 ⚠️ id10: тело не подтверждено лицом (животное или упавший — не различить)
 ```
@@ -261,7 +262,7 @@ mvm --version
 | **mvm-detect** | YuNet ONNX (228 КБ) — лицо + 5 лендмарков |
 | **mvm-identity** | SFace ONNX (37 МБ), 128d L2-эмбеддинг, галерея + margin |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16 МБ), 8 классов VGAF + entropy |
-| **mvm-posture** | нативная BlazePose (two-stage) + feature→RandomForest (method-C, 3 класса) + VAE (OOD-only), мульти-persona |
+| **mvm-posture** | нативная BlazePose (two-stage) + feature→RandomForest (GRIP, 3 класса) + VAE (OOD-only), мульти-persona |
 | **mvm-scene** | YOLO26n ONNX (объекты) + ObjectTracker + YOLO-seg (`--masks`) + object-permanence статичных фикстур |
 | **mvm-depth** | Depth-Anything-V2-Small ONNX → depth-anchoring к торс-Z |
 | **mvm-hands** | MediaPipe handpose ONNX (21 lm/рука), ROI из запястий |
@@ -270,7 +271,7 @@ mvm --version
 | **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
 | **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`, рендер snapshot/recap, MCP-сервер, StateFile |
 
-**597 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
+**608 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
 модели YuNet/BlazePose/RF, крупные ONNX грузятся из models-dir — см. «Сборка и запуск»).
 
 ### Микро-агенты и модели
@@ -293,7 +294,7 @@ mvm --version
 
 ```bash
 cargo build --release          # → target/release/mvm
-cargo test --workspace         # 597 тестов
+cargo test --workspace         # 608 тестов
 cargo xtask bundle             # → dist/mvm (embed мелких моделей: YuNet + BlazePose + RF/VAE)
 
 # Модели: sha256-проверенный fetch в models-dir (9/9: 7 upstream-источников
@@ -348,12 +349,38 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **12** | ✅ | **LLM-render** — pull-модель (snapshot / recap ~190× / inspect), токен-диета, MCP stdio-сервер |
 | **13** | ✅ | **Agent Tools/Skills Polishing** — когерентный CLI-дерево, `--help`, [`AGENT.md`](AGENT.md), самодокументирующие MCP-описания |
 | **14** | ✅ | **Продукт** — ✅ 14.0 XDG-пути/config.toml/авто-детект камеры/бинарь `mvm`/doctor · ✅ 14.1 `mvm setup` (fetch+sha256+resume) · ✅ 14.2 watched-галерея (`gallery/<Имя>/`, drag-and-drop) · ✅ 14.3 `serve --with-camera` (единый демон) · ✅ 14.4 `mcp install` · ✅ 14.5 `service install` (systemd user) · ✅ 14.6 дистрибуция (GitHub Releases + `curl\|sh`; анонимный `curl` — после public-flip репо) |
+| **15 → v0.2.0** | ✅ | **ML Refactor** (лаб-фёрст на CMU mocap + OpenImages, журналы LJ0–6) — поза 2D-GRIP z-free + Mahalanobis↔VAE (footprint −79%) · SL-вето падений · tracker stale-relink · E2 scene-level fall · SFace align-fix (+19.5 п.п.) · словарь v2. Порт-акты P0–P8 → релиз **v0.2.0** |
+
+---
+
+## Паспорт качества v0.2.0
+
+Каждое число — через замороженный протокол (`spike_pose/bench.py`, SEED=0, grouped bootstrap CI,
+data+code паспорт), журналы **LJ0–LJ6** (Kaggle). Ось — скорость / точность / вес.
+
+| Ось | Что | Измерено |
+|-----|-----|----------|
+| **Поза** | 2D-GRIP (z=0) на gold R3, cross-domain | **0.894** [0.880, 0.907] (был 0.83 lab-only; z-3D рушится до 0.62) — LJ1 |
+| **Вес** | footprint позы (forest + Mahalanobis + flexion) | **1068 → 222 КБ (−79%)**; VAE 195 КБ выкинут — LJ1/LJ5 |
+| **Падения** | E2 scene-level fall (скорость таза + пол) | AUROC ≈ **1.000**; прод per-id правило было 3/10 FA → 0 — LJ2/LJ4 |
+| **Переходы** | ложный `standing↔lying` флип под окклюзией | **→ 0** (SL-вето, Δ CI [−3.62, −0.43]) — LJ2 |
+| **Трекер** | walking-фрагментация (stale-identity relink) | Δ med **−4.70** / heavy **−8.25** (established); idle 0/0 — LJ3 |
+| **Identity** | SFace/LFW, align-фикс кропа | unaligned 0.783 → **aligned 0.978** (+19.5 п.п., +0 вес); TAR@FAR=1e-3 0.17→0.95 — LJ5 |
+| **Эмоция** | RAF-DB held-out balanced-acc | **0.665** [0.643, 0.688] (neg-control healthy) — LJ5 |
+| **Скорость** | человеко-цепочка (YuNet+SFace+emotion+BlazePose) | **16.7 мс** all-cores (<50 PASS), ONNX 121.7 MiB — LJ5 |
+
+**Изменения контракта в v0.2.0** (детали — [`AGENT.md`](AGENT.md)):
+1. **`torso_flexion`** — новое опциональное поле позы (непрерывный наклон торса, °) в StateFile/JSON/MCP/snapshot.
+2. **Словарь активностей v2** — `typing/using_mouse/using_phone/reading → using_object(<class>)`; `watching_tv` убран (VRD-аудит: 0 supervisable-инстансов; «смотрит ТВ» — это head-facing, не wrist-контакт). `holding_drink` сохранён.
+3. **Семантика pose-OOD** — `plausibility` теперь от Mahalanobis-дистанции (не VAE-logpz); `recon_error` deprecated → всегда `None` (поле оставлено для схемы). Новый `Config.camera_height_m` (1.75) — floor-reference для E2.
 
 ---
 
 ## Честные ограничения
 
-- **Walking-фрагментация** — ходящий человек может дробиться на фантомные треки → ложные `people_together` (честно `stable=false`). Person-маски (11.A3, `--masks`, ≥2 чел.) лечат основную часть; остаточный фантом ужимается гейтами.
+- **Walking-фрагментация** — ходящий человек может дробиться на фантомные треки → ложные `people_together` (честно `stable=false`). Person-маски (11.A3, `--masks`, ≥2 чел.) лечат основную часть; остаточный фантом ужимается гейтами. 15.6-порт (stale-identity relink) режет структурный корень (Δ med −4.70/heavy −8.25).
+- **Поза z-free, sit↔stand у фронтального стола** — 2D-GRIP выкидывает MediaPipe-z (кросс-доменная бомба, LJ1) вместе с глубинным сигналом бедра → *фронтальный* сидящий за столом может прочитаться `standing` на near-tie (замерено `p_V_06` .42 vs .48). Инвариант безопасности держится (никогда ложный `lying`); relational-слой даёт `seated_at_workstation` независимо.
+- **Падения — порог с потолком** — E2 калиброван на трюковых CMU-падениях (быстрых) → ограничивает клинический порог *сверху*; мягкое падение пожилого может просесть медленнее. `camera_height_m` наследует некалиброванный масштаб → floor-гейт 0.35 м приблизителен.
 - **Абсолют 3D приблизителен** (`torso_length_m`/`fx` не откалиброваны рулеткой) — ординал/относительное надёжны, метрика ±15–30%.
 - **Объекты под нестандартным ракурсом** — COCO out-of-distribution; лучший рычаг — угол камеры, не пороги детектора.
 - **`fps` в StateFile** = темп **доставки** кадров, не темп обработки человеко-цепочки.

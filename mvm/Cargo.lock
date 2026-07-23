@@ -525,12 +525,13 @@ dependencies = [
 
 [[package]]
 name = "mvm-cli"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
  "image",
  "mvm-core",
+ "mvm-dataset",
  "mvm-depth",
  "mvm-detect",
  "mvm-emotion",
@@ -550,14 +551,25 @@ dependencies = [
 
 [[package]]
 name = "mvm-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
 ]
 
 [[package]]
+name = "mvm-dataset"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "mvm-core",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "mvm-depth"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -569,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-detect"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -581,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-emotion"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -593,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-fusion"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "mvm-core",
@@ -601,7 +613,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-hands"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -612,7 +624,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-identity"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -624,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-mesh"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -633,7 +645,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-pipeline"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -645,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-posture"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -658,7 +670,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-scene"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "image",
@@ -1478,7 +1490,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.3.0"
 
 [[package]]
 name = "zeroize"

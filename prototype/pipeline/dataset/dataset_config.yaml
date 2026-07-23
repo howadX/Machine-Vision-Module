@@ -1,0 +1,37 @@
+# MVM Dataset Factory — export filters (phase 16.4).
+#
+# Selects which recorded frames enter a training view. Every key is optional;
+# omit one to leave it unconstrained. Filters are quality-aware: they read the
+# per-signal confidence / entropy / status the recorder preserved. A `withheld`
+# posture is honestly absent — it never satisfies a `postures` requirement and is
+# never treated as a negative class.
+#
+# A frame passes when: it clears every frame-level constraint AND (if any
+# person-level constraint is set) at least one person satisfies all of them.
+
+filters:
+  # --- person-level (≥1 person must satisfy the active ones) ---
+  postures: []                 # e.g. [sitting, standing] — keep frames with such a person; [] = any
+  min_posture_confidence: 0.0
+  min_emotion_confidence: 0.0  # drop low-confidence emotion labels
+  emotion_entropy_max: 1.0     # 1.0 = keep all; 0.5 drops near-chance predictions
+  require_identity: false      # keep only frames with a gallery-recognised person
+
+  # --- frame-level ---
+  activities: []               # e.g. [using_object(cell phone)] — keep frames tagged with ≥1; [] = any
+  require_depth: false         # keep only frames that have a depth map
+  min_people: 0                # keep frames with at least this many people
+
+# Example task presets (copy into `filters:` above):
+#
+#   posture classifier (clean, confident):
+#     postures: [sitting, standing, lying]
+#     min_posture_confidence: 0.6
+#
+#   emotion on real faces (drop near-chance):
+#     require_identity: false
+#     min_emotion_confidence: 0.5
+#     emotion_entropy_max: 0.5
+#
+#   self-supervised depth (RGB → depth):
+#     require_depth: true
