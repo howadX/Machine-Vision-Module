@@ -7,8 +7,8 @@
 Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо. Два потребителя: LLM/MCP + **Dataset Factory** (фаза 16).
 
 ![version](https://img.shields.io/badge/version-0.3.0-8A2BE2)
-![phase](https://img.shields.io/badge/phase-16.6--A%20Dataset--Factory-8A2BE2)
-![tests](https://img.shields.io/badge/tests-670%20green-brightgreen)
+![phase](https://img.shields.io/badge/phase-16.7%20Semantic--Session--Log-8A2BE2)
+![tests](https://img.shields.io/badge/tests-689%20green-brightgreen)
 ![crates](https://img.shields.io/badge/crates-13-informational)
 ![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
 ![fusion](https://img.shields.io/badge/fusion-%2B0%20deps-success)
@@ -96,17 +96,19 @@ mvm serve --mcp --with-camera  # единый процесс: продюсер +
 Тот же scene-graph питает второго потребителя: **накопительную структурированную память** для обучения. Не архив кадров — **компилятор наблюдений** в интерпретируемые обучающие записи. Крейт `mvm-dataset` — чистый потребитель WorldState (как StateFileWriter), **ноль ML-фреймворков** в ядре.
 
 ```bash
-mvm run --record                 # копить сессии (privacy=safe по умолчанию)
+mvm run                          # по умолчанию: text-only семантическая сессия (без пикселей, 16.7)
+mvm run --record                 # доростить до пиксельного датасета (privacy=safe по умолчанию)
 mvm dataset list                 # что накоплено (info / stats / prune / export)
 mvm dataset check [--strict]     # data-quality гейт: целостность/privacy/баланс → exit-code (CI)
 mvm dataset export               # → готовые команды к Python-экспортёрам
 ```
 
-- **Self-describing на диске:** `sessions/<id>/` = `frames/` + `depth/` (16-бит, обратимо) + маски (RLE) + `labels.jsonl` (Canonical Observation на кадр) + `session.toml`. Папку можно скопировать на другую машину.
+- **Self-describing на диске:** `sessions/<id>/` = `labels.jsonl` (Canonical Observation на кадр) + `session.toml`, а под `--record` ещё `frames/` + `depth/` (16-бит, обратимо) + маски (RLE). Папку можно скопировать на другую машину.
+- **Единый durable vision-лог (фаза 16.7):** `mvm run` по умолчанию пишет **text-only** семантическую сессию (SCHEMA 16.7.0: entities + relations зон/рёбер + per-frame activities + завершённые events); плоские `scene-*.jsonl`/`events-*.jsonl` ретайрнуты (legacy `--scene-log`); `recap`/`inspect`/journal читают сессии. `--no-vision-log` выключает запись.
 - **Semantic Router G₁–G₅** маршрутизирует сигналы по ветвям (Human/Scene/Interaction/Temporal/Quality); provenance и статусы честности (`observed/derived/temporal/weak/withheld/unknown`) сохраняются. `withheld`/`unknown` **никогда** не становятся отрицательным классом.
-- **Privacy-first:** `safe` (default) размывает лица анонимов, оставляет галерейных чёткими; `anonymous` — всех; `full` — всё. Флаг `--privacy`.
+- **Privacy-first:** text-only по умолчанию (без пикселей вообще); под `--record` — `safe` (default) размывает лица анонимов, оставляет галерейных чёткими; `anonymous` — всех; `full` — всё. Флаг `--privacy`.
 - **Экспорт — Python** (`prototype/pipeline/dataset/`): PyTorch `IterableDataset` / TFRecord / WebDataset + quality-aware фильтры + `validate.py` (пиксельный гейт). ML-deps живут здесь, не в Rust-ядре (инвариант #2).
-- **16.6-A ✅** data-quality гейты; **16.6-B** (hard-example mining) — впереди. План — [`docs/phase-16-plan.md`](docs/phase-16-plan.md).
+- **16.6-A ✅** data-quality гейты; **16.7 ✅** Semantic Session Log (live-провалидирована); **16.6-B** (hard-example mining) — впереди. Планы — [`docs/phase-16-plan.md`](docs/phase-16-plan.md), [`docs/phase-16.7-plan.md`](docs/phase-16.7-plan.md).
 
 ---
 
@@ -290,10 +292,10 @@ mvm --version
 | **mvm-fusion** | `build_scene` (union-find граф + зоны) + PoE; `ZoneTracker` (persistence) |
 | **mvm-mesh** | Agent trait + `LatestFrame` + `AgentMesh` оркестратор на std::thread |
 | **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
-| **mvm-dataset** | ★ Dataset Factory (фаза 16, чистый потребитель WorldState): Canonical Observation + Semantic Router G₁–G₅ + `DatasetWriter` (сессии/JSONL/session.toml) + privacy-blur + `validate` (data-quality гейт). Deps: serde/toml — **ноль ML-фреймворков** |
-| **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/**`dataset`**, рендер snapshot/recap, MCP-сервер, StateFile, `--record` рекордер |
+| **mvm-dataset** | ★ Dataset Factory (фаза 16/16.7, чистый потребитель WorldState): Canonical Observation (SCHEMA 16.7.0) + Semantic Router G₁–G₅ (`route_with_relations`: зоны/рёбра/активности/эпизоды) + `DatasetWriter` (сессии/JSONL/session.toml) + `effective_recorder` (default-on text-only) + privacy-blur + `validate` (data-quality гейт). Deps: serde/toml — **ноль ML-фреймворков** |
+| **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/**`dataset`**, рендер snapshot/recap (читают семантические сессии, 16.7), MCP-сервер, StateFile, text-only/`--record` рекордер |
 
-**670 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
+**689 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
 модели YuNet/BlazePose/RF, крупные ONNX грузятся из models-dir — см. «Сборка и запуск»).
 
 ### Микро-агенты и модели
@@ -316,7 +318,7 @@ mvm --version
 
 ```bash
 cargo build --release          # → target/release/mvm
-cargo test --workspace         # 670 тестов
+cargo test --workspace         # 689 тестов
 cargo xtask bundle             # → dist/mvm (embed мелких моделей: YuNet + BlazePose + RF/VAE)
 
 # Модели: sha256-проверенный fetch в models-dir (9/9: 7 upstream-источников
@@ -373,6 +375,7 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **14** | ✅ | **Продукт** — ✅ 14.0 XDG-пути/config.toml/авто-детект камеры/бинарь `mvm`/doctor · ✅ 14.1 `mvm setup` (fetch+sha256+resume) · ✅ 14.2 watched-галерея (`gallery/<Имя>/`, drag-and-drop) · ✅ 14.3 `serve --with-camera` (единый демон) · ✅ 14.4 `mcp install` · ✅ 14.5 `service install` (systemd user) · ✅ 14.6 дистрибуция (GitHub Releases + `curl\|sh`; анонимный `curl` — после public-flip репо) |
 | **15** | ✅ | **ML Refactor** (лаб-фёрст на CMU mocap + OpenImages, журналы LJ0–6) — поза 2D-GRIP z-free + Mahalanobis↔VAE (footprint −79%) · SL-вето падений · tracker stale-relink · E2 scene-level fall · SFace align-fix (+19.5 п.п.) · словарь v2. Порт-акты P0–P8. Свёрнута в код **v0.3.0** (v0.2.0 отдельным тегом не выпускалась) |
 | **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (+крейт `mvm-dataset`, чистый потребитель WorldState) — двухпотребительская архитектура: `mvm run --record` → self-describing сессии (RGB+depth+masks+labels), Semantic Router G₁–G₅, privacy-слой, Python-экспортёры (PyTorch/TFRecord/WebDataset), **16.6-A data-quality гейты** (`mvm dataset check` + `validate.py`). Осталось 16.6-B (hard-example mining). Детали — [`docs/phase-16-plan.md`](docs/phase-16-plan.md) |
+| **16.7** | ✅ live | **Semantic Session Log** — свела два стора истории сцены в один: `mvm run` по умолчанию пишет **text-only семантическую сессию** (SCHEMA 16.7.0 с relations/activities/events), плоские `scene-*.jsonl`/`events-*.jsonl` ретайрнуты; `recap`/`inspect`/journal читают сессии; `--record` = пиксели. Live-провалидировано (4-мин камера). Детали — [`docs/phase-16.7-plan.md`](docs/phase-16.7-plan.md) |
 
 ---
 

@@ -44,16 +44,18 @@ call has pointed you at a specific moment or track id.
    `mvm inspect` — or just read the files a running producer keeps fresh:
    `current_state.md` (the snapshot) and `journal.md` (a rolling recap of the day).
 
-The **producer** must be running for any of this to have data:
-`mvm run --scene-log <DIR>` (camera + all models → StateFile + durable
-`scene-*.jsonl` / `events-*.jsonl` logs in `<DIR>`). `snapshot` reads the
-StateFile; `recap`/`inspect` read the logs.
+The **producer** must be running for any of this to have data: just `mvm run`
+(camera + all models → StateFile + a durable, text-only **semantic session**
+under `~/.local/share/mvm/datasets/sessions/`, on by default since phase 16.7).
+`snapshot` reads the StateFile; `recap`/`inspect` read the sessions (no flag —
+they resolve the default data dir). The old flat `scene-*.jsonl`/`events-*.jsonl`
+logs are retired; pass `--scene-log <DIR>` only if you need them for back-compat.
 
 ```
-mvm run --scene-log ~/vision/logs     # producer (start once, leave running)
+mvm run                               # producer (start once, leave running)
 mvm snapshot                          # what's happening now
-mvm recap  --input ~/vision/logs --last 10m
-mvm inspect --input ~/vision/logs --around 2026-07-05T17:51:23 --window 5
+mvm recap   --last 10m                # summary over the default session store
+mvm inspect --around 2026-07-05T17:51:23 --window 5
 ```
 
 ## How to read a snapshot
@@ -114,12 +116,12 @@ stable markers to match on.)
 
 ## A cadence caveat for `inspect`
 
-Two logs run at different rates: the **event journal** (`events-*.jsonl`) records
-activity start/stop **per frame**, but the **scene log** (`scene-*.jsonl`, what
-`inspect` reads) is written at the **dump cadence**. A very brief event can appear
-in a recap's episode list yet have **no matching scene frame** in the inspected
-window. Absence in `inspect` doesn't disprove a recap episode; it means the moment
-fell between scene dumps. Widen `--window` before concluding.
+A semantic session records per-frame observations at the **record cadence**, while
+completed **episodes** are written inline on the exact frame they close. A very brief
+episode can appear in a recap's activity list yet have **no matching per-frame
+observation** in the inspected window. Absence in `inspect` doesn't disprove a recap
+episode; it means the moment fell between recorded frames. Widen `--window` before
+concluding.
 
 ## Contract changes since v0.1.0 (the ML-refactor line, shipped in v0.3.0)
 
@@ -142,23 +144,28 @@ the current release **v0.3.0** (a v0.1.0 consumer upgrading to v0.3.0 sees all t
 
 ## Recording a dataset (the second consumer)
 
-Beyond answering "what's happening now", MVM can **accumulate** what it sees as a
-structured, self-describing dataset — the Dataset Factory (phase 16). This is memory,
+Beyond answering "what's happening now", MVM **accumulates** what it sees as a
+structured, self-describing store — the Dataset Factory (phase 16/16.7). This is memory,
 not an archive: each recorded frame is a Canonical Observation with provenance and
-honest label statuses, not just pixels.
+honest label statuses, not just pixels. Since phase 16.7 the store is **on by default**:
+`mvm run` keeps a durable **text-only** semantic session (labels only, no pixels);
+`--record` upgrades it to a full pixel dataset; `--no-vision-log` turns it off.
 
 ```
-mvm run --record            # producer + recorder (privacy=safe by default)
+mvm run                     # default: text-only semantic session (durable vision log)
+mvm run --record            # upgrade to a pixel dataset (privacy=safe by default)
 mvm dataset list            # sessions on disk (frames, participants, activities)
 mvm dataset info <id>       # one session in detail
 mvm dataset stats           # dataset-wide totals
 mvm dataset check [id]      # data-quality gate — exit 1 on any error (CI-gateable)
+mvm dataset prune --keep N  # retention (drop old sessions)
 mvm dataset export          # → ready-to-run Python export commands (PyTorch/TFRecord/WebDataset)
 ```
 
-- **Self-describing on disk.** A session is `frames/` + `depth/` + masks + `labels.jsonl`
-  (one observation per frame) + `session.toml`. Copy the folder to another machine and
-  it still works. Details: `prototype/pipeline/dataset/README.md`.
+- **Self-describing on disk.** A session is `labels.jsonl` (one observation per frame,
+  carrying entities + zones/edges + activities + completed episodes) + `session.toml`;
+  under `--record` also `frames/` + `depth/` + masks. Copy the folder to another machine
+  and it still works. Details: `prototype/pipeline/dataset/README.md`.
 - **Same honesty contract.** A `withheld` posture is recorded as withheld, **never** as a
   negative class — absence is data (§16.0.2). The exporters and `check` enforce this.
 - **Privacy-first.** `safe` (default) blurs anonymous faces and keeps only gallery

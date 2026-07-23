@@ -8,9 +8,15 @@
 
 ## Статус
 
-- **Фаза 15 (ML Refactor) ЗАКРЫТА; Фаза 16 (Dataset Factory) — 16.0–16.6-A закрыты и live-провалидированы
-  (ветка `kaggle`). 13 крейтов, 670 Rust-тестов** (1 ignored — live-камера) + Python-группы (экспортёры +
-  validate-гейт). **Осталось: 16.6-B** (hard-example mining, зависит от накопленных данных).
+- **Фаза 15 (ML Refactor) ЗАКРЫТА; Фаза 16 (Dataset Factory) 16.0–16.6-A + Фаза 16.7 (Semantic Session Log)
+  закрыты и live-провалидированы (ветка `kaggle`). 13 крейтов, 689 Rust-тестов** (1 ignored — live-камера)
+  + Python-группы (экспортёры + validate-гейт). **Осталось: 16.6-B** (hard-example mining, зависит от данных).
+- **Фаза 16.7 — Semantic Session Log ✅:** свела два стора истории сцены в один. `mvm run` по умолчанию
+  пишет **text-only семантическую сессию** (`datasets/sessions/<id>/labels.jsonl`, без пикселей — durable
+  vision-лог, SCHEMA 16.7.0 с relations/activities/events); плоские `scene-*.jsonl`/`events-*.jsonl`
+  ретайрнуты (legacy `--scene-log`); `--record` доращивает до пиксельного датасета; `--no-vision-log`
+  выключает. `recap`/`inspect`/journal читают сессии (shim → те же ридеры). Live: 4-мин прогон, сессия
+  199 записей + 45 эпизодов, `dataset check` зелёный. План — `docs/phase-16.7-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,
@@ -20,9 +26,10 @@
   `mvm setup` (fetch+sha256), watched-галерея, `serve --with-camera`, `mvm mcp install`, `mvm service`,
   дистрибуция через GitHub Releases.
 - **Что живо:** `mvm run` (Agent-Mesh, чистый Rust, ~16 fps с человеком) пишет метрич. 3D scene-graph +
-  `snapshot`/`recap`/`journal` в `~/.local/share/mvm`; `mvm serve --mcp` отдаёт это LLM read-only.
-  **Фаза 16:** `mvm run --record` копит сессии-датасеты (RGB+depth+masks+labels, privacy-safe),
-  `mvm dataset list/info/stats/prune`, Python-экспортёры в `prototype/pipeline/dataset/`.
+  `snapshot`/`recap`/`journal` в `~/.local/share/mvm` + **default-on text-only семантическую сессию**
+  (16.7); `mvm serve --mcp` отдаёт это LLM read-only. **Фаза 16:** `mvm run --record` доращивает сессию до
+  пиксельного датасета (RGB+depth+masks+labels, privacy-safe), `mvm dataset list/info/stats/check/prune`,
+  Python-экспортёры в `prototype/pipeline/dataset/`.
 - **История фаз — таблица Roadmap ниже. Детальные runbook'и закрытых фаз — `mvm/docs/phase-*.md`.**
 - **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь.
 
@@ -70,17 +77,19 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 670 тестов
+cargo test --workspace         # 689 тестов
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
 # Фаза 14.0: камера авто-детект, state+логи+journal → ~/.local/share/mvm (XDG), конфиг ~/.config/mvm/config.toml
 cargo run --release -- run --dump-json                       # живой (камера + все модели); `mesh` = алиас
+                                                             #   ↑ по умолчанию пишет text-only сессию (16.7)
 cargo run --release -- run --stub --max-frames 100           # model-free CI-smoke
 
-# Dataset Factory (фаза 16): запись сессий + инспекция
-cargo run --release -- run --record                          # копить датасет (RGB+depth+labels; privacy-safe)
-cargo run --release -- dataset list                          # сессии на диске (info/stats/prune/export)
+# Dataset Factory (фаза 16/16.7): text-only сессия по умолчанию; --record = пиксели
+cargo run --release -- run --record                          # доростить до пиксельного датасета (RGB+depth+labels)
+cargo run --release -- run --no-vision-log                   # выключить запись целиком
+cargo run --release -- dataset list                          # сессии на диске (info/stats/check/prune/export)
 # Python-экспортёры (PyTorch/TFRecord/WebDataset) — prototype/pipeline/dataset/
 
 # Синхронные пути (живы)
@@ -110,7 +119,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-hands** | MediaPipe handpose ONNX (4МБ), 21 lm/рука, ROI из запястий BlazePose [8.E.4] |
 | **mvm-mesh** | Agent trait + `LatestFrame` (single-slot latest-wins) + `AgentMesh` оркестратор на std::thread [8.C] |
 | **mvm-pipeline** | Camera (Python bridge subprocess) + NativeCamera (v4l2 MJPG) |
-| **mvm-dataset** | ★ **Dataset Factory (фаза 16)** — чистый потребитель WorldState. `observation` (Canonical Observation, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания), `router` (Semantic Router G₁–G₅), `config` (`DatasetConfig`), `writer` (`DatasetWriter`: сессии+JSONL+session.toml), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`), **`validate` (16.6-A data-quality gate: integrity/binding-keys/mask-RLE/depth-range/privacy-leak + stats → `mvm dataset check`)**. Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
+| **mvm-dataset** | ★ **Dataset Factory (фаза 16/16.7)** — чистый потребитель WorldState. `observation` (Canonical Observation SCHEMA 16.7.0, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания, +`activities`), `router` (Semantic Router G₁–G₅ + `route_with_relations`: relations/activities/events из WorldState+`SceneRelations`), `config` (`DatasetConfig`, `vision_log`/`effective_recorder` — 16.7 default-on text-only), `writer` (`DatasetWriter`: сессии+JSONL+session.toml, text-only-гейт), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`), **`validate` (16.6-A data-quality gate → `mvm dataset check`)**. Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
 | **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`/**`dataset`**; `pipeline.rs` (BodyPrimaryPipeline), `agents/` (+`dataset_writer` 16.1.2b), `dataset_cmd.rs` (16.3), `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
 
 > Модели ONNX (YuNet/SFace/EmotiEffLib/BlazePose/YOLO26n/Depth-Anything/handpose) — единый **манифест**
@@ -236,6 +245,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **14 → v0.1.0** | ✅ | Продукт: XDG/config, `setup`/`doctor`, watched-галерея, `serve --with-camera`, `mcp install`, `service`, дистрибуция v0.1.0 |
 | **15** | ✅ | ML Refactor (`kaggle`, lab-first, журналы LJ0–LJ6): 15.0 лаб+бенч · 15.1 поза (2D-GRIP z-free, flexion, Mahalanobis↔VAE, footprint −79%) · 15.2 переходы (E2 fall «пол+скорость таза», AUROC 1.000) · 15.3 трекер (stale-relink фикс) · 15.4 golden-симулятор + словарь v2 `using_object(class)` · 15.5 паспорт+диета (⭐ SFace align +19.5 п.п.) · 15.6 Rust-порт P0–P8. Свёрнута в код v0.3.0 (v0.2.0 отдельным тегом не выпускалась). Детали — `docs/phase-15-plan.md`, `docs/phase-15.6-port-plan.md` |
 | **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`--privacy` флаг) · **16.6-A ✅** data-quality gates (`mvm dataset check` + Python `validate.py`, CI exit-code). Всё live-провалидировано, релиз v0.3.0. **Осталось:** 16.6-B (hard-example mining). План — `docs/phase-16-plan.md` |
+| **16.7** | ✅ live | **Semantic Session Log** (`kaggle`): два стора истории сцены → один. **1 ✅** text-only запись (`save_frames`) · **1.5 ✅** обогащение роутера (relations/activities/events, SCHEMA 16.7.0, `route_with_relations`+`SceneRelations`) · **2 ✅** миграция ридеров (recap/inspect читают сессии через flat-shape shim + `Source`-resolver, golden-паритет) · **3 ✅** default-on text-only (`effective_recorder`, `vision_log`, ретайр плоских логов, `--no-vision-log`). Live-провалидировано (4-мин камера). План — `docs/phase-16.7-plan.md` |
 
 ## Терминология
 

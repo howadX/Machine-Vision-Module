@@ -1,10 +1,13 @@
 # MVM Dataset Factory — exporters (phase 16.4)
 
-Turn recorded MVM sessions into ML-ready datasets. The Rust side
-(`mvm run --record`) accumulates self-describing sessions; this Python layer
-compiles them into PyTorch / TFRecord / WebDataset views. Python is the research
-consumer's ecosystem, so the ML-framework deps live **here**, never in the Rust
-core (invariant #2).
+Turn recorded MVM sessions into ML-ready datasets. The Rust side accumulates
+self-describing sessions; this Python layer compiles them into PyTorch / TFRecord
+/ WebDataset views. Python is the research consumer's ecosystem, so the
+ML-framework deps live **here**, never in the Rust core (invariant #2).
+
+> **Needs pixel sessions.** Since phase 16.7 `mvm run` records **text-only** sessions
+> by default (labels only, no `frames/`/`depth/`). These exporters consume pixels, so
+> record with **`mvm run --record`** to produce sessions the image/depth loaders can read.
 
 ## Input: a recorded session
 

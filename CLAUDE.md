@@ -20,8 +20,9 @@ MVM — **ансамбль независимых микро-агентов зр
 **явно** (`withheld` / ⚠️), а не замалчивается — модуль скорее скажет «поза withheld, видна только верхняя
 часть», чем угадает. `withheld`/`unknown` **никогда** не превращаются в отрицательный класс.
 
-**Два потребителя** (фаза 16): (1) **LLM / MCP** — pull-модель `snapshot`/`recap`/`inspect`, read-only;
-(2) **Dataset Factory** — `mvm run --record` компилирует каждый кадр в структурированную обучающую память.
+**Два потребителя** (фаза 16): (1) **LLM / MCP** — pull-модель `snapshot`/`recap`/`inspect`, read-only,
+поверх durable text-only семантической сессии (default-on, фаза 16.7); (2) **Dataset Factory** —
+`mvm run --record` доращивает ту же сессию до полного пиксельного датасета (обучающая память).
 
 ## Структура
 
@@ -31,7 +32,7 @@ MVM — **ансамбль независимых микро-агентов зр
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (13 крейтов, 670 тестов; фазы 5–16.6-A закрыты, 16.6-B осталось)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (13 крейтов, 689 тестов; фазы 5–16.7 закрыты, 16.6-B осталось)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, dataset, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   ├── CHANGELOG.md#   версии бинаря (0.1.0 → 0.3.0)
@@ -86,6 +87,13 @@ live-провалидированы:** Semantic Contract (Canonical Observation 
 CLI `mvm dataset` → Python-экспортёры → точный YuNet-face-bbox privacy → **16.6-A data-quality гейты**
 (`mvm dataset check` + `validate.py`, CI exit-code). **Осталось:** 16.6-B (hard-example mining, зависит от
 накопленных данных). Детали — `mvm/CLAUDE.md`, план — `mvm/docs/phase-16-plan.md`.
+
+**Фаза 16.7 — Semantic Session Log ✅ (live-провалидирована, `kaggle`):** свела ДВА параллельных стора
+истории сцены в ОДИН. Раньше vision-история жила в плоских `scene-*.jsonl`/`events-*.jsonl`, а датасет —
+в session-организованных `labels.jsonl`. Теперь **`mvm run` по умолчанию пишет text-only семантическую
+сессию** (`labels.jsonl`, без пикселей — durable vision-лог), обогащённую relations/activities/events
+(SCHEMA 16.7.0); плоские логи ретайрнуты (legacy `--scene-log`); `--record` — полный пиксельный датасет;
+`recap`/`inspect`/journal читают сессии. План — `mvm/docs/phase-16.7-plan.md`.
 
 ## Для Agents
 
