@@ -119,7 +119,9 @@ impl DatasetWriterAgent {
     fn step(&mut self, ctx: &MeshContext, frame: &Frame) -> anyhow::Result<bool> {
         let now = Instant::now();
         let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S").to_string();
-        let iso = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string();
+        // Full RFC3339 (with UTC offset) so downstream readers (`recap --last`,
+        // `inspect --around`) can parse the semantic session timestamp (§16.7).
+        let iso = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string();
 
         // Snapshot the latest relative depth map (if enabled + available) BEFORE
         // the lock, so its [min,max] range can go into the label the writer builds.
@@ -225,7 +227,7 @@ impl Agent for DatasetWriterAgent {
             std::thread::sleep(Duration::from_millis(5));
         }
         // Finalize any open session on shutdown so its session.toml is written.
-        let ended = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f").to_string();
+        let ended = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string();
         if let Ok(mut w) = ctx.world.write() {
             let _ = self.writer.close_open_session(&mut w, &ended);
         }

@@ -12,8 +12,9 @@
 //! no `ort`/`image`. Mirrors the shape of [`crate::activity`].
 
 /// One frame's worth of observations the recap reads (the `recap` subcommand
-/// fills these from a `scene-*.jsonl` line).
-#[derive(Debug, Clone, Default)]
+/// fills these from a `scene-*.jsonl` line — or, since phase 16.7, from a
+/// semantic session `labels.jsonl` line projected to the same shape).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FrameObs {
     pub people: Vec<PersonObs>,
     /// Distinct object classes present this frame (background + foreground).
@@ -24,7 +25,7 @@ pub struct FrameObs {
 }
 
 /// A person as seen in one frame.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PersonObs {
     pub id: u32,
     pub dist_m: Option<f32>,
@@ -33,8 +34,9 @@ pub struct PersonObs {
     pub identity: Option<String>,
 }
 
-/// One completed activity episode (a `events-*.jsonl` line).
-#[derive(Debug, Clone)]
+/// One completed activity episode (a `events-*.jsonl` line, or an inline
+/// `{kind:"episode"}` record in a semantic session `labels.jsonl`, phase 16.7).
+#[derive(Debug, Clone, PartialEq)]
 pub struct EpisodeObs {
     pub label: String,
     /// Participants including object ids (≥ 10000) — dropped from the group key.

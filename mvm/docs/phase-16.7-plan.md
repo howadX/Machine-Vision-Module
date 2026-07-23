@@ -1,6 +1,6 @@
 # Фаза 16.7 — Semantic Session Log: конвергенция vision-логов
 
-> **Версия:** 0.2 (2026-07-23; Фазы 1 + 1.5 закрыты). Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0).
+> **Версия:** 0.3 (2026-07-23; Фазы 1 + 1.5 + 2 закрыты, осталась Фаза 3). Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0).
 > **Цель фазы:** свести два параллельных стора истории сцены в **один семантический session-лог**.
 > Сегодня MVM пишет vision-историю как плоские `scene-YYYY-MM-DD.jsonl` / `events-YYYY-MM-DD.jsonl`
 > (по дню, без session-дисциплины, без prune), а Dataset Factory пишет session-организованные
@@ -117,16 +117,34 @@
 - ✅ `mvm dataset check` зелёный: `schema_version==SCHEMA_VERSION` (нет drift-warn), обогащённые записи
   проходят валидатор.
 
-### Фаза 2 — миграция ридеров ⏳
+### Фаза 2 — миграция ридеров ✅ ЗАКРЫТА
 
-`recap_cmd.rs` / `render.rs` / journal читают `labels.jsonl` семантической сессии вместо
-`scene-*.jsonl`/`events-*.jsonl` (эпизоды — из инлайн `events`).
+`recap`/`inspect`/journal читают семантические сессии `labels.jsonl` **через shim**: каждое наблюдение
+проецируется в плоскую scene/event-форму (`scene_value_from_semantic`/`event_values_from_semantic` в
+`recap_cmd.rs`), после чего работают **те же** парсеры (`parse_frame_value`/`parse_episode_value`) и вся
+агрегация `mvm-core::recap` — один код-путь, паритет by-construction. Маппинг: `dist_m`←`position_3d.z`,
+posture/identity←`attributes.*.label`, zone-labels←zone-записи `relations`, episode participants
+`entity_id`→u32, `stable`→`stable_participants`.
 
-**Верификация:**
-- Golden: `recap` над семантической сессией даёт тот же episode/zone/activity-свод, что и над плоскими
-  логами (фикстура-сессия, сравнение вывода).
-- `snapshot`/`inspect` рендерят из семантической записи без потери полей (зоны, активности, ⚠️-ноты).
-- MCP-инструменты (`serve --mcp`) работают поверх нового пути.
+**Резолвер источника (`Source::{Flat,Semantic}`):** директория **предпочитает плоские логи**, если они есть
+(back-compat дефолт), иначе ищет сессии (`labels.jsonl` напрямую или под `sessions/`/`datasets/sessions/`).
+Этот fallback — то, что даст `recap` работать после Фазы 3 (когда плоские логи перестанут писаться).
+`render.rs` не тронут (рендерит `Recap`, источник-агностик). Агент теперь пишет timestamp полным RFC3339
+(`%:z`) — чтобы `recap --last`/`inspect --around` парсили семантические часы.
+
+**Верификация — сделано, 685 тестов зелёные (+5):**
+- ✅ **Golden-паритет кадра**: один `WorldState` → плоская scene-строка (реальный `to_json_line_world`) и
+  семантическое наблюдение (реальный `route_with_relations`) → **идентичный `FrameObs`** (люди/dist/поза/
+  identity, объекты, зоны, аномалия).
+- ✅ **Golden-паритет эпизода**: реальный `events_log_lines` vs роутер-инлайн `{kind:"episode"}` → идентичный
+  `EpisodeObs` (participants u32, stable).
+- ✅ Резолвер: flat-приоритет + semantic-fallback (tempdir).
+- ✅ E2E: `recap`/`inspect` над реальной семантической сессией на диске рендерят markdown (человек, зона,
+  compact md-строка с dist/позой). MCP `mvm_recap`/`mvm_inspect` идут тем же путём (dir → resolver).
+- `mvm-core::recap` типы получили `PartialEq` (аддитивно, для golden-сравнения).
+
+> Приоритет плоских логов при их наличии → дефолтный UX `recap` не меняется, пока Фаза 3 не сделает
+> text-only сессии дефолтом и не отключит запись плоских логов. Live-валидация (камера) — в Фазе 3.
 
 ### Фаза 3 — ретайр плоских логов + default-on ⏳
 
@@ -169,8 +187,9 @@ Text-only семантическая запись становится дефо�
 | `crates/mvm-dataset/src/writer.rs` | ✅ text-only frame-gating (Ф1) + `relations`-аргумент `record_frame` (Ф1.5) |
 | `crates/mvm-cli/src/agents/dataset_writer.rs` | ✅ владеет `ZoneTracker`, считает `SceneRelations` (Ф1.5); default-on wiring — Фаза 3 |
 | `crates/mvm-cli/src/state.rs` | ✅ `relation_kept` → `pub(crate)` (Ф1.5); ретайр `SceneLog` scene/events — Фаза 3 |
-| `crates/mvm-cli/src/recap_cmd.rs` | миграция чтения (Фаза 2) |
-| `crates/mvm-cli/src/render.rs` | рендер из семантической записи (Фаза 2) |
+| `crates/mvm-cli/src/recap_cmd.rs` | ✅ семантический shim + `Source` резолвер + чтение сессий (Фаза 2) |
+| `crates/mvm-core/src/recap.rs` | ✅ `PartialEq` на `FrameObs`/`PersonObs`/`EpisodeObs` (Ф2, golden-паритет) |
+| `crates/mvm-cli/src/render.rs` | не тронут — рендерит `Recap`, источник-агностик (Ф2) |
 
 ---
 
