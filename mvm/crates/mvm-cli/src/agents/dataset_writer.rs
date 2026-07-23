@@ -416,6 +416,35 @@ mod tests {
     }
 
     #[test]
+    fn default_on_recorder_writes_text_only_session() {
+        // §16.7-3: the default `mvm run` recorder (effective_recorder of a default
+        // config) is text-only — labels.jsonl + session.toml, no frames/ pixels.
+        let root = temp_root("textonly");
+        let mut cfg = DatasetConfig::default().effective_recorder().expect("vision log on by default");
+        assert!(!cfg.save_frames, "default recorder is text-only");
+        cfg.frame_cadence = 1; // record every frame so the bounded run terminates
+        let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None).with_max_records(1);
+
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.frame_id = 1;
+        world.people.push(person(1, now, false));
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::new(RwLock::new(world)),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        ctx.frames.publish(Frame::new(1, image::DynamicImage::new_rgb8(64, 48), now));
+        assert_eq!(agent.run(&ctx).ticks, 1);
+
+        let sessions = root.join("sessions");
+        let sess_dir = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        assert!(sess_dir.join("labels.jsonl").is_file(), "semantic labels written");
+        assert!(sess_dir.join("session.toml").is_file(), "session finalized on shutdown");
+        assert!(!sess_dir.join("frames").exists(), "text-only: no pixel frames dir");
+    }
+
+    #[test]
     fn records_zone_relations_from_world() {
         // §16.7: the agent computes zones+edges from the world and they reach the
         // semantic label — a person + an overlapping keyboard form one "workstation".

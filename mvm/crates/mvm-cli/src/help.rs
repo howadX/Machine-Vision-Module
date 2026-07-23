@@ -67,18 +67,22 @@ pub const RUN: &str = "\
 mvm run — live vision mesh (production). Camera → {human, scene, depth} → fusion → StateFile.
 `mvm mesh` is a hidden alias of this command.
 
+By default `mvm run` keeps a durable, text-only semantic session log under
+[dataset].dir/sessions/ (labels.jsonl — no pixels); recap/snapshot/inspect read
+it automatically. --record upgrades to a pixel dataset; --no-vision-log disables it.
+
 USAGE:
     mvm run [flags]
 
 FLAGS:
-    --scene-log <DIR>       Where the rotating scene-/events-YYYY-MM-DD.jsonl history
-                            goes (default: ~/.local/share/mvm — recap/serve read it
-                            without extra flags)
+    --record                Upgrade to a full pixel dataset (RGB + depth + masks +
+                            labels → [dataset].dir; privacy-safe). See mvm dataset.
+    --no-vision-log         Disable the always-on text-only semantic session log
+    --scene-log <DIR>       Also write the LEGACY flat logs (scene-/events-*.jsonl)
+                            to <DIR> — retired from the default path in 16.7
     --dump-json             Print one Scene-JSON line per tick to stdout
     --masks                 Run the YOLO-seg expert (+1 ONNX): instance masks →
                             mask-contact + mask-median depth (opt-in)
-    --record                Record a Dataset Factory session (RGB + depth + labels
-                            → [dataset].dir; privacy-safe by default). See mvm dataset.
     --privacy <MODE>        Override [dataset].privacy for this run: safe (blur anon
                             faces) | anonymous (blur all) | full (blur none)
     --interval-ms <MS>      StateFile snapshot interval, milliseconds
@@ -101,9 +105,10 @@ Camera, paths and cadence come from ~/.config/mvm/config.toml (flags override).
 pub const DATASET: &str = "\
 mvm dataset — inspect & maintain recorded Dataset Factory sessions (phase 16).
 
-Recording is opt-in: `mvm run --record` (or [dataset].enabled) saves every N-th
-frame with full labels to [dataset].dir (default ~/.local/share/mvm/datasets).
-Each session is self-describing: frames/ + depth/ + labels.jsonl + session.toml.
+`mvm run` records a text-only semantic session by default (labels.jsonl only);
+`--record` upgrades to a pixel dataset (RGB + depth + masks) under [dataset].dir
+(default ~/.local/share/mvm/datasets). Each session is self-describing:
+[frames/ + depth/ +] labels.jsonl + session.toml. Prune old ones with `dataset prune`.
 
 USAGE:
     mvm dataset list                 List recorded sessions (frames, status, people)
@@ -141,14 +146,16 @@ Reads the file a running `mvm run` writes — start `mvm run` (or `mvm mesh`) fi
 ";
 
 pub const RECAP: &str = "\
-mvm recap — summarise a period from the durable logs (scene-/events-*.jsonl).
+mvm recap — summarise a period from the durable vision history (semantic sessions,
+or legacy scene-/events-*.jsonl).
 
 USAGE:
     mvm recap [--input <PATH>] [--last <DUR> | --from <ISO> --to <ISO>]
 
 FLAGS:
-    --input <PATH>   Log directory (scene-*.jsonl/events-*.jsonl) or a single scene file
-                     (default: ~/.local/share/mvm — where `mvm run` writes)
+    --input <PATH>   Data dir, a session dir/labels.jsonl, or a legacy scene file
+                     (default: ~/.local/share/mvm — where `mvm run` writes). Prefers
+                     flat logs when present, else reads semantic sessions.
     --events <PATH>  Explicit events file (when --input is a single file)
     --last <DUR>     Keep only the last window before the latest entry: 30s, 10m, 2h
     --from <ISO>     Inclusive ISO8601 lower bound

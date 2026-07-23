@@ -189,8 +189,10 @@ struct CommonFlags {
     /// (→ mask-median depth, mask contact). Opt-in / default off — zero perf hit
     /// unless requested (spike §3.3: owner A/Bs the ~+47ms cadence cost live).
     masks: bool,
-    /// --scene-log <dir>: append each dumped frame to a per-day rotating
-    /// `scene-YYYY-MM-DD.jsonl` in <dir> (phase 12.C0). Independent of --dump-json.
+    /// --scene-log <dir>: write the **legacy** per-day flat logs
+    /// (`scene-YYYY-MM-DD.jsonl` + `events-*.jsonl`) to <dir> (phase 12.C0).
+    /// Retired from the default path in 16.7-3 (the semantic session replaced them);
+    /// pass this to keep emitting them for back-compat. Independent of --dump-json.
     scene_log: Option<PathBuf>,
     /// --dump-distributions: include the 8-class `emotion_distribution` in the
     /// Scene JSON (phase 12.A2 opt-in; off by default — summary is enough).
@@ -198,9 +200,14 @@ struct CommonFlags {
     /// --dump-full-graph: include object↔object `near` edges (phase 12.A3 opt-in;
     /// off by default — static desk geometry).
     dump_full_graph: bool,
-    /// --record: enable the Dataset Factory recorder (phase 16.1.2b). Overrides
-    /// `[dataset].enabled = false`; every N-th frame is saved with full labels.
+    /// --record: enable the **pixel** Dataset Factory recorder (phase 16.1.2b).
+    /// Overrides `[dataset].enabled = false`; every N-th frame is saved with full
+    /// labels + RGB/depth/masks. Without it, `mvm run` still writes a text-only
+    /// semantic session (§16.7-3); this flag upgrades it to a pixel dataset.
     record: bool,
+    /// --no-vision-log: disable the always-on text-only semantic session
+    /// (§16.7-3). Turns off durable vision history entirely (unless `--record`).
+    no_vision_log: bool,
     /// --privacy <safe|full|anonymous>: override `[dataset].privacy` for this run
     /// (phase 16.5). Raw string; parsed at mesh build.
     privacy: Option<String>,
@@ -218,6 +225,7 @@ fn parse_common(raw: &[String], i: &mut usize, c: &mut CommonFlags) -> bool {
         "--dump-distributions" => c.dump_distributions = true,
         "--dump-full-graph" => c.dump_full_graph = true,
         "--record" => c.record = true,
+        "--no-vision-log" => c.no_vision_log = true,
         "--privacy" => {
             if *i + 1 < raw.len() {
                 c.privacy = Some(raw[*i + 1].clone());
@@ -649,15 +657,16 @@ fn build_live_mesh(
     state_file.dump_distributions = args.common.dump_distributions;
     state_file.dump_full_graph = args.common.dump_full_graph;
     let interval = Duration::from_millis(args.interval_ms.unwrap_or(product.snapshot_ms));
-    // Durable JSONL history (phase 12.C0/C1); reuses the StateFile timezone. Both
-    // logs share one dir (scene-*.jsonl frames, events-*.jsonl episodes):
-    // `--scene-log <dir>` overrides, default = data_dir (14.0.4 — the `--logs`
-    // trap is gone: recap/serve find these without extra flags).
+    // Flat JSONL logs are RETIRED by default (phase 16.7-3): the durable vision
+    // history is now the text-only semantic session (labels.jsonl), and the journal
+    // reads it via the recap resolver. `--scene-log <dir>` still writes the legacy
+    // `scene-*.jsonl`/`events-*.jsonl` when explicitly requested (back-compat).
+    let scene_log = args.common.scene_log.as_ref().map(|d| state_file.open_scene_log(d.clone()));
+    let events_log = args.common.scene_log.as_ref().map(|d| state_file.open_events_log(d.clone()));
+    // Rolling journal.md beside current_state.md (phase 12.D1). Its source dir is
+    // data_dir by default (holds `datasets/sessions/` → the recap resolver finds
+    // the semantic sessions), or the explicit `--scene-log` dir for the legacy logs.
     let log_dir = args.common.scene_log.clone().unwrap_or_else(|| product.data_dir.clone());
-    let scene_log = Some(state_file.open_scene_log(log_dir.clone()));
-    let events_log = Some(state_file.open_events_log(log_dir.clone()));
-    // Rolling journal.md beside current_state.md (phase 12.D1) — summarises the
-    // logs above at a ~60-write cadence.
     let journal = Some(agents::JournalCfg {
         path: state_file.journal_path(),
         log_dir: log_dir.clone(),
@@ -775,28 +784,32 @@ fn build_live_mesh(
     mesh.add(Box::new(agents::FusionAgent::new(config.clone(), depth_slot.clone())));
     mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.common.dump_json, interval, None, scene_log, events_log, journal)));
 
-    // Dataset Factory recorder (phase 16.1.2b) — opt-in via [dataset].enabled or
-    // the --record flag. Reads WorldState like any other sink; the vision core is
-    // untouched. Off by default → zero cost. CLI overrides win over the file.
+    // Dataset Factory recorder (phase 16.1.2b / 16.7-3). Default-on model: a
+    // text-only semantic session unless `--record` upgrades it to a pixel dataset,
+    // or `--no-vision-log` disables it. Reads WorldState like any other sink; the
+    // vision core is untouched. CLI overrides win over the file.
     let mut ds_cfg = product.dataset.clone();
     ds_cfg.apply_cli_overrides(
         args.common.record.then_some(true),
         None,
         args.common.privacy.as_deref().and_then(parse_privacy),
     );
-    if ds_cfg.enabled {
-        let root = PathBuf::from(&ds_cfg.dir);
+    if args.common.no_vision_log {
+        ds_cfg.vision_log = false;
+    }
+    if let Some(cfg) = ds_cfg.effective_recorder() {
+        let root = PathBuf::from(&cfg.dir);
         paths::ensure_dir_private(&root)?;
+        let mode = if cfg.save_frames { "pixel dataset" } else { "text-only vision log" };
         eprintln!(
-            "  dataset: recording ENABLED → {} (cadence {}, privacy {:?}, depth {})",
+            "  dataset: {mode} → {} (cadence {}, privacy {:?})",
             root.display(),
-            ds_cfg.frame_cadence.max(1),
-            ds_cfg.privacy,
-            ds_cfg.save_depth,
+            cfg.frame_cadence.max(1),
+            cfg.privacy,
         );
-        // Wire the shared depth slot so the recorder can save 16-bit depth PNGs
+        // Wire the shared depth slot so a pixel dataset can save 16-bit depth PNGs
         // (empty until DepthAgent warms up → no depth path recorded meanwhile).
-        mesh.add(Box::new(agents::DatasetWriterAgent::new(ds_cfg, root, Some(depth_slot.clone()))));
+        mesh.add(Box::new(agents::DatasetWriterAgent::new(cfg, root, Some(depth_slot.clone()))));
     }
 
     Ok(mesh)

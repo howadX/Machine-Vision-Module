@@ -1,6 +1,7 @@
 # Фаза 16.7 — Semantic Session Log: конвергенция vision-логов
 
-> **Версия:** 0.3 (2026-07-23; Фазы 1 + 1.5 + 2 закрыты, осталась Фаза 3). Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0).
+> **Версия:** 1.0 (2026-07-24; Фазы 1 + 1.5 + 2 + 3 закрыты — осталась только live-камера валидация за
+> владельцем). Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0).
 > **Цель фазы:** свести два параллельных стора истории сцены в **один семантический session-лог**.
 > Сегодня MVM пишет vision-историю как плоские `scene-YYYY-MM-DD.jsonl` / `events-YYYY-MM-DD.jsonl`
 > (по дню, без session-дисциплины, без prune), а Dataset Factory пишет session-организованные
@@ -146,16 +147,30 @@ posture/identity←`attributes.*.label`, zone-labels←zone-записи `relati
 > Приоритет плоских логов при их наличии → дефолтный UX `recap` не меняется, пока Фаза 3 не сделает
 > text-only сессии дефолтом и не отключит запись плоских логов. Live-валидация (камера) — в Фазе 3.
 
-### Фаза 3 — ретайр плоских логов + default-on ⏳
+### Фаза 3 — ретайр плоских логов + default-on ✅ ЗАКРЫТА (кроме live-камеры)
 
-Text-only семантическая запись становится дефолтным vision-логом `mvm run` (always-on, лёгкий);
-запись `scene-*.jsonl`/`events-*.jsonl` убирается; ретеншен — через `mvm dataset prune`.
+Text-only семантическая запись — **дефолтный vision-лог** `mvm run` (always-on, лёгкий): запись
+`scene-*.jsonl`/`events-*.jsonl` убрана из дефолтного пути. Модель:
+- **`mvm run`** (без флагов) → text-only сессия (`labels.jsonl`, без пикселей) — durable vision-история;
+- **`--record`** → полный пиксельный датасет (RGB+depth+masks);
+- **`--no-vision-log`** (или `[dataset].vision_log=false`) → запись выключена целиком;
+- **`--scene-log <dir>`** → legacy-плоские логи по явному запросу (back-compat).
 
-**Верификация:**
-- `mvm run` без флагов → создаётся семантическая сессия; `scene-*.jsonl` больше не пишется.
-- `recap`/`inspect`/`snapshot` работают на дефолтном пути (в т.ч. Sight-потребитель).
-- Прогон `mvm run --stub --max-frames` → сессия на диске, `check` зелёный.
-- Live-валидация: живая камера 3–5 мин → сессия → `recap`/`snapshot` корректны.
+Решение вынесено в чистый `DatasetConfig::effective_recorder() -> Option<DatasetConfig>`
+(pixels / text-only / None). Ретеншен — `mvm dataset prune --keep`. Journal читает сессии через resolver
+Фазы 2 (data_dir → `datasets/sessions/`). `save_raw_embeddings`/`save_landmarks` — невшитые no-op'ы,
+text-only их не касается.
+
+**Верификация — сделано, 689 тестов зелёные (+4):**
+- ✅ `effective_recorder`: default→text-only (`save_frames=false`, `enabled`), `--record`→pixels,
+  `vision_log=false`→None (config unit-тесты).
+- ✅ Agent e2e (model-free): дефолтный recorder пишет `labels.jsonl`+`session.toml`, **без** `frames/`.
+- ✅ Live stub-smoke: `mvm run --stub` пишет только `current_state.md`, `scene-*.jsonl` **не** создаётся.
+- ✅ Recap/inspect/snapshot на дефолтном пути — через resolver Фазы 2 (data_dir→сессии).
+- ⏳ **Live-камера 3–5 мин → сессия → recap/snapshot** — за владельцем (нет камеры в CI-среде).
+
+> **Миграция:** старые `scene-*.jsonl` на диске в data_dir теневят сессии в recap/journal (resolver
+> предпочитает плоские логи). Рекомендация — clean cut: удалить старые плоские логи вручную один раз.
 
 ## Открытые решения (зафиксировать по ходу)
 
@@ -183,10 +198,12 @@ Text-only семантическая запись становится дефо�
 |------|------|
 | `crates/mvm-dataset/src/observation.rs` | ✅ +`activities`, `SCHEMA_VERSION` 16.7.0 (Фаза 1.5) |
 | `crates/mvm-dataset/src/router.rs` | ✅ `route_with_relations` + заполнение relations/activities/events (Фаза 1.5) |
-| `crates/mvm-dataset/src/config.rs` | ✅ `save_frames` (Фаза 1) |
+| `crates/mvm-dataset/src/config.rs` | ✅ `save_frames` (Ф1); `vision_log` + `effective_recorder()` (Ф3) |
 | `crates/mvm-dataset/src/writer.rs` | ✅ text-only frame-gating (Ф1) + `relations`-аргумент `record_frame` (Ф1.5) |
-| `crates/mvm-cli/src/agents/dataset_writer.rs` | ✅ владеет `ZoneTracker`, считает `SceneRelations` (Ф1.5); default-on wiring — Фаза 3 |
-| `crates/mvm-cli/src/state.rs` | ✅ `relation_kept` → `pub(crate)` (Ф1.5); ретайр `SceneLog` scene/events — Фаза 3 |
+| `crates/mvm-cli/src/main.rs` | ✅ default-on recorder через `effective_recorder`, ретайр плоских логов, `--no-vision-log` (Ф3) |
+| `crates/mvm-cli/src/help.rs` | ✅ обновлён run/recap/dataset help под default-on модель (Ф3) |
+| `crates/mvm-cli/src/agents/dataset_writer.rs` | ✅ владеет `ZoneTracker`, считает `SceneRelations` (Ф1.5); RFC3339 ts (Ф2) |
+| `crates/mvm-cli/src/state.rs` | ✅ `relation_kept` → `pub(crate)` (Ф1.5); `SceneLog` жив как legacy `--scene-log` |
 | `crates/mvm-cli/src/recap_cmd.rs` | ✅ семантический shim + `Source` резолвер + чтение сессий (Фаза 2) |
 | `crates/mvm-core/src/recap.rs` | ✅ `PartialEq` на `FrameObs`/`PersonObs`/`EpisodeObs` (Ф2, golden-паритет) |
 | `crates/mvm-cli/src/render.rs` | не тронут — рендерит `Recap`, источник-агностик (Ф2) |
