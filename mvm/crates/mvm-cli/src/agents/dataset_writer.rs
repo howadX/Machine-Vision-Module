@@ -13,9 +13,14 @@
 //! off so labels never reference a depth file that was not written.
 
 use super::DepthSlot;
+use crate::state::{object_state_to_entity, person_to_entity, relation_kept};
 use image::{ImageFormat, RgbImage};
+use mvm_core::types::RelationKind;
 use mvm_core::BBox;
-use mvm_dataset::{blur_regions, DatasetConfig, DatasetWriter, FrameRecord, PrivacyPerson};
+use mvm_dataset::{
+    blur_regions, DatasetConfig, DatasetWriter, EdgeRel, FrameRecord, PrivacyPerson, SceneRelations,
+    ZoneRel,
+};
 use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -35,6 +40,10 @@ pub(crate) struct DatasetWriterAgent {
     last_frame_id: Option<u64>,
     /// Stop after this many recorded frames (bounded runs/tests). `None` = live.
     max_records: Option<u64>,
+    /// Persistent zone tracker (§16.7) — the same stateful discipline `SceneLog`
+    /// uses, so the semantic session log carries zones with stable ids + labels.
+    /// Ticks once per recording step (dataset cadence).
+    zones: mvm_fusion::ZoneTracker,
 }
 
 impl DatasetWriterAgent {
@@ -45,7 +54,55 @@ impl DatasetWriterAgent {
     ) -> Self {
         let cadence = cfg.frame_cadence.max(1);
         let writer = DatasetWriter::new(cfg.clone(), root, DATASET_ID);
-        Self { writer, cfg, cadence, depth, last_frame_id: None, max_records: None }
+        Self {
+            writer,
+            cfg,
+            cadence,
+            depth,
+            last_frame_id: None,
+            max_records: None,
+            zones: mvm_fusion::ZoneTracker::new(),
+        }
+    }
+
+    /// Build this frame's relational scene-graph (§16.7) from the shared world:
+    /// `build_scene` for edges + a stateful `ZoneTracker` tick for zones with
+    /// persistent ids + labels. Mirrors `SceneLog::to_json_line_world` so the
+    /// semantic session log is a faithful superset of the flat scene log.
+    fn scene_relations(&mut self, world: &mvm_core::WorldState) -> SceneRelations {
+        let mut entities: Vec<mvm_core::types::Entity> =
+            world.people.iter().map(person_to_entity).collect();
+        entities.extend(world.objects.iter().map(object_state_to_entity));
+        let scene = mvm_fusion::build_scene(entities);
+
+        // Edges — the scene log's default relation diet (drop static↔static clutter).
+        let edges: Vec<EdgeRel> = scene
+            .relations
+            .iter()
+            .filter(|r| relation_kept(r.a, r.b, &r.kind, false))
+            .map(|r| {
+                let rel = match r.kind {
+                    RelationKind::Near => "near",
+                    RelationKind::Overlapping => "overlapping",
+                    RelationKind::PartOf => "part_of",
+                };
+                EdgeRel { a: r.a, b: r.b, rel: rel.into() }
+            })
+            .collect();
+
+        // Zones — one tracker tick per recorded frame yields stable ids + labels.
+        let zones: Vec<ZoneRel> = self
+            .zones
+            .update(&scene.zones, &scene.entities)
+            .iter()
+            .map(|z| ZoneRel {
+                persistent_id: Some(z.id),
+                label: z.label.map(str::to_string),
+                members: z.members.clone(),
+            })
+            .collect();
+
+        SceneRelations { zones, edges }
     }
 
     /// Bound the number of recorded frames (tests / finite runs).
@@ -90,7 +147,10 @@ impl DatasetWriterAgent {
                     is_anon: p.identity.is_none(),
                 })
                 .collect();
-            let r = self.writer.record_frame(&mut w, now, &iso, &stamp, depth_range)?;
+            // §16.7: compute zones+edges (ticks the persistent tracker) before the
+            // record so the label carries the frame's relational scene-graph.
+            let relations = self.scene_relations(&w);
+            let r = self.writer.record_frame(&mut w, now, &iso, &stamp, depth_range, &relations)?;
             (r, pp)
         };
 
@@ -351,6 +411,55 @@ mod tests {
         assert!(sess_dir.join("frames/000000.jpg").exists(), "RGB frame written");
         // On shutdown the open session was finalized.
         assert!(sess_dir.join("session.toml").exists(), "session.toml on shutdown");
+    }
+
+    #[test]
+    fn records_zone_relations_from_world() {
+        // §16.7: the agent computes zones+edges from the world and they reach the
+        // semantic label — a person + an overlapping keyboard form one "workstation".
+        let root = temp_root("zones");
+        let mut cfg = DatasetConfig::default();
+        cfg.frame_cadence = 1;
+        let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None).with_max_records(1);
+
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.frame_id = 7;
+        world.people.push(person(1, now, true));
+        world.objects.push(mvm_core::world::ObjectState {
+            id: 10001,
+            class: "keyboard".into(),
+            bbox: BBox { x1: 0.3, y1: 0.4, x2: 0.5, y2: 0.6 },
+            confidence: 0.8,
+            age: 5,
+            position_3d: None,
+            mask: None,
+            remembered: false,
+            last_seen: now,
+        });
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::new(RwLock::new(world)),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        ctx.frames.publish(Frame::new(7, image::DynamicImage::new_rgb8(64, 48), now));
+        assert_eq!(agent.run(&ctx).ticks, 1);
+
+        let sessions = root.join("sessions");
+        let sess_dir = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        let content = std::fs::read_to_string(sess_dir.join("labels.jsonl")).unwrap();
+        let obs: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        let rels = obs["relations"].as_array().expect("relations array");
+        assert!(
+            rels.iter().any(|r| r["kind"] == "zone" && r["label"] == "workstation"),
+            "expected a workstation zone, got: {}",
+            obs["relations"]
+        );
+        assert!(
+            rels.iter().any(|r| r["kind"] == "edge" && r["a"] == "p1" && r["b"] == "o10001"),
+            "expected a person↔object edge, got: {}",
+            obs["relations"]
+        );
     }
 
     #[test]

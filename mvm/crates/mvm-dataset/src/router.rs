@@ -32,12 +32,74 @@ pub struct RouteContext<'a> {
     pub seq_in_session: u64,
 }
 
-/// Маршрутизировать снимок [`WorldState`] в [`CanonicalObservation`].
+/// Реляционный scene-graph одного кадра, посчитанный вызывающим (§16.7).
+///
+/// Dataset-слой не владеет `build_scene`/`ZoneTracker` (они в `mvm-fusion`, выше
+/// по слоям), поэтому зоны и рёбра считает writer в `mvm-cli` и передаёт сюда —
+/// роутер остаётся **чистой функцией своих входов**. `SceneRelations::default()`
+/// (пусто) — для путей без реляционного контекста (sync-путь, unit-тесты).
+#[derive(Debug, Clone, Default)]
+pub struct SceneRelations {
+    /// Зоны кадра (связные компоненты; персистентные — из `ZoneTracker`).
+    pub zones: Vec<ZoneRel>,
+    /// Рёбра близости/пересечения между сущностями.
+    pub edges: Vec<EdgeRel>,
+}
+
+/// Одна зона: набор сущностей-участников + опц. персистентный id и семантика.
+#[derive(Debug, Clone)]
+pub struct ZoneRel {
+    /// Стабильный id из `ZoneTracker`; `None` для чисто per-frame компонента.
+    pub persistent_id: Option<u32>,
+    /// Семантическая метка (`workstation`/`seating`/…), `None` если не применима.
+    pub label: Option<String>,
+    /// Scene-graph id'ы участников (люди/объекты).
+    pub members: Vec<u32>,
+}
+
+/// Одно реляционное ребро (близость/пересечение) между двумя scene-graph id.
+#[derive(Debug, Clone)]
+pub struct EdgeRel {
+    pub a: u32,
+    pub b: u32,
+    /// Тип ребра (`near`/`overlapping`/…).
+    pub rel: String,
+}
+
+/// Граница scene-graph id, зеркалит `mvm_scene::OBJECT_ID_BASE`: id ≥ этого —
+/// объекты (`o{id}`), ниже — люди (`p{id}`). Держится локально, чтобы dataset-слой
+/// не тянул зависимость на `mvm-scene`.
+const OBJECT_ID_BASE: u32 = 10_000;
+
+/// Отобразить сырой scene-graph id в стабильный `entity_id`, согласованный с id
+/// сущностей, которые эмитит роутер (`p{track_id}` / `o{id}`) — связь relations/
+/// activities/events с `entities`.
+fn entity_id_of(id: u32) -> String {
+    if id >= OBJECT_ID_BASE {
+        format!("o{id}")
+    } else {
+        format!("p{id}")
+    }
+}
+
+/// Маршрутизировать снимок [`WorldState`] в [`CanonicalObservation`] без внешнего
+/// реляционного контекста (relations остаётся пустым). Тонкая обёртка над
+/// [`route_with_relations`] — activities/events всё равно берутся из `WorldState`.
+pub fn route(world: &WorldState, ctx: &RouteContext) -> CanonicalObservation {
+    route_with_relations(world, ctx, &SceneRelations::default())
+}
+
+/// Маршрутизировать снимок [`WorldState`] + посчитанные зоны/рёбра в наблюдение.
 ///
 /// Сущности-люди → ветвь G₁ Human, объекты → G₂ Scene. Кросс-секущие ветви
 /// (G₃ Interaction / G₄ Temporal / G₅ Quality) активируются на уровне кадра по
 /// уже наблюдённым сигналам и перечисляются в `semantic_groups` (selective routing).
-pub fn route(world: &WorldState, ctx: &RouteContext) -> CanonicalObservation {
+/// `relations`/`activities`/`events` (§16.7) заполняются из `world` + `rel`.
+pub fn route_with_relations(
+    world: &WorldState,
+    ctx: &RouteContext,
+    rel: &SceneRelations,
+) -> CanonicalObservation {
     let mut obs = CanonicalObservation::new(
         ctx.dataset_id,
         ctx.session_id,
@@ -72,6 +134,12 @@ pub fn route(world: &WorldState, ctx: &RouteContext) -> CanonicalObservation {
         });
     }
 
+    // G₂ relational — зоны + рёбра, посчитанные вызывающим (§16.7).
+    obs.relations = relation_records(rel);
+    // G₃/G₄ — per-frame активности из журнала (или flat-списка) + завершённые эпизоды.
+    obs.activities = activity_records(world);
+    obs.events = event_records(world);
+
     obs.semantic_groups = active_groups(world);
 
     // G₅ Quality — «quality is data»: счётчики + anomaly кадра из наблюдений.
@@ -88,6 +156,95 @@ pub fn route(world: &WorldState, ctx: &RouteContext) -> CanonicalObservation {
     });
 
     obs
+}
+
+/// G₂ реляционные записи (§16.7): зоны + рёбра как гетерогенный `{kind:…}` JSON.
+/// Участники/концы рёбер маппятся в `entity_id` — связь с `entities`.
+fn relation_records(rel: &SceneRelations) -> Vec<serde_json::Value> {
+    let mut out = Vec::with_capacity(rel.zones.len() + rel.edges.len());
+    for z in &rel.zones {
+        let members: Vec<String> = z.members.iter().map(|&id| entity_id_of(id)).collect();
+        out.push(serde_json::json!({
+            "kind": "zone",
+            "label": z.label,
+            "members": members,
+            "persistent_id": z.persistent_id,
+        }));
+    }
+    for e in &rel.edges {
+        out.push(serde_json::json!({
+            "kind": "edge",
+            "a": entity_id_of(e.a),
+            "b": entity_id_of(e.b),
+            "rel": e.rel,
+        }));
+    }
+    out
+}
+
+/// G₃/G₄ per-frame активности (§16.7). Предпочитаем инстансы журнала (несут
+/// временные поля started_at/duration); иначе — плоский `activities` (sync-путь).
+/// Участники → `entity_id`; `stable` зеркалит reserved-id правило (эфемерные
+/// анонимы 10..10000 нестабильны — honesty-нота «участники нестабильны»).
+fn activity_records(world: &WorldState) -> Vec<serde_json::Value> {
+    if !world.activity_instances.is_empty() {
+        world
+            .activity_instances
+            .iter()
+            .map(|i| {
+                let participants: Vec<String> =
+                    i.key.participants.iter().map(|&id| entity_id_of(id)).collect();
+                serde_json::json!({
+                    "label": i.key.label,
+                    "participants": participants,
+                    "confidence": i.confidence,
+                    "state": i.phase.as_str(),
+                    "started_at": i.started_at,
+                    "duration_s": i.last_seen - i.started_at,
+                    "stable": i.key.stable_participants(),
+                })
+            })
+            .collect()
+    } else {
+        world
+            .activities
+            .iter()
+            .map(|a| {
+                let participants: Vec<String> =
+                    a.participants.iter().map(|&id| entity_id_of(id)).collect();
+                let stable = a.participants.iter().all(|&id| id < 10 || id >= OBJECT_ID_BASE);
+                serde_json::json!({
+                    "label": a.label,
+                    "participants": participants,
+                    "confidence": a.confidence,
+                    "stable": stable,
+                })
+            })
+            .collect()
+    }
+}
+
+/// G₄ завершённые эпизоды (§16.7), инлайн на кадре закрытия — зеркалит плоский
+/// `events-*.jsonl` внутри единого файла сессии.
+fn event_records(world: &WorldState) -> Vec<serde_json::Value> {
+    world
+        .events
+        .iter()
+        .map(|e| {
+            let participants: Vec<String> =
+                e.participants.iter().map(|&id| entity_id_of(id)).collect();
+            serde_json::json!({
+                "kind": "episode",
+                "label": e.label,
+                "participants": participants,
+                "started_at": e.started_at,
+                "ended_at": e.ended_at,
+                "duration_s": e.duration_s,
+                "peak_confidence": e.peak_confidence,
+                "stable": e.stable_participants,
+            })
+        })
+        .collect()
 }
 
 /// Какие ветви активирует этот кадр (selective routing). Порядок — канонический
@@ -503,6 +660,122 @@ mod tests {
         let obs = route(&world, &ctx());
         let ent = obs.entities[0].attributes["emotion_entropy"].as_f64().unwrap();
         assert!(ent > 0.99, "uniform softmax → entropy ≈ 1.0, got {ent}");
+    }
+
+    // --- §16.7 relations / activities / events enrichment ---
+
+    #[test]
+    fn relations_emit_zone_and_edge_records_with_entity_ids() {
+        let world = WorldState::new(Instant::now());
+        let rel = SceneRelations {
+            zones: vec![ZoneRel {
+                persistent_id: Some(3),
+                label: Some("workstation".into()),
+                members: vec![0, 10001],
+            }],
+            edges: vec![EdgeRel { a: 0, b: 10001, rel: "near".into() }],
+        };
+        let obs = route_with_relations(&world, &ctx(), &rel);
+
+        let zone = obs.relations.iter().find(|r| r["kind"] == "zone").expect("zone record");
+        assert_eq!(zone["label"], "workstation");
+        assert_eq!(zone["persistent_id"], 3);
+        assert_eq!(zone["members"], serde_json::json!(["p0", "o10001"]));
+
+        let edge = obs.relations.iter().find(|r| r["kind"] == "edge").expect("edge record");
+        assert_eq!(edge["a"], "p0");
+        assert_eq!(edge["b"], "o10001");
+        assert_eq!(edge["rel"], "near");
+    }
+
+    #[test]
+    fn anonymous_zone_carries_null_persistent_id_and_label() {
+        let world = WorldState::new(Instant::now());
+        let rel = SceneRelations {
+            zones: vec![ZoneRel { persistent_id: None, label: None, members: vec![1, 10] }],
+            edges: Vec::new(),
+        };
+        let obs = route_with_relations(&world, &ctx(), &rel);
+        let zone = &obs.relations[0];
+        assert!(zone["persistent_id"].is_null(), "anonymous component → null id");
+        assert!(zone["label"].is_null());
+        assert_eq!(zone["members"], serde_json::json!(["p1", "p10"]));
+    }
+
+    #[test]
+    fn events_emit_inline_episode_records() {
+        let mut world = WorldState::new(Instant::now());
+        world.events.push(mvm_core::ActivityEvent {
+            label: "seated_at_workstation".into(),
+            participants: vec![0],
+            started_at: 10.0,
+            ended_at: 90.0,
+            duration_s: 80.0,
+            peak_confidence: 0.9,
+            stable_participants: true,
+        });
+        let obs = route(&world, &ctx());
+        assert_eq!(obs.events.len(), 1);
+        let e = &obs.events[0];
+        assert_eq!(e["kind"], "episode");
+        assert_eq!(e["label"], "seated_at_workstation");
+        assert_eq!(e["participants"], serde_json::json!(["p0"]));
+        assert_eq!(e["duration_s"], 80.0);
+        assert_eq!(e["stable"], true);
+    }
+
+    #[test]
+    fn flat_activities_map_participants_and_stability() {
+        let mut world = WorldState::new(Instant::now());
+        // Reserved gallery id 0 → stable; ephemeral anon id 12 → unstable.
+        world.activities.push(Activity { label: "typing".into(), confidence: 0.8, participants: vec![0] });
+        world.activities.push(Activity { label: "gesturing".into(), confidence: 0.5, participants: vec![12] });
+        let obs = route(&world, &ctx());
+        assert_eq!(obs.activities.len(), 2);
+
+        let typing = obs.activities.iter().find(|a| a["label"] == "typing").unwrap();
+        assert_eq!(typing["participants"], serde_json::json!(["p0"]));
+        assert_eq!(typing["stable"], true);
+
+        let gest = obs.activities.iter().find(|a| a["label"] == "gesturing").unwrap();
+        assert_eq!(gest["participants"], serde_json::json!(["p12"]));
+        assert_eq!(gest["stable"], false);
+    }
+
+    #[test]
+    fn journal_instances_win_over_flat_with_temporal_fields() {
+        // Drive the FSM to a confirmed instance (mirrors the flat scene-log path).
+        let mut j = mvm_core::ActivityJournal::new();
+        let raw = [Activity { label: "typing".into(), confidence: 0.8, participants: vec![0, 10001] }];
+        for f in 0..4u64 {
+            j.update(&raw, f as f64 * 0.1, f);
+        }
+        let inst = j.active().next().expect("confirmed").clone();
+
+        let mut world = WorldState::new(Instant::now());
+        world.activities = raw.to_vec(); // flat list present too
+        world.activity_instances.push(inst);
+        let obs = route(&world, &ctx());
+
+        assert_eq!(obs.activities.len(), 1, "journal instances preferred over the flat list");
+        let a = &obs.activities[0];
+        assert_eq!(a["label"], "typing");
+        assert_eq!(a["participants"], serde_json::json!(["p0", "o10001"]));
+        assert!(a["started_at"].is_number(), "temporal field present from the journal");
+        assert!(a["duration_s"].is_number());
+        assert_eq!(a["state"], "active");
+        assert_eq!(a["stable"], true, "reserved 0 + object 10001 → stable participants");
+    }
+
+    #[test]
+    fn route_without_relations_leaves_relations_empty_but_fills_temporal() {
+        // Back-compat: plain route() has no relational context, but still surfaces
+        // activities/events already present in the WorldState.
+        let mut world = WorldState::new(Instant::now());
+        world.activities.push(Activity { label: "typing".into(), confidence: 0.8, participants: vec![0] });
+        let obs = route(&world, &ctx());
+        assert!(obs.relations.is_empty(), "no SceneRelations → no zone/edge records");
+        assert_eq!(obs.activities.len(), 1, "activities still routed from world");
     }
 
     #[test]

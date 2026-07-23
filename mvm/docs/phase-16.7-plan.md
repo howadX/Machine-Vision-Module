@@ -1,6 +1,6 @@
 # Фаза 16.7 — Semantic Session Log: конвергенция vision-логов
 
-> **Версия:** 0.1 (2026-07-23). Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0).
+> **Версия:** 0.2 (2026-07-23; Фазы 1 + 1.5 закрыты). Ветка `kaggle`. Родитель — фаза 16 (Dataset Factory, v0.3.0).
 > **Цель фазы:** свести два параллельных стора истории сцены в **один семантический session-лог**.
 > Сегодня MVM пишет vision-историю как плоские `scene-YYYY-MM-DD.jsonl` / `events-YYYY-MM-DD.jsonl`
 > (по дню, без session-дисциплины, без prune), а Dataset Factory пишет session-организованные
@@ -93,17 +93,29 @@
 без пикселей; writer не аллоцирует frame-путь (`FrameRecord.frame_path: Option`), агент пропускает энкод.
 `mvm dataset check`/`prune` работают из коробки (гейт 16.6-A уже толерантен к `frame_path=None`). 671 тест.
 
-### Фаза 1.5 — обогащение роутера (достройка §16.3) ⏳ СЛЕДУЮЩАЯ
+### Фаза 1.5 — обогащение роутера (достройка §16.3) ✅ ЗАКРЫТА
 
-Роутер (`mvm-dataset/src/router.rs`) заполняет `relations` (зоны+рёбра), `activities` (per-frame), `events`
-(эпизоды) из `WorldState`; `SCHEMA_VERSION → 16.7.0`; `observation.rs` +поле `activities`.
+`SCHEMA_VERSION → 16.7.0`; `observation.rs` +поле `activities` (аддитивно, `#[serde(default)]`). Роутер
+(`router.rs`) заполняет `activities` (per-frame из `activity_instances`, иначе flat `activities`) и `events`
+(эпизоды из `world.events`) **напрямую из `WorldState`**; участники маппятся в `entity_id` (`p{id}`/`o{id}`),
+`stable` зеркалит reserved-id правило.
 
-**Верификация (TDD, Rust):**
-- `WorldState` с зонами/активностями/завершённым эпизодом → `route()` → observation несёт их (unit).
-- Round-trip JSONL сохраняет relations/activities/events.
-- **Golden-паритет:** семантическая observation ⊇ содержимого scene-json+episode строки того же кадра
-  (зоны, объекты, активности, аномалия, эпизоды присутствуют).
-- `mvm dataset check` остаётся зелёным на обогащённых сессиях.
+**Уточнение по итогам аудита (вариант B):** зоны/рёбра **не лежат в `WorldState`** (их строит
+`build_scene`+stateful `ZoneTracker` в fusion/cli-слое). Чтобы роутер остался **чистой функцией входов**,
+введён `SceneRelations{zones,edges}` — новый аргумент `route_with_relations()` (старый `route()` = тонкая
+обёртка с пустыми relations). Зоны считает stateful **агент** `mvm-cli` (`DatasetWriterAgent` теперь владеет
+своим `ZoneTracker`, тикает раз на записанный кадр — как `SceneLog`), передаёт в `record_frame`.
+`mvm-dataset` остаётся dep-чистым (serde + mvm-core); зависимость на `mvm-fusion` — только в cli-агенте.
+
+**Верификация (TDD, Rust) — сделано, 680 тестов зелёные (+9):**
+- ✅ `route_with_relations` с зонами/рёбрами → зоны `{kind:"zone",label,members,persistent_id}` + рёбра
+  `{kind:"edge",a,b,rel}`; активности из журнала несут `started_at`/`duration_s`/`state`/`stable`; эпизоды
+  из `world.events` → `{kind:"episode",…}`; flat-ветка activities при пустых инстансах (router unit-тесты).
+- ✅ Round-trip JSONL + back-compat: 16.0.1-строка без `activities` парсится (default пусто).
+- ✅ Golden-паритет (агент): person + перекрывающая клавиатура → зона `workstation` + ребро `p1↔o10001` в
+  `labels.jsonl` — зеркалит `SceneLog::to_json_line_world`.
+- ✅ `mvm dataset check` зелёный: `schema_version==SCHEMA_VERSION` (нет drift-warn), обогащённые записи
+  проходят валидатор.
 
 ### Фаза 2 — миграция ридеров ⏳
 
@@ -151,14 +163,14 @@ Text-only семантическая запись становится дефо�
 
 | Файл | Роль |
 |------|------|
-| `crates/mvm-dataset/src/observation.rs` | +`activities`, `SCHEMA_VERSION` 16.7.0 |
-| `crates/mvm-dataset/src/router.rs` | заполнение relations/activities/events (Фаза 1.5) |
-| `crates/mvm-dataset/src/config.rs` | `save_frames` (✅ Фаза 1) |
-| `crates/mvm-dataset/src/writer.rs` | text-only frame-gating (✅ Фаза 1) |
+| `crates/mvm-dataset/src/observation.rs` | ✅ +`activities`, `SCHEMA_VERSION` 16.7.0 (Фаза 1.5) |
+| `crates/mvm-dataset/src/router.rs` | ✅ `route_with_relations` + заполнение relations/activities/events (Фаза 1.5) |
+| `crates/mvm-dataset/src/config.rs` | ✅ `save_frames` (Фаза 1) |
+| `crates/mvm-dataset/src/writer.rs` | ✅ text-only frame-gating (Ф1) + `relations`-аргумент `record_frame` (Ф1.5) |
+| `crates/mvm-cli/src/agents/dataset_writer.rs` | ✅ владеет `ZoneTracker`, считает `SceneRelations` (Ф1.5); default-on wiring — Фаза 3 |
+| `crates/mvm-cli/src/state.rs` | ✅ `relation_kept` → `pub(crate)` (Ф1.5); ретайр `SceneLog` scene/events — Фаза 3 |
 | `crates/mvm-cli/src/recap_cmd.rs` | миграция чтения (Фаза 2) |
 | `crates/mvm-cli/src/render.rs` | рендер из семантической записи (Фаза 2) |
-| `crates/mvm-cli/src/state.rs` | ретайр `SceneLog` scene/events (Фаза 3) |
-| `crates/mvm-cli/src/agents/dataset_writer.rs` | default-on wiring (Фаза 3) |
 
 ---
 

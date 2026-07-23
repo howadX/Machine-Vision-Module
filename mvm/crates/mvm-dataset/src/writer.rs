@@ -12,7 +12,7 @@
 
 use crate::config::DatasetConfig;
 use crate::observation::CanonicalObservation;
-use crate::router::{route, RouteContext};
+use crate::router::{route_with_relations, RouteContext, SceneRelations};
 use crate::session::{
     AnomaliesBlock, ObjectsBlock, ParticipantsBlock, SessionBlock, SessionMeta,
 };
@@ -167,6 +167,10 @@ impl DatasetWriter {
     /// about to write for this frame, or `None` when no depth is available. The
     /// depth path is recorded **only** when `save_depth` is on *and* a range is
     /// given → labels never point at a depth file that was not written.
+    ///
+    /// `relations` — the frame's zones+edges (§16.7), computed by the caller (it
+    /// owns the `mvm-fusion` `build_scene`/`ZoneTracker`). Pass
+    /// `&SceneRelations::default()` when no relational context is available.
     pub fn record_frame(
         &mut self,
         world: &mut WorldState,
@@ -174,6 +178,7 @@ impl DatasetWriter {
         wallclock_iso: &str,
         new_session_stamp: &str,
         depth_range: Option<[f32; 2]>,
+        relations: &SceneRelations,
     ) -> anyhow::Result<RecordResult> {
         let mut res = RecordResult::default();
         let has_people = !world.people.is_empty();
@@ -220,7 +225,7 @@ impl DatasetWriter {
                 timestamp: wallclock_iso,
                 seq_in_session: seq,
             };
-            let mut obs = route(world, &ctx);
+            let mut obs = route_with_relations(world, &ctx, relations);
             obs.frame.frame_path = frame_rel.clone();
             obs.frame.depth_path = depth_rel.clone();
             obs.frame.depth_range = depth_rel.as_ref().and(depth_range);
@@ -356,7 +361,7 @@ mod tests {
         world.frame_id = 100;
         world.people.push(person(1, t0));
 
-        let r = w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
+        let r = w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None, &SceneRelations::default()).unwrap();
         assert_eq!(r.opened.as_deref(), Some("2026-07-17_153000"));
         let frame = r.frame.expect("frame recorded");
         assert_eq!(frame.seq, 0);
@@ -386,7 +391,7 @@ mod tests {
         world.frame_id = 100;
         world.people.push(person(1, t0));
 
-        let r = w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
+        let r = w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None, &SceneRelations::default()).unwrap();
         let frame = r.frame.expect("frame recorded");
         // No pixel path handed to the caller, and none in the label.
         assert!(frame.frame_path.is_none(), "text-only mode allocates no frame path");
@@ -402,6 +407,31 @@ mod tests {
     }
 
     #[test]
+    fn record_frame_threads_relations_into_the_label() {
+        // §16.7: zones/edges the caller computed reach labels.jsonl as relation records.
+        let root = temp_root();
+        let mut w = writer(&root);
+        let t0 = Instant::now();
+        let mut world = WorldState::new(t0);
+        world.people.push(person(1, t0));
+
+        let rel = SceneRelations {
+            zones: vec![crate::router::ZoneRel {
+                persistent_id: Some(3),
+                label: Some("workstation".into()),
+                members: vec![1, 10001],
+            }],
+            edges: vec![crate::router::EdgeRel { a: 1, b: 10001, rel: "near".into() }],
+        };
+        let r = w
+            .record_frame(&mut world, t0, "iso", "2026-07-17_153000", None, &rel)
+            .unwrap();
+        let obs = r.frame.unwrap().observation;
+        assert!(obs.relations.iter().any(|x| x["kind"] == "zone" && x["label"] == "workstation"));
+        assert!(obs.relations.iter().any(|x| x["kind"] == "edge" && x["a"] == "p1" && x["b"] == "o10001"));
+    }
+
+    #[test]
     fn seq_increments_and_session_persists_across_frames() {
         let root = temp_root();
         let mut w = writer(&root);
@@ -412,7 +442,7 @@ mod tests {
         for i in 0..3u64 {
             world.frame_id = i;
             let t = t0 + Duration::from_secs(i);
-            let r = w.record_frame(&mut world, t, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
+            let r = w.record_frame(&mut world, t, "2026-07-17T15:30:00.000", "2026-07-17_153000", None, &SceneRelations::default()).unwrap();
             // Session opened only on the first frame.
             assert_eq!(r.opened.is_some(), i == 0);
             assert_eq!(r.frame.unwrap().seq, i);
@@ -445,7 +475,7 @@ mod tests {
         });
         world.activities.push(Activity { label: "typing".into(), confidence: 0.8, participants: vec![1] });
         world.anomaly_score = 0.4;
-        w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
+        w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None, &SceneRelations::default()).unwrap();
 
         // People leave.
         world.people.clear();
@@ -453,11 +483,11 @@ mod tests {
         world.activities.clear();
 
         // A frame 20s later — inside the window, no close.
-        let r = w.record_frame(&mut world, t0 + Duration::from_secs(20), "iso", "unused", None).unwrap();
+        let r = w.record_frame(&mut world, t0 + Duration::from_secs(20), "iso", "unused", None, &SceneRelations::default()).unwrap();
         assert!(r.closed.is_none());
 
         // A frame 31s after last presence — session closes.
-        let r = w.record_frame(&mut world, t0 + Duration::from_secs(31), "2026-07-17T15:30:31.000", "unused", None).unwrap();
+        let r = w.record_frame(&mut world, t0 + Duration::from_secs(31), "2026-07-17T15:30:31.000", "unused", None, &SceneRelations::default()).unwrap();
         assert_eq!(r.closed.as_deref(), Some("2026-07-17_153000"));
         assert!(!world.session_active());
 
@@ -481,14 +511,14 @@ mod tests {
         world.people.push(person(1, t0));
 
         // Frame 0: no depth available → no depth path/range even though save_depth=true.
-        let r = w.record_frame(&mut world, t0, "iso", "2026-07-17_170000", None).unwrap();
+        let r = w.record_frame(&mut world, t0, "iso", "2026-07-17_170000", None, &SceneRelations::default()).unwrap();
         let obs0 = &r.frame.unwrap().observation;
         assert!(obs0.frame.depth_path.is_none(), "no dangling depth path without depth");
         assert!(obs0.frame.depth_range.is_none());
 
         // Frame 1: depth available → path + range recorded.
         let r = w
-            .record_frame(&mut world, t0 + Duration::from_secs(1), "iso", "unused", Some([0.2, 3.5]))
+            .record_frame(&mut world, t0 + Duration::from_secs(1), "iso", "unused", Some([0.2, 3.5]), &SceneRelations::default())
             .unwrap();
         let obs1 = &r.frame.unwrap().observation;
         assert_eq!(obs1.frame.depth_path.as_deref(), Some("depth/000001.png"));
@@ -501,7 +531,7 @@ mod tests {
         let mut w = writer(&root);
         let t0 = Instant::now();
         let mut world = WorldState::new(t0);
-        let r = w.record_frame(&mut world, t0, "iso", "stamp", None).unwrap();
+        let r = w.record_frame(&mut world, t0, "iso", "stamp", None, &SceneRelations::default()).unwrap();
         assert!(r.opened.is_none() && r.frame.is_none() && r.closed.is_none());
         assert!(!root.join("sessions/stamp").exists());
     }
@@ -513,7 +543,7 @@ mod tests {
         let t0 = Instant::now();
         let mut world = WorldState::new(t0);
         world.people.push(person(1, t0));
-        w.record_frame(&mut world, t0, "iso", "2026-07-17_160000", None).unwrap();
+        w.record_frame(&mut world, t0, "iso", "2026-07-17_160000", None, &SceneRelations::default()).unwrap();
         assert!(world.session_active());
 
         let closed = w.close_open_session(&mut world, "2026-07-17_160500").unwrap();

@@ -426,7 +426,7 @@ fn is_false(b: &bool) -> bool {
 /// object↔object `near` (both ids ≥ OBJECT_ID_BASE) — repeated desk geometry
 /// ("mouse near book") no consumer reasons over. Person-involving edges and all
 /// overlap/part_of edges always stay. `--dump-full-graph` keeps everything.
-fn relation_kept(a: u32, b: u32, kind: &mvm_core::types::RelationKind, full_graph: bool) -> bool {
+pub(crate) fn relation_kept(a: u32, b: u32, kind: &mvm_core::types::RelationKind, full_graph: bool) -> bool {
     use mvm_core::types::RelationKind;
     if full_graph || !matches!(kind, RelationKind::Near) {
         return true;

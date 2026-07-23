@@ -32,7 +32,7 @@ pub use observation::{
     SemanticGroup, SessionRef, SCHEMA_VERSION,
 };
 pub use privacy::{blur_regions, PrivacyPerson};
-pub use router::{route, RouteContext};
+pub use router::{route, route_with_relations, EdgeRel, RouteContext, SceneRelations, ZoneRel};
 pub use session::{
     aggregate, list_sessions, partition_prune, DatasetStats, PrunePolicy, SessionInfo, SessionMeta,
 };
