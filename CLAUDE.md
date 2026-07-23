@@ -95,6 +95,11 @@ CLI `mvm dataset` → Python-экспортёры → точный YuNet-face-bb
 (SCHEMA 16.7.0); плоские логи ретайрнуты (legacy `--scene-log`); `--record` — полный пиксельный датасет;
 `recap`/`inspect`/journal читают сессии. План — `mvm/docs/phase-16.7-plan.md`.
 
+**Фаза 17 — Agent Skills (⏳ план):** вынести know-how «как LLM-агенту водить MVM» из `mvm/AGENT.md` в
+портируемый **SKILL.md** (стандарт agentskills.io): 2 скилла `mvm/skills/{mvm-vision,mvm-dataset}`, заменить
+устаревший Hermes-скилл (~38.9 КБ мёртвого Python-стека). Только know-how-слой — ядро/версия не трогаются,
+Hermes — по явному согласию. План — `mvm/docs/phase-17-plan.md`.
+
 ## Для Agents
 
 При работе с Rust-кодом — читай `mvm/CLAUDE.md` (полный контекст: архитектура, крейты, фазы, TDD-паттерны)
