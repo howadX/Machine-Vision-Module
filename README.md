@@ -2,7 +2,7 @@
 
 # MVM — Machine Vision Module
 
-**Structured Decomposed Picture-to-Text** — локальный модуль зрения: камера →
+**Structured Decomposed Agentic Vision** — локальный модуль зрения: камера →
 **метрический 3D scene-graph** каждый кадр (не VLM). Ансамбль независимых микро-агентов вместо
 одной end-to-end модели. **Два потребителя:** LLM-агент (pull-модель/MCP) и накопительная
 **Dataset Factory** (структурированная память для обучения). CPU-first, $0, приватно, интерпретируемо.
@@ -113,8 +113,8 @@ flowchart TD
 | **`prototype/pipeline/dataset/`** | Python-экспортёры Dataset Factory (PyTorch/TFRecord/WebDataset) + `validate.py` | фаза 16 |
 | **`prototype/`** | Python-прототип (архив): `sight.py`, `pipeline/`, `data/`, `legacy/` | заморожен |
 
-**Релизы:** `v0.1.0` (фаза 14, Продукт) опубликован на GitHub Releases. `v0.2.0` (фаза 15, ML Refactor) и
-`v0.3.0` (фаза 16, Dataset Factory) подготовлены по коду — ждут owner-тега (CI триггерится тегом).
+**Релизы:** `v0.1.0` (фаза 14, Продукт) и `v0.3.0` (фаза 16, Dataset Factory) опубликованы на GitHub
+Releases. `v0.2.0` (фаза 15, ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась).
 
 История: проект прошёл путь Python-прототип → полная Rust-переписка. Python-линия сохранена на
 ветках `python-prototype`/`3d-workspace` и теге `backup/master-pre-merge`.
