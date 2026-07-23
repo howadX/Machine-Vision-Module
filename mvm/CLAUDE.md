@@ -8,12 +8,13 @@
 
 ## Статус
 
-- **Фаза 15 (ML Refactor → v0.2.0) ЗАКРЫТА по коду; Фаза 16 (Dataset Factory) в работе — 16.0–16.5
-  + 16.6-A закрыты и live-провалидированы (ветка `kaggle`). 13 крейтов, 670 Rust-тестов** (1 ignored — live-камера)
-  + Python-группы (экспортёры + validate-гейт). **Осталось: 16.6-B** (hard-example mining).
-- **Версия `v0.2.0` подготовлена** — `Cargo.toml` bump 0.1.0→0.2.0, паспорт/CHANGELOG/контракт-изменения
-  записаны; **релиз ждёт owner-пуша тега `v0.2.0`** (CI триггерится тегом, версия из тега). Опубликованный
-  прод пока `v0.1.0`. `master` — прод после слияния `rust-core`; вся 15.6+16 разработка на `kaggle`.
+- **Фаза 15 (ML Refactor) ЗАКРЫТА; Фаза 16 (Dataset Factory) — 16.0–16.6-A закрыты и live-провалидированы
+  (ветка `kaggle`). 13 крейтов, 670 Rust-тестов** (1 ignored — live-камера) + Python-группы (экспортёры +
+  validate-гейт). **Осталось: 16.6-B** (hard-example mining, зависит от накопленных данных).
+- **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
+  пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
+  **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,
+  версия из `Cargo.toml`. Активная разработка продолжается на `kaggle`.
 - **Фаза 14 «Продукт» — ЗАКРЫТА целиком** (2026-07-06, live с нуля: `git clone` → `cargo build` →
   `mvm setup` 9/9 → `serve --with-camera` → MCP-снапшот): XDG-пути + `config.toml`, авто-детект камеры,
   `mvm setup` (fetch+sha256), watched-галерея, `serve --with-camera`, `mvm mcp install`, `mvm service`,
@@ -23,7 +24,7 @@
   **Фаза 16:** `mvm run --record` копит сессии-датасеты (RGB+depth+masks+labels, privacy-safe),
   `mvm dataset list/info/stats/prune`, Python-экспортёры в `prototype/pipeline/dataset/`.
 - **История фаз — таблица Roadmap ниже. Детальные runbook'и закрытых фаз — `mvm/docs/phase-*.md`.**
-- **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь; пуш тега `v0.2.0` для релиза.
+- **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь.
 
 ## Три инварианта (любая фича обязана им соответствовать)
 
@@ -69,7 +70,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 657 тестов
+cargo test --workspace         # 670 тестов
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
@@ -232,9 +233,9 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **11** | ✅ | Fusion-полировка (+0 ONNX): mask-контакт, activity-FSM+journal, зоны-persistence, anomaly v2, self-calib, object-permanence, person-маски |
 | **12** | ✅ | LLM-render (+0 ONNX/+0 deps): pull-модель snapshot/recap/inspect, токен-диета, MCP stdio-сервер |
 | **13** | ✅ | Agent Tools/Skills Polishing: когерентное CLI-дерево + `--help`, `mvm/AGENT.md`, само-докум. MCP |
-| **14** | ✅ | Продукт: XDG/config, `setup`/`doctor`, watched-галерея, `serve --with-camera`, `mcp install`, `service`, дистрибуция v0.1.0 |
-| **15** | ✅ по коду | ML Refactor → v0.2.0 (`kaggle`, lab-first, журналы LJ0–LJ6): 15.0 лаб+бенч · 15.1 поза (2D-GRIP z-free, flexion, Mahalanobis↔VAE, footprint −79%) · 15.2 переходы (E2 fall «пол+скорость таза», AUROC 1.000) · 15.3 трекер (stale-relink фикс) · 15.4 golden-симулятор + словарь v2 `using_object(class)` · 15.5 паспорт+диета (⭐ SFace align +19.5 п.п.) · 15.6 Rust-порт P0–P8. Релиз v0.2.0 ждёт owner-тега. Детали — `docs/phase-15-plan.md`, `docs/phase-15.6-port-plan.md` |
-| **16** | 🔨 | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`--privacy` флаг) · **16.6-A ✅** data-quality gates (`mvm dataset check` + Python `validate.py`, CI exit-code). Всё live-провалидировано. **Осталось:** 16.6-B (hard-example mining). План — `docs/phase-16-plan.md` |
+| **14 → v0.1.0** | ✅ | Продукт: XDG/config, `setup`/`doctor`, watched-галерея, `serve --with-camera`, `mcp install`, `service`, дистрибуция v0.1.0 |
+| **15** | ✅ | ML Refactor (`kaggle`, lab-first, журналы LJ0–LJ6): 15.0 лаб+бенч · 15.1 поза (2D-GRIP z-free, flexion, Mahalanobis↔VAE, footprint −79%) · 15.2 переходы (E2 fall «пол+скорость таза», AUROC 1.000) · 15.3 трекер (stale-relink фикс) · 15.4 golden-симулятор + словарь v2 `using_object(class)` · 15.5 паспорт+диета (⭐ SFace align +19.5 п.п.) · 15.6 Rust-порт P0–P8. Свёрнута в код v0.3.0 (v0.2.0 отдельным тегом не выпускалась). Детали — `docs/phase-15-plan.md`, `docs/phase-15.6-port-plan.md` |
+| **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`--privacy` флаг) · **16.6-A ✅** data-quality gates (`mvm dataset check` + Python `validate.py`, CI exit-code). Всё live-провалидировано, релиз v0.3.0. **Осталось:** 16.6-B (hard-example mining). План — `docs/phase-16-plan.md` |
 
 ## Терминология
 

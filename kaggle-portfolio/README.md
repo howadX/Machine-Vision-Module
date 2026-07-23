@@ -3,7 +3,7 @@
 > **Kaggle-профиль как живая лаборатория.** Каждый ноутбук = design doc с воспроизводимыми экспериментами.
 > Обновляется при изменениях в production. Не архив — платформа прототипирования.
 
-**Production:** [github.com/dawoh/mvm](https://github.com/dawoh/mvm) — Rust, 597 тестов, GitHub Releases
+**Production:** [github.com/howadX/Machine-Vision-Module](https://github.com/howadX/Machine-Vision-Module) — Rust, 670 тестов, v0.3.0 на GitHub Releases
 **Автор:** Вадим Ховрин · ML / Computer Vision Engineer
 **Как это поддерживается:** [WORKFLOW.md](./WORKFLOW.md) — build → Kaggle push/pull через `kctl.py` (ноутбуки генерируются, не редактируются вручную)
 
@@ -34,7 +34,7 @@ results/metrics.json    — реальные числа, стянутые с п�
  │      GRIP: 14 фич → RF → 0.959
  │
 2026 ─ Production: EmotiEffLib ONNX + GRIP в Rust
-        MVM v0.1.0: 597 тестов, MCP, systemd
+        MVM v0.3.0: 670 тестов, Dataset Factory, MCP, systemd
 ```
 
 ---

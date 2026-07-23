@@ -121,9 +121,11 @@ in a recap's episode list yet have **no matching scene frame** in the inspected
 window. Absence in `inspect` doesn't disprove a recap episode; it means the moment
 fell between scene dumps. Widen `--window` before concluding.
 
-## Contract changes in v0.2.0 (from v0.1.0)
+## Contract changes since v0.1.0 (the ML-refactor line, shipped in v0.3.0)
 
-The ML refactor (phase 15, journals LJ0–LJ6) changed three things a consumer sees:
+The ML refactor (phase 15, journals LJ0–LJ6) changed three things a consumer sees.
+It was prepared as the 0.2.0 line but never tagged on its own — the changes ship in
+the current release **v0.3.0** (a v0.1.0 consumer upgrading to v0.3.0 sees all three):
 
 1. **`torso_flexion`** — a new *optional* posture field (continuous torso inclination
    in degrees). Present when the torso is visible; absent otherwise. Additive — old
