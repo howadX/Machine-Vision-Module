@@ -39,8 +39,9 @@ pub struct RecordResult {
 pub struct FrameRecord {
     pub session_id: String,
     pub seq: u64,
-    /// Абсолютный путь, куда вызывающий должен записать RGB-кадр.
-    pub frame_path: PathBuf,
+    /// Абсолютный путь, куда вызывающий должен записать RGB-кадр. `None` в
+    /// text-only режиме (`save_frames = false`) — вызывающий пиксели не пишет.
+    pub frame_path: Option<PathBuf>,
     /// Абсолютный путь под карту глубины (если `save_depth`).
     pub depth_path: Option<PathBuf>,
     /// Наблюдение, записанное в `labels.jsonl` (для интроспекции/тестов).
@@ -183,7 +184,10 @@ impl DatasetWriter {
             if !world.session_active() {
                 let sid = new_session_stamp.to_string();
                 let dir = self.session_dir(&sid);
-                fs::create_dir_all(dir.join("frames"))?;
+                fs::create_dir_all(&dir)?; // session root always (holds labels.jsonl + session.toml)
+                if self.cfg.save_frames {
+                    fs::create_dir_all(dir.join("frames"))?;
+                }
                 if self.cfg.save_depth {
                     fs::create_dir_all(dir.join("depth"))?;
                 }
@@ -197,7 +201,12 @@ impl DatasetWriter {
         // 2. Write while a session is open.
         if let Some(sid) = world.current_session_id.clone() {
             let seq = self.seq_in_session;
-            let frame_rel = format!("frames/{:06}.{}", seq, self.cfg.frame_format.ext());
+            // Text-only mode (`save_frames = false`): no pixel path is allocated, so
+            // the label never points at a frame that was not written.
+            let frame_rel = self
+                .cfg
+                .save_frames
+                .then(|| format!("frames/{:06}.{}", seq, self.cfg.frame_format.ext()));
             // Record a depth path only when depth is enabled AND actually available
             // this frame (range given) — otherwise the label would dangle.
             let depth_rel = match (self.cfg.save_depth, depth_range) {
@@ -212,7 +221,7 @@ impl DatasetWriter {
                 seq_in_session: seq,
             };
             let mut obs = route(world, &ctx);
-            obs.frame.frame_path = Some(frame_rel.clone());
+            obs.frame.frame_path = frame_rel.clone();
             obs.frame.depth_path = depth_rel.clone();
             obs.frame.depth_range = depth_rel.as_ref().and(depth_range);
 
@@ -226,7 +235,7 @@ impl DatasetWriter {
             res.frame = Some(FrameRecord {
                 session_id: sid,
                 seq,
-                frame_path: dir.join(&frame_rel),
+                frame_path: frame_rel.map(|r| dir.join(r)),
                 depth_path: depth_rel.map(|d| dir.join(d)),
                 observation: obs,
             });
@@ -351,7 +360,7 @@ mod tests {
         assert_eq!(r.opened.as_deref(), Some("2026-07-17_153000"));
         let frame = r.frame.expect("frame recorded");
         assert_eq!(frame.seq, 0);
-        assert!(frame.frame_path.ends_with("frames/000000.jpg"));
+        assert!(frame.frame_path.as_ref().unwrap().ends_with("frames/000000.jpg"));
 
         let labels = root.join("sessions/2026-07-17_153000/labels.jsonl");
         let lines = read_lines(&labels);
@@ -361,6 +370,35 @@ mod tests {
         assert_eq!(obs.session_id, "2026-07-17_153000");
         assert_eq!(obs.frame.frame_path.as_deref(), Some("frames/000000.jpg"));
         assert_eq!(obs.entities.len(), 1);
+    }
+
+    #[test]
+    fn text_only_mode_writes_labels_without_a_frame_path() {
+        // save_frames = false → semantic session: labels.jsonl + session.toml, no pixels.
+        let root = temp_root();
+        let mut cfg = DatasetConfig::default();
+        cfg.save_frames = false;
+        cfg.save_depth = false;
+        let mut w = DatasetWriter::new(cfg, root.clone(), "mvm_sessions");
+
+        let t0 = Instant::now();
+        let mut world = WorldState::new(t0);
+        world.frame_id = 100;
+        world.people.push(person(1, t0));
+
+        let r = w.record_frame(&mut world, t0, "2026-07-17T15:30:00.000", "2026-07-17_153000", None).unwrap();
+        let frame = r.frame.expect("frame recorded");
+        // No pixel path handed to the caller, and none in the label.
+        assert!(frame.frame_path.is_none(), "text-only mode allocates no frame path");
+        assert!(frame.observation.frame.frame_path.is_none());
+
+        let sess = root.join("sessions/2026-07-17_153000");
+        // The semantic log is present; the pixel dir was never created.
+        assert!(sess.join("labels.jsonl").is_file(), "labels.jsonl present");
+        assert!(!sess.join("frames").exists(), "no frames/ dir in text-only mode");
+        // The label still carries the full semantic observation (entities, quality).
+        let obs = CanonicalObservation::from_jsonl_line(&read_lines(&sess.join("labels.jsonl"))[0]).unwrap();
+        assert_eq!(obs.entities.len(), 1, "person entity still recorded");
     }
 
     #[test]

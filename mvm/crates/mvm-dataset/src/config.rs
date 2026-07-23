@@ -86,6 +86,11 @@ pub struct DatasetConfig {
     pub frame_format: FrameFormat,
     /// Качество JPEG (0–100), игнорируется для PNG.
     pub frame_quality: u8,
+    /// Сохранять RGB-кадры. `false` → **text-only режим**: сессия несёт только
+    /// `labels.jsonl` (Canonical Observation) + `session.toml`, без пикселей —
+    /// подробный семантический лог сцены с той же session-дисциплиной (grouper,
+    /// `check`, `prune`), что и полный датасет.
+    pub save_frames: bool,
     /// Сохранять карты глубины (16-bit PNG).
     pub save_depth: bool,
     /// Сохранять instance-маски (если активен `--masks`).
@@ -111,6 +116,7 @@ impl Default for DatasetConfig {
             frame_cadence: 30,
             frame_format: FrameFormat::Jpg,
             frame_quality: 85,
+            save_frames: true,
             save_depth: true,
             save_masks: true,
             save_raw_embeddings: true,
@@ -159,6 +165,7 @@ mod tests {
         assert_eq!(c.frame_cadence, 30);
         assert_eq!(c.frame_format, FrameFormat::Jpg);
         assert_eq!(c.frame_quality, 85);
+        assert!(c.save_frames, "frames saved by default (backward-compatible)");
         assert!(c.save_depth && c.save_masks && c.save_raw_embeddings && c.save_landmarks);
         assert_eq!(c.privacy, Privacy::Safe);
         assert_eq!(c.session_timeout_secs, 30);

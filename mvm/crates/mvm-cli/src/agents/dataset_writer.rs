@@ -98,9 +98,12 @@ impl DatasetWriterAgent {
             return Ok(false);
         };
 
-        // Outside the lock: encode + blur + persist the RGB pixels.
-        let regions = blur_regions(&privacy_people, self.cfg.privacy);
-        self.write_frame_image(&frame.image, &rec, &regions)?;
+        // Outside the lock: encode + blur + persist the RGB pixels. In text-only
+        // mode the writer allocates no frame path → skip the pixel encode entirely.
+        if rec.frame_path.is_some() {
+            let regions = blur_regions(&privacy_people, self.cfg.privacy);
+            self.write_frame_image(&frame.image, &rec, &regions)?;
+        }
 
         // Depth (§16.2.2): the writer only set a depth path when we passed a range,
         // so path.is_some() ⇔ depth_map.is_some().
@@ -122,7 +125,8 @@ impl DatasetWriterAgent {
     ) -> anyhow::Result<()> {
         let mut rgb = img.to_rgb8();
         apply_blur(&mut rgb, blur);
-        save_rgb(&rgb, &rec.frame_path, &self.cfg)?;
+        let path = rec.frame_path.as_ref().expect("write_frame_image called only when a frame path exists");
+        save_rgb(&rgb, path, &self.cfg)?;
         Ok(())
     }
 }
@@ -366,14 +370,14 @@ mod tests {
         let rec = FrameRecord {
             session_id: "s".into(),
             seq: 0,
-            frame_path: root.join("frames/000000.jpg"),
+            frame_path: Some(root.join("frames/000000.jpg")),
             depth_path: None,
             observation: mvm_dataset::CanonicalObservation::new("d", "s", 0, "iso", 0),
         };
         let regions = vec![BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 0.3 }];
         agent.write_frame_image(&dynimg, &rec, &regions).unwrap();
 
-        let saved = image::open(&rec.frame_path).unwrap();
+        let saved = image::open(rec.frame_path.as_ref().unwrap()).unwrap();
         assert_eq!(saved.width(), 40);
         assert_eq!(saved.height(), 40);
     }
