@@ -8,9 +8,9 @@
 
 ## Статус
 
-- **Фаза 15 (ML Refactor → v0.2.0) ЗАКРЫТА по коду; Фаза 16 (Dataset Factory) в работе — 16.0–16.4
-  закрыты и live-провалидированы (ветка `kaggle`). 13 крейтов, 657 Rust-тестов** (1 ignored — live-камера)
-  + 6 Python-групп (экспортёры).
+- **Фаза 15 (ML Refactor → v0.2.0) ЗАКРЫТА по коду; Фаза 16 (Dataset Factory) в работе — 16.0–16.5
+  + 16.6-A закрыты и live-провалидированы (ветка `kaggle`). 13 крейтов, 670 Rust-тестов** (1 ignored — live-камера)
+  + Python-группы (экспортёры + validate-гейт). **Осталось: 16.6-B** (hard-example mining).
 - **Версия `v0.2.0` подготовлена** — `Cargo.toml` bump 0.1.0→0.2.0, паспорт/CHANGELOG/контракт-изменения
   записаны; **релиз ждёт owner-пуша тега `v0.2.0`** (CI триггерится тегом, версия из тега). Опубликованный
   прод пока `v0.1.0`. `master` — прод после слияния `rust-core`; вся 15.6+16 разработка на `kaggle`.
@@ -109,7 +109,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-hands** | MediaPipe handpose ONNX (4МБ), 21 lm/рука, ROI из запястий BlazePose [8.E.4] |
 | **mvm-mesh** | Agent trait + `LatestFrame` (single-slot latest-wins) + `AgentMesh` оркестратор на std::thread [8.C] |
 | **mvm-pipeline** | Camera (Python bridge subprocess) + NativeCamera (v4l2 MJPG) |
-| **mvm-dataset** | ★ **Dataset Factory (фаза 16)** — чистый потребитель WorldState. `observation` (Canonical Observation, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания), `router` (Semantic Router G₁–G₅), `config` (`DatasetConfig`), `writer` (`DatasetWriter`: сессии+JSONL+session.toml), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`). Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
+| **mvm-dataset** | ★ **Dataset Factory (фаза 16)** — чистый потребитель WorldState. `observation` (Canonical Observation, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания), `router` (Semantic Router G₁–G₅), `config` (`DatasetConfig`), `writer` (`DatasetWriter`: сессии+JSONL+session.toml), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`), **`validate` (16.6-A data-quality gate: integrity/binding-keys/mask-RLE/depth-range/privacy-leak + stats → `mvm dataset check`)**. Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
 | **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`/**`dataset`**; `pipeline.rs` (BodyPrimaryPipeline), `agents/` (+`dataset_writer` 16.1.2b), `dataset_cmd.rs` (16.3), `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
 
 > Модели ONNX (YuNet/SFace/EmotiEffLib/BlazePose/YOLO26n/Depth-Anything/handpose) — единый **манифест**
@@ -234,7 +234,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **13** | ✅ | Agent Tools/Skills Polishing: когерентное CLI-дерево + `--help`, `mvm/AGENT.md`, само-докум. MCP |
 | **14** | ✅ | Продукт: XDG/config, `setup`/`doctor`, watched-галерея, `serve --with-camera`, `mcp install`, `service`, дистрибуция v0.1.0 |
 | **15** | ✅ по коду | ML Refactor → v0.2.0 (`kaggle`, lab-first, журналы LJ0–LJ6): 15.0 лаб+бенч · 15.1 поза (2D-GRIP z-free, flexion, Mahalanobis↔VAE, footprint −79%) · 15.2 переходы (E2 fall «пол+скорость таза», AUROC 1.000) · 15.3 трекер (stale-relink фикс) · 15.4 golden-симулятор + словарь v2 `using_object(class)` · 15.5 паспорт+диета (⭐ SFace align +19.5 п.п.) · 15.6 Rust-порт P0–P8. Релиз v0.2.0 ждёт owner-тега. Детали — `docs/phase-15-plan.md`, `docs/phase-15.6-port-plan.md` |
-| **16** | 🔨 | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`face_bbox` на PersonState + dataset-лейбл, `--privacy` флаг, fallback-полоса). Всё live-провалидировано (запись→PyTorch DataLoader; precise blur). **Осталось:** 16.6 (интеграция с тренерами + quality gates). План — `docs/phase-16-plan.md` |
+| **16** | 🔨 | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`--privacy` флаг) · **16.6-A ✅** data-quality gates (`mvm dataset check` + Python `validate.py`, CI exit-code). Всё live-провалидировано. **Осталось:** 16.6-B (hard-example mining). План — `docs/phase-16-plan.md` |
 
 ## Терминология
 

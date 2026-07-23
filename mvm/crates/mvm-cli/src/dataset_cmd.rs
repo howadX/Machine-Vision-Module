@@ -6,6 +6,7 @@ use crate::config_file::ProductConfig;
 use mvm_dataset::session::{
     aggregate, list_sessions, partition_prune, DatasetStats, PrunePolicy, SessionInfo,
 };
+use mvm_dataset::validate::{check_dataset, check_session, DatasetReport, Severity, SessionReport};
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "\
@@ -15,6 +16,7 @@ USAGE:
     mvm dataset list                 list recorded sessions
     mvm dataset info <session_id>    details for one session
     mvm dataset stats                dataset-wide totals
+    mvm dataset check [session_id]   data-quality gate (--strict fails on warnings)
     mvm dataset prune --keep <N|Nd>  remove old sessions (dry-run unless --yes)
     mvm dataset export ...           → Python exporters (phase 16.4)
 ";
@@ -26,6 +28,7 @@ pub fn run_dataset(product: &ProductConfig, raw: &[String]) -> anyhow::Result<()
         Some("list") => cmd_list(&root),
         Some("info") => cmd_info(&root, raw.get(3).map(String::as_str)),
         Some("stats") => cmd_stats(&root),
+        Some("check") => cmd_check(&root, raw),
         Some("prune") => cmd_prune(&root, raw),
         Some("export") => {
             cmd_export(&root);
@@ -133,6 +136,81 @@ fn cmd_stats(root: &Path) -> anyhow::Result<()> {
     }
     println!("  anomaly max:  {:.3}", st.anomaly_max);
     Ok(())
+}
+
+/// `mvm dataset check [session_id] [--strict]` — data-quality gate (§16.6-A).
+/// Prints findings + quality stats, then fails (non-zero exit) when the gate does:
+/// any error, or — with `--strict` — any warning too. CI-gateable.
+fn cmd_check(root: &Path, raw: &[String]) -> anyhow::Result<()> {
+    let strict = raw.iter().any(|a| a == "--strict");
+    // First non-flag positional after `check` is an optional session id.
+    let session_id = raw.get(3..).and_then(|rest| rest.iter().find(|a| !a.starts_with('-')));
+
+    let report: DatasetReport = if let Some(id) = session_id {
+        let dir = root.join("sessions").join(id);
+        if !dir.is_dir() {
+            anyhow::bail!("no session {id} under {}", root.join("sessions").display());
+        }
+        DatasetReport { sessions: vec![check_session(&dir, id)] }
+    } else {
+        check_dataset(root)?
+    };
+
+    if report.sessions.is_empty() {
+        println!("No sessions under {} — nothing to check.", root.join("sessions").display());
+        return Ok(());
+    }
+    for sr in &report.sessions {
+        print_session_report(sr);
+    }
+
+    let (errs, warns) = (report.errors(), report.warns());
+    println!("\n{} session(s) · {errs} error(s) · {warns} warning(s)", report.sessions.len());
+
+    if errs > 0 {
+        anyhow::bail!("data-quality check FAILED: {errs} error(s)");
+    }
+    if strict && warns > 0 {
+        anyhow::bail!("data-quality check FAILED (--strict): {warns} warning(s)");
+    }
+    println!("OK — data-quality check passed.");
+    Ok(())
+}
+
+fn print_session_report(sr: &SessionReport) {
+    let st = &sr.stats;
+    println!("── {} ──", sr.id);
+    for f in &sr.findings {
+        let tag = match f.severity {
+            Severity::Error => "E",
+            Severity::Warn => "W",
+        };
+        match f.frame_id {
+            Some(fid) => println!("  [{tag}] {:<22} frame {fid}: {}", f.code, f.msg),
+            None => println!("  [{tag}] {:<22} {}", f.code, f.msg),
+        }
+    }
+    println!(
+        "  stats: {} frames · {} people ({} gallery / {} anon) · {} objects · {} masks · {} depth",
+        st.frames, st.people, st.gallery_people, st.anon_people, st.objects, st.masks, st.with_depth
+    );
+    println!(
+        "         withheld-posture {:.0}% · postures {} · emotions {} · objects {}",
+        st.withheld_rate() * 100.0,
+        fmt_hist(&st.posture_hist),
+        fmt_hist(&st.emotion_hist),
+        fmt_hist(&st.object_hist),
+    );
+}
+
+/// Compact `a×3 b×1` rendering of a class histogram (desc by count), `—` if empty.
+fn fmt_hist(h: &std::collections::BTreeMap<String, u64>) -> String {
+    if h.is_empty() {
+        return "—".to_string();
+    }
+    let mut v: Vec<(&String, &u64)> = h.iter().collect();
+    v.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    v.iter().take(6).map(|(k, c)| format!("{k}×{c}")).collect::<Vec<_>>().join(" ")
 }
 
 fn cmd_prune(root: &Path, raw: &[String]) -> anyhow::Result<()> {

@@ -19,7 +19,8 @@
 | **16.3** | ✅ | CLI `mvm dataset list/info/stats/prune` (prune — dry-run по умолчанию); публичный `session.rs` ридер |
 | **16.4** | ✅ | Python-экспортёры в `prototype/pipeline/dataset/` (PyTorch `IterableDataset` / TFRecord / WebDataset), фильтры `dataset_config.yaml`, README, тесты. Сквозной путь запись→PyTorch DataLoader(num_workers=2) live-провалиден |
 | **16.5** | ✅ | Privacy: точный YuNet-face-bbox (padded 18%) вместо полосы; `face_bbox` на BodyData/PersonState + как dataset-лейбл; fallback-полоса 50% при недетекте (privacy-first); флаг `--privacy`. Live: точный блюр детектнутого лица, щедрый fallback покрывает зону глаз. Ограничение: fallback — геометрическая эвристика |
-| **16.6** | ⏳ (пересмотрен) | **A** data-quality gates + **B** hard-example mining. Descope: наивный supervised fine-tune (self-labeling-ловушка). См. §16.6-ML ниже |
+| **16.6-A** | ✅ | Data-quality gates: Rust `mvm dataset check` (`mvm-dataset::validate`, структура/binding-keys/файлы/mask-RLE/depth-range/privacy-embedding-leak + quality-stats → exit-code) + Python `validate.py` (пиксельная валидация: декод кадров/depth/масок + parity-stats). 13 тестов (10 Rust + 3 Python), live-smoke exit 0/1 |
+| **16.6-B** | ⏳ | Hard-example mining — `mvm dataset export --hard-examples` / view поверх quality-as-data. Зависит от накопленных данных. См. §16.6-ML |
 
 Отклонения от плана (зафиксированы): (1) session-lifecycle драйвит **DatasetWriter** (recording-gated),
 а не FusionAgent — ноль стоимости когда запись выключена; (2) пиксельное кодирование/blur — в mesh-агенте
@@ -405,8 +406,19 @@ mvm dataset export --format pytorch
 
 | # | Задача | Объём | Зависит от |
 |---|--------|-------|-----------|
-| **A** | **Data-quality gates** — Python `validate.py` + `mvm dataset check`: целостность (пути/RLE/depth_range/provenance/ключи связывания), privacy-leak чек, баланс классов, withheld-rate → отчёт + exit-code (CI-гейтуемо) | **S** | ничего (любая сессия) |
-| **B** | **Hard-example mining** — `mvm dataset export --hard-examples` / view поверх quality-as-data (высокая entropy, низкий conf, withheld, OOD, anomaly) → курированный set для разметки человеком. Окупает 16.2. | **M** | накопленные данные |
+| **A** ✅ | **Data-quality gates** — `mvm dataset check` (`mvm-dataset::validate`) + Python `validate.py`: целостность (пути/RLE/depth_range/ключи связывания), privacy-leak чек, баланс классов, withheld-rate → отчёт + exit-code (CI-гейтуемо) | **S** | ничего (любая сессия) |
+| **B** ⏳ | **Hard-example mining** — `mvm dataset export --hard-examples` / view поверх quality-as-data (высокая entropy, низкий conf, withheld, OOD, anomaly) → курированный set для разметки человеком. Окупает 16.2. | **M** | накопленные данные |
+
+**16.6-A реализация (факт):** два дополняющих гейта, оба с ненулевым exit-code (CI).
+- **Rust `mvm dataset check [session_id] [--strict]`** — авторитет по *структуре* (без image-deps, инвариант #2):
+  парс `labels.jsonl`, binding-keys (`session_id`==папка, `schema_version`), существование frame/depth-файлов,
+  depth_range `[min≤max]`, mask-RLE == `res²`, **privacy-leak** (никаких сырых `embedding`/`descriptor` в лейблах),
+  quality-count consistency; + quality-stats (people/gallery/anon, withheld-rate, гистограммы поз/эмоций/объектов).
+  Логика в `mvm-dataset/src/validate.rs` (чистая, unit-тестируема), CLI в `dataset_cmd.rs`. 10 тестов.
+- **Python `validate.py`** — пиксельная валидация (то, чего Rust не может): декод каждого кадра (H×W×3),
+  depth (2-D + обратимый range), mask-RLE → `MASK_RES²`; parity-stats. Переиспользует `records.py`. 3 теста.
+- **Честность §16.0.2:** `withheld` поза считается как gap, никогда не ошибка и не класс.
+- Live-smoke: чистая сессия → exit 0; протечка (embedding + session-id mismatch) → печать findings, exit 1.
 
 ### Descope / отложено (осознанно)
 

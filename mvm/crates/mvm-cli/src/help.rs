@@ -109,6 +109,8 @@ USAGE:
     mvm dataset list                 List recorded sessions (frames, status, people)
     mvm dataset info <session_id>    Details for one session
     mvm dataset stats                Dataset-wide totals (frames, participants, activities)
+    mvm dataset check [session_id]   Data-quality gate: integrity, privacy, balance
+                                     (--strict also fails on warnings; non-zero exit → CI)
     mvm dataset prune --keep <N|Nd>  Remove old sessions — keep last N, or on/after today−Nd
                                      (dry-run unless --yes)
     mvm dataset export ...           Convert to PyTorch/TFRecord/WebDataset (Python, phase 16.4)
@@ -116,6 +118,8 @@ USAGE:
 EXAMPLES:
     mvm dataset list
     mvm dataset info 2026-07-17_153721
+    mvm dataset check                     # gate the whole dataset (exit 1 on any error)
+    mvm dataset check 2026-07-17_153721 --strict
     mvm dataset prune --keep 7d            # dry-run: what falls outside the last 7 days
     mvm dataset prune --keep 5 --yes       # actually keep the 5 newest, delete the rest
 

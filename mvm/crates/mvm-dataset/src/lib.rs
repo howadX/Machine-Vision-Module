@@ -23,6 +23,7 @@ pub mod observation;
 pub mod privacy;
 pub mod router;
 pub mod session;
+pub mod validate;
 pub mod writer;
 
 pub use config::{DatasetConfig, ExportConfig, ExportFormat, FrameFormat, Privacy};
@@ -34,5 +35,8 @@ pub use privacy::{blur_regions, PrivacyPerson};
 pub use router::{route, RouteContext};
 pub use session::{
     aggregate, list_sessions, partition_prune, DatasetStats, PrunePolicy, SessionInfo, SessionMeta,
+};
+pub use validate::{
+    check_dataset, check_session, CheckStats, DatasetReport, Finding, Severity, SessionReport,
 };
 pub use writer::{DatasetWriter, FrameRecord, RecordResult};

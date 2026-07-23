@@ -215,6 +215,48 @@ def test_pytorch_dataset(sdir: Path):
     assert len(batches) == 2
 
 
+def test_validate_clean(sdir: Path):
+    from validate import validate_dataset
+
+    # `sdir` is a session dir (has labels.jsonl) → validated as a single session.
+    reps = validate_dataset(sdir)
+    assert len(reps) == 1
+    r = reps[0]
+    assert r.errors == 0, [i.__dict__ for i in r.issues]
+    st = r.stats
+    assert st.frames == 3 and st.people == 3
+    assert st.gallery == 2 and st.anon == 1
+    assert st.withheld_posture == 1 and abs(st.withheld_rate - 1 / 3) < 1e-6
+    assert st.masks == 1 and st.with_depth == 2
+    assert st.posture_hist.get("sitting") == 1 and st.posture_hist.get("standing") == 1
+
+
+def test_validate_catches_missing_frame():
+    from validate import validate_session
+
+    with tempfile.TemporaryDirectory() as td:
+        sdir = build_session(Path(td))
+        (sdir / "frames" / "000000.jpg").unlink()  # break a referenced frame
+        r = validate_session(sdir)
+        assert r.errors >= 1
+        assert any(i.code == "frame-missing" for i in r.issues)
+
+
+def test_validate_catches_bad_mask():
+    from validate import validate_session
+
+    with tempfile.TemporaryDirectory() as td:
+        sdir = Path(td) / "sessions" / "2026-07-17_150000"
+        (sdir / "frames").mkdir(parents=True)
+        o = _obs(0, 100, identity="Вадим", with_depth=False)
+        # An RLE that doesn't cover MASK_RES² cells → decode_rle raises → finding.
+        o["entities"][1]["attributes"]["mask"] = {"res": MASK_RES, "coverage": 0.0, "rle": [10, 20]}
+        (sdir / "labels.jsonl").write_text(json.dumps(o) + "\n", encoding="utf-8")
+        Image.fromarray(np.zeros((48, 64, 3), np.uint8), "RGB").save(sdir / "frames" / "000000.jpg")
+        r = validate_session(sdir)
+        assert any(i.code == "mask-decode" for i in r.issues), [i.__dict__ for i in r.issues]
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
@@ -225,6 +267,9 @@ def main() -> int:
         test_filters(sdir)
         test_filters_from_yaml()
         test_pytorch_dataset(sdir)
+        test_validate_clean(sdir)
+    test_validate_catches_missing_frame()
+    test_validate_catches_bad_mask()
     print("all dataset exporter tests passed ✓")
     return 0
 

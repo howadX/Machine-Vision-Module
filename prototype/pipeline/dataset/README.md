@@ -32,8 +32,9 @@ mvm dataset list                 # see what you have
 | `export_pytorch.py` | `MVMSessionDataset` (`IterableDataset`), worker-sharded. |
 | `export_tfrecord.py` | TFRecord shards (needs `tensorflow`). |
 | `export_webdataset.py` | WebDataset `.tar` shards (writes with stdlib `tarfile` — no dep). |
+| `validate.py` | **Pixel-level data-quality gate** (16.6-A): decodes every frame/depth/mask + folds stats; non-zero exit on failure. Companion to Rust `mvm dataset check`. |
 | `dataset_config.yaml` | Export filters + task presets. |
-| `test_dataset.py` | Pure-logic + PyTorch tests on a synthetic session. |
+| `test_dataset.py` | Pure-logic + PyTorch + validate tests on a synthetic session. |
 
 ## Quick start (PyTorch)
 
@@ -95,6 +96,25 @@ absence of a posture is never a negative label (§16.0.2).
 range is in each label's `frame.depth_range = [min, max]`. `Record.load_depth()`
 de-normalizes back to the recorder's affine-relative scale (larger = nearer; not
 metres). Frames without depth simply have no `depth` key.
+
+## Validation gate (16.6-A)
+
+Two complementary gates guard data quality before training — both exit non-zero on
+failure, so either drops into CI:
+
+```bash
+mvm dataset check                       # Rust: structure/labels/privacy (no image deps)
+python validate.py <root-or-session>    # Python: decodes frames/depth/masks + stats
+python validate.py <root> --strict      # also fail on warnings
+```
+
+`mvm dataset check` is authoritative for *structure* — binding keys, referenced-file
+existence, mask-RLE cell counts, depth ranges, and privacy (no raw face embeddings in
+`labels.jsonl`). `validate.py` does what the Rust core deliberately can't without an
+image crate: it **actually decodes** every frame, depth map, and mask RLE the exporter
+is about to feed a trainer, and reports the same quality-as-data stats (identity split,
+posture balance, withheld-rate). A `withheld` posture is honest absence — counted, never
+an error (§16.0.2).
 
 ## Feeding the training scripts
 
