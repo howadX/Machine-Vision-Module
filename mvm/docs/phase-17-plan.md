@@ -119,13 +119,25 @@ Gate сообщает, что нужен human audit skills; он не заяв�
 **Верификация:** workflow проходит на текущем контракте и предсказуемо падает на
 невалидном frontmatter, stale marker либо public-surface change без skill audit.
 
-## Фаза 17.2 — Portability
+## Фаза 17.2 — Portability ✅
 
-- Проверить SKILL.md внешним совместимым validator/discovery mechanism.
-- Проверить, что body остаётся компактным и содержит только action-guiding
+- ✅ Проверить SKILL.md внешним совместимым validator/discovery mechanism.
+- ✅ Проверить, что body остаётся компактным и содержит только action-guiding
   knowledge; большие справочные сведения остаются в существующих repo docs.
-- Подтвердить, что skills discoverable по frontmatter и загружаются без
+- ✅ Подтвердить, что skills discoverable по frontmatter и загружаются без
   agent-specific assumptions.
+
+**Верификация (2026-07-26):**
+
+- официальный `skills-ref` из `agentskills/agentskills` (`38a2ff8`) принял оба
+  skill через `validate`; `read-properties` извлёк только стандартные
+  `name`/`description`, а `to-prompt` построил discovery XML с repo-location;
+- `mvm-vision` — 118 строк / 704 слова, `mvm-dataset` — 119 строк / 664 слова:
+  оба существенно ниже лимита 500 строк и не требуют bundled references;
+- два fresh-agent forward-test прочитали только соответствующий `SKILL.md`:
+  vision-прогон корректно выполнил `snapshot -> recap -> inspect` и сохранил
+  body-only/withheld/cadence honesty; dataset-прогон корректно различил
+  text-only/`--record`, privacy, quality gate, dry-run retention и label statuses.
 
 ## Фаза 17.3 — Hermes Integration
 

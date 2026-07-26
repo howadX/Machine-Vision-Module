@@ -95,11 +95,12 @@ CLI `mvm dataset` → Python-экспортёры → точный YuNet-face-bb
 (SCHEMA 16.7.0); плоские логи ретайрнуты (legacy `--scene-log`); `--record` — полный пиксельный датасет;
 `recap`/`inspect`/journal читают сессии. План — `mvm/docs/phase-16.7-plan.md`.
 
-**Фаза 17 — Canonical MVM Agent Skills (17.0–17.1 ✅):** repo-canonical know-how разделён на два
+**Фаза 17 — Canonical MVM Agent Skills (17.0–17.2 ✅):** repo-canonical know-how разделён на два
 переносимых skills `mvm/skills/{mvm-vision,mvm-dataset}`; прежний монолитный agent how-to удалён.
 Repo-local validator + CI contract gate защищают frontmatter, honesty markers и public-surface drift.
-Впереди 17.2 portability и 17.3 Hermes integration. Ядро/версия не трогаются; Hermes — по явному
-согласию. План — `mvm/docs/phase-17-plan.md`.
+Официальный `skills-ref` и fresh-agent forward-tests подтвердили portability. Впереди только 17.3
+Hermes integration. Ядро/версия не трогаются; Hermes — по явному согласию. План —
+`mvm/docs/phase-17-plan.md`.
 
 ## Для Agents
 

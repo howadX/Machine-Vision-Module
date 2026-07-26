@@ -18,9 +18,10 @@
   ретайрнуты (legacy `--scene-log`); `--record` доращивает до пиксельного датасета; `--no-vision-log`
   выключает. `recap`/`inspect`/journal читают сессии (shim → те же ридеры). Live: 4-мин прогон, сессия
   199 записей + 45 эпизодов, `dataset check` зелёный. План — `docs/phase-16.7-plan.md`.
-- **Фаза 17.0–17.1 — Repo Skills + CI Contract Gate ✅:** agent know-how разделён на canonical
+- **Фаза 17.0–17.2 — Repo Skills + CI Gate + Portability ✅:** agent know-how разделён на canonical
   `mvm-vision` и `mvm-dataset`; stdlib-only validator и GitHub Actions защищают minimal frontmatter,
-  honesty markers, stale-stack запреты и public-surface drift. Впереди 17.2 portability и 17.3 Hermes.
+  honesty markers, stale-stack запреты и public-surface drift. Официальный `skills-ref` и fresh-agent
+  forward-tests прошли. Впереди только 17.3 Hermes integration.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,
@@ -250,7 +251,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **15** | ✅ | ML Refactor (`kaggle`, lab-first, журналы LJ0–LJ6): 15.0 лаб+бенч · 15.1 поза (2D-GRIP z-free, flexion, Mahalanobis↔VAE, footprint −79%) · 15.2 переходы (E2 fall «пол+скорость таза», AUROC 1.000) · 15.3 трекер (stale-relink фикс) · 15.4 golden-симулятор + словарь v2 `using_object(class)` · 15.5 паспорт+диета (⭐ SFace align +19.5 п.п.) · 15.6 Rust-порт P0–P8. Свёрнута в код v0.3.0 (v0.2.0 отдельным тегом не выпускалась). Детали — `docs/phase-15-plan.md`, `docs/phase-15.6-port-plan.md` |
 | **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`--privacy` флаг) · **16.6-A ✅** data-quality gates (`mvm dataset check` + Python `validate.py`, CI exit-code). Всё live-провалидировано, релиз v0.3.0. **Осталось:** 16.6-B (hard-example mining). План — `docs/phase-16-plan.md` |
 | **16.7** | ✅ live | **Semantic Session Log** (`kaggle`): два стора истории сцены → один. **1 ✅** text-only запись (`save_frames`) · **1.5 ✅** обогащение роутера (relations/activities/events, SCHEMA 16.7.0, `route_with_relations`+`SceneRelations`) · **2 ✅** миграция ридеров (recap/inspect читают сессии через flat-shape shim + `Source`-resolver, golden-паритет) · **3 ✅** default-on text-only (`effective_recorder`, `vision_log`, ретайр плоских логов, `--no-vision-log`). Live-провалидировано (4-мин камера). План — `docs/phase-16.7-plan.md` |
-| **17** | 17.0–17.1 ✅ | **Canonical MVM Agent Skills** — repo-canonical `mvm-vision` + `mvm-dataset` и CI contract gate готовы; впереди portability и Hermes integration. Только know-how-слой: ядро/версия не трогаются. План — `docs/phase-17-plan.md` |
+| **17** | 17.0–17.2 ✅ | **Canonical MVM Agent Skills** — repo-canonical `mvm-vision` + `mvm-dataset`, CI contract gate и portability готовы; впереди только Hermes integration. Только know-how-слой: ядро/версия не трогаются. План — `docs/phase-17-plan.md` |
 
 ## Терминология
 
