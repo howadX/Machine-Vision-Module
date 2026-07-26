@@ -126,11 +126,10 @@ impl Source {
 }
 
 /// Resolve `--input` to a [`Source`]. A single `labels.jsonl` → semantic; a single
-/// other file → a flat scene file. A directory prefers **flat logs** when present
-/// (back-compat: the current `mvm run` default), and otherwise looks for semantic
-/// sessions (`labels.jsonl` directly, or under `sessions/` / `datasets/sessions/`).
-/// The flat→semantic fallback is what lets recap keep working once phase 3 makes
-/// text-only sessions the default and stops writing flat logs.
+/// other file → a flat scene file. A directory prefers semantic sessions
+/// (`labels.jsonl` directly, or under `sessions/` / `datasets/sessions/`) and
+/// falls back to flat logs only when no semantic sessions exist. This prevents
+/// retired flat logs from shadowing the current default-on session store.
 fn resolve_source(input: &Path, events: Option<&PathBuf>) -> Result<Source> {
     if input.is_file() {
         if input.file_name().and_then(|n| n.to_str()) == Some("labels.jsonl") {
@@ -141,13 +140,13 @@ fn resolve_source(input: &Path, events: Option<&PathBuf>) -> Result<Source> {
             events: events.cloned().into_iter().collect(),
         });
     }
-    let (scene, ev) = glob_flat(input)?;
-    if !scene.is_empty() {
-        return Ok(Source::Flat { scene, events: ev });
-    }
     let labels = find_session_labels(input);
     if !labels.is_empty() {
         return Ok(Source::Semantic { labels });
+    }
+    let (scene, ev) = glob_flat(input)?;
+    if !scene.is_empty() {
+        return Ok(Source::Flat { scene, events: ev });
     }
     bail!("no scene-*.jsonl or semantic sessions (labels.jsonl) in {}", input.display());
 }
@@ -852,23 +851,18 @@ mod tests {
     }
 
     #[test]
-    fn resolve_source_prefers_flat_then_falls_back_to_semantic() {
-        let root = tmp_path("resolve");
+    fn resolve_source_prefers_fresh_semantic_over_stale_flat() {
+        let root = tmp_path("resolve_semantic_first");
         let _ = std::fs::remove_dir_all(&root);
         let sess = root.join("datasets/sessions/2026-07-17_153000");
         std::fs::create_dir_all(&sess).unwrap();
         std::fs::write(sess.join("labels.jsonl"), "{}\n").unwrap();
+        std::fs::write(root.join("scene-2026-07-16.jsonl"), "{}\n").unwrap();
+        std::fs::write(root.join("events-2026-07-16.jsonl"), "{}\n").unwrap();
 
-        // No flat logs yet → semantic session is discovered.
         match resolve_source(&root, None).unwrap() {
             Source::Semantic { labels } => assert_eq!(labels.len(), 1),
-            _ => panic!("expected semantic fallback"),
-        }
-        // A flat scene log appears → it takes precedence (back-compat default).
-        std::fs::write(root.join("scene-2026-07-17.jsonl"), "{}\n").unwrap();
-        match resolve_source(&root, None).unwrap() {
-            Source::Flat { scene, .. } => assert_eq!(scene.len(), 1),
-            _ => panic!("expected flat precedence"),
+            _ => panic!("fresh semantic sessions must take precedence over stale flat logs"),
         }
         let _ = std::fs::remove_dir_all(&root);
     }
