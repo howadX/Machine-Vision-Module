@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mvm://benchmark/cortex-frame-v1",
+  "title": "CortexFrame replay envelope reserved by phase 18.0",
+  "description": "The concrete fields become executable with mvm-cortex in phase 18.2; this envelope prevents fixtures from becoming a durable store.",
+  "type": "object",
+  "required": ["scene_frame_id", "claims"],
+  "properties": {
+    "scene_frame_id": {"type": "integer", "minimum": 0},
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["status", "reasons", "evidence"]
+      }
+    }
+  },
+  "additionalProperties": true
+}

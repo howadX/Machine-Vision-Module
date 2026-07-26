@@ -1,7 +1,7 @@
 # Фаза 18 — Visual Cortex Layer: явный когнитивный слой MVM
 
-> **Версия:** 0.3 (26 июля 2026)
-> **Статус:** 📋 архитектурный план; canonical state contract и границы Cortex утверждены
+> **Версия:** 0.4 (27 июля 2026)
+> **Статус:** 🚧 реализация начата; 18.0 State Contract + Benchmark Baseline ✅
 > **Ветка:** `kaggle`
 > **Цель фазы:** сначала завершить канонический facts-слой `FusedSceneFrame`, затем добавить над ним явный, читаемый и проверяемый когнитивный слой `mvm-cortex`, превращающий perception pipeline в visual substrate for agency.
 > **Манифест:** `~/wiki/mvm/north-star-visual-cortex-agent.md`
@@ -860,6 +860,15 @@ Benchmark — не декоративный. Без него claims visual-corte
 
 ### 18.0 — State Contract + Benchmark Baseline
 
+**Статус:** ✅ закрыта 27 июля 2026 г. Добавлены serializable canonical types в
+`mvm-core::canonical`, read-only `WorldStateProjection`, incarnation registry,
+frame-based freshness, non-destructive event cursor с явным `EventGap`, девять
+contract tests и `benchmark/` с шестью обязательными сценариями. Baseline v0.3.0:
+synthetic continuity 2/2, scene-event recall 0/4, honesty 2/2,
+last-observation forecast 1/2; неизмеренные live-метрики оставлены
+`not measured`. Same-hardware live performance повторно снимается перед merge
+runtime-миграции 18.1.
+
 **Цель:** до runtime-рефакторинга зафиксировать executable contract canonical facts и baseline, против
 которого будут измеряться все Cortex claims.
 
@@ -1375,7 +1384,7 @@ v0.4.0 — Visual Cortex / фаза 18
 
 ---
 
-*План обновлён 26 июля 2026 г. по запросу Вадима (Ховрина).*
+*План обновлён 27 июля 2026 г.; 18.0 реализована и проверена полным workspace gate.*
 *Основание: фазовый план 18 v0.2, актуальные runtime/dataset contracts, `north-star-visual-cortex-agent.md`,
 `north-star-conscious-vision.md`, академическая работа `deconstructing-consciousness-as-engineering-method.md`
 и утверждённые решения о canonical `FusedSceneFrame`, evidence split и едином `mvm-cortex`.*

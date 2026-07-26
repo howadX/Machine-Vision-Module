@@ -32,7 +32,7 @@ MVM — **ансамбль независимых микро-агентов зр
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (13 крейтов, 689 тестов; фазы 5–16.7 закрыты, 16.6-B осталось)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (13 крейтов, 698 тестов; фазы 5–17 закрыты, фаза 18 активна)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, dataset, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   ├── CHANGELOG.md#   версии бинаря (0.1.0 → 0.3.0)
@@ -101,6 +101,12 @@ Repo-local validator + CI contract gate защищают frontmatter, honesty ma
 Официальный `skills-ref` и fresh-agent forward-tests подтвердили portability; профиль Hermes `sight`
 читает skills напрямую из repo, а legacy Python/wiki flow архивирован. Ядро/версия не затронуты. План —
 `mvm/docs/phase-17-plan.md`.
+
+**Фаза 18 — Visual Cortex Layer 🚧:** 18.0 ✅ — canonical facts contract
+(`FusedSceneFrame`, `SceneFact<T>`, `EntityKey`+incarnation, stamped sources,
+non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. Runtime пока остаётся на
+`WorldState`; следующий шаг — 18.1 typed observation bus + canonical Fusion. План —
+`mvm/docs/phase-18-plan.md`.
 
 ## Для Agents
 

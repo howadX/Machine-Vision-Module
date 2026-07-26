@@ -1,0 +1,16 @@
+{
+  "fixture_version": "18.0.0",
+  "scenario_id": "009",
+  "name": "dog_enters",
+  "status": "skeleton",
+  "required_signals": ["animal_detection", "human_bbox"],
+  "expected_scene_events": ["entity_appeared"],
+  "claims": ["animal is a tracked animal entity and not a negative person claim"],
+  "baseline_v0_3_0": {
+    "temporal_continuity": null,
+    "scene_event_recall": {"correct": 0, "total": 1},
+    "uncertainty_honesty": {"correct": 1, "total": 1},
+    "last_observation_forecast": null
+  },
+  "frames": []
+}

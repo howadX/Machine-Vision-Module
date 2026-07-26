@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mvm://benchmark/fused-scene-frame-v1",
+  "title": "FusedSceneFrame replay envelope",
+  "type": "object",
+  "required": ["stamp", "sources", "entities", "relations", "zones", "activities", "events", "anomaly", "quality"],
+  "properties": {
+    "stamp": {
+      "type": "object",
+      "required": ["run_id", "frame_id", "captured_at_unix_ms", "published_at_unix_ms"]
+    },
+    "sources": {"type": "array"},
+    "entities": {"type": "array"},
+    "relations": {"type": "array"},
+    "zones": {"type": "array"},
+    "activities": {"type": "array"},
+    "events": {"type": "object", "required": ["first_seq", "next_seq", "events"]},
+    "anomaly": {"type": "object", "required": ["status"]},
+    "quality": {"type": "object"}
+  },
+  "additionalProperties": false
+}

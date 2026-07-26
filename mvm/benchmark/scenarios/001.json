@@ -1,0 +1,16 @@
+{
+  "fixture_version": "18.0.0",
+  "scenario_id": "001",
+  "name": "person_enters",
+  "status": "skeleton",
+  "required_signals": ["human_bbox", "track_lifecycle"],
+  "expected_scene_events": ["entity_appeared", "person_entered"],
+  "claims": ["entity identity remains continuous after entry"],
+  "baseline_v0_3_0": {
+    "temporal_continuity": {"correct": 1, "total": 1},
+    "scene_event_recall": {"correct": 0, "total": 2},
+    "uncertainty_honesty": null,
+    "last_observation_forecast": null
+  },
+  "frames": []
+}

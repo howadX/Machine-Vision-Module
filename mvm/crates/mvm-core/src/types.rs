@@ -4,7 +4,7 @@
 //! emotion, posture, and 3D workspace data with confidence scores.
 
 /// A bounding box in normalised frame coordinates (0.0..1.0).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BBox {
     pub x1: f32,
     pub y1: f32,

@@ -1,0 +1,17 @@
+{
+  "question_set": "temporal-v1",
+  "questions": [
+    {"scenario_id": "001", "question": "Did a person enter?", "answer": "yes"},
+    {"scenario_id": "001", "question": "Was the person present before entry?", "answer": "no"},
+    {"scenario_id": "004", "question": "Was the hidden object freshly observed?", "answer": "withheld"},
+    {"scenario_id": "004", "question": "May the object still exist?", "answer": "remembered"},
+    {"scenario_id": "007", "question": "How many continuous person entities crossed?", "answer": "2"},
+    {"scenario_id": "007", "question": "Did either canonical identity swap?", "answer": "no"},
+    {"scenario_id": "009", "question": "Was the new entity an animal?", "answer": "yes"},
+    {"scenario_id": "009", "question": "Does animal evidence prove no person exists?", "answer": "no"},
+    {"scenario_id": "011", "question": "Was the person moving?", "answer": "no"},
+    {"scenario_id": "011", "question": "Should the persistence forecast move the bbox?", "answer": "no"},
+    {"scenario_id": "012", "question": "Was the motion expected by the prior forecast?", "answer": "no"},
+    {"scenario_id": "012", "question": "Should prediction-error salience increase?", "answer": "yes"}
+  ]
+}

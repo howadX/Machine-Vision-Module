@@ -18,7 +18,7 @@ use crate::{BBox, PersonTrack};
 use std::time::Instant;
 
 /// Metric 3D position in metres, origin = camera.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Position3D {
     pub x: f32,
     pub y: f32,
