@@ -113,3 +113,6 @@ details matter:
 
 Do not infer current interfaces from old phase documents or legacy Python
 bridge instructions.
+
+For recording, privacy, retention, validation, or export work, load
+[mvm-dataset](../mvm-dataset/SKILL.md).

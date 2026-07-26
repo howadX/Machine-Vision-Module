@@ -101,15 +101,15 @@ Trigger: запись, проверка, retention или export накопле�
 его workflow; `rg` не находит активных ссылок на `AGENT.md` или legacy flat logs;
 honesty statements сохранены.
 
-## Фаза 17.1 — CI Contract Gate
+## Фаза 17.1 — CI Contract Gate ✅
 
-1. Добавить repo-local validator без зависимости от `~/.codex`, `~/.hermes` или
+1. ✅ Добавить repo-local validator без зависимости от `~/.codex`, `~/.hermes` или
    внешних Python packages. Он проверяет структуру tree, minimal frontmatter,
    имена/descriptions, межskill-ссылки, обязательные contract markers и отсутствие
    stale Python-stack markers.
-2. Добавить GitHub Actions workflow на pull request и push. Он запускает validator
+2. ✅ Добавить GitHub Actions workflow на pull request и push. Он запускает validator
    и релевантные существующие CLI/MCP tests.
-3. Добавить public-surface audit: изменения согласованных файлов CLI help/parser,
+3. ✅ Добавить public-surface audit: изменения согласованных файлов CLI help/parser,
    MCP definitions, recap/inspect, dataset config/schema/validation требуют
    изменения skills или явного audit-артефакта в том же PR.
 

@@ -114,3 +114,6 @@ dataset.
 Run `mvm dataset --help` for the current CLI and read `session.toml` for the
 session's effective settings. When prose disagrees with executable behavior,
 follow CLI behavior and session metadata, then flag the documentation drift.
+
+For questions about the live scene or historical scene evidence, load
+[mvm-vision](../mvm-vision/SKILL.md).
