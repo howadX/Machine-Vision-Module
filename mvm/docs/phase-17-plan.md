@@ -139,23 +139,23 @@ Gate сообщает, что нужен human audit skills; он не заяв�
   body-only/withheld/cadence honesty; dataset-прогон корректно различил
   text-only/`--record`, privacy, quality gate, dry-run retention и label statuses.
 
-## Фаза 17.3 — Hermes Integration
+## Фаза 17.3 — Hermes Integration ✅
 
 > Изменения в `~/.hermes/` выполняются только с подтверждением владельца. Оно
 > дано для этой фазы 2026-07-25.
 
-1. Добавить абсолютный путь checkout `.../Machine Vision Module/mvm/skills` в
+1. ✅ Добавить абсолютный путь checkout `.../Machine Vision Module/mvm/skills` в
    `skills.external_dirs` профиля `sight`; Hermes обнаруживает канон напрямую,
    без симлинков и копий.
-2. Добавить profile-level diagnostic для отсутствующего external directory:
+2. ✅ Добавить profile-level diagnostic для отсутствующего external directory:
    агент сообщает, что MVM skills недоступны, и никогда не откатывается к stale
    local fallback.
-3. Архивировать local `sight`/`sight-journal`, paused jobs `sight-capture` и
+3. ✅ Архивировать local `sight`/`sight-journal`, paused jobs `sight-capture` и
    `sight-journal` и скрипт `sight-capture.sh`. Они обслуживают только retired
    Python/wiki flow; historical logs/sessions остаются нетронутыми.
-4. Заменить устаревший profile `AGENTS.md` короткой навигацией к внешним MVM
+4. ✅ Заменить устаревший profile `AGENTS.md` короткой навигацией к внешним MVM
    skills, без Python/GPU/wiki workflow.
-5. В свежей Hermes session или через supported reload подтвердить discovery и
+5. ✅ В свежей Hermes session или через supported reload подтвердить discovery и
    загрузку `mvm-vision`/`mvm-dataset` из external directory. Только после
    этого окончательно удалить активные legacy artifacts; archive остаётся
    rollback-опцией до принятия migration.
@@ -163,6 +163,18 @@ Gate сообщает, что нужен human audit skills; он не заяв�
 **Верификация:** профиль не обнаруживает stale skills; оба canonical skills
 видны и загружаются из repo path; отсутствие path даёт явную diagnostic; cron не
 ссылается на `sight-journal` или `sight.py`.
+
+**Результат (2026-07-26):**
+
+- профиль `sight` читает оба skills напрямую из абсолютного repo path; fresh
+  one-shot с явной загрузкой обоих skills подтвердил source paths, honesty и
+  различие default text-only logging / `--record`;
+- profile alias выполняет deterministic preflight обоих `SKILL.md`: негативный
+  тест вернул точную diagnostic и exit 78 до запуска агента;
+- local skills, Python capture script/workspace helper и две paused cron-записи
+  выведены из active profile. Rollback archive:
+  `~/.hermes/profiles/sight/archive/mvm-phase17-3-20260726T150001Z`;
+- historical `cron/output`, logs и sessions сохранены без очистки.
 
 ## Что не меняется
 
