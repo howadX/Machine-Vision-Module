@@ -126,7 +126,7 @@ fn tool_defs() -> Value {
     // These three tools are the pull model, cheap → expensive: snapshot (now) →
     // recap (a window) → inspect (raw frames). The descriptions teach an agent
     // when to reach for each and how to read the output; keep them in sync with
-    // mvm/AGENT.md (single source of truth, phase 13.C/D).
+    // mvm/skills/mvm-vision/SKILL.md (canonical agent workflow, phase 17).
     json!([
         {
             "name": "mvm_snapshot",

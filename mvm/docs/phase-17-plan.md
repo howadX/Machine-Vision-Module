@@ -1,151 +1,169 @@
-# Фаза 17 — Agent Skills: AGENT.md → SKILL.md
+# Фаза 17 — Canonical MVM Agent Skills
 
-> **Версия:** 0.1 (2026-07-24, набросок на согласование). Ветка `kaggle`. Родитель — фазы 12–13
-> (LLM-render / Agent Tools) + 16.7 (Semantic Session Log).
-> **Цель фазы:** превратить know-how «как LLM-агенту водить MVM» (сейчас — `mvm/AGENT.md`) в
-> **портируемый load-on-demand артефакт** формата **SKILL.md** (открытый стандарт agentskills.io,
-> Apache-2.0), и этим закрыть **устаревший дубликат** в Hermes. Один источник истины → нет рассинхрона.
+> **Версия:** 0.2 (2026-07-25). Ветка `kaggle`. Родитель — фазы 12–13
+> (LLM-render / Agent Tools) и 16.7 (Semantic Session Log).
+> **Цель:** перенести know-how «как LLM-агенту водить MVM» в два переносимых
+> load-on-demand артефакта `SKILL.md`, сделать их единственным живым источником
+> MVM-инструкций и защитить от рассинхрона с публичным контрактом.
 >
-> **Это НЕ релиз и НЕ изменение кода.** Фаза 17 трогает только документацию/скиллы; бинарь `mvm`,
-> детекторы, fusion, MCP-инструменты — **0 изменений**. Версия не бампается.
+> **Это не релиз и не изменение vision runtime.** Бинарь `mvm`, детекторы,
+> fusion, MCP-поведение и версия не меняются. Фаза затрагивает documentation,
+> skills и их validation/integration.
 
 ## Мотивация / аудит-основание
 
-- **`mvm/AGENT.md` (188 строк, актуален)** — правильное знание: pull-модель `snapshot→recap→inspect`,
-  честность (`withheld` ≠ negative, ⚠️-ноты), чтение snapshot-таблицы, default-on text-only сессии (16.7),
-  чего MVM **не** делает. Это уже «скилл», просто в форме одного README-подобного файла.
-- **`~/.hermes/profiles/sight/skills/vision/sight/SKILL.md` — СТЕЙЛ (~38.9 КБ)** про мёртвый
-  Python-прототип: SCRFD, ArcFace 512d, HSEmotion GPU, MediaPipe Holistic, LightGBM, `mvm_bridge.py` как
-  основной путь. Ничего из этого не соответствует нативному Rust-проду (YuNet / SFace 128d / EmotiEffLib /
-  BlazePose). Скилл **дезинформирует** агента сегодня — это главный долг, который закрывает фаза.
-- Рядом — `vision/sight-journal/SKILL.md` (cron-обслуживание журнала) — тоже под ревизию.
-- Hermes **skill-native** (84 SKILL.md в профиле sight) → SKILL.md — родной формат потребителя;
-  тот же файл читают и Claude Code / Codex / Gemini / Cursor.
+- `mvm/AGENT.md` (188 строк в `HEAD`) уже содержит правильные правила: pull-модель
+  `snapshot -> recap -> inspect`, honesty (`withheld` != negative, `⚠️`-ноты),
+  чтение snapshot и text-only semantic sessions 16.7. Это skill по содержанию,
+  но не по форме и без progressive disclosure.
+- `~/.hermes/profiles/sight/skills/vision/sight/SKILL.md` содержит стейл Python/GPU
+  стек: SCRFD, ArcFace 512d, HSEmotion, MediaPipe Holistic и `mvm_bridge.py` как
+  основной путь. Он противоречит актуальному Rust-MVM (YuNet / SFace 128d /
+  EmotiEffLib / BlazePose).
+- `sight-journal` и связанная Python/wiki cron-цепочка retired: Semantic Session
+  Log 16.7 уже ведёт durable историю сцены в MVM.
 
-**Почему SKILL.md, а не оставить AGENT.md:** progressive disclosure. Frontmatter (`name`+`description`,
-~30–100 токенов) всегда «висит» дёшево; тяжёлое тело грузится **только при матче** триггера. Плюс —
-портируемость (один стандарт на всех агентов) и версионирование вместе с бинарём.
+**Почему SKILL.md:** frontmatter `name` + `description` доступен для discovery
+дёшево, тело загружается только по trigger, а один portable формат читается
+Codex, Claude Code, Gemini, Cursor и Hermes.
 
-## Управляющие принципы (сквозные)
+## Управляющие принципы
 
-1. **Ядро зрения не трогается.** Детекторы/fusion/mesh/CLI/MCP — 0 изменений. Фаза = только know-how-слой.
-2. **Один источник истины.** Канон живёт в репо (`mvm/skills/`), со-эволюционирует с бинарём. Никаких
-   параллельных копий знания — потребители (Hermes и др.) ссылаются/симлинкуют, не дублируют.
-3. **Honesty-контент сохраняется дословно.** `withheld`/`unknown` ≠ negative, ⚠️-семантика, «что MVM не
-   делает» — переносятся без смягчения.
-4. **Hermes не трогаем без явного согласия.** Всё, что пишет в `~/.hermes/`, — отдельная под-фаза,
-   выполняется только по прямому «да» (правило окружения).
-5. **Не гадать про модель-агент.** SKILL.md — переносимый факт-контракт; писать так, чтобы читал любой
-   агент, а не только текущий.
+1. **Канон в репозитории.** `mvm/skills/` — единственный редактируемый источник
+   MVM know-how; потребители обнаруживают его напрямую, не копируют.
+2. **Honesty неизменна.** `withheld`/`unknown` не становятся отрицательным классом;
+   `⚠️` и ограничения MVM переносятся без смягчения.
+3. **Portable core.** В frontmatter используются только стандартные `name` и
+   `description`; Hermes-специфичные `category`, `tags` и другие поля не нужны.
+4. **Проверяемый контракт выше prose.** Skills объясняют контракт, но не
+   переопределяют CLI, MCP или semantic schema.
+5. **Hermes migration обратима.** Legacy artifacts архивируются до окончательной
+   очистки; исторические logs/sessions не удаляются.
 
-## Предлагаемая структура (рекомендация — 2 скилла)
+## Карта источников публичного контракта
 
-`AGENT.md` покрывает два разных «когда»: *читать сцену* и *копить/инспектировать данные*. Прогрессив-
-дисклоужер любит **узкие триггеры**, поэтому — маленькое дерево:
+| Поверхность | Канонический источник |
+|---|---|
+| CLI flags, команды и help | `mvm/crates/mvm-cli/src/help.rs` и parser в `main.rs` |
+| MCP tool names, arguments и descriptions | `mvm/crates/mvm-cli/src/mcp.rs` |
+| `recap` / `inspect` semantics | `mvm/crates/mvm-cli/src/recap_cmd.rs` |
+| Sessions, privacy, labels и statuses | `mvm/crates/mvm-dataset/` |
+| Наблюдаемое поведение | релевантные Rust tests и live-validated phase docs |
+
+Skills не фиксируют изменчивые номера схемы или версии без необходимости: для
+точного текущего значения агент направляется к CLI и `session.toml`/labels metadata.
+
+## Целевая структура
 
 ```
 mvm/skills/
-├── mvm-vision/SKILL.md     # «понять, что видит камера сейчас / что было»
-│                           #   тело: What MVM is · pull-model · access · read-snapshot ·
-│                           #   honesty · cadence caveat · What MVM does NOT do
-└── mvm-dataset/SKILL.md    # «копить/инспектировать/экспортировать сессии зрения»
-                            #   тело: Recording (16.7 default-on text-only vs --record) ·
-                            #   dataset list/info/stats/check/prune/export · self-describing на диске
+├── mvm-vision/SKILL.md
+└── mvm-dataset/SKILL.md
 ```
 
-**Frontmatter-схема** (совместима с Hermes: `name`/`description`/`category`/`tags`/`related_skills`;
-минимум по стандарту — `name`+`description`):
+### `mvm-vision`
 
-```yaml
+Trigger: запросы «что камера видит сейчас», «что произошло», анализ живой сцены
+или semantic history. Тело содержит:
+
+- назначение и closed-world границы MVM;
+- cheapest-first workflow `snapshot -> recap -> inspect`;
+- MCP и CLI access, prerequisite работающего producer;
+- чтение snapshot (id ranges, confidence, zones, activities);
+- honesty markers, phantom/face/pose caveats и inspect cadence caveat.
+
+### `mvm-dataset`
+
+Trigger: запись, проверка, retention или export накопленных vision sessions. Тело
+содержит:
+
+- default-on text-only semantic session, `--record` и `--no-vision-log`;
+- privacy modes и self-describing session layout;
+- `dataset list/info/stats/check/prune/export`;
+- Canonical Observation, provenance и правило `withheld`/`unknown` != negative.
+
+Оба файла самодостаточны в своём workflow; дублирование между ними минимально.
+Исходным содержимым миграции послужил `HEAD:mvm/AGENT.md`; промежуточный
+монолитный черновик `mvm/SKILL.md` удалён после разбиения.
+
+## Фаза 17.0 — Repo Skills ✅
+
+1. ✅ Создать два canonical `SKILL.md` по целевой структуре с frontmatter `name` и
+   `description`; descriptions описывают точные triggers и остаются короткими.
+2. ✅ Разнести действующее content `AGENT.md` по vision/dataset границе, удалить
+   legacy Python claims и не копировать stale flat-log diagrams.
+3. ✅ Удалить `mvm/AGENT.md`; перенацелить все repo-ссылки на новый canonical tree.
+4. ✅ Исправить известные legacy references в `mvm/README.md`: retired
+   `scene-*.jsonl`/`events-*.jsonl` outputs и ссылки на `AGENT.md`. После миграции
+   в repo не должно остаться конкурирующего how-to.
+
+**Верификация:** прочтение каждого skill отдельно позволяет корректно выполнить
+его workflow; `rg` не находит активных ссылок на `AGENT.md` или legacy flat logs;
+honesty statements сохранены.
+
+## Фаза 17.1 — CI Contract Gate
+
+1. Добавить repo-local validator без зависимости от `~/.codex`, `~/.hermes` или
+   внешних Python packages. Он проверяет структуру tree, minimal frontmatter,
+   имена/descriptions, межskill-ссылки, обязательные contract markers и отсутствие
+   stale Python-stack markers.
+2. Добавить GitHub Actions workflow на pull request и push. Он запускает validator
+   и релевантные существующие CLI/MCP tests.
+3. Добавить public-surface audit: изменения согласованных файлов CLI help/parser,
+   MCP definitions, recap/inspect, dataset config/schema/validation требуют
+   изменения skills или явного audit-артефакта в том же PR.
+
+Gate сообщает, что нужен human audit skills; он не заявляет, что способен
+автоматически доказать смысловую полноту prose.
+
+**Верификация:** workflow проходит на текущем контракте и предсказуемо падает на
+невалидном frontmatter, stale marker либо public-surface change без skill audit.
+
+## Фаза 17.2 — Portability
+
+- Проверить SKILL.md внешним совместимым validator/discovery mechanism.
+- Проверить, что body остаётся компактным и содержит только action-guiding
+  knowledge; большие справочные сведения остаются в существующих repo docs.
+- Подтвердить, что skills discoverable по frontmatter и загружаются без
+  agent-specific assumptions.
+
+## Фаза 17.3 — Hermes Integration
+
+> Изменения в `~/.hermes/` выполняются только с подтверждением владельца. Оно
+> дано для этой фазы 2026-07-25.
+
+1. Добавить абсолютный путь checkout `.../Machine Vision Module/mvm/skills` в
+   `skills.external_dirs` профиля `sight`; Hermes обнаруживает канон напрямую,
+   без симлинков и копий.
+2. Добавить profile-level diagnostic для отсутствующего external directory:
+   агент сообщает, что MVM skills недоступны, и никогда не откатывается к stale
+   local fallback.
+3. Архивировать local `sight`/`sight-journal`, paused jobs `sight-capture` и
+   `sight-journal` и скрипт `sight-capture.sh`. Они обслуживают только retired
+   Python/wiki flow; historical logs/sessions остаются нетронутыми.
+4. Заменить устаревший profile `AGENTS.md` короткой навигацией к внешним MVM
+   skills, без Python/GPU/wiki workflow.
+5. В свежей Hermes session или через supported reload подтвердить discovery и
+   загрузку `mvm-vision`/`mvm-dataset` из external directory. Только после
+   этого окончательно удалить активные legacy artifacts; archive остаётся
+   rollback-опцией до принятия migration.
+
+**Верификация:** профиль не обнаруживает stale skills; оба canonical skills
+видны и загружаются из repo path; отсутствие path даёт явную diagnostic; cron не
+ссылается на `sight-journal` или `sight.py`.
+
+## Что не меняется
+
+| Слой | Изменение |
+|---|---|
+| Rust vision runtime, модели, fusion, tracker | 0 |
+| CLI/MCP semantics и schema | 0 |
+| Версия бинаря и GitHub release | 0 |
+| Исторические Hermes logs/sessions | не удаляются |
+| Несвязанные worktree changes | не затрагиваются |
+
 ---
-name: mvm-vision
-description: "Drive the Machine Vision Module (MVM) as an eyes-on-the-scene tool:
-  ask what the camera sees now or what happened over a window via snapshot/recap/
-  inspect (MCP or CLI), read the honesty markers, and know what MVM won't claim."
-category: vision
-tags: [mvm, vision, snapshot, recap, mcp, honesty, rust]
-related_skills: [mvm-dataset, sight-journal]
----
-# тело = актуальный AGENT.md, разбитый по разделам
-```
 
-> **Альтернатива (в открытых решениях):** один скилл `mvm-vision` со всем телом — проще, но триггер шире
-> и dataset-часть грузится зря при обычном «кто в кадре». Рекомендуется 2.
-
-## Порядок и критерии верификации
-
-### Фаза 17.0 — скиллы в репо (безопасно, без Hermes) ⏳
-
-Создать `mvm/skills/mvm-vision/SKILL.md` и `mvm/skills/mvm-dataset/SKILL.md` из тела `AGENT.md` (разбить по
-границе vision/dataset), дописать frontmatter. Контент — дословный перенос актуального AGENT.md + 16.7.
-
-**Верификация:**
-- Frontmatter валиден (YAML парсится; есть `name`+`description`).
-- `description` — тугой триггер (одно-два предложения, ≤~300 симв.), покрывает «когда грузить».
-- Тело самодостаточно: агент, прочитавший только скилл, может выполнить snapshot→recap→inspect и не
-  переврать honesty-семантику. Все команды/пути актуальны (нет `mvm_bridge.py`-легаси, есть 16.7-сессии).
-- Взаимные ссылки `related_skills` корректны.
-
-### Фаза 17.1 — AGENT.md → канон переезжает в скиллы ⏳
-
-`mvm/AGENT.md` становится **тонким стаб-редиректом** («каноничное how-to — `skills/mvm-vision/` +
-`skills/mvm-dataset/`») либо удаляется; ссылки в `README.md`/`CLAUDE.md`/`mvm/README.md`/`mvm/CLAUDE.md`
-перецеливаются на скиллы.
-
-**Верификация:**
-- Ни один док не ссылается на AGENT.md как на источник how-to (либо стаб корректно редиректит).
-- `rg AGENT.md` по репо — только осознанные ссылки.
-
-### Фаза 17.2 — валидация портируемости ⏳
-
-Проверить, что скилл читается как скилл во внешнем агенте (Claude Code видит `mvm/skills/*/SKILL.md`;
-опц. сухой прогон загрузки). Линт длины/структуры.
-
-**Верификация:**
-- Скилл обнаруживается механизмом skill-discovery (frontmatter-only в контексте, тело по матчу).
-- Размер тела разумный (не 38.9 КБ; ориентир — как AGENT.md, ~1.5–2 К слов на скилл максимум).
-
-### Фаза 17.3 — Hermes: заменить стейл (⚠️ ТОЛЬКО с явного согласия) ⏳
-
-Заменить `~/.hermes/profiles/sight/skills/vision/sight/SKILL.md` (38.9 КБ мёртвого стека) → тонкий скилл,
-ссылающийся на репо-канон `mvm-vision`; подрезать `sight-journal` под 16.7-journal/session-flow. Способ —
-симлинк на репо или тонкая обёртка (решить в под-фазе).
-
-**Верификация:**
-- Стейл-контент про SCRFD/ArcFace/HSEmotion/`mvm_bridge.py` удалён из активного Hermes-скилла.
-- Sight-агент, подняв скилл, водит текущий Rust-MVM корректно (snapshot/recap на 16.7-сессиях).
-- **Гейт:** каждое изменение в `~/.hermes/` — по прямому подтверждению владельца.
-
-## Открытые решения (зафиксировать перед 17.0)
-
-1. **Дерево из 2 скиллов** (`mvm-vision` + `mvm-dataset`) **или один** `mvm-vision`? — рек. **2**.
-2. **Судьба `AGENT.md`:** стаб-редирект **или** удалить **или** оставить рядом (скилл — производная)? —
-   рек. **стаб-редирект** (полная замена как источника how-to, но не битые внешние ссылки).
-3. **Скоуп сейчас:** только репо (17.0–17.2) **или** сразу с Hermes (17.3)? — рек. **репо-first**;
-   17.3 — отдельным подтверждением.
-4. **Расположение в репо:** `mvm/skills/` (со-эволюция с крейтами) **или** корень `skills/` (портфельно)? —
-   рек. **`mvm/skills/`**.
-
-## Что НЕ меняется
-
-| Слой | Изменения |
-|------|-----------|
-| детекторы / fusion / mesh / трекер / CLI / MCP | **0** (фаза — только know-how-документация) |
-| `mvm/AGENT.md` | стаб-редирект или удаление (17.1) — контент переезжает, не теряется |
-| Hermes-конфиг | только 17.3 и только по явному согласию |
-| wiki (`~/wiki/`) | не трогаем (правило окружения) |
-
-## Критичные файлы
-
-| Файл | Роль |
-|------|------|
-| `mvm/skills/mvm-vision/SKILL.md` | новый — тело из vision-разделов AGENT.md (17.0) |
-| `mvm/skills/mvm-dataset/SKILL.md` | новый — тело из dataset/16.7-разделов (17.0) |
-| `mvm/AGENT.md` | стаб-редирект / удаление (17.1) |
-| `README.md` · `CLAUDE.md` · `mvm/README.md` · `mvm/CLAUDE.md` | перецелить ссылки на скиллы (17.1) |
-| `~/.hermes/.../vision/sight/SKILL.md` · `.../sight-journal/SKILL.md` | заменить стейл (17.3, gated) |
-
----
-
-*Фаза 17 — чистый know-how-слой: ядро зрения (5–16.7) не трогается, версия не бампается. SKILL.md =
-переносимый факт-контракт «как водить MVM», один источник в репо, потребители (Hermes и др.) ссылаются.*
+*Phase 17 переводит MVM agent know-how в portable skills и ставит вокруг него
+контрактный audit. Репозиторий остаётся единственным каноном; Hermes потребляет
+его напрямую.*

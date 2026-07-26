@@ -87,7 +87,9 @@ mvm serve --mcp                # → mvm_snapshot / mvm_recap / mvm_inspect (н�
 mvm serve --mcp --with-camera  # единый процесс: продюсер + MCP над своими свежими артефактами
 ```
 
-Всё, что нужно агенту, чтобы пользоваться MVM без чтения исходников, лежит в **[`AGENT.md`](AGENT.md)**: pull-модель, как читать таблицу snapshot, семантика id, `⚠️`-ноты честности, каденс-нюансы и чего MVM **не** делает.
+Canonical agent know-how разделён по триггерам: **[`mvm-vision`](skills/mvm-vision/SKILL.md)** учит
+pull-модели, чтению snapshot, honesty и cadence; **[`mvm-dataset`](skills/mvm-dataset/SKILL.md)** —
+записи, privacy, проверке и экспорту сессий.
 
 ---
 
@@ -166,7 +168,7 @@ flowchart TD
     FUSION["FusionAgent (реляционная, object-agnostic)<br/>build_scene: 3D-граф + зоны (union-find, persistence)<br/>activity-FSM (start/stop/duration) · anomaly v2 (noisy-OR)"]
 
     OUT1["current_state.md<br/>snapshot v2 — таблица + ноты честности"]
-    OUT2["scene-/events-*.jsonl<br/>durable-логи → recap/inspect"]
+    OUT2["semantic sessions<br/>labels.jsonl → recap/inspect"]
     OUT3["journal.md<br/>rolling-рекап дня"]
     OUT4["Scene JSON<br/>--dump-json — машинный контракт"]
     MCP["MCP stdio<br/>serve --mcp — snapshot/recap/inspect как инструменты"]
@@ -204,7 +206,7 @@ flowchart TD
       │
       ▼  Выходы:
          ├─ current_state.md      (snapshot v2 — таблица + ноты честности)
-         ├─ scene-/events-*.jsonl (durable-логи → recap/inspect)
+         ├─ semantic sessions     (labels.jsonl → recap/inspect)
          ├─ journal.md            (rolling-рекап дня)
          ├─ Scene JSON            (--dump-json — машинный контракт)
          └─ MCP stdio             (serve --mcp — snapshot/recap/inspect как инструменты)
@@ -371,12 +373,12 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **10** | ✅ | Full Data Collection (эмоция-корень, кисти, head-orientation) + **Segmentation** (+1 ONNX YOLO-seg) |
 | **11** | ✅ | Fusion-полировка — activity-FSM + journal, зоны-persistence, anomaly v2, mask-контакт, object-permanence, self-calib |
 | **12** | ✅ | **LLM-render** — pull-модель (snapshot / recap ~190× / inspect), токен-диета, MCP stdio-сервер |
-| **13** | ✅ | **Agent Tools/Skills Polishing** — когерентный CLI-дерево, `--help`, [`AGENT.md`](AGENT.md), самодокументирующие MCP-описания |
+| **13** | ✅ | **Agent Tools/Skills Polishing** — когерентный CLI-дерево, `--help`, agent how-to, самодокументирующие MCP-описания |
 | **14** | ✅ | **Продукт** — ✅ 14.0 XDG-пути/config.toml/авто-детект камеры/бинарь `mvm`/doctor · ✅ 14.1 `mvm setup` (fetch+sha256+resume) · ✅ 14.2 watched-галерея (`gallery/<Имя>/`, drag-and-drop) · ✅ 14.3 `serve --with-camera` (единый демон) · ✅ 14.4 `mcp install` · ✅ 14.5 `service install` (systemd user) · ✅ 14.6 дистрибуция (GitHub Releases + `curl\|sh`; анонимный `curl` — после public-flip репо) |
 | **15** | ✅ | **ML Refactor** (лаб-фёрст на CMU mocap + OpenImages, журналы LJ0–6) — поза 2D-GRIP z-free + Mahalanobis↔VAE (footprint −79%) · SL-вето падений · tracker stale-relink · E2 scene-level fall · SFace align-fix (+19.5 п.п.) · словарь v2. Порт-акты P0–P8. Свёрнута в код **v0.3.0** (v0.2.0 отдельным тегом не выпускалась) |
 | **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (+крейт `mvm-dataset`, чистый потребитель WorldState) — двухпотребительская архитектура: `mvm run --record` → self-describing сессии (RGB+depth+masks+labels), Semantic Router G₁–G₅, privacy-слой, Python-экспортёры (PyTorch/TFRecord/WebDataset), **16.6-A data-quality гейты** (`mvm dataset check` + `validate.py`). Осталось 16.6-B (hard-example mining). Детали — [`docs/phase-16-plan.md`](docs/phase-16-plan.md) |
 | **16.7** | ✅ live | **Semantic Session Log** — свела два стора истории сцены в один: `mvm run` по умолчанию пишет **text-only семантическую сессию** (SCHEMA 16.7.0 с relations/activities/events), плоские `scene-*.jsonl`/`events-*.jsonl` ретайрнуты; `recap`/`inspect`/journal читают сессии; `--record` = пиксели. Live-провалидировано (4-мин камера). Детали — [`docs/phase-16.7-plan.md`](docs/phase-16.7-plan.md) |
-| **17** | ⏳ план | **Agent Skills** — вынести know-how «как LLM водит MVM» из `AGENT.md` в портируемый **SKILL.md** (agentskills.io): `mvm/skills/{mvm-vision,mvm-dataset}`; заменить устаревший Hermes-скилл. Только know-how-слой (ядро/версия не трогаются). Детали — [`docs/phase-17-plan.md`](docs/phase-17-plan.md) |
+| **17** | 17.0 ✅ | **Canonical MVM Agent Skills** — repo-canonical [`mvm-vision`](skills/mvm-vision/SKILL.md) + [`mvm-dataset`](skills/mvm-dataset/SKILL.md) готовы; впереди contract gate, portability и Hermes integration. Детали — [`docs/phase-17-plan.md`](docs/phase-17-plan.md) |
 
 ---
 
@@ -397,7 +399,8 @@ ML-рефакторинге (фаза 15) и без изменений вошл�
 | **Эмоция** | RAF-DB held-out balanced-acc | **0.665** [0.643, 0.688] (neg-control healthy) — LJ5 |
 | **Скорость** | человеко-цепочка (YuNet+SFace+emotion+BlazePose) | **16.7 мс** all-cores (<50 PASS), ONNX 121.7 MiB — LJ5 |
 
-**Изменения контракта (ML Refactor, в проде с v0.3.0)** (детали — [`AGENT.md`](AGENT.md)):
+**Изменения контракта (ML Refactor, в проде с v0.3.0)** (agent semantics —
+[`mvm-vision`](skills/mvm-vision/SKILL.md)):
 1. **`torso_flexion`** — новое опциональное поле позы (непрерывный наклон торса, °) в StateFile/JSON/MCP/snapshot.
 2. **Словарь активностей v2** — `typing/using_mouse/using_phone/reading → using_object(<class>)`; `watching_tv` убран (VRD-аудит: 0 supervisable-инстансов; «смотрит ТВ» — это head-facing, не wrist-контакт). `holding_drink` сохранён.
 3. **Семантика pose-OOD** — `plausibility` теперь от Mahalanobis-дистанции (не VAE-logpz); `recon_error` deprecated → всегда `None` (поле оставлено для схемы). Новый `Config.camera_height_m` (1.75) — floor-reference для E2.

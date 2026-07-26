@@ -36,7 +36,8 @@ mvm dataset check   # data-quality гейт (целостность/privacy/ба
 ```
 
 Полная инструкция, CLI-дерево, выходной JSON-контракт и honesty-семантика — **[`mvm/README.md`](mvm/README.md)**.
-Как LLM-агенту пользоваться MVM (pull-модель, MCP) — **[`mvm/AGENT.md`](mvm/AGENT.md)**.
+Agent skills: **[`mvm-vision`](mvm/skills/mvm-vision/SKILL.md)** для pull-модели/MCP и
+**[`mvm-dataset`](mvm/skills/mvm-dataset/SKILL.md)** для записи и обслуживания сессий.
 
 ## Что это
 

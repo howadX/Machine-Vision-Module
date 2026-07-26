@@ -95,13 +95,14 @@ CLI `mvm dataset` → Python-экспортёры → точный YuNet-face-bb
 (SCHEMA 16.7.0); плоские логи ретайрнуты (legacy `--scene-log`); `--record` — полный пиксельный датасет;
 `recap`/`inspect`/journal читают сессии. План — `mvm/docs/phase-16.7-plan.md`.
 
-**Фаза 17 — Agent Skills (⏳ план):** вынести know-how «как LLM-агенту водить MVM» из `mvm/AGENT.md` в
-портируемый **SKILL.md** (стандарт agentskills.io): 2 скилла `mvm/skills/{mvm-vision,mvm-dataset}`, заменить
-устаревший Hermes-скилл (~38.9 КБ мёртвого Python-стека). Только know-how-слой — ядро/версия не трогаются,
-Hermes — по явному согласию. План — `mvm/docs/phase-17-plan.md`.
+**Фаза 17 — Canonical MVM Agent Skills (17.0 ✅):** repo-canonical know-how разделён на два переносимых
+skills `mvm/skills/{mvm-vision,mvm-dataset}`; прежний монолитный agent how-to удалён. Впереди 17.1
+contract gate, 17.2 portability и 17.3 Hermes integration. Только know-how-слой — ядро/версия не
+трогаются; Hermes — по явному согласию. План — `mvm/docs/phase-17-plan.md`.
 
 ## Для Agents
 
-При работе с Rust-кодом — читай `mvm/CLAUDE.md` (полный контекст: архитектура, крейты, фазы, TDD-паттерны)
-и `mvm/AGENT.md` (как AI-агенту пользоваться MVM как модулем зрения: pull-модель, MCP, dataset CLI,
-honesty-семантика). Python-модули: `core/face_id.py`, `tools/mvm_bridge.py`, `core/workspace_3d.py`.
+При работе с Rust-кодом — читай `mvm/CLAUDE.md` (полный контекст: архитектура, крейты, фазы, TDD-паттерны).
+Для vision pull-модели/MCP загружай `mvm/skills/mvm-vision/SKILL.md`; для записи, проверки и экспорта
+сессий — `mvm/skills/mvm-dataset/SKILL.md`. Python-модули: `core/face_id.py`, `tools/mvm_bridge.py`,
+`core/workspace_3d.py`.

@@ -60,7 +60,8 @@ FLAGS:
     -h, --help       Show help (add to any command for its flags)
     -V, --version    Print version
 
-Add --help to any command for its flags. See mvm/AGENT.md for how an LLM agent drives MVM.
+Add --help to any command for its flags. Agent workflows live in
+mvm/skills/mvm-vision and mvm/skills/mvm-dataset.
 ";
 
 pub const RUN: &str = "\
