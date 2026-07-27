@@ -5,7 +5,8 @@
 //! serializable canonical scene facts.
 
 use mvm_core::{BBox, ObjectState, PersonState, mask::InstanceMask};
-use mvm_mesh::LatestValue;
+use mvm_fusion::canonical::AnimalObservation;
+use mvm_mesh::{Frame, LatestValue};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,20 +15,39 @@ pub(crate) struct ObservationStamp {
     pub source_frame_id: u64,
     pub captured_at: Instant,
     pub produced_at: Instant,
+    pub captured_at_unix_ms: i64,
+    pub produced_at_unix_ms: i64,
 }
 
 impl ObservationStamp {
-    pub(crate) fn new(source_frame_id: u64, captured_at: Instant) -> Self {
+    pub(crate) fn new(
+        source_frame_id: u64,
+        captured_at: Instant,
+        captured_at_unix_ms: i64,
+    ) -> Self {
         Self {
             source_frame_id,
             captured_at,
             produced_at: Instant::now(),
+            captured_at_unix_ms,
+            produced_at_unix_ms: unix_ms_now(),
         }
+    }
+
+    pub(crate) fn from_frame(frame: &Frame) -> Self {
+        Self::new(frame.id, frame.captured, frame.captured_at_unix_ms)
     }
 
     pub(crate) fn age_at(self, camera_frame_id: u64) -> Option<u64> {
         camera_frame_id.checked_sub(self.source_frame_id)
     }
+}
+
+fn unix_ms_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Clone)]
@@ -40,7 +60,7 @@ pub(crate) struct HumanObservationFrame {
 pub(crate) struct SceneObservationFrame {
     pub stamp: ObservationStamp,
     pub objects: Arc<Vec<ObjectState>>,
-    pub animals: Arc<Vec<BBox>>,
+    pub animals: Arc<Vec<AnimalObservation>>,
     pub person_masks: Arc<Vec<(BBox, InstanceMask)>>,
 }
 
@@ -50,9 +70,24 @@ pub(crate) struct DepthObservationFrame {
     pub map: Arc<mvm_depth::DepthMap>,
 }
 
+#[derive(Clone)]
+pub(crate) struct FrameEvidenceHandles {
+    pub rgb: Arc<image::DynamicImage>,
+    pub depth: Option<DepthObservationFrame>,
+    pub human: Option<HumanObservationFrame>,
+    pub scene: Option<SceneObservationFrame>,
+}
+
+#[derive(Clone)]
+pub(crate) struct FusedFramePacket {
+    pub scene: Arc<mvm_core::canonical::FusedSceneFrame>,
+    pub evidence: FrameEvidenceHandles,
+}
+
 pub(crate) type HumanObservationBus = LatestValue<HumanObservationFrame>;
 pub(crate) type SceneObservationBus = LatestValue<SceneObservationFrame>;
 pub(crate) type DepthObservationBus = LatestValue<DepthObservationFrame>;
+pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;
 
 #[cfg(test)]
 mod tests {
@@ -65,6 +100,8 @@ mod tests {
             source_frame_id: 12,
             captured_at: now,
             produced_at: now,
+            captured_at_unix_ms: 1_000,
+            produced_at_unix_ms: 1_001,
         };
         assert_eq!(stamp.age_at(15), Some(3));
         assert_eq!(stamp.age_at(11), None);
@@ -73,7 +110,13 @@ mod tests {
     #[test]
     fn typed_bus_keeps_source_stamp_with_depth_handle() {
         let bus = DepthObservationBus::new();
-        let stamp = ObservationStamp::new(7, Instant::now());
+        let frame = Frame::new_stamped(
+            7,
+            image::DynamicImage::new_rgb8(2, 2),
+            Instant::now(),
+            1_000,
+        );
+        let stamp = ObservationStamp::from_frame(&frame);
         bus.publish(DepthObservationFrame {
             stamp,
             map: Arc::new(mvm_depth::DepthMap {
@@ -85,6 +128,7 @@ mod tests {
 
         let observed = bus.latest().expect("published depth observation");
         assert_eq!(observed.stamp.source_frame_id, 7);
+        assert_eq!(observed.stamp.captured_at_unix_ms, 1_000);
         assert_eq!(observed.map.w, 2);
     }
 }

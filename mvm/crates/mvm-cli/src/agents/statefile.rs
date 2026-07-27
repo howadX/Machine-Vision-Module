@@ -4,6 +4,7 @@
 //! it reads the blackboard the agents fill and computes FPS from the frame_id
 //! advance between writes.
 
+use crate::agents::FusedFrameBus;
 use crate::state::{SceneLog, StateFile};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::path::PathBuf;
@@ -33,6 +34,8 @@ pub(crate) struct StateFileWriter {
     journal: Option<JournalCfg>,
     /// (frame_id, instant) of the previous write — for FPS.
     last: Option<(u64, Instant)>,
+    fused_frames: Option<FusedFrameBus>,
+    event_cursor: Option<u64>,
 }
 
 impl StateFileWriter {
@@ -54,7 +57,14 @@ impl StateFileWriter {
             events_log,
             journal,
             last: None,
+            fused_frames: None,
+            event_cursor: None,
         }
+    }
+
+    pub(crate) fn with_fused_frames(mut self, fused_frames: FusedFrameBus) -> Self {
+        self.fused_frames = Some(fused_frames);
+        self
     }
 }
 
@@ -67,18 +77,41 @@ impl Agent for StateFileWriter {
         let mut writes = 0u64;
         let mut errors = 0u64;
         while ctx.running() {
-            // Snapshot under the lock, then release before doing IO. A write
-            // lock because completed activity events (phase 11.C3) are consumed
-            // exclusively — each event belongs to exactly one written frame.
-            let snapshot = match ctx.world.write() {
-                Ok(mut w) => {
-                    let s = w.clone();
-                    w.events.clear();
-                    s
-                }
-                Err(_) => {
+            let (snapshot, canonical_events) = if let Some(fused) = &self.fused_frames {
+                let Some(packet) = fused.latest() else {
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                };
+                let delta = packet.scene.events.delta_after(self.event_cursor);
+                if let Some(gap) = delta.gap {
+                    eprintln!(
+                        "  statefile: canonical event gap after {}, available from {}",
+                        gap.requested_after, gap.available_from
+                    );
                     errors += 1;
-                    break;
+                }
+                self.event_cursor = delta.next_cursor;
+                let events: Vec<mvm_core::canonical::SceneEvent> =
+                    delta.events.into_iter().cloned().collect();
+                let projection = packet.scene.compatibility_world_state(Instant::now());
+                let mut snapshot = (*projection).clone();
+                if let Some(human) = &packet.evidence.human {
+                    snapshot.people = human.people.as_ref().clone();
+                }
+                if let Some(scene) = &packet.evidence.scene {
+                    snapshot.objects = scene.objects.as_ref().clone();
+                    snapshot.animals = scene.animals.iter().map(|animal| animal.bbox).collect();
+                }
+                (snapshot, Some(events))
+            } else {
+                // Compatibility-only fallback for unit tests and the transition
+                // window. Production mesh injects the canonical fused bus.
+                match ctx.world.read() {
+                    Ok(world) => (world.clone(), None),
+                    Err(_) => {
+                        errors += 1;
+                        break;
+                    }
                 }
             };
 
@@ -106,12 +139,23 @@ impl Agent for StateFileWriter {
             // Drain completed episodes to the events log (phase 12.C1). The
             // snapshot holds this write's events (cleared from the shared world
             // above), so each episode is logged exactly once.
-            if let Some(elog) = self.events_log.as_mut()
-                && !snapshot.events.is_empty()
-            {
-                for line in self.state_file.events_log_lines(&snapshot.events) {
-                    if let Err(e) = elog.append(&line) {
-                        eprintln!("  events-log: append error: {e}");
+            if let Some(elog) = self.events_log.as_mut() {
+                if let Some(events) = &canonical_events {
+                    for event in events {
+                        match serde_json::to_string(event) {
+                            Ok(line) => {
+                                if let Err(e) = elog.append(&line) {
+                                    eprintln!("  events-log: append error: {e}");
+                                }
+                            }
+                            Err(e) => eprintln!("  events-log: serialize error: {e}"),
+                        }
+                    }
+                } else if !snapshot.events.is_empty() {
+                    for line in self.state_file.events_log_lines(&snapshot.events) {
+                        if let Err(e) = elog.append(&line) {
+                            eprintln!("  events-log: append error: {e}");
+                        }
                     }
                 }
             }
@@ -187,6 +231,75 @@ mod tests {
     #[test]
     fn first_write_has_zero_fps() {
         assert_eq!(fps_between(None, 5, Instant::now()), 0.0);
+    }
+
+    #[test]
+    fn canonical_writer_reads_packet_without_mutating_shared_world() {
+        use crate::agents::{FrameEvidenceHandles, FusedFrameBus, FusedFramePacket};
+        use mvm_core::canonical::{FactSource, FrameStamp, SourceStamp};
+        use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput};
+
+        let now = Instant::now();
+        let camera =
+            mvm_mesh::Frame::new_stamped(4, image::DynamicImage::new_rgb8(8, 8), now, 1_000);
+        let mut canonical = CanonicalFusion::new("test-run");
+        let scene = canonical
+            .assemble(CanonicalFusionInput {
+                stamp: FrameStamp::new("test-run", 4, 1_000, 1_001).unwrap(),
+                sources: vec![
+                    SourceStamp::at_frame(FactSource::Capture, 4, 1_001)
+                        .relative_to(4, 0, 0)
+                        .unwrap(),
+                ],
+                people: &[],
+                objects: &[],
+                animals: &[],
+                activities: &[],
+                ended_activities: &[],
+                anomaly_score: 0.0,
+            })
+            .unwrap();
+        let fused = FusedFrameBus::new();
+        fused.publish(FusedFramePacket {
+            scene: Arc::new(scene),
+            evidence: FrameEvidenceHandles {
+                rgb: Arc::clone(&camera.image),
+                depth: None,
+                human: None,
+                scene: None,
+            },
+        });
+
+        let mut shared_world = WorldState::new(now);
+        shared_world.events.push(mvm_core::ActivityEvent {
+            label: "legacy-event".into(),
+            participants: Vec::new(),
+            started_at: 0.0,
+            ended_at: 1.0,
+            duration_s: 1.0,
+            peak_confidence: 1.0,
+            stable_participants: true,
+        });
+        let shared = Arc::new(RwLock::new(shared_world));
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::clone(&shared),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        let path =
+            std::env::temp_dir().join(format!("mvm_statefile_canonical_{}.md", std::process::id()));
+        let state = StateFile::open_at(path.clone()).unwrap();
+        let mut writer =
+            StateFileWriter::new(state, false, Duration::ZERO, Some(1), None, None, None)
+                .with_fused_frames(fused);
+        let health = writer.run(&ctx);
+        assert_eq!(health.ticks, 1);
+        assert_eq!(
+            shared.read().unwrap().events.len(),
+            1,
+            "canonical sink never drains shared compatibility events"
+        );
+        assert!(path.is_file());
     }
 
     #[test]

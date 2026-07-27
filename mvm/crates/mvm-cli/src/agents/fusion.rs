@@ -8,18 +8,27 @@
 //! Human/scene/depth agents publish immutable stamped observations; this agent
 //! assembles one revision for each captured frame and rejects future evidence.
 
-use crate::agents::{DepthObservationBus, HumanObservationBus, SceneObservationBus};
-use mvm_core::{
-    Activity, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState, Position3D,
-    WorldState,
+use crate::agents::{
+    DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
+    FusedFramePacket, HumanObservationBus, HumanObservationFrame, SceneObservationBus,
+    SceneObservationFrame,
 };
+use mvm_core::{
+    Activity, ActivityEvent, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState,
+    Position3D, WorldState,
+};
+use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
+use std::sync::Arc;
 
 pub(crate) struct FusionAgent {
     config: mvm_core::Config,
     human_observations: HumanObservationBus,
     scene_observations: SceneObservationBus,
     depth_observations: DepthObservationBus,
+    fused_frames: FusedFrameBus,
+    canonical: CanonicalFusion,
+    run_id: String,
     /// Temporal debounce + event journal over the raw activities (phase 11.C3).
     journal: ActivityJournal,
     /// Anomaly v2 scorer (phase 11.B2) — same frame-gated cadence as the journal.
@@ -38,13 +47,19 @@ impl FusionAgent {
         human_observations: HumanObservationBus,
         scene_observations: SceneObservationBus,
         depth_observations: DepthObservationBus,
+        fused_frames: FusedFrameBus,
+        run_id: impl Into<String>,
     ) -> Self {
         let camera_height_m = config.camera_height_m;
+        let run_id = run_id.into();
         Self {
             config,
             human_observations,
             scene_observations,
             depth_observations,
+            fused_frames,
+            canonical: CanonicalFusion::new(run_id.clone()),
+            run_id,
             // Churn stitching on (11.C6): the mesh live test (2026-07-03)
             // showed object-track id churn spamming the journal with dozens of
             // ½-second typing/holding_drink fragments for one physical desk —
@@ -62,7 +77,7 @@ impl FusionAgent {
     /// the raw activities, step the FSM once per *new* frame_id, publish the
     /// stabilized set (Active+Cooling, EMA confidence) as `world.activities` and
     /// append completed episodes to `world.events`.
-    fn advance_journal(&mut self, w: &mut WorldState) {
+    fn advance_journal(&mut self, w: &mut WorldState) -> Vec<ActivityEvent> {
         // Drop a body overlapping a YOLO animal detection from relational
         // activities — a pet with a spurious BlazePose skeleton must never be a
         // `people_together` participant (model-corroborated anti-pet gate;
@@ -82,7 +97,7 @@ impl FusionAgent {
                 .collect();
             infer_activities(people.as_slice(), w.objects.as_slice())
         };
-        if self.last_frame != Some(w.frame_id) {
+        let ended = if self.last_frame != Some(w.frame_id) {
             self.last_frame = Some(w.frame_id);
             let t = w
                 .timestamp
@@ -90,11 +105,13 @@ impl FusionAgent {
                 .as_secs_f64();
             self.journal.update(&raw, t, w.frame_id);
             let ended = self.journal.drain_events();
-            w.events.extend(ended);
             // Anomaly v2 (11.B2): decaying peak over noisy-OR'd signals —
             // ticked once per frame so the decay rate means something.
             w.anomaly_score = self.anomaly.update(&w.people, &w.objects, t);
-        }
+            ended
+        } else {
+            Vec::new()
+        };
         w.activity_instances = self.journal.active().cloned().collect();
         w.activities = w
             .activity_instances
@@ -105,6 +122,7 @@ impl FusionAgent {
                 participants: i.key.participants.clone(),
             })
             .collect();
+        ended
     }
 }
 
@@ -135,42 +153,93 @@ impl Agent for FusionAgent {
                         .is_some_and(|age| age <= u64::from(self.config.depth_cadence.max(1)) * 2)
                 });
 
-                if let Ok(mut w) = ctx.world.write() {
-                    w.frame_id = frame.id;
-                    w.timestamp = frame.captured;
-                    w.people = human
-                        .as_ref()
-                        .map_or_else(Vec::new, |obs| obs.people.as_ref().clone());
-                    w.objects = scene
-                        .as_ref()
-                        .map_or_else(Vec::new, |obs| obs.objects.as_ref().clone());
-                    w.animals = scene
-                        .as_ref()
-                        .map_or_else(Vec::new, |obs| obs.animals.as_ref().clone());
-                    {
-                        let WorldState {
-                            people, objects, ..
-                        } = &mut *w;
-                        // Anchor objects to metric 3D when a depth map is available
-                        // (the person↔person activities don't need it — people carry
-                        // torso-3D directly).
-                        if let Some(d) = depth.as_ref() {
-                            anchor_objects(
-                                people.as_slice(),
-                                objects.as_mut_slice(),
-                                &d.map,
-                                &pinhole,
-                                frame.image.width() as f32,
-                                frame.image.height() as f32,
-                            );
-                        }
+                let mut world = WorldState::new(frame.captured);
+                world.frame_id = frame.id;
+                world.people = human
+                    .as_ref()
+                    .map_or_else(Vec::new, |obs| obs.people.as_ref().clone());
+                world.objects = scene
+                    .as_ref()
+                    .map_or_else(Vec::new, |obs| obs.objects.as_ref().clone());
+                world.animals = scene.as_ref().map_or_else(Vec::new, |obs| {
+                    obs.animals.iter().map(|animal| animal.bbox).collect()
+                });
+                {
+                    let WorldState {
+                        people, objects, ..
+                    } = &mut world;
+                    // Anchor objects to metric 3D when a depth map is available
+                    // (the person↔person activities don't need it — people carry
+                    // torso-3D directly).
+                    if let Some(d) = depth.as_ref() {
+                        anchor_objects(
+                            people.as_slice(),
+                            objects.as_mut_slice(),
+                            &d.map,
+                            &pinhole,
+                            frame.image.width() as f32,
+                            frame.image.height() as f32,
+                        );
                     }
-                    // Cross-group inference (phase 8.F) through the temporal
-                    // journal (phase 11.C3): raw per-tick activities are debounced
-                    // into stable instances + start/stop events.
-                    self.advance_journal(&mut w);
-                    ticks += 1;
                 }
+                // Cross-group inference (phase 8.F) through the temporal journal.
+                let ended = self.advance_journal(&mut world);
+                let published_at_unix_ms = unix_ms_now().max(frame.captured_at_unix_ms);
+                let stamp = mvm_core::canonical::FrameStamp::new(
+                    self.run_id.clone(),
+                    frame.id,
+                    frame.captured_at_unix_ms,
+                    published_at_unix_ms,
+                )
+                .expect("camera frame timestamps form a valid canonical stamp");
+                let sources = source_stamps(
+                    frame.id,
+                    published_at_unix_ms,
+                    human.as_ref(),
+                    scene.as_ref(),
+                    depth.as_ref(),
+                    self.config.object_cadence,
+                    self.config.depth_cadence,
+                );
+                match self.canonical.assemble(CanonicalFusionInput {
+                    stamp,
+                    sources,
+                    people: &world.people,
+                    objects: &world.objects,
+                    animals: scene
+                        .as_ref()
+                        .map_or(&[][..], |observation| observation.animals.as_slice()),
+                    activities: &world.activities,
+                    ended_activities: &ended,
+                    anomaly_score: world.anomaly_score,
+                }) {
+                    Ok(scene_frame) => {
+                        let mut compatibility =
+                            (*scene_frame.compatibility_world_state(frame.captured)).clone();
+                        // Preserve rich legacy-only evidence during the v0.4
+                        // compatibility window; canonical facts remain authority.
+                        compatibility.people = world.people;
+                        compatibility.objects = world.objects;
+                        compatibility.animals = world.animals;
+                        compatibility.activity_instances = world.activity_instances;
+                        if let Ok(mut shared) = ctx.world.write() {
+                            *shared = compatibility;
+                        }
+                        self.fused_frames.publish(FusedFramePacket {
+                            scene: Arc::new(scene_frame),
+                            evidence: FrameEvidenceHandles {
+                                rgb: Arc::clone(&frame.image),
+                                depth: depth.clone(),
+                                human: human.clone(),
+                                scene: scene.clone(),
+                            },
+                        });
+                    }
+                    Err(error) => {
+                        eprintln!("  fusion: canonical assembly error: {error}");
+                    }
+                }
+                ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(15));
         }
@@ -180,6 +249,75 @@ impl Agent for FusionAgent {
             errors: 0,
         }
     }
+}
+
+fn unix_ms_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+fn source_stamps(
+    fused_frame_id: u64,
+    published_at_unix_ms: i64,
+    human: Option<&HumanObservationFrame>,
+    scene: Option<&SceneObservationFrame>,
+    depth: Option<&DepthObservationFrame>,
+    object_cadence: u32,
+    depth_cadence: u32,
+) -> Vec<mvm_core::canonical::SourceStamp> {
+    use mvm_core::canonical::{FactSource, SourceStamp};
+
+    let mut sources = vec![
+        SourceStamp::at_frame(FactSource::Capture, fused_frame_id, published_at_unix_ms)
+            .relative_to(fused_frame_id, 0, 0)
+            .expect("capture source is the canonical clock"),
+        observation_source(
+            FactSource::Human,
+            human.map(|observation| &observation.stamp),
+            fused_frame_id,
+            2,
+            4,
+        ),
+        observation_source(
+            FactSource::Scene,
+            scene.map(|observation| &observation.stamp),
+            fused_frame_id,
+            u64::from(object_cadence.max(1)),
+            u64::from(object_cadence.max(1)) * 2,
+        ),
+        observation_source(
+            FactSource::Depth,
+            depth.map(|observation| &observation.stamp),
+            fused_frame_id,
+            u64::from(depth_cadence.max(1)),
+            u64::from(depth_cadence.max(1)) * 2,
+        ),
+    ];
+    sources.sort_by_key(|source| source.source);
+    sources
+}
+
+fn observation_source(
+    source: mvm_core::canonical::FactSource,
+    stamp: Option<&crate::agents::ObservationStamp>,
+    fused_frame_id: u64,
+    fresh_through: u64,
+    coasted_through: u64,
+) -> mvm_core::canonical::SourceStamp {
+    stamp.map_or_else(
+        || mvm_core::canonical::SourceStamp::unavailable(source),
+        |stamp| {
+            mvm_core::canonical::SourceStamp::at_frame(
+                source,
+                stamp.source_frame_id,
+                stamp.produced_at_unix_ms,
+            )
+            .relative_to(fused_frame_id, fresh_through, coasted_through)
+            .expect("future expert observations are filtered before canonical fusion")
+        },
+    )
 }
 
 /// Anchor objects to metric 3D using people as the scale reference (phase 8.E.2,
@@ -603,6 +741,8 @@ mod tests {
             HumanObservationBus::new(),
             SceneObservationBus::new(),
             DepthObservationBus::new(),
+            FusedFrameBus::new(),
+            "test-run",
         )
     }
 
@@ -655,8 +795,7 @@ mod tests {
             let mut w =
                 mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100 * (f + g)));
             w.frame_id = f + g;
-            agent.advance_journal(&mut w);
-            last_events = w.events.clone();
+            last_events = agent.advance_journal(&mut w);
         }
         assert_eq!(last_events.len(), 1, "end of contact journals one event");
         assert_eq!(last_events[0].label, "using_object(keyboard)");

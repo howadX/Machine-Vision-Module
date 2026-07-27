@@ -32,8 +32,9 @@ pub(crate) use depth::DepthAgent;
 pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
 pub(crate) use observations::{
-    DepthObservationBus, DepthObservationFrame, HumanObservationBus, HumanObservationFrame,
-    ObservationStamp, SceneObservationBus, SceneObservationFrame,
+    DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
+    FusedFramePacket, HumanObservationBus, HumanObservationFrame, ObservationStamp,
+    SceneObservationBus, SceneObservationFrame,
 };
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
@@ -205,6 +206,29 @@ mod tests {
         assert!(
             objects[1].position_3d.is_none(),
             "bed has no depth anchor → None"
+        );
+    }
+
+    #[test]
+    fn only_fusion_writes_the_compatibility_world() {
+        for (name, source) in [
+            ("human", include_str!("human.rs")),
+            ("scene", include_str!("scene.rs")),
+            ("depth", include_str!("depth.rs")),
+            ("statefile", include_str!("statefile.rs")),
+            ("dataset_writer", include_str!("dataset_writer.rs")),
+        ] {
+            assert!(
+                !source.contains("ctx.world.write()"),
+                "{name} must consume observations/canonical frames read-only"
+            );
+        }
+        assert_eq!(
+            include_str!("fusion.rs")
+                .matches("ctx.world.write()")
+                .count(),
+            1,
+            "Fusion owns the sole compatibility projection write-site"
         );
     }
 }

@@ -21,6 +21,7 @@ pub(crate) struct SceneAgent {
     seg_detector: Option<mvm_scene::YoloSegDetector>,
     observations: SceneObservationBus,
     tracker: mvm_scene::ObjectTracker,
+    animal_tracker: mvm_scene::ObjectTracker,
     score_thresh: f32,
     min_area: f32,
     cadence: u32,
@@ -41,6 +42,7 @@ impl SceneAgent {
             seg_detector,
             observations,
             tracker,
+            animal_tracker: mvm_scene::ObjectTracker::with_params(0.3, 8, 0.5),
             score_thresh,
             min_area,
             cadence,
@@ -69,10 +71,22 @@ impl Agent for SceneAgent {
                         // nodes (dropped by `is_relevant`), but fusion needs
                         // them to drop a pet-overlapping body from relational
                         // activities (anti-pet gate) — capture before filtering.
-                        let animals: Vec<mvm_core::BBox> = objs
+                        let animal_detections: Vec<_> = objs
                             .iter()
                             .filter(|o| mvm_scene::is_animal(o.class_name))
-                            .map(|o| o.bbox)
+                            .cloned()
+                            .collect();
+                        let animals: Vec<_> = self
+                            .animal_tracker
+                            .update(&animal_detections)
+                            .into_iter()
+                            .map(|animal| mvm_fusion::canonical::AnimalObservation {
+                                track_id: animal.id,
+                                class_name: animal.class_name.to_owned(),
+                                bbox: animal.bbox,
+                                confidence: animal.score,
+                                remembered: animal.missed > 0,
+                            })
                             .collect();
                         // Filters A/C/D (mirror the synchronous loop): relevant
                         // classes, per-class score floor, minimum bbox area.
@@ -135,7 +149,7 @@ impl Agent for SceneAgent {
                             }
                         }
 
-                        let stamp = ObservationStamp::new(frame.id, frame.captured);
+                        let stamp = ObservationStamp::from_frame(&frame);
                         self.observations.publish(SceneObservationFrame {
                             stamp,
                             objects: Arc::new(collect_objects(&tracked, stamp.produced_at)),
@@ -188,7 +202,7 @@ mod tests {
                 * mvm_core::mask::MASK_RES
         ]);
         bus.publish(SceneObservationFrame {
-            stamp: ObservationStamp::new(9, std::time::Instant::now()),
+            stamp: ObservationStamp::new(9, std::time::Instant::now(), 1_000),
             objects: Arc::new(Vec::new()),
             animals: Arc::new(Vec::new()),
             person_masks: Arc::new(vec![(

@@ -18,6 +18,8 @@
 
 use mvm_core::types::{Entity, EntityKind, Relation, RelationKind, Scene};
 
+pub mod canonical;
+
 const K: usize = 8;
 
 /// Proximity threshold in metres: entities closer than this get a `Near` edge.

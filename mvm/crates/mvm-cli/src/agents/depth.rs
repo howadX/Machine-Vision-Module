@@ -48,7 +48,7 @@ impl Agent for DepthAgent {
                 match self.estimator.estimate(frame.image.as_ref()) {
                     Ok(map) => {
                         self.observations.publish(DepthObservationFrame {
-                            stamp: ObservationStamp::new(frame.id, frame.captured),
+                            stamp: ObservationStamp::from_frame(&frame),
                             map: Arc::new(map),
                         });
                         ticks += 1;
@@ -78,7 +78,7 @@ mod tests {
         let bus = DepthObservationBus::new();
         assert!(bus.latest().is_none());
         bus.publish(DepthObservationFrame {
-            stamp: ObservationStamp::new(3, std::time::Instant::now()),
+            stamp: ObservationStamp::new(3, std::time::Instant::now(), 1_000),
             map: Arc::new(mvm_depth::DepthMap {
                 data: vec![0.5; 4],
                 w: 2,

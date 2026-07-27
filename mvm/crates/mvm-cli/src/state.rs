@@ -879,7 +879,7 @@ impl StateFile {
         lines.push(format!("- Status: {status}"));
         lines.push(String::new());
 
-        fs::write(&self.path, lines.join("\n"))?;
+        atomic_write(&self.path, lines.join("\n").as_bytes())?;
 
         eprintln!("  state written: {face_count} faces, {fps:.1} fps");
         Ok(())
@@ -1305,7 +1305,7 @@ impl StateFile {
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
         let md = crate::render::render_snapshot(world, fps, &ts);
-        fs::write(&self.path, md)?;
+        atomic_write(&self.path, md.as_bytes())?;
         Ok(())
     }
 
@@ -1475,6 +1475,22 @@ impl StateFile {
             faces,
         };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("mvm-state");
+    let temp = path.with_file_name(format!(".{file_name}.tmp-{}", std::process::id()));
+    fs::write(&temp, bytes)?;
+    match fs::rename(&temp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            Err(error)
+        }
     }
 }
 

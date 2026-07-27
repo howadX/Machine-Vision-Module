@@ -12,7 +12,7 @@
 //! Depth maps (16-bit PNG) are a 16.2 follow-up — the agent forces `save_depth`
 //! off so labels never reference a depth file that was not written.
 
-use super::DepthObservationBus;
+use super::{DepthObservationBus, FusedFrameBus, FusedFramePacket};
 use crate::state::{object_state_to_entity, person_to_entity, relation_kept};
 use image::{ImageFormat, RgbImage};
 use mvm_core::BBox;
@@ -22,7 +22,9 @@ use mvm_dataset::{
     blur_regions,
 };
 use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
+use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Logical dataset id (root-of-storage binding key).
@@ -44,6 +46,8 @@ pub(crate) struct DatasetWriterAgent {
     /// uses, so the semantic session log carries zones with stable ids + labels.
     /// Ticks once per recording step (dataset cadence).
     zones: mvm_fusion::ZoneTracker,
+    fused_frames: Option<FusedFrameBus>,
+    session_world: mvm_core::WorldState,
 }
 
 impl DatasetWriterAgent {
@@ -62,7 +66,14 @@ impl DatasetWriterAgent {
             last_frame_id: None,
             max_records: None,
             zones: mvm_fusion::ZoneTracker::new(),
+            fused_frames: None,
+            session_world: mvm_core::WorldState::new(Instant::now()),
         }
+    }
+
+    pub(crate) fn with_fused_frames(mut self, fused_frames: FusedFrameBus) -> Self {
+        self.fused_frames = Some(fused_frames);
+        self
     }
 
     /// Build this frame's relational scene-graph (§16.7) from the shared world:
@@ -142,14 +153,15 @@ impl DatasetWriterAgent {
         };
         let depth_range = depth_map.as_ref().and_then(|m| depth_minmax(&m.data));
 
-        // Lock section: advance the session lifecycle + append the label. All of
-        // this is fast (no image work). Capture the people boxes for the blur pass
-        // before releasing.
+        // Compatibility input is cloned read-only; DatasetWriter owns session
+        // lifecycle in `session_world` and never mutates the shared scene.
         let (result, privacy_people) = {
-            let mut w = match ctx.world.write() {
-                Ok(w) => w,
+            let mut w = match ctx.world.read() {
+                Ok(world) => world.clone(),
                 Err(_) => return Ok(false),
             };
+            w.current_session_id = self.session_world.current_session_id.clone();
+            w.last_people_seen = self.session_world.last_people_seen;
             let pp: Vec<PrivacyPerson> = w
                 .people
                 .iter()
@@ -165,6 +177,7 @@ impl DatasetWriterAgent {
             let r = self
                 .writer
                 .record_frame(&mut w, now, &iso, &stamp, depth_range, &relations)?;
+            self.session_world = w;
             (r, pp)
         };
 
@@ -183,6 +196,73 @@ impl DatasetWriterAgent {
         // so path.is_some() ⇔ depth_map.is_some().
         if let (Some(path), Some(map), Some(range)) =
             (rec.depth_path.as_ref(), depth_map.as_ref(), depth_range)
+        {
+            write_depth_png(map, range, path)?;
+        }
+        Ok(true)
+    }
+
+    fn step_canonical(&mut self, packet: &FusedFramePacket) -> anyhow::Result<bool> {
+        let now = Instant::now();
+        let file_stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S").to_string();
+        let iso = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+            .to_string();
+
+        let depth_map = self
+            .cfg
+            .save_depth
+            .then(|| {
+                packet
+                    .evidence
+                    .depth
+                    .as_ref()
+                    .map(|depth| Arc::clone(&depth.map))
+            })
+            .flatten();
+        let depth_range = depth_map.as_ref().and_then(|map| depth_minmax(&map.data));
+
+        let projection = packet.scene.compatibility_world_state(now);
+        let mut world = (*projection).clone();
+        if let Some(human) = &packet.evidence.human {
+            world.people = human.people.as_ref().clone();
+        }
+        if let Some(scene) = &packet.evidence.scene {
+            world.objects = scene.objects.as_ref().clone();
+            world.animals = scene.animals.iter().map(|animal| animal.bbox).collect();
+        }
+        world.current_session_id = self.session_world.current_session_id.clone();
+        world.last_people_seen = self.session_world.last_people_seen;
+
+        let privacy_people: Vec<PrivacyPerson> = world
+            .people
+            .iter()
+            .map(|person| PrivacyPerson {
+                body: person.bbox,
+                face: person.face_bbox,
+                is_anon: person.identity.is_none(),
+            })
+            .collect();
+        let relations = canonical_relations(&packet.scene);
+        let result = self.writer.record_frame(
+            &mut world,
+            now,
+            &iso,
+            &file_stamp,
+            depth_range,
+            &relations,
+        )?;
+        self.session_world = world;
+
+        let Some(record) = result.frame else {
+            return Ok(false);
+        };
+        if record.frame_path.is_some() {
+            let regions = blur_regions(&privacy_people, self.cfg.privacy);
+            self.write_frame_image(&packet.evidence.rgb, &record, &regions)?;
+        }
+        if let (Some(path), Some(map), Some(range)) =
+            (record.depth_path.as_ref(), depth_map.as_ref(), depth_range)
         {
             write_depth_png(map, range, path)?;
         }
@@ -208,6 +288,48 @@ impl DatasetWriterAgent {
     }
 }
 
+fn canonical_relations(scene: &mvm_core::canonical::FusedSceneFrame) -> SceneRelations {
+    use mvm_core::canonical::SceneRelationKind;
+
+    let display_ids: BTreeMap<_, _> = scene
+        .entities
+        .iter()
+        .map(|entity| (entity.key.clone(), entity.display_id))
+        .collect();
+    let edges = scene
+        .relations
+        .iter()
+        .filter_map(|relation| {
+            Some(EdgeRel {
+                a: *display_ids.get(&relation.a)?,
+                b: *display_ids.get(&relation.b)?,
+                rel: match relation.kind {
+                    SceneRelationKind::Near => "near",
+                    SceneRelationKind::Overlapping => "overlapping",
+                    SceneRelationKind::PartOf => "part_of",
+                    SceneRelationKind::Touching => "touching",
+                    SceneRelationKind::HeldBy => "held_by",
+                }
+                .into(),
+            })
+        })
+        .collect();
+    let zones = scene
+        .zones
+        .iter()
+        .map(|zone| ZoneRel {
+            persistent_id: u32::try_from(zone.id).ok(),
+            label: zone.label.clone(),
+            members: zone
+                .members
+                .iter()
+                .filter_map(|key| display_ids.get(key).copied())
+                .collect(),
+        })
+        .collect();
+    SceneRelations { zones, edges }
+}
+
 impl Agent for DatasetWriterAgent {
     fn name(&self) -> String {
         "dataset".into()
@@ -217,7 +339,30 @@ impl Agent for DatasetWriterAgent {
         let mut records = 0u64;
         let mut errors = 0u64;
         while ctx.running() {
-            if let Some(frame) = ctx.frames.latest() {
+            if self.fused_frames.is_some() {
+                let packet = self
+                    .fused_frames
+                    .as_ref()
+                    .and_then(mvm_mesh::LatestValue::latest);
+                if let Some(packet) = packet {
+                    let frame_id = packet.scene.stamp.frame_id;
+                    let is_new = self.last_frame_id != Some(frame_id);
+                    let due = super::cadence_due(frame_id, self.cadence);
+                    if is_new {
+                        self.last_frame_id = Some(frame_id);
+                        if due {
+                            match self.step_canonical(&packet) {
+                                Ok(true) => records += 1,
+                                Ok(false) => {}
+                                Err(error) => {
+                                    eprintln!("  dataset: canonical record error: {error}");
+                                    errors += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if let Some(frame) = ctx.frames.latest() {
                 let is_new = self.last_frame_id != Some(frame.id);
                 let due = super::cadence_due(frame.id, self.cadence);
                 if is_new {
@@ -231,13 +376,13 @@ impl Agent for DatasetWriterAgent {
                                 errors += 1;
                             }
                         }
-                        if let Some(max) = self.max_records
-                            && records >= max
-                        {
-                            break;
-                        }
                     }
                 }
+            }
+            if let Some(max) = self.max_records
+                && records >= max
+            {
+                break;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -245,9 +390,9 @@ impl Agent for DatasetWriterAgent {
         let ended = chrono::Local::now()
             .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
             .to_string();
-        if let Ok(mut w) = ctx.world.write() {
-            let _ = self.writer.close_open_session(&mut w, &ended);
-        }
+        let _ = self
+            .writer
+            .close_open_session(&mut self.session_world, &ended);
         AgentHealth {
             name: self.name(),
             ticks: records,
@@ -339,6 +484,7 @@ fn save_rgb(rgb: &RgbImage, path: &Path, cfg: &DatasetConfig) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::{FrameEvidenceHandles, HumanObservationFrame, ObservationStamp};
     use mvm_core::world::{PersonState, WorldState};
     use mvm_mesh::LatestFrame;
     use std::sync::atomic::AtomicBool;
@@ -506,6 +652,76 @@ mod tests {
             !sess_dir.join("frames").exists(),
             "text-only: no pixel frames dir"
         );
+    }
+
+    #[test]
+    fn canonical_packet_records_without_mutating_shared_world() {
+        use mvm_core::canonical::{FactSource, FrameStamp, SourceStamp};
+        use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput};
+
+        let root = temp_root("canonical");
+        let mut cfg = DatasetConfig::default()
+            .effective_recorder()
+            .expect("default text-only recorder");
+        cfg.frame_cadence = 1;
+        let fused = FusedFrameBus::new();
+        let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None)
+            .with_fused_frames(fused.clone())
+            .with_max_records(1);
+
+        let now = Instant::now();
+        let people = Arc::new(vec![person(1, now, false)]);
+        let mut canonical = CanonicalFusion::new("test-run");
+        let scene = canonical
+            .assemble(CanonicalFusionInput {
+                stamp: FrameStamp::new("test-run", 3, 1_000, 1_001).unwrap(),
+                sources: vec![
+                    SourceStamp::at_frame(FactSource::Human, 3, 1_001)
+                        .relative_to(3, 2, 4)
+                        .unwrap(),
+                ],
+                people: &people,
+                objects: &[],
+                animals: &[],
+                activities: &[],
+                ended_activities: &[],
+                anomaly_score: 0.0,
+            })
+            .unwrap();
+        let camera = Frame::new_stamped(3, image::DynamicImage::new_rgb8(64, 48), now, 1_000);
+        fused.publish(FusedFramePacket {
+            scene: Arc::new(scene),
+            evidence: FrameEvidenceHandles {
+                rgb: Arc::clone(&camera.image),
+                depth: None,
+                human: Some(HumanObservationFrame {
+                    stamp: ObservationStamp::from_frame(&camera),
+                    people,
+                }),
+                scene: None,
+            },
+        });
+
+        let shared = Arc::new(RwLock::new(WorldState::new(now)));
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::clone(&shared),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        assert_eq!(agent.run(&ctx).ticks, 1);
+        assert!(
+            shared.read().unwrap().current_session_id.is_none(),
+            "canonical DatasetWriter owns session lifecycle privately"
+        );
+
+        let session = std::fs::read_dir(root.join("sessions"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(session.join("labels.jsonl").is_file());
+        assert!(session.join("session.toml").is_file());
     }
 
     #[test]

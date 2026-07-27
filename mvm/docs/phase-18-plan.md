@@ -902,8 +902,13 @@ Baseline report committed; ни один следующий feature gate не п
 **Статус:** 🚧 начата 27 июля 2026 г. Первый проверенный срез обобщил mesh-channel до
 `LatestValue<T>`, ввёл runtime-only stamped Human/Scene/Depth observations, заменил unstamped
 depth/person-mask slots и убрал прямые `WorldState` write-sites из expert agents. Fusion теперь
-camera-driven и единолично собирает expert facts в compatibility `WorldState`. Следующий срез — публикация
-`FusedFramePacket` как единственного facts authority и миграция sinks на read-only canonical frame.
+camera-driven. Второй срез добавил `mvm-fusion::canonical::CanonicalFusion`: incarnation-safe entities,
+единожды вычисленные relations/persistent zones/kinematics, sequenced event tail и публикацию
+`LatestValue<FusedFramePacket>` до compatibility projection. Production StateFile/DatasetWriter читают
+тот же immutable packet, имеют независимое состояние/cursor и не мутируют scene; DatasetWriter владеет
+session lifecycle, `current_state.md` пишется atomic temp+rename. Search-gate оставляет единственный
+compatibility `WorldState` write-site в Fusion. Следующий срез — canonical events в semantic labels,
+replay determinism/cursor-overflow gates и завершение legacy capture transition.
 
 **Цель:** заменить multi-writer `WorldState` на stamped expert observations и один
 `LatestValue<FusedFramePacket>`.

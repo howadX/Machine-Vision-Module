@@ -149,7 +149,7 @@ impl Agent for HumanAgent {
                     &result.landmarks,
                     t_secs,
                 );
-                let stamp = ObservationStamp::new(frame.id, frame.captured);
+                let stamp = ObservationStamp::from_frame(&frame);
                 self.observations.publish(HumanObservationFrame {
                     stamp,
                     people: Arc::new(collect_people(

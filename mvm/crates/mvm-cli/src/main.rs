@@ -866,6 +866,12 @@ fn build_live_mesh(
     let human_observations = agents::HumanObservationBus::new();
     let scene_observations = agents::SceneObservationBus::new();
     let depth_observations = agents::DepthObservationBus::new();
+    let fused_frames = agents::FusedFrameBus::new();
+    let run_id = format!(
+        "{}-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"),
+        std::process::id()
+    );
 
     // Camera through the platform seam (14.0.3): "auto" scans /dev/video*,
     // an explicit [camera].device is opened literally.
@@ -918,16 +924,21 @@ fn build_live_mesh(
         human_observations,
         scene_observations,
         depth_observations.clone(),
+        fused_frames.clone(),
+        run_id,
     )));
-    mesh.add(Box::new(agents::StateFileWriter::new(
-        state_file,
-        args.common.dump_json,
-        interval,
-        None,
-        scene_log,
-        events_log,
-        journal,
-    )));
+    mesh.add(Box::new(
+        agents::StateFileWriter::new(
+            state_file,
+            args.common.dump_json,
+            interval,
+            None,
+            scene_log,
+            events_log,
+            journal,
+        )
+        .with_fused_frames(fused_frames.clone()),
+    ));
 
     // Dataset Factory recorder (phase 16.1.2b / 16.7-3). Default-on model: a
     // text-only semantic session unless `--record` upgrades it to a pixel dataset,
@@ -958,11 +969,10 @@ fn build_live_mesh(
         );
         // Wire the stamped depth bus so a pixel dataset can save 16-bit depth PNGs
         // (empty until DepthAgent warms up → no depth path recorded meanwhile).
-        mesh.add(Box::new(agents::DatasetWriterAgent::new(
-            cfg,
-            root,
-            Some(depth_observations.clone()),
-        )));
+        mesh.add(Box::new(
+            agents::DatasetWriterAgent::new(cfg, root, Some(depth_observations.clone()))
+                .with_fused_frames(fused_frames.clone()),
+        ));
     }
 
     Ok(mesh)
@@ -1092,6 +1102,11 @@ fn main() -> Result<()> {
     let dump_secs = args.dump_interval;
     let once = args.once;
     let native = args.native;
+    if native && !args.native_camera {
+        eprintln!(
+            "warning: `--native` Python bridge is deprecated for v0.4; use `mvm run` for the canonical Rust AgentMesh path"
+        );
+    }
 
     let mode_label = if native { "native, " } else { "" };
     let json_label = if args.common.dump_json { "json, " } else { "" };

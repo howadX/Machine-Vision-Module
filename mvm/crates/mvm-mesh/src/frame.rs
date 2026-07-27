@@ -16,16 +16,34 @@ pub struct Frame {
     pub id: u64,
     pub image: Arc<DynamicImage>,
     pub captured: Instant,
+    pub captured_at_unix_ms: i64,
 }
 
 impl Frame {
     pub fn new(id: u64, image: DynamicImage, captured: Instant) -> Self {
+        let captured_at_unix_ms = unix_ms(std::time::SystemTime::now());
+        Self::new_stamped(id, image, captured, captured_at_unix_ms)
+    }
+
+    pub fn new_stamped(
+        id: u64,
+        image: DynamicImage,
+        captured: Instant,
+        captured_at_unix_ms: i64,
+    ) -> Self {
         Self {
             id,
             image: Arc::new(image),
             captured,
+            captured_at_unix_ms,
         }
     }
+}
+
+fn unix_ms(time: std::time::SystemTime) -> i64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 /// Generic single-slot latest-value cell shared between one producer and any
