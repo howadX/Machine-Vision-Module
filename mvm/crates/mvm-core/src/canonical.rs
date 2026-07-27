@@ -451,6 +451,19 @@ pub enum SceneEventKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SceneEventPayload {
+    ActivityEpisode {
+        label: String,
+        started_at_s: f64,
+        ended_at_s: f64,
+        duration_s: f64,
+        peak_confidence: f32,
+        stable_participants: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SceneEvent {
     pub event_seq: u64,
     pub source_frame_id: u64,
@@ -458,6 +471,8 @@ pub struct SceneEvent {
     pub kind: SceneEventKind,
     pub entity_keys: Vec<EntityKey>,
     pub fact: SceneFact<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<SceneEventPayload>,
 }
 
 /// Bounded immutable event suffix published with a scene frame.
@@ -640,6 +655,18 @@ impl FusedSceneFrame {
         let mut previous = None;
         for event in &self.events.events {
             event.fact.validate()?;
+            match (&event.kind, &event.payload) {
+                (
+                    SceneEventKind::ActivityEnded,
+                    Some(SceneEventPayload::ActivityEpisode { .. }),
+                )
+                | (_, None) => {}
+                _ => {
+                    return Err(CanonicalContractError::new(
+                        "scene event payload does not match event kind",
+                    ));
+                }
+            }
             if event.source_frame_id > self.stamp.frame_id {
                 return Err(CanonicalContractError::new(
                     "event source frame is newer than fused frame",

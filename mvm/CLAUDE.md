@@ -29,8 +29,9 @@
   `LatestValue<T>` и stamped Human/Scene/Depth observation bus; `CanonicalFusion` публикует immutable
   `FusedFramePacket` с incarnation-safe entities, едиными relations/zones/kinematics и event tail.
   StateFile/DatasetWriter читают packet без scene mutation; session lifecycle локален DatasetWriter,
-  `current_state.md` atomic. Следующий срез — semantic canonical events + replay/legacy-transition
-  gates. План — `docs/phase-18-plan.md`.
+  `current_state.md` atomic. Typed activity episodes попадают в `labels.jsonl` через независимый
+  event cursor с source provenance; replay/cursor/late-result gates добавлены. Следующий срез —
+  legacy capture transition и dataset fixture/live gates. План — `docs/phase-18-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,

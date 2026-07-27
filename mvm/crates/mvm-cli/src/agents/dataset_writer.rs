@@ -18,8 +18,8 @@ use image::{ImageFormat, RgbImage};
 use mvm_core::BBox;
 use mvm_core::types::RelationKind;
 use mvm_dataset::{
-    DatasetConfig, DatasetWriter, EdgeRel, FrameRecord, PrivacyPerson, SceneRelations, ZoneRel,
-    blur_regions,
+    DatasetConfig, DatasetWriter, EdgeRel, FrameRecord, PrivacyPerson, RecordAnnotations,
+    SceneRelations, ZoneRel, blur_regions,
 };
 use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
 use std::collections::BTreeMap;
@@ -48,6 +48,7 @@ pub(crate) struct DatasetWriterAgent {
     zones: mvm_fusion::ZoneTracker,
     fused_frames: Option<FusedFrameBus>,
     session_world: mvm_core::WorldState,
+    event_cursor: Option<u64>,
 }
 
 impl DatasetWriterAgent {
@@ -68,6 +69,7 @@ impl DatasetWriterAgent {
             zones: mvm_fusion::ZoneTracker::new(),
             fused_frames: None,
             session_world: mvm_core::WorldState::new(Instant::now()),
+            event_cursor: None,
         }
     }
 
@@ -244,19 +246,35 @@ impl DatasetWriterAgent {
             })
             .collect();
         let relations = canonical_relations(&packet.scene);
-        let result = self.writer.record_frame(
+        let delta = packet.scene.events.delta_after(self.event_cursor);
+        let mut events = canonical_event_records(&delta.events, &packet.scene);
+        if let Some(gap) = delta.gap {
+            events.insert(
+                0,
+                serde_json::json!({
+                    "kind": "event_gap",
+                    "requested_after": gap.requested_after,
+                    "available_from": gap.available_from,
+                }),
+            );
+        }
+        let result = self.writer.record_frame_with_annotations(
             &mut world,
             now,
             &iso,
             &file_stamp,
             depth_range,
-            &relations,
+            RecordAnnotations {
+                relations: &relations,
+                canonical_events: &events,
+            },
         )?;
         self.session_world = world;
 
         let Some(record) = result.frame else {
             return Ok(false);
         };
+        self.event_cursor = delta.next_cursor;
         if record.frame_path.is_some() {
             let regions = blur_regions(&privacy_people, self.cfg.privacy);
             self.write_frame_image(&packet.evidence.rgb, &record, &regions)?;
@@ -328,6 +346,72 @@ fn canonical_relations(scene: &mvm_core::canonical::FusedSceneFrame) -> SceneRel
         })
         .collect();
     SceneRelations { zones, edges }
+}
+
+fn canonical_event_records(
+    events: &[&mvm_core::canonical::SceneEvent],
+    scene: &mvm_core::canonical::FusedSceneFrame,
+) -> Vec<serde_json::Value> {
+    use mvm_core::canonical::{SceneEventPayload, TrackDomain};
+
+    let display_ids: BTreeMap<_, _> = scene
+        .entities
+        .iter()
+        .map(|entity| (entity.key.clone(), entity.display_id))
+        .collect();
+    events
+        .iter()
+        .map(|event| {
+            let participants: Vec<String> = event
+                .entity_keys
+                .iter()
+                .map(|key| {
+                    let id = display_ids.get(key).copied().unwrap_or(key.track_id);
+                    match key.track_domain {
+                        TrackDomain::Person => format!("p{id}"),
+                        TrackDomain::Object => format!("o{id}"),
+                        TrackDomain::Animal => format!("a{id}"),
+                    }
+                })
+                .collect();
+            match &event.payload {
+                Some(SceneEventPayload::ActivityEpisode {
+                    label,
+                    started_at_s,
+                    ended_at_s,
+                    duration_s,
+                    peak_confidence,
+                    stable_participants,
+                }) => serde_json::json!({
+                    "kind": "episode",
+                    "event": "activity_ended",
+                    "event_seq": event.event_seq,
+                    "source_frame_id": event.source_frame_id,
+                    "source_timestamp": event.source_timestamp_unix_ms,
+                    "label": label,
+                    "participants": participants,
+                    "started_at": started_at_s,
+                    "ended_at": ended_at_s,
+                    "duration_s": duration_s,
+                    "peak_confidence": peak_confidence,
+                    "stable": stable_participants,
+                }),
+                None => {
+                    let event_name = serde_json::to_value(event.kind)
+                        .unwrap_or_else(|_| serde_json::Value::String("unknown".into()));
+                    serde_json::json!({
+                        "kind": "scene_event",
+                        "event": event_name,
+                        "event_seq": event.event_seq,
+                        "source_frame_id": event.source_frame_id,
+                        "source_timestamp": event.source_timestamp_unix_ms,
+                        "participants": participants,
+                        "confidence": event.fact.confidence,
+                    })
+                }
+            }
+        })
+        .collect()
 }
 
 impl Agent for DatasetWriterAgent {
@@ -672,6 +756,15 @@ mod tests {
         let now = Instant::now();
         let people = Arc::new(vec![person(1, now, false)]);
         let mut canonical = CanonicalFusion::new("test-run");
+        let ended = [mvm_core::ActivityEvent {
+            label: "working".into(),
+            participants: vec![1],
+            started_at: 1.0,
+            ended_at: 4.5,
+            duration_s: 3.5,
+            peak_confidence: 0.9,
+            stable_participants: true,
+        }];
         let scene = canonical
             .assemble(CanonicalFusionInput {
                 stamp: FrameStamp::new("test-run", 3, 1_000, 1_001).unwrap(),
@@ -684,7 +777,7 @@ mod tests {
                 objects: &[],
                 animals: &[],
                 activities: &[],
-                ended_activities: &[],
+                ended_activities: &ended,
                 anomaly_score: 0.0,
             })
             .unwrap();
@@ -722,6 +815,13 @@ mod tests {
             .path();
         assert!(session.join("labels.jsonl").is_file());
         assert!(session.join("session.toml").is_file());
+        let labels = std::fs::read_to_string(session.join("labels.jsonl")).unwrap();
+        let record: serde_json::Value = serde_json::from_str(labels.trim()).unwrap();
+        assert_eq!(record["events"][0]["kind"], "episode");
+        assert_eq!(record["events"][0]["event"], "activity_ended");
+        assert_eq!(record["events"][0]["event_seq"], 0);
+        assert_eq!(record["events"][0]["label"], "working");
+        assert_eq!(record["events"][0]["participants"][0], "p1");
     }
 
     #[test]

@@ -32,6 +32,12 @@ pub struct RecordResult {
     pub closed: Option<String>,
 }
 
+/// Semantic additions computed outside the legacy `WorldState` projection.
+pub struct RecordAnnotations<'a> {
+    pub relations: &'a SceneRelations,
+    pub canonical_events: &'a [serde_json::Value],
+}
+
 /// Записанный кадр: наблюдение уже в `labels.jsonl`, пиксели пишет вызывающий.
 #[derive(Debug)]
 pub struct FrameRecord {
@@ -186,6 +192,30 @@ impl DatasetWriter {
         depth_range: Option<[f32; 2]>,
         relations: &SceneRelations,
     ) -> anyhow::Result<RecordResult> {
+        self.record_frame_with_annotations(
+            world,
+            now,
+            wallclock_iso,
+            new_session_stamp,
+            depth_range,
+            RecordAnnotations {
+                relations,
+                canonical_events: &[],
+            },
+        )
+    }
+
+    /// Canonical-fusion variant: appends this consumer's non-destructive event
+    /// cursor delta to the observation written on this cadence tick.
+    pub fn record_frame_with_annotations(
+        &mut self,
+        world: &mut WorldState,
+        now: Instant,
+        wallclock_iso: &str,
+        new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
+        annotations: RecordAnnotations<'_>,
+    ) -> anyhow::Result<RecordResult> {
         let mut res = RecordResult::default();
         let has_people = !world.people.is_empty();
 
@@ -231,7 +261,8 @@ impl DatasetWriter {
                 timestamp: wallclock_iso,
                 seq_in_session: seq,
             };
-            let mut obs = route_with_relations(world, &ctx, relations);
+            let mut obs = route_with_relations(world, &ctx, annotations.relations);
+            obs.events.extend_from_slice(annotations.canonical_events);
             obs.frame.frame_path = frame_rel.clone();
             obs.frame.depth_path = depth_rel.clone();
             obs.frame.depth_range = depth_rel.as_ref().and(depth_range);

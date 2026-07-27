@@ -9,8 +9,8 @@ use mvm_core::canonical::{
     AnimalFacts, EntityKey, EventTailView, Existence, FactEvidenceRef, FactReason, FactSource,
     FactStatus, FrameStamp, FusedSceneFrame, GalleryIdentity, IncarnationRegistry, Kinematics,
     ObjectFacts, PersonFacts, SceneActivity, SceneEntity, SceneEntityKind, SceneEvent,
-    SceneEventKind, SceneFact, SceneQuality, SceneRelation, SceneRelationKind, SceneZone,
-    SourceFreshness, SourceStamp, TrackDomain,
+    SceneEventKind, SceneEventPayload, SceneFact, SceneQuality, SceneRelation, SceneRelationKind,
+    SceneZone, SourceFreshness, SourceStamp, TrackDomain,
 };
 use mvm_core::types::{Entity, EntityKind, RelationKind};
 use mvm_core::{Activity, ActivityEvent, BBox, ObjectState, PersonState, Position3D};
@@ -287,6 +287,14 @@ impl CanonicalFusion {
                         event_seq: Some(seq),
                     }],
                 )?,
+                payload: Some(SceneEventPayload::ActivityEpisode {
+                    label: event.label.clone(),
+                    started_at_s: event.started_at,
+                    ended_at_s: event.ended_at,
+                    duration_s: event.duration_s,
+                    peak_confidence: event.peak_confidence,
+                    stable_participants: event.stable_participants,
+                }),
             });
             while self.events.len() > EVENT_TAIL_CAP {
                 self.events.pop_front();
@@ -722,5 +730,62 @@ mod tests {
         assert!((kinematics.bbox_velocity[0] - 1.0).abs() < 1e-5);
         assert!(kinematics.velocity_3d_mps.is_none());
         assert_eq!(second.entities[0].kinematics.status, FactStatus::Temporal);
+    }
+
+    #[test]
+    fn ended_activity_becomes_typed_sequenced_scene_event() {
+        let mut fusion = CanonicalFusion::new("run");
+        let people = [person(10)];
+        let ended = [ActivityEvent {
+            label: "working".into(),
+            participants: vec![10],
+            started_at: 1.0,
+            ended_at: 4.5,
+            duration_s: 3.5,
+            peak_confidence: 0.9,
+            stable_participants: true,
+        }];
+        let mut frame_input = input(7, &people);
+        frame_input.ended_activities = &ended;
+
+        let frame = fusion.assemble(frame_input).unwrap();
+        let event = frame.events.events.first().expect("canonical event");
+        assert_eq!(event.event_seq, 0);
+        assert_eq!(event.kind, SceneEventKind::ActivityEnded);
+        assert_eq!(event.entity_keys, vec![frame.entities[0].key.clone()]);
+        assert_eq!(
+            event.payload,
+            Some(SceneEventPayload::ActivityEpisode {
+                label: "working".into(),
+                started_at_s: 1.0,
+                ended_at_s: 4.5,
+                duration_s: 3.5,
+                peak_confidence: 0.9,
+                stable_participants: true,
+            })
+        );
+        frame.validate().unwrap();
+    }
+
+    #[test]
+    fn replay_is_deterministic_independent_of_sink_read_cadence() {
+        let mut eager = CanonicalFusion::new("run");
+        let mut sparse = CanonicalFusion::new("run");
+        let mut eager_last = None;
+        let mut sparse_last = None;
+
+        for frame_id in 1..=3 {
+            let mut observed = person(10);
+            observed.bbox.x1 += frame_id as f32 * 0.01;
+            observed.bbox.x2 += frame_id as f32 * 0.01;
+            let people = [observed];
+            eager_last = Some(eager.assemble(input(frame_id, &people)).unwrap());
+            let published = sparse.assemble(input(frame_id, &people)).unwrap();
+            if frame_id == 3 {
+                sparse_last = Some(published);
+            }
+        }
+
+        assert_eq!(eager_last.unwrap(), sparse_last.unwrap());
     }
 }

@@ -107,7 +107,9 @@ Repo-local validator + CI contract gate защищают frontmatter, honesty ma
 non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 начата: generic
 `LatestValue<T>` + stamped Human/Scene/Depth observations, `CanonicalFusion` публикует immutable
 `FusedFramePacket`; StateFile/DatasetWriter читают его без scene mutation, session lifecycle локален,
-а `current_state.md` пишется atomic. Следующий срез — canonical semantic events и replay/legacy gates. План —
+а `current_state.md` пишется atomic. Canonical activity episodes пишутся в `labels.jsonl` через
+независимый DatasetWriter cursor с event/source provenance; replay/cursor/late-result gates добавлены.
+Следующий срез — legacy capture transition и dataset fixture/live gates. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents

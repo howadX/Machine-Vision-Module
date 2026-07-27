@@ -95,6 +95,7 @@ fn canonical_scene_contract_event_cursor_reports_explicit_gap() {
         kind: SceneEventKind::EntityAppeared,
         entity_keys: Vec::new(),
         fact: SceneFact::claimed(FactStatus::Temporal, true, 1.0, vec![evidence]).unwrap(),
+        payload: None,
     };
     let tail = EventTailView {
         first_seq: 10,
@@ -111,6 +112,17 @@ fn canonical_scene_contract_event_cursor_reports_explicit_gap() {
     assert!(replay.gap.is_none());
     assert!(replay.events.is_empty());
     assert_eq!(replay.next_cursor, Some(10));
+
+    let other_consumer = tail.delta_after(Some(4));
+    assert_eq!(
+        other_consumer
+            .events
+            .iter()
+            .map(|event| event.event_seq)
+            .collect::<Vec<_>>(),
+        vec![10],
+        "consumer cursors are independent and non-destructive"
+    );
 }
 
 #[test]

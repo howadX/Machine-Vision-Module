@@ -907,8 +907,13 @@ camera-driven. Второй срез добавил `mvm-fusion::canonical::Cano
 `LatestValue<FusedFramePacket>` до compatibility projection. Production StateFile/DatasetWriter читают
 тот же immutable packet, имеют независимое состояние/cursor и не мутируют scene; DatasetWriter владеет
 session lifecycle, `current_state.md` пишется atomic temp+rename. Search-gate оставляет единственный
-compatibility `WorldState` write-site в Fusion. Следующий срез — canonical events в semantic labels,
-replay determinism/cursor-overflow gates и завершение legacy capture transition.
+compatibility `WorldState` write-site в Fusion. Третий срез добавил typed
+`SceneEventPayload::ActivityEpisode` и запись canonical event delta в `labels.jsonl` через собственный
+cursor DatasetWriter; durable event сохраняет `event_seq`, `source_frame_id` и `source_timestamp`.
+Контрактные тесты фиксируют non-destructive независимые cursors, детерминированный replay при разной
+sink cadence и неизменность уже опубликованного packet при позднем expert result. Следующий срез —
+завершение legacy capture transition и fixture/live-проверка `mvm dataset check` для text-only и pixel
+режимов.
 
 **Цель:** заменить multi-writer `WorldState` на stamped expert observations и один
 `LatestValue<FusedFramePacket>`.

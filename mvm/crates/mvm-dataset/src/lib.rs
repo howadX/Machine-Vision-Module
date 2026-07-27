@@ -39,4 +39,4 @@ pub use session::{
 pub use validate::{
     CheckStats, DatasetReport, Finding, SessionReport, Severity, check_dataset, check_session,
 };
-pub use writer::{DatasetWriter, FrameRecord, RecordResult};
+pub use writer::{DatasetWriter, FrameRecord, RecordAnnotations, RecordResult};

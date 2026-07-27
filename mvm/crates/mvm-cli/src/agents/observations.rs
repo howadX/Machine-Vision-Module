@@ -92,6 +92,24 @@ pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mvm_core::canonical::{
+        EventTailView, FactReason, FrameStamp, FusedSceneFrame, SceneFact, SceneQuality,
+    };
+
+    fn fused_scene(frame_id: u64) -> FusedSceneFrame {
+        let timestamp = i64::try_from(frame_id).unwrap() * 100;
+        FusedSceneFrame {
+            stamp: FrameStamp::new("run", frame_id, timestamp, timestamp + 1).unwrap(),
+            sources: Vec::new(),
+            entities: Vec::new(),
+            relations: Vec::new(),
+            zones: Vec::new(),
+            activities: Vec::new(),
+            events: EventTailView::default(),
+            anomaly: SceneFact::unknown(FactReason::MissingSource),
+            quality: SceneQuality::default(),
+        }
+    }
 
     #[test]
     fn observation_age_rejects_future_results() {
@@ -130,5 +148,35 @@ mod tests {
         assert_eq!(observed.stamp.source_frame_id, 7);
         assert_eq!(observed.stamp.captured_at_unix_ms, 1_000);
         assert_eq!(observed.map.w, 2);
+    }
+
+    #[test]
+    fn publishing_late_result_cannot_mutate_previous_fused_packet() {
+        let bus = FusedFrameBus::new();
+        let image = Arc::new(image::DynamicImage::new_rgb8(2, 2));
+        let evidence = FrameEvidenceHandles {
+            rgb: Arc::clone(&image),
+            depth: None,
+            human: None,
+            scene: None,
+        };
+        bus.publish(FusedFramePacket {
+            scene: Arc::new(fused_scene(1)),
+            evidence: evidence.clone(),
+        });
+        let first = bus.latest().expect("first packet");
+        let serialized = serde_json::to_string(first.scene.as_ref()).unwrap();
+
+        bus.publish(FusedFramePacket {
+            scene: Arc::new(fused_scene(2)),
+            evidence,
+        });
+
+        assert_eq!(first.scene.stamp.frame_id, 1);
+        assert_eq!(
+            serde_json::to_string(first.scene.as_ref()).unwrap(),
+            serialized
+        );
+        assert_eq!(bus.latest().unwrap().scene.stamp.frame_id, 2);
     }
 }
