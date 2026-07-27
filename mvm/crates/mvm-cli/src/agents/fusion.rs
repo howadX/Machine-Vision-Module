@@ -4,12 +4,11 @@
 //! metric torso-Z, giving objects a metric position in the same frame → real
 //! person↔object `Near` edges (built later by the StateFileWriter / 8.F).
 //!
-//! It reads the depth handle from the shared `DepthSlot`, the frame dimensions
-//! from the latest frame (the same pixel space the body-primary 3D uses), and
-//! read-modify-writes `WorldState.objects` under a single write lock so a
-//! concurrent `SceneAgent` swap can't clobber the anchored positions.
+//! It is camera-driven and is the sole writer of the compatibility `WorldState`.
+//! Human/scene/depth agents publish immutable stamped observations; this agent
+//! assembles one revision for each captured frame and rejects future evidence.
 
-use crate::agents::DepthSlot;
+use crate::agents::{DepthObservationBus, HumanObservationBus, SceneObservationBus};
 use mvm_core::{
     Activity, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState, Position3D,
     WorldState,
@@ -18,7 +17,9 @@ use mvm_mesh::{Agent, AgentHealth, MeshContext};
 
 pub(crate) struct FusionAgent {
     config: mvm_core::Config,
-    depth_slot: DepthSlot,
+    human_observations: HumanObservationBus,
+    scene_observations: SceneObservationBus,
+    depth_observations: DepthObservationBus,
     /// Temporal debounce + event journal over the raw activities (phase 11.C3).
     journal: ActivityJournal,
     /// Anomaly v2 scorer (phase 11.B2) — same frame-gated cadence as the journal.
@@ -28,14 +29,22 @@ pub(crate) struct FusionAgent {
     last_frame: Option<u64>,
     /// Zero point for the journal's monotonic clock.
     epoch: std::time::Instant,
+    last_fused_frame: Option<u64>,
 }
 
 impl FusionAgent {
-    pub(crate) fn new(config: mvm_core::Config, depth_slot: DepthSlot) -> Self {
+    pub(crate) fn new(
+        config: mvm_core::Config,
+        human_observations: HumanObservationBus,
+        scene_observations: SceneObservationBus,
+        depth_observations: DepthObservationBus,
+    ) -> Self {
         let camera_height_m = config.camera_height_m;
         Self {
             config,
-            depth_slot,
+            human_observations,
+            scene_observations,
+            depth_observations,
             // Churn stitching on (11.C6): the mesh live test (2026-07-03)
             // showed object-track id churn spamming the journal with dozens of
             // ½-second typing/holding_drink fragments for one physical desk —
@@ -45,6 +54,7 @@ impl FusionAgent {
             anomaly: AnomalyScorer::new().with_camera_height(camera_height_m),
             last_frame: None,
             epoch: std::time::Instant::now(),
+            last_fused_frame: None,
         }
     }
 
@@ -107,37 +117,60 @@ impl Agent for FusionAgent {
         let pinhole = mvm_core::space::Pinhole::from_config(&self.config);
         let mut ticks = 0u64;
         while ctx.running() {
-            // Cheaply grab the latest depth handle (clone the inner Arc, release
-            // the slot lock immediately) + the frame's pixel dimensions.
-            let depth = self.depth_slot.lock().ok().and_then(|g| g.clone());
-            let dims = ctx
-                .frames
-                .latest()
-                .map(|f| (f.image.width() as f32, f.image.height() as f32));
-            if let Ok(mut w) = ctx.world.write() {
-                {
-                    let WorldState {
-                        people, objects, ..
-                    } = &mut *w;
-                    // Anchor objects to metric 3D when a depth map is available
-                    // (the person↔person activities don't need it — people carry
-                    // torso-3D directly).
-                    if let (Some(d), Some((fw, fh))) = (depth.as_ref(), dims) {
-                        anchor_objects(
-                            people.as_slice(),
-                            objects.as_mut_slice(),
-                            d,
-                            &pinhole,
-                            fw,
-                            fh,
-                        );
+            if let Some(frame) = ctx.frames.latest()
+                && self.last_fused_frame != Some(frame.id)
+            {
+                self.last_fused_frame = Some(frame.id);
+                let human = self
+                    .human_observations
+                    .latest()
+                    .filter(|obs| obs.stamp.age_at(frame.id).is_some());
+                let scene = self
+                    .scene_observations
+                    .latest()
+                    .filter(|obs| obs.stamp.age_at(frame.id).is_some());
+                let depth = self.depth_observations.latest().filter(|obs| {
+                    obs.stamp
+                        .age_at(frame.id)
+                        .is_some_and(|age| age <= u64::from(self.config.depth_cadence.max(1)) * 2)
+                });
+
+                if let Ok(mut w) = ctx.world.write() {
+                    w.frame_id = frame.id;
+                    w.timestamp = frame.captured;
+                    w.people = human
+                        .as_ref()
+                        .map_or_else(Vec::new, |obs| obs.people.as_ref().clone());
+                    w.objects = scene
+                        .as_ref()
+                        .map_or_else(Vec::new, |obs| obs.objects.as_ref().clone());
+                    w.animals = scene
+                        .as_ref()
+                        .map_or_else(Vec::new, |obs| obs.animals.as_ref().clone());
+                    {
+                        let WorldState {
+                            people, objects, ..
+                        } = &mut *w;
+                        // Anchor objects to metric 3D when a depth map is available
+                        // (the person↔person activities don't need it — people carry
+                        // torso-3D directly).
+                        if let Some(d) = depth.as_ref() {
+                            anchor_objects(
+                                people.as_slice(),
+                                objects.as_mut_slice(),
+                                &d.map,
+                                &pinhole,
+                                frame.image.width() as f32,
+                                frame.image.height() as f32,
+                            );
+                        }
                     }
+                    // Cross-group inference (phase 8.F) through the temporal
+                    // journal (phase 11.C3): raw per-tick activities are debounced
+                    // into stable instances + start/stop events.
+                    self.advance_journal(&mut w);
+                    ticks += 1;
                 }
-                // Cross-group inference (phase 8.F) through the temporal
-                // journal (phase 11.C3): raw per-tick activities are debounced
-                // into stable instances + start/stop events.
-                self.advance_journal(&mut w);
-                ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(15));
         }
@@ -565,8 +598,12 @@ mod tests {
     // ── mesh journal wiring (phase 11.C3) ──
 
     fn fusion_agent() -> FusionAgent {
-        let slot: DepthSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
-        FusionAgent::new(Config::default(), slot)
+        FusionAgent::new(
+            Config::default(),
+            HumanObservationBus::new(),
+            SceneObservationBus::new(),
+            DepthObservationBus::new(),
+        )
     }
 
     /// A world whose raw inference yields "using_object(keyboard)" (wrist on keyboard).

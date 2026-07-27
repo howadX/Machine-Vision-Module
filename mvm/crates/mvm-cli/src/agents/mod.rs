@@ -22,20 +22,24 @@ mod fusion;
 #[cfg(test)]
 mod golden;
 mod human;
+mod observations;
 mod scene;
 mod statefile;
 
 pub(crate) use capture::CaptureAgent;
 pub(crate) use dataset_writer::DatasetWriterAgent;
-pub(crate) use depth::{DepthAgent, DepthSlot};
+pub(crate) use depth::DepthAgent;
 pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
-pub(crate) use scene::{PersonMaskSlot, SceneAgent};
+pub(crate) use observations::{
+    DepthObservationBus, DepthObservationFrame, HumanObservationBus, HumanObservationFrame,
+    ObservationStamp, SceneObservationBus, SceneObservationFrame,
+};
+pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
 
 use crate::pipeline::BodyData;
-use mvm_core::{BBox, ObjectState, PersonState, PersonTracker, Position3D, WorldState};
-use std::sync::{Arc, RwLock};
+use mvm_core::{BBox, ObjectState, PersonState, PersonTracker, Position3D};
 use std::time::Instant;
 
 /// A cadence gate: run on frame 0 and every `cadence`-th frame after. `cadence
@@ -45,18 +49,15 @@ pub(crate) fn cadence_due(frame_id: u64, cadence: u32) -> bool {
     cadence <= 1 || frame_id.is_multiple_of(cadence as u64)
 }
 
-/// Project the tracker's active people into `WorldState.people` and advance the
-/// frame stamp. Each person's wrists/hands are attached from the per-body
-/// landmark data by best bbox match (phase 8.F: interaction by landmarks). Called
-/// by the `HumanAgent` every frame (it owns the frame_id / timestamp advance).
-pub(crate) fn project_people(
-    world: &Arc<RwLock<WorldState>>,
+/// Project the tracker's active people into an immutable expert observation.
+/// Each person's wrists/hands are attached from the per-body landmark data by
+/// best bbox match (phase 8.F: interaction by landmarks).
+pub(crate) fn collect_people(
     tracker: &PersonTracker,
     bodies: &[BodyData],
-    frame_id: u64,
     now: Instant,
-) {
-    let people: Vec<PersonState> = tracker
+) -> Vec<PersonState> {
+    tracker
         .active()
         .map(|t| {
             let mut p = PersonState::from_track(t, now);
@@ -67,12 +68,7 @@ pub(crate) fn project_people(
             }
             p
         })
-        .collect();
-    if let Ok(mut w) = world.write() {
-        w.people = people;
-        w.frame_id = frame_id;
-        w.timestamp = now;
-    }
+        .collect()
 }
 
 /// The body whose bbox overlaps `target` most (IoU), above a small floor. Ties a
@@ -96,15 +92,13 @@ fn bbox_iou(a: &BBox, b: &BBox) -> f32 {
     if ua > 0.0 { inter / ua } else { 0.0 }
 }
 
-/// Project tracked objects into `WorldState.objects`. 3D is whatever the tracked
-/// object already carries (`None` until the fusion step anchors them, 8.C.7).
-pub(crate) fn project_objects(
-    world: &Arc<RwLock<WorldState>>,
+/// Project tracked objects into an immutable expert observation. 3D is whatever
+/// the tracked object already carries (`None` until canonical fusion anchors it).
+pub(crate) fn collect_objects(
     objects: &[mvm_scene::TrackedObject],
-    animals: &[mvm_core::BBox],
     now: Instant,
-) {
-    let objs: Vec<ObjectState> = objects
+) -> Vec<ObjectState> {
+    objects
         .iter()
         .map(|t| ObjectState {
             id: t.id,
@@ -124,11 +118,7 @@ pub(crate) fn project_objects(
             remembered: t.missed > 0,
             last_seen: now,
         })
-        .collect();
-    if let Ok(mut w) = world.write() {
-        w.objects = objs;
-        w.animals = animals.to_vec();
-    }
+        .collect()
 }
 
 #[cfg(test)]
@@ -162,18 +152,14 @@ mod tests {
         det.position_z = Some(1.5);
         tracker.tick(&[det]);
 
-        let world = Arc::new(RwLock::new(WorldState::new(Instant::now())));
         let now = Instant::now();
-        project_people(&world, &tracker, &[], 42, now);
+        let people = collect_people(&tracker, &[], now);
 
-        let w = world.read().unwrap();
-        assert_eq!(w.frame_id, 42);
-        assert_eq!(w.people.len(), 1, "one active track → one PersonState");
+        assert_eq!(people.len(), 1, "one active track → one PersonState");
     }
 
     #[test]
     fn project_objects_maps_fields_and_3d() {
-        let world = Arc::new(RwLock::new(WorldState::new(Instant::now())));
         let now = Instant::now();
         let objs = vec![
             mvm_scene::TrackedObject {
@@ -209,16 +195,15 @@ mod tests {
                 mask: None,
             },
         ];
-        project_objects(&world, &objs, &[], now);
+        let objects = collect_objects(&objs, now);
 
-        let w = world.read().unwrap();
-        assert_eq!(w.objects.len(), 2);
-        assert_eq!(w.objects[0].id, 10000);
-        assert_eq!(w.objects[0].class, "cup");
-        let p = w.objects[0].position_3d.as_ref().expect("cup has 3D");
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0].id, 10000);
+        assert_eq!(objects[0].class, "cup");
+        let p = objects[0].position_3d.as_ref().expect("cup has 3D");
         assert!((p.z - 0.7).abs() < 1e-6);
         assert!(
-            w.objects[1].position_3d.is_none(),
+            objects[1].position_3d.is_none(),
             "bed has no depth anchor → None"
         );
     }

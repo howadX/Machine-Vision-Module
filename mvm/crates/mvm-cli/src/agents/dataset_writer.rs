@@ -12,7 +12,7 @@
 //! Depth maps (16-bit PNG) are a 16.2 follow-up — the agent forces `save_depth`
 //! off so labels never reference a depth file that was not written.
 
-use super::DepthSlot;
+use super::DepthObservationBus;
 use crate::state::{object_state_to_entity, person_to_entity, relation_kept};
 use image::{ImageFormat, RgbImage};
 use mvm_core::BBox;
@@ -35,7 +35,7 @@ pub(crate) struct DatasetWriterAgent {
     cadence: u32,
     /// Shared relative-depth slot (§16.2.2). `None` when depth is off or its agent
     /// isn't running; the recorder then records no depth path.
-    depth: Option<DepthSlot>,
+    depth: Option<DepthObservationBus>,
     /// Last captured frame id handled — dedupes the fast mesh loop.
     last_frame_id: Option<u64>,
     /// Stop after this many recorded frames (bounded runs/tests). `None` = live.
@@ -50,7 +50,7 @@ impl DatasetWriterAgent {
     pub(crate) fn new(
         cfg: DatasetConfig,
         root: impl Into<std::path::PathBuf>,
-        depth: Option<DepthSlot>,
+        depth: Option<DepthObservationBus>,
     ) -> Self {
         let cadence = cfg.frame_cadence.max(1);
         let writer = DatasetWriter::new(cfg.clone(), root, DATASET_ID);
@@ -134,7 +134,9 @@ impl DatasetWriterAgent {
         let depth_map = if self.cfg.save_depth {
             self.depth
                 .as_ref()
-                .and_then(|s| s.lock().ok().and_then(|g| g.clone()))
+                .and_then(|bus| bus.latest())
+                .filter(|observation| observation.stamp.age_at(frame.id).is_some())
+                .map(|observation| observation.map)
         } else {
             None
         };

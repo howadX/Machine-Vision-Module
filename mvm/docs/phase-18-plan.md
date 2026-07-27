@@ -1,7 +1,8 @@
 # Фаза 18 — Visual Cortex Layer: явный когнитивный слой MVM
 
 > **Версия:** 0.4 (27 июля 2026)
-> **Статус:** 🚧 реализация начата; 18.0 State Contract + Benchmark Baseline ✅
+> **Статус:** 🚧 реализация начата; 18.0 State Contract + Benchmark Baseline ✅;
+> 18.1 Typed Observation Bus + Canonical Fusion — в работе
 > **Ветка:** `kaggle`
 > **Цель фазы:** сначала завершить канонический facts-слой `FusedSceneFrame`, затем добавить над ним явный, читаемый и проверяемый когнитивный слой `mvm-cortex`, превращающий perception pipeline в visual substrate for agency.
 > **Манифест:** `~/wiki/mvm/north-star-visual-cortex-agent.md`
@@ -897,6 +898,12 @@ Baseline report committed; ни один следующий feature gate не п
 ---
 
 ### 18.1 — Typed Observation Bus + Canonical Fusion
+
+**Статус:** 🚧 начата 27 июля 2026 г. Первый проверенный срез обобщил mesh-channel до
+`LatestValue<T>`, ввёл runtime-only stamped Human/Scene/Depth observations, заменил unstamped
+depth/person-mask slots и убрал прямые `WorldState` write-sites из expert agents. Fusion теперь
+camera-driven и единолично собирает expert facts в compatibility `WorldState`. Следующий срез — публикация
+`FusedFramePacket` как единственного facts authority и миграция sinks на read-only canonical frame.
 
 **Цель:** заменить multi-writer `WorldState` на stamped expert observations и один
 `LatestValue<FusedFramePacket>`.

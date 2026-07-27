@@ -1,13 +1,17 @@
 //! HumanAgent (phase 8.C.5) — group G₁. Wraps a (human-only) `BodyPrimaryPipeline`
 //! and owns its own `PersonTracker`. Every frame: process → track → project the
-//! active tracks into `WorldState.people`. The pipeline is constructed with no
+//! active tracks into a stamped immutable observation. The pipeline is constructed with no
 //! scene/depth detector (those are their own agents now), so it does only the
 //! body-primary chain; objects/depth come from `SceneAgent`/`DepthAgent`.
 
-use crate::agents::{PersonMaskSlot, project_people};
+use crate::agents::{
+    HumanObservationBus, HumanObservationFrame, ObservationStamp, SceneObservationBus,
+    collect_people,
+};
 use crate::pipeline::BodyPrimaryPipeline;
 use mvm_core::{BBox, Detection, mask::InstanceMask};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
+use std::sync::Arc;
 
 /// Bbox-IoU floor for binding a published person silhouette to a body detection
 /// (11.A3). The seg person-bbox and the body-primary bbox track the same person,
@@ -46,22 +50,25 @@ fn attach_person_masks(
 pub(crate) struct HumanAgent {
     pipeline: BodyPrimaryPipeline,
     tracker: mvm_core::PersonTracker,
-    /// Shared person-mask slot written by the `SceneAgent` (11.A3). Read each
-    /// frame and matched onto body detections before the tracker tick. Holds
-    /// `None` until the first seg cadence hit (or forever when `--masks` is off).
-    person_masks: PersonMaskSlot,
+    scene_observations: SceneObservationBus,
+    observations: HumanObservationBus,
+    max_mask_age_frames: u64,
 }
 
 impl HumanAgent {
     pub(crate) fn new(
         pipeline: BodyPrimaryPipeline,
         tracker: mvm_core::PersonTracker,
-        person_masks: PersonMaskSlot,
+        scene_observations: SceneObservationBus,
+        observations: HumanObservationBus,
+        object_cadence: u32,
     ) -> Self {
         Self {
             pipeline,
             tracker,
-            person_masks,
+            scene_observations,
+            observations,
+            max_mask_age_frames: u64::from(object_cadence.max(1)) * 2,
         }
     }
 }
@@ -119,8 +126,17 @@ impl Agent for HumanAgent {
                 // can use them. Lagged (seg cadence) and cross-thread — a race
                 // that misses just leaves detections maskless (term degrades to
                 // zero). The ≥2-people gate lives in the tracker.
-                if let Some(masks) = self.person_masks.lock().ok().and_then(|s| s.clone()) {
-                    attach_person_masks(&mut result.detections, &masks, PERSON_MASK_IOU);
+                if let Some(scene) = self.scene_observations.latest()
+                    && scene
+                        .stamp
+                        .age_at(frame.id)
+                        .is_some_and(|age| age <= self.max_mask_age_frames)
+                {
+                    attach_person_masks(
+                        &mut result.detections,
+                        &scene.person_masks,
+                        PERSON_MASK_IOU,
+                    );
                 }
                 // Monotonic seconds since the first frame → motion velocities (9.8).
                 let t_secs = frame
@@ -133,13 +149,15 @@ impl Agent for HumanAgent {
                     &result.landmarks,
                     t_secs,
                 );
-                project_people(
-                    &ctx.world,
-                    &self.tracker,
-                    &result.bodies,
-                    frame.id,
-                    frame.captured,
-                );
+                let stamp = ObservationStamp::new(frame.id, frame.captured);
+                self.observations.publish(HumanObservationFrame {
+                    stamp,
+                    people: Arc::new(collect_people(
+                        &self.tracker,
+                        &result.bodies,
+                        stamp.produced_at,
+                    )),
+                });
                 ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -155,8 +173,7 @@ impl Agent for HumanAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mvm_core::{Config, Detection, WorldState};
-    use std::sync::{Arc, RwLock};
+    use mvm_core::{Config, Detection};
     use std::time::Instant;
 
     /// An anonymous body (no matched face) projects to a person with no identity
@@ -167,13 +184,11 @@ mod tests {
         let mut tracker = mvm_core::PersonTracker::with_config(&config);
         tracker.tick(&[Detection::bare(0.2, 0.2, 0.4, 0.6)]);
 
-        let world = Arc::new(RwLock::new(WorldState::new(Instant::now())));
-        project_people(&world, &tracker, &[], 1, Instant::now());
+        let people = collect_people(&tracker, &[], Instant::now());
 
-        let w = world.read().unwrap();
-        assert_eq!(w.people.len(), 1);
+        assert_eq!(people.len(), 1);
         assert!(
-            w.people[0].identity.is_none(),
+            people[0].identity.is_none(),
             "anonymous body → identity None"
         );
     }
@@ -188,10 +203,9 @@ mod tests {
             Detection::bare(0.65, 0.2, 0.85, 0.7),
         ]);
 
-        let world = Arc::new(RwLock::new(WorldState::new(Instant::now())));
-        project_people(&world, &tracker, &[], 2, Instant::now());
+        let people = collect_people(&tracker, &[], Instant::now());
 
-        assert_eq!(world.read().unwrap().people.len(), 2);
+        assert_eq!(people.len(), 2);
     }
 
     /// A distinguishable non-empty mask (a single set cell at `i`) so tests can

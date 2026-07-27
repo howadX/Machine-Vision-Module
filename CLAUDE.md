@@ -104,8 +104,9 @@ Repo-local validator + CI contract gate защищают frontmatter, honesty ma
 
 **Фаза 18 — Visual Cortex Layer 🚧:** 18.0 ✅ — canonical facts contract
 (`FusedSceneFrame`, `SceneFact<T>`, `EntityKey`+incarnation, stamped sources,
-non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. Runtime пока остаётся на
-`WorldState`; следующий шаг — 18.1 typed observation bus + canonical Fusion. План —
+non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 начата: generic
+`LatestValue<T>` + stamped Human/Scene/Depth observations, expert agents больше не мутируют
+`WorldState`; следующий срез — canonical `FusedFramePacket` и read-only sinks. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents

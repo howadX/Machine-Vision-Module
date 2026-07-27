@@ -35,7 +35,6 @@ use anyhow::{Context, Result};
 use mvm_core::Detection;
 use mvm_core::Module;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Returns true when the Rust emotion result should replace the current (Python bridge) prediction.
@@ -862,10 +861,11 @@ fn build_live_mesh(
         None,
     );
 
-    // Shared depth slot: DepthAgent writes, FusionAgent reads.
-    let depth_slot: agents::DepthSlot = Arc::new(Mutex::new(None));
-    // Shared person-mask slot (11.A3): SceneAgent writes, HumanAgent reads.
-    let person_mask_slot: agents::PersonMaskSlot = Arc::new(Mutex::new(None));
+    // Typed latest-wins observation channels (phase 18.1). Expert packets keep
+    // their source frame; Fusion is their only facts assembler.
+    let human_observations = agents::HumanObservationBus::new();
+    let scene_observations = agents::SceneObservationBus::new();
+    let depth_observations = agents::DepthObservationBus::new();
 
     // Camera through the platform seam (14.0.3): "auto" scans /dev/video*,
     // an explicit [camera].device is opened literally.
@@ -891,13 +891,15 @@ fn build_live_mesh(
     mesh.add(Box::new(agents::HumanAgent::new(
         pipeline,
         person_tracker,
-        person_mask_slot.clone(),
+        scene_observations.clone(),
+        human_observations.clone(),
+        config.object_cadence,
     )));
     if let Some(yolo) = yolo {
         mesh.add(Box::new(agents::SceneAgent::new(
             yolo,
             seg,
-            person_mask_slot.clone(),
+            scene_observations.clone(),
             mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
             config.object_score_thresh,
             config.object_min_area,
@@ -907,13 +909,15 @@ fn build_live_mesh(
     if let Some(depth) = depth {
         mesh.add(Box::new(agents::DepthAgent::new(
             depth,
-            depth_slot.clone(),
+            depth_observations.clone(),
             config.depth_cadence,
         )));
     }
     mesh.add(Box::new(agents::FusionAgent::new(
         config.clone(),
-        depth_slot.clone(),
+        human_observations,
+        scene_observations,
+        depth_observations.clone(),
     )));
     mesh.add(Box::new(agents::StateFileWriter::new(
         state_file,
@@ -952,12 +956,12 @@ fn build_live_mesh(
             cfg.frame_cadence.max(1),
             cfg.privacy,
         );
-        // Wire the shared depth slot so a pixel dataset can save 16-bit depth PNGs
+        // Wire the stamped depth bus so a pixel dataset can save 16-bit depth PNGs
         // (empty until DepthAgent warms up → no depth path recorded meanwhile).
         mesh.add(Box::new(agents::DatasetWriterAgent::new(
             cfg,
             root,
-            Some(depth_slot.clone()),
+            Some(depth_observations.clone()),
         )));
     }
 

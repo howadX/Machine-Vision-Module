@@ -25,8 +25,10 @@
 - **Фаза 18 — Visual Cortex Layer 🚧:** 18.0 ✅ — в `mvm-core::canonical` зафиксированы
   `FusedSceneFrame`, `SceneFact<T>`, `EntityKey`+incarnation, stamped sources, event-tail cursor с
   `EventGap` и read-only compatibility projection. `benchmark/` содержит replay-контракт, шесть
-  обязательных сценариев и честный pre-Cortex baseline. Runtime всё ещё использует `WorldState`;
-  следующий шаг — 18.1 typed observation bus + canonical Fusion. План — `docs/phase-18-plan.md`.
+  обязательных сценариев и честный pre-Cortex baseline. **18.1 🚧:** добавлен generic
+  `LatestValue<T>` и stamped Human/Scene/Depth observation bus; expert agents больше не пишут
+  `WorldState`, compatibility expert facts camera-driven собирает только Fusion. Следующий срез — canonical
+  `FusedFramePacket` и read-only sinks. План — `docs/phase-18-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,

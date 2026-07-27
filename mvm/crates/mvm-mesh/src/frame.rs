@@ -1,4 +1,4 @@
-//! Frame + the single-slot "latest frame wins" channel (phase 8.C).
+//! Frame + the generic single-slot "latest value wins" channel.
 //!
 //! Proven by spike B (`spikes/mesh-spike/src/bin/latest_frame.rs`): a fast producer
 //! (camera) feeds slow consumers (agents); each consumer always reads the FRESHEST
@@ -28,30 +28,54 @@ impl Frame {
     }
 }
 
-/// Single-slot latest-value cell shared between the capture agent (producer) and
-/// all consumer agents. Cloning shares the same slot.
-#[derive(Clone, Default)]
-pub struct LatestFrame {
-    slot: Arc<Mutex<Option<Frame>>>,
+/// Generic single-slot latest-value cell shared between one producer and any
+/// number of consumers. Publishing replaces the previous value without a
+/// backlog; cloning the cell shares the same slot.
+///
+/// Values are cloned out, so callers cannot mutate a value after publication
+/// through this channel. Phase 18 observation packets use immutable structs and
+/// cheap `Arc` handles for large evidence.
+pub struct LatestValue<T> {
+    slot: Arc<Mutex<Option<T>>>,
 }
 
-impl LatestFrame {
+impl<T> Clone for LatestValue<T> {
+    fn clone(&self) -> Self {
+        Self {
+            slot: Arc::clone(&self.slot),
+        }
+    }
+}
+
+impl<T> Default for LatestValue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> LatestValue<T> {
     pub fn new() -> Self {
         Self {
             slot: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Overwrite with the newest frame (producer).
-    pub fn publish(&self, frame: Frame) {
-        *self.slot.lock().unwrap() = Some(frame);
+    /// Overwrite with the newest value (producer).
+    pub fn publish(&self, value: T) {
+        *self.slot.lock().unwrap() = Some(value);
     }
+}
 
-    /// Read the freshest frame, if any (consumer). Clones out (cheap — Arc image).
-    pub fn latest(&self) -> Option<Frame> {
+impl<T: Clone> LatestValue<T> {
+    /// Read the freshest value, if any. The stored value remains available to
+    /// every consumer and is never drained by a read.
+    pub fn latest(&self) -> Option<T> {
         self.slot.lock().unwrap().clone()
     }
 }
+
+/// Compatibility name for the capture-frame channel.
+pub type LatestFrame = LatestValue<Frame>;
 
 #[cfg(test)]
 mod tests {
@@ -82,5 +106,40 @@ mod tests {
         let b = a.clone();
         a.publish(frame(7));
         assert_eq!(b.latest().unwrap().id, 7, "clone sees producer's publish");
+    }
+
+    #[test]
+    fn generic_latest_value_supports_typed_observations() {
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        struct Observation {
+            source_frame_id: u64,
+            labels: Vec<&'static str>,
+        }
+
+        let observations = LatestValue::new();
+        observations.publish(Observation {
+            source_frame_id: 12,
+            labels: vec!["person"],
+        });
+
+        assert_eq!(
+            observations.latest(),
+            Some(Observation {
+                source_frame_id: 12,
+                labels: vec!["person"],
+            })
+        );
+    }
+
+    #[test]
+    fn reads_are_non_destructive_for_independent_consumers() {
+        let producer = LatestValue::new();
+        let consumer_a = producer.clone();
+        let consumer_b = producer.clone();
+        producer.publish(42_u64);
+
+        assert_eq!(consumer_a.latest(), Some(42));
+        assert_eq!(consumer_b.latest(), Some(42));
+        assert_eq!(consumer_a.latest(), Some(42));
     }
 }
