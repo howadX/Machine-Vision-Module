@@ -31,9 +31,29 @@ use crate::world::{ObjectState, PersonState};
 /// relevant-but-not-here (sharp items, personal effects appearing/leaving)
 /// nudges the anomaly score.
 pub const EXPECTED_OBJECTS: &[&str] = &[
-    "chair", "couch", "bed", "dining table", "tv", "laptop", "mouse", "remote",
-    "keyboard", "cell phone", "book", "clock", "vase", "potted plant", "cup",
-    "bottle", "bowl", "fork", "spoon", "microwave", "oven", "toaster", "sink",
+    "chair",
+    "couch",
+    "bed",
+    "dining table",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "book",
+    "clock",
+    "vase",
+    "potted plant",
+    "cup",
+    "bottle",
+    "bowl",
+    "fork",
+    "spoon",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
     "refrigerator",
 ];
 
@@ -151,7 +171,11 @@ pub struct AnomalyScorer {
 
 impl Default for AnomalyScorer {
     fn default() -> Self {
-        Self { heights: Vec::new(), camera_height_m: 1.75, score: 0.0 }
+        Self {
+            heights: Vec::new(),
+            camera_height_m: 1.75,
+            score: 0.0,
+        }
     }
 }
 
@@ -190,7 +214,10 @@ impl AnomalyScorer {
                 let idx = match self.heights.iter().position(|h| h.id == p.track_id) {
                     Some(i) => Some(i),
                     None if self.heights.len() < TRACK_MEMORY_CAP => {
-                        self.heights.push(TrackHeights { id: p.track_id, samples: Vec::new() });
+                        self.heights.push(TrackHeights {
+                            id: p.track_id,
+                            samples: Vec::new(),
+                        });
                         Some(self.heights.len() - 1)
                     }
                     None => None,
@@ -217,12 +244,14 @@ impl AnomalyScorer {
         // Forget rings for tracks gone well past the lookback (also drop absent
         // tracks whose ring has fully aged out).
         self.heights.retain(|h| {
-            live_ids.contains(&h.id)
-                || h.samples.iter().any(|(t, _)| t_secs - *t <= E2_LOOKBACK_S)
+            live_ids.contains(&h.id) || h.samples.iter().any(|(t, _)| t_secs - *t <= E2_LOOKBACK_S)
         });
 
         // Noisy-OR, then the decaying peak.
-        let raw = 1.0 - components.iter().fold(1.0f32, |acc, c| acc * (1.0 - c.clamp(0.0, 1.0)));
+        let raw = 1.0
+            - components
+                .iter()
+                .fold(1.0f32, |acc, c| acc * (1.0 - c.clamp(0.0, 1.0)));
         self.score = raw.max(self.score * ANOMALY_DECAY);
         if self.score < 1e-3 {
             self.score = 0.0;
@@ -234,19 +263,29 @@ impl AnomalyScorer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::Position3D;
     use crate::BBox;
+    use crate::world::Position3D;
     use std::time::Instant;
 
     fn person(track_id: u32, posture: Option<&str>) -> PersonState {
         PersonState {
             track_id,
-            bbox: BBox { x1: 0.3, y1: 0.2, x2: 0.5, y2: 0.7 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.2,
+                x2: 0.5,
+                y2: 0.7,
+            },
             face_bbox: None,
             identity: None,
             emotion: None,
             posture: posture.map(|l| (l.to_string(), 0.9)),
-            position_3d: Some(Position3D { x: 0.0, y: 0.0, z: 2.0, confidence: 0.5 }),
+            position_3d: Some(Position3D {
+                x: 0.0,
+                y: 0.0,
+                z: 2.0,
+                confidence: 0.5,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -269,7 +308,12 @@ mod tests {
         ObjectState {
             id: 10000,
             class: class.into(),
-            bbox: BBox { x1: 0.4, y1: 0.4, x2: 0.5, y2: 0.5 },
+            bbox: BBox {
+                x1: 0.4,
+                y1: 0.4,
+                x2: 0.5,
+                y2: 0.5,
+            },
             confidence: 0.8,
             age: 2,
             position_3d: None,
@@ -284,7 +328,12 @@ mod tests {
     /// 1.75 − height`.
     fn person_h(track_id: u32, height: f32) -> PersonState {
         let mut p = person(track_id, Some("lying"));
-        p.position_3d = Some(Position3D { x: 0.0, y: 1.75 - height, z: 2.0, confidence: 0.5 });
+        p.position_3d = Some(Position3D {
+            x: 0.0,
+            y: 1.75 - height,
+            z: 2.0,
+            confidence: 0.5,
+        });
         p
     }
 
@@ -330,7 +379,10 @@ mod tests {
         // Same floor endpoint, but a 5 s controlled descent — velocity stays well
         // under threshold, so no fall (the LJ4 false-alarm the per-id rule made).
         let quiet = drive_descent(1.1, 0.15, 5.0, &[]);
-        assert_eq!(quiet, 0.0, "controlled lie-down must not read as a fall, got {quiet}");
+        assert_eq!(
+            quiet, 0.0,
+            "controlled lie-down must not read as a fall, got {quiet}"
+        );
     }
 
     #[test]
@@ -338,7 +390,10 @@ mod tests {
         // Fast descent (~1.6 m/s) that never reaches the floor (min 0.6 m) — the
         // vault/crouch confound. The floor veto keeps it quiet.
         let quiet = drive_descent(1.4, 0.6, 0.5, &[]);
-        assert_eq!(quiet, 0.0, "a fast crouch that stays up is not a fall, got {quiet}");
+        assert_eq!(
+            quiet, 0.0,
+            "a fast crouch that stays up is not a fall, got {quiet}"
+        );
     }
 
     #[test]
@@ -366,8 +421,14 @@ mod tests {
                 (k as f64 / fps, 1.4 + (0.6 - 1.4) * frac) // 1.4 → 0.6 m, never reaches floor
             })
             .collect();
-        assert!(!e2_fall(&samples, true), "floor-gated rule must veto the vault");
-        assert!(e2_fall(&samples, false), "velocity-only fallback must fire on the fast descent");
+        assert!(
+            !e2_fall(&samples, true),
+            "floor-gated rule must veto the vault"
+        );
+        assert!(
+            e2_fall(&samples, false),
+            "velocity-only fallback must fire on the fast descent"
+        );
     }
 
     #[test]
@@ -403,10 +464,16 @@ mod tests {
             let h = 1.1 + (0.1 - 1.1) * frac;
             spike = spike.max(s.update(&[person_h(0, h)], &[], k as f64 / fps));
         }
-        assert!((spike - ANOMALY_FALL).abs() < 1e-6, "fall should peak at ANOMALY_FALL, got {spike}");
+        assert!(
+            (spike - ANOMALY_FALL).abs() < 1e-6,
+            "fall should peak at ANOMALY_FALL, got {spike}"
+        );
         // Person gone → the ring stops updating, the published peak decays.
         let next = s.update(&[], &[], (n as f64 + 1.0) / fps);
-        assert!((next - spike * ANOMALY_DECAY).abs() < 1e-6, "decaying peak, got {next}");
+        assert!(
+            (next - spike * ANOMALY_DECAY).abs() < 1e-6,
+            "decaying peak, got {next}"
+        );
         let mut last = next;
         for t in 3..120 {
             last = s.update(&[], &[], 10.0 + t as f64);

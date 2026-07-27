@@ -7,8 +7,8 @@
 //! the server owns no camera, it reads the artifacts a running mesh writes
 //! (StateFile + scene/events logs), so producer and serving stay decoupled.
 
-use anyhow::{bail, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 pub struct ServeArgs {
@@ -45,7 +45,11 @@ pub fn parse_serve_args(raw: &[String]) -> anyhow::Result<ServeArgs> {
         i += 1;
     }
     let logs = logs.unwrap_or(product.data_dir);
-    Ok(ServeArgs { state, logs, with_camera })
+    Ok(ServeArgs {
+        state,
+        logs,
+        with_camera,
+    })
 }
 
 pub fn run_serve(args: ServeArgs) -> Result<()> {
@@ -101,9 +105,14 @@ pub(crate) fn handle(req: &Value, args: &ServeArgs) -> Option<Value> {
         "tools/list" => Some(result(id, json!({ "tools": tool_defs() }))),
         "tools/call" => {
             let params = req.get("params");
-            let name = params.and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or("");
-            let arguments =
-                params.and_then(|p| p.get("arguments")).cloned().unwrap_or_else(|| json!({}));
+            let name = params
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let arguments = params
+                .and_then(|p| p.get("arguments"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             let call = dispatch_tool(name, &arguments, args);
             Some(result(
                 id,
@@ -191,7 +200,11 @@ mod tests {
 
     fn args_with_state(path: PathBuf) -> ServeArgs {
         let logs = path.parent().unwrap().to_path_buf();
-        ServeArgs { state: path, logs, with_camera: false }
+        ServeArgs {
+            state: path,
+            logs,
+            with_camera: false,
+        }
     }
 
     #[test]
@@ -231,12 +244,21 @@ mod tests {
         }
         let snap = tool("mvm_snapshot");
         let snap = snap["description"].as_str().unwrap();
-        assert!(snap.contains("NOW") && snap.contains("cheapest"), "snapshot frames itself as the cheap now-call");
-        assert!(snap.contains("0–9") && snap.contains("⚠️"), "snapshot explains id ranges + honesty notes");
+        assert!(
+            snap.contains("NOW") && snap.contains("cheapest"),
+            "snapshot frames itself as the cheap now-call"
+        );
+        assert!(
+            snap.contains("0–9") && snap.contains("⚠️"),
+            "snapshot explains id ranges + honesty notes"
+        );
         let recap = tool("mvm_recap");
         assert!(
             recap["description"].as_str().unwrap().contains("HAPPENED")
-                && recap["description"].as_str().unwrap().contains("after a snapshot"),
+                && recap["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("after a snapshot"),
             "recap frames itself as the middle tier"
         );
         let insp = tool("mvm_inspect");
@@ -258,7 +280,11 @@ mod tests {
     #[test]
     fn tools_call_snapshot_returns_file_content() {
         let path = std::env::temp_dir().join(format!("mvm_mcp_snap_{}.md", std::process::id()));
-        std::fs::write(&path, "# Scene 17:51:19 · occupied · anomaly 0.00 · 18 fps\n").unwrap();
+        std::fs::write(
+            &path,
+            "# Scene 17:51:19 · occupied · anomaly 0.00 · 18 fps\n",
+        )
+        .unwrap();
         let a = args_with_state(path.clone());
         let req = json!({
             "jsonrpc":"2.0","id":3,"method":"tools/call",

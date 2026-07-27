@@ -4,9 +4,9 @@
 
 use crate::config_file::ProductConfig;
 use mvm_dataset::session::{
-    aggregate, list_sessions, partition_prune, DatasetStats, PrunePolicy, SessionInfo,
+    DatasetStats, PrunePolicy, SessionInfo, aggregate, list_sessions, partition_prune,
 };
-use mvm_dataset::validate::{check_dataset, check_session, DatasetReport, Severity, SessionReport};
+use mvm_dataset::validate::{DatasetReport, SessionReport, Severity, check_dataset, check_session};
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "\
@@ -68,11 +68,28 @@ fn cmd_list(root: &Path) -> anyhow::Result<()> {
         println!("No sessions under {}", root.join("sessions").display());
         return Ok(());
     }
-    println!("{:<20}  {:>6}  {:<9}  {}", "SESSION", "FRAMES", "STATUS", "PARTICIPANTS");
+    println!(
+        "{:<20}  {:>6}  {:<9}  {}",
+        "SESSION", "FRAMES", "STATUS", "PARTICIPANTS"
+    );
     for si in &sessions {
-        let status = if si.meta.is_some() { "closed" } else { "recording" };
-        let frames = si.meta.as_ref().map(|m| m.session.saved_frames).unwrap_or(si.saved_frames_on_disk);
-        println!("{:<20}  {:>6}  {:<9}  {}", si.id, frames, status, participants_line(si));
+        let status = if si.meta.is_some() {
+            "closed"
+        } else {
+            "recording"
+        };
+        let frames = si
+            .meta
+            .as_ref()
+            .map(|m| m.session.saved_frames)
+            .unwrap_or(si.saved_frames_on_disk);
+        println!(
+            "{:<20}  {:>6}  {:<9}  {}",
+            si.id,
+            frames,
+            status,
+            participants_line(si)
+        );
     }
     println!("\n{} session(s) · {}", sessions.len(), root.display());
     Ok(())
@@ -111,7 +128,10 @@ fn cmd_info(root: &Path, id: Option<&str>) -> anyhow::Result<()> {
             if !m.objects.top.is_empty() {
                 println!("  objects: {}", m.objects.top.join(", "));
             }
-            println!("  anomaly: max {:.3} · mean {:.3}", m.anomalies.max, m.anomalies.mean);
+            println!(
+                "  anomaly: max {:.3} · mean {:.3}",
+                m.anomalies.max, m.anomalies.mean
+            );
         }
     }
     Ok(())
@@ -125,13 +145,25 @@ fn cmd_stats(root: &Path) -> anyhow::Result<()> {
     println!(
         "  participants: {} ({})",
         st.participants.len(),
-        if st.participants.is_empty() { "—".into() } else { st.participants.iter().cloned().collect::<Vec<_>>().join(", ") }
+        if st.participants.is_empty() {
+            "—".into()
+        } else {
+            st.participants
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
     );
     println!("  anon sessions: {}", st.anon_sessions);
     if !st.activities.is_empty() {
         let mut acts: Vec<_> = st.activities.iter().collect();
         acts.sort_by(|a, b| b.1.cmp(a.1));
-        let s: Vec<String> = acts.iter().take(8).map(|(k, c)| format!("{k}×{c}")).collect();
+        let s: Vec<String> = acts
+            .iter()
+            .take(8)
+            .map(|(k, c)| format!("{k}×{c}"))
+            .collect();
         println!("  activities:   {}", s.join(", "));
     }
     println!("  anomaly max:  {:.3}", st.anomaly_max);
@@ -144,20 +176,27 @@ fn cmd_stats(root: &Path) -> anyhow::Result<()> {
 fn cmd_check(root: &Path, raw: &[String]) -> anyhow::Result<()> {
     let strict = raw.iter().any(|a| a == "--strict");
     // First non-flag positional after `check` is an optional session id.
-    let session_id = raw.get(3..).and_then(|rest| rest.iter().find(|a| !a.starts_with('-')));
+    let session_id = raw
+        .get(3..)
+        .and_then(|rest| rest.iter().find(|a| !a.starts_with('-')));
 
     let report: DatasetReport = if let Some(id) = session_id {
         let dir = root.join("sessions").join(id);
         if !dir.is_dir() {
             anyhow::bail!("no session {id} under {}", root.join("sessions").display());
         }
-        DatasetReport { sessions: vec![check_session(&dir, id)] }
+        DatasetReport {
+            sessions: vec![check_session(&dir, id)],
+        }
     } else {
         check_dataset(root)?
     };
 
     if report.sessions.is_empty() {
-        println!("No sessions under {} — nothing to check.", root.join("sessions").display());
+        println!(
+            "No sessions under {} — nothing to check.",
+            root.join("sessions").display()
+        );
         return Ok(());
     }
     for sr in &report.sessions {
@@ -165,7 +204,10 @@ fn cmd_check(root: &Path, raw: &[String]) -> anyhow::Result<()> {
     }
 
     let (errs, warns) = (report.errors(), report.warns());
-    println!("\n{} session(s) · {errs} error(s) · {warns} warning(s)", report.sessions.len());
+    println!(
+        "\n{} session(s) · {errs} error(s) · {warns} warning(s)",
+        report.sessions.len()
+    );
 
     if errs > 0 {
         anyhow::bail!("data-quality check FAILED: {errs} error(s)");
@@ -192,7 +234,13 @@ fn print_session_report(sr: &SessionReport) {
     }
     println!(
         "  stats: {} frames · {} people ({} gallery / {} anon) · {} objects · {} masks · {} depth",
-        st.frames, st.people, st.gallery_people, st.anon_people, st.objects, st.masks, st.with_depth
+        st.frames,
+        st.people,
+        st.gallery_people,
+        st.anon_people,
+        st.objects,
+        st.masks,
+        st.with_depth
     );
     println!(
         "         withheld-posture {:.0}% · postures {} · emotions {} · objects {}",
@@ -210,7 +258,11 @@ fn fmt_hist(h: &std::collections::BTreeMap<String, u64>) -> String {
     }
     let mut v: Vec<(&String, &u64)> = h.iter().collect();
     v.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
-    v.iter().take(6).map(|(k, c)| format!("{k}×{c}")).collect::<Vec<_>>().join(" ")
+    v.iter()
+        .take(6)
+        .map(|(k, c)| format!("{k}×{c}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn cmd_prune(root: &Path, raw: &[String]) -> anyhow::Result<()> {
@@ -239,11 +291,17 @@ fn cmd_prune(root: &Path, raw: &[String]) -> anyhow::Result<()> {
     let (_, remove) = partition_prune(&ids, &policy);
 
     if remove.is_empty() {
-        println!("Nothing to prune ({} session(s), policy keeps all).", ids.len());
+        println!(
+            "Nothing to prune ({} session(s), policy keeps all).",
+            ids.len()
+        );
         return Ok(());
     }
     if !confirmed {
-        println!("Would remove {} session(s) (dry-run — pass --yes to delete):", remove.len());
+        println!(
+            "Would remove {} session(s) (dry-run — pass --yes to delete):",
+            remove.len()
+        );
         for id in &remove {
             println!("  {id}");
         }
@@ -263,7 +321,9 @@ fn cmd_prune(root: &Path, raw: &[String]) -> anyhow::Result<()> {
 /// (invariant #2). Print ready-to-run commands with the real dataset dir filled in.
 fn cmd_export(root: &Path) {
     let root = root.display();
-    println!("ML export runs in Python (prototype/pipeline/dataset/) — Rust core stays framework-free.\n");
+    println!(
+        "ML export runs in Python (prototype/pipeline/dataset/) — Rust core stays framework-free.\n"
+    );
     println!("From the repo:\n  cd prototype/pipeline/dataset\n");
     println!("PyTorch (smoke-iterate the dataset):");
     println!("  python export_pytorch.py {root} --config dataset_config.yaml --limit 8\n");
@@ -277,11 +337,17 @@ fn cmd_export(root: &Path) {
 /// Parse `--keep` value: `5` → keep last 5; `7d` → keep sessions on/after today−7d.
 fn parse_keep(v: &str) -> anyhow::Result<PrunePolicy> {
     if let Some(days) = v.strip_suffix('d') {
-        let n: i64 = days.parse().map_err(|_| anyhow::anyhow!("bad --keep days: {v}"))?;
+        let n: i64 = days
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bad --keep days: {v}"))?;
         let cutoff = chrono::Local::now().date_naive() - chrono::Duration::days(n);
-        Ok(PrunePolicy::KeepSince(cutoff.format("%Y-%m-%d").to_string()))
+        Ok(PrunePolicy::KeepSince(
+            cutoff.format("%Y-%m-%d").to_string(),
+        ))
     } else {
-        let n: usize = v.parse().map_err(|_| anyhow::anyhow!("bad --keep count: {v}"))?;
+        let n: usize = v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("bad --keep count: {v}"))?;
         Ok(PrunePolicy::KeepLast(n))
     }
 }

@@ -31,8 +31,10 @@ fn bundle() {
         .args([
             "build",
             "--release",
-            "--features", "embed-models",
-            "-p", "mvm-cli",
+            "--features",
+            "embed-models",
+            "-p",
+            "mvm-cli",
         ])
         .current_dir(workspace_root)
         .status()

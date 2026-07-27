@@ -108,8 +108,8 @@ pub fn read_file_config(path: &Path) -> anyhow::Result<Option<FileConfig>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(anyhow::anyhow!("read {}: {e}", path.display())),
     };
-    let cfg: FileConfig = toml::from_str(&text)
-        .map_err(|e| anyhow::anyhow!("parse {}: {e}", path.display()))?;
+    let cfg: FileConfig =
+        toml::from_str(&text).map_err(|e| anyhow::anyhow!("parse {}: {e}", path.display()))?;
     Ok(Some(cfg))
 }
 
@@ -124,7 +124,9 @@ pub(crate) fn resolve(
     let file = file.unwrap_or_default();
 
     let pick = |env_key: &str, file_val: Option<&String>| -> Option<String> {
-        env(env_key).filter(|v| !v.is_empty()).or_else(|| file_val.cloned())
+        env(env_key)
+            .filter(|v| !v.is_empty())
+            .or_else(|| file_val.cloned())
     };
 
     let camera_device =
@@ -167,7 +169,9 @@ pub(crate) fn resolve(
     // Dataset Factory (phase 16.1): the section comes wholesale from the file
     // (serde defaults fill the rest); only its storage dir needs tilde expansion.
     let mut dataset = file.dataset;
-    dataset.dir = expand_tilde(&dataset.dir, &home).to_string_lossy().into_owned();
+    dataset.dir = expand_tilde(&dataset.dir, &home)
+        .to_string_lossy()
+        .into_owned();
 
     ProductConfig {
         camera_device,
@@ -220,7 +224,12 @@ mod tests {
     use super::*;
 
     fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        move |k: &str| pairs.iter().find(|(key, _)| *key == k).map(|(_, v)| v.to_string())
+        move |k: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == k)
+                .map(|(_, v)| v.to_string())
+        }
     }
 
     const NOTHING_EXISTS: &dyn Fn(&Path) -> bool = &|_| false;
@@ -277,8 +286,14 @@ mod tests {
         assert_eq!(c.camera_device, "auto");
         assert_eq!((c.camera_width, c.camera_height), (1280, 720));
         assert_eq!(c.data_dir, PathBuf::from("/home/u/.local/share/mvm"));
-        assert_eq!(c.state_path, PathBuf::from("/home/u/.local/share/mvm/current_state.md"));
-        assert_eq!(c.models_dir, PathBuf::from("/home/u/.local/share/mvm/models"));
+        assert_eq!(
+            c.state_path,
+            PathBuf::from("/home/u/.local/share/mvm/current_state.md")
+        );
+        assert_eq!(
+            c.models_dir,
+            PathBuf::from("/home/u/.local/share/mvm/models")
+        );
         assert_eq!(c.gallery_dir, PathBuf::from("/home/u/.config/mvm/gallery"));
         assert_eq!(c.snapshot_ms, 1000);
     }
@@ -294,15 +309,19 @@ mod tests {
         assert_eq!(c.camera_device, "/dev/video2");
         assert_eq!(c.data_dir, PathBuf::from("/home/u/vision"));
         // state follows the overridden data_dir unless state_path is set.
-        assert_eq!(c.state_path, PathBuf::from("/home/u/vision/current_state.md"));
+        assert_eq!(
+            c.state_path,
+            PathBuf::from("/home/u/vision/current_state.md")
+        );
         assert_eq!(c.snapshot_ms, 250);
     }
 
     #[test]
     fn env_overrides_file() {
-        let file: FileConfig =
-            toml::from_str("[camera]\ndevice = \"/dev/video2\"\n[models]\ndir = \"/file/models\"\n")
-                .unwrap();
+        let file: FileConfig = toml::from_str(
+            "[camera]\ndevice = \"/dev/video2\"\n[models]\ndir = \"/file/models\"\n",
+        )
+        .unwrap();
         let env = env_of(&[
             ("HOME", "/home/u"),
             ("MVM_CAMERA_DEVICE", "/dev/video9"),
@@ -338,8 +357,7 @@ mod tests {
         assert_eq!(picked, xdg);
         // Explicit always wins, even if it doesn't exist yet.
         let explicit = PathBuf::from("/custom");
-        let picked =
-            resolve_models_dir(Some(explicit.clone()), xdg.clone(), cwd, &|p| p == xdg);
+        let picked = resolve_models_dir(Some(explicit.clone()), xdg.clone(), cwd, &|p| p == xdg);
         assert_eq!(picked, explicit);
     }
 
@@ -348,7 +366,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("mvm_cfg_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(read_file_config(&dir.join("config.toml")).unwrap().is_none());
+        assert!(
+            read_file_config(&dir.join("config.toml"))
+                .unwrap()
+                .is_none()
+        );
         let bad = dir.join("config.toml");
         std::fs::write(&bad, "not [valid toml").unwrap();
         assert!(read_file_config(&bad).is_err());
@@ -357,9 +379,18 @@ mod tests {
 
     #[test]
     fn tilde_expansion_variants() {
-        assert_eq!(expand_tilde("~/a/b", "/home/u"), PathBuf::from("/home/u/a/b"));
+        assert_eq!(
+            expand_tilde("~/a/b", "/home/u"),
+            PathBuf::from("/home/u/a/b")
+        );
         assert_eq!(expand_tilde("~", "/home/u"), PathBuf::from("/home/u"));
-        assert_eq!(expand_tilde("/abs/path", "/home/u"), PathBuf::from("/abs/path"));
-        assert_eq!(expand_tilde("rel/path", "/home/u"), PathBuf::from("rel/path"));
+        assert_eq!(
+            expand_tilde("/abs/path", "/home/u"),
+            PathBuf::from("/abs/path")
+        );
+        assert_eq!(
+            expand_tilde("rel/path", "/home/u"),
+            PathBuf::from("rel/path")
+        );
     }
 }

@@ -15,7 +15,7 @@ static ANCHORS_BIN: &[u8] = include_bytes!("anchors_person.bin");
 
 #[derive(Clone, Debug)]
 pub struct Person {
-    pub bbox: [f32; 4],          // x1,y1,x2,y2 in original-image pixels
+    pub bbox: [f32; 4],           // x1,y1,x2,y2 in original-image pixels
     pub keypoints: [[f32; 2]; 4], // kp0=mid-hip, kp1=full-body, kp2=shoulder-center, kp3=upper-body
     pub score: f32,
 }
@@ -28,12 +28,26 @@ pub struct PersonDetector {
 }
 
 fn load_anchors() -> Vec<[f32; 2]> {
-    assert_eq!(ANCHORS_BIN.len(), N_ANCHORS * 2 * 4, "anchors_person.bin size mismatch");
+    assert_eq!(
+        ANCHORS_BIN.len(),
+        N_ANCHORS * 2 * 4,
+        "anchors_person.bin size mismatch"
+    );
     let mut v = Vec::with_capacity(N_ANCHORS);
     for i in 0..N_ANCHORS {
         let o = i * 8;
-        let ax = f32::from_le_bytes([ANCHORS_BIN[o], ANCHORS_BIN[o + 1], ANCHORS_BIN[o + 2], ANCHORS_BIN[o + 3]]);
-        let ay = f32::from_le_bytes([ANCHORS_BIN[o + 4], ANCHORS_BIN[o + 5], ANCHORS_BIN[o + 6], ANCHORS_BIN[o + 7]]);
+        let ax = f32::from_le_bytes([
+            ANCHORS_BIN[o],
+            ANCHORS_BIN[o + 1],
+            ANCHORS_BIN[o + 2],
+            ANCHORS_BIN[o + 3],
+        ]);
+        let ay = f32::from_le_bytes([
+            ANCHORS_BIN[o + 4],
+            ANCHORS_BIN[o + 5],
+            ANCHORS_BIN[o + 6],
+            ANCHORS_BIN[o + 7],
+        ]);
         v.push([ax, ay]);
     }
     v
@@ -42,13 +56,23 @@ fn load_anchors() -> Vec<[f32; 2]> {
 impl PersonDetector {
     pub fn from_path(path: &std::path::Path) -> anyhow::Result<Self> {
         let session = Session::builder()?.commit_from_file(path)?;
-        Ok(Self { session, anchors: load_anchors(), score_threshold: 0.5, nms_threshold: 0.3 })
+        Ok(Self {
+            session,
+            anchors: load_anchors(),
+            score_threshold: 0.5,
+            nms_threshold: 0.3,
+        })
     }
 
     #[cfg(feature = "embed-model")]
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let session = Session::builder()?.commit_from_memory(bytes)?;
-        Ok(Self { session, anchors: load_anchors(), score_threshold: 0.5, nms_threshold: 0.3 })
+        Ok(Self {
+            session,
+            anchors: load_anchors(),
+            score_threshold: 0.5,
+            nms_threshold: 0.3,
+        })
     }
 
     /// Letterbox preprocess → CHW [1,3,224,224] in [-1,1]; returns (tensor, pad_x, pad_y, scale).
@@ -65,7 +89,10 @@ impl PersonDetector {
         // with cv2 INTER_LINEAR half-pixel mapping (supersampling here added cost
         // without net class-agreement gain — the pose stage is where it matters).
         let mut data = vec![0f32; 3 * INPUT * INPUT];
-        let (sw, sh) = (rgb.width() as f32 / rw as f32, rgb.height() as f32 / rh as f32);
+        let (sw, sh) = (
+            rgb.width() as f32 / rw as f32,
+            rgb.height() as f32 / rh as f32,
+        );
         for dy in 0..rh {
             let sy = ((dy as f32 + 0.5) * sh - 0.5).clamp(0.0, h - 1.0);
             let y0 = sy.floor() as u32;
@@ -108,7 +135,11 @@ impl PersonDetector {
     /// without touching the validated `detect()` path. NMS is unchanged, so the
     /// high-confidence kept set is identical to `detect()` — extra low boxes only
     /// add non-overlapping survivors.
-    pub fn detect_scored(&mut self, image: &DynamicImage, min_score: f32) -> anyhow::Result<Vec<Person>> {
+    pub fn detect_scored(
+        &mut self,
+        image: &DynamicImage,
+        min_score: f32,
+    ) -> anyhow::Result<Vec<Person>> {
         let (input, pad_x, pad_y, scale) = self.preprocess(image)?;
         let outputs = self.session.run(ort::inputs!["input_1:0" => input])?;
         let boxes = outputs["Identity:0"].try_extract_tensor::<f32>()?.1; // [2254*12]
@@ -136,7 +167,11 @@ impl PersonDetector {
                 kp[k][0] = (boxes[b + 4 + 2 * k] / INPUT as f32 + ax) * scale - pad_x;
                 kp[k][1] = (boxes[b + 4 + 2 * k + 1] / INPUT as f32 + ay) * scale - pad_y;
             }
-            cand.push(Person { bbox: [x1, y1, x2, y2], keypoints: kp, score: s });
+            cand.push(Person {
+                bbox: [x1, y1, x2, y2],
+                keypoints: kp,
+                score: s,
+            });
         }
         Ok(nms(cand, self.nms_threshold))
     }
@@ -174,7 +209,8 @@ mod tests {
     }
 
     fn detector() -> PersonDetector {
-        PersonDetector::from_path(&models_dir().join("person_detection_mediapipe_2023mar.onnx")).unwrap()
+        PersonDetector::from_path(&models_dir().join("person_detection_mediapipe_2023mar.onnx"))
+            .unwrap()
     }
 
     #[test]
@@ -182,7 +218,10 @@ mod tests {
         let a = load_anchors();
         assert_eq!(a.len(), N_ANCHORS);
         // anchors are normalized centers in [0,1]
-        assert!(a.iter().all(|[x, y]| *x >= 0.0 && *x <= 1.0 && *y >= 0.0 && *y <= 1.0));
+        assert!(
+            a.iter()
+                .all(|[x, y]| *x >= 0.0 && *x <= 1.0 && *y >= 0.0 && *y <= 1.0)
+        );
     }
 
     #[test]
@@ -190,7 +229,11 @@ mod tests {
         let mut det = detector();
         let img = DynamicImage::new_rgb8(640, 480);
         let persons = det.detect(&img).unwrap();
-        assert!(persons.is_empty(), "black image should yield no persons, got {}", persons.len());
+        assert!(
+            persons.is_empty(),
+            "black image should yield no persons, got {}",
+            persons.len()
+        );
     }
 
     #[test]
@@ -201,7 +244,10 @@ mod tests {
         let img = image::open(models_dir().join("references/p_V_03.jpg")).unwrap();
         let persons = det.detect(&img).unwrap();
         assert!(!persons.is_empty(), "expected a person in p_V_03");
-        let best = persons.iter().max_by(|a, b| a.score.partial_cmp(&b.score).unwrap()).unwrap();
+        let best = persons
+            .iter()
+            .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap())
+            .unwrap();
         assert!(best.score > 0.8, "score {} too low", best.score);
 
         // Tolerance ~2.5% of the 1280px frame: the Rust JPEG decoder + bilinear resize
@@ -209,14 +255,24 @@ mod tests {
         // The decisive oracle is the 33-landmark pose match (pose_oracle test).
         let gbox = [634.1, 105.9, 890.2, 362.0];
         for i in 0..4 {
-            assert!((best.bbox[i] - gbox[i]).abs() < 20.0,
-                "bbox[{i}] {} vs golden {} (>20px)", best.bbox[i], gbox[i]);
+            assert!(
+                (best.bbox[i] - gbox[i]).abs() < 20.0,
+                "bbox[{i}] {} vs golden {} (>20px)",
+                best.bbox[i],
+                gbox[i]
+            );
         }
         // pose ROI keypoints: kp0 mid-hip, kp1 full-body (drive the pose ROI + rotation)
         let (mh, fb) = (best.keypoints[0], best.keypoints[1]);
-        assert!((mh[0] - 892.0).abs() < 30.0 && (mh[1] - 583.0).abs() < 30.0,
-            "mid-hip {:?} vs (892,583)", mh);
-        assert!((fb[0] - 656.0).abs() < 30.0 && (fb[1] - 60.0).abs() < 30.0,
-            "full-body {:?} vs (656,60)", fb);
+        assert!(
+            (mh[0] - 892.0).abs() < 30.0 && (mh[1] - 583.0).abs() < 30.0,
+            "mid-hip {:?} vs (892,583)",
+            mh
+        );
+        assert!(
+            (fb[0] - 656.0).abs() < 30.0 && (fb[1] - 60.0).abs() < 30.0,
+            "full-body {:?} vs (656,60)",
+            fb
+        );
     }
 }

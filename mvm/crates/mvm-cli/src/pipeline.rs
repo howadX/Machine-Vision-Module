@@ -50,7 +50,11 @@ const SEG_ATTACH_IOU: f32 = 0.5;
 /// that only hallucinated legs produce (observed live: a desk frame whose leg
 /// visibilities squeaked past the coverage gate still read `lying` at 0.77
 /// while the torso was plainly vertical).
-fn posture_claimable(coverage: mvm_posture::classifier::BodyCoverage, attitude: &str, label: &str) -> bool {
+fn posture_claimable(
+    coverage: mvm_posture::classifier::BodyCoverage,
+    attitude: &str,
+    label: &str,
+) -> bool {
     use mvm_posture::classifier::BodyCoverage as C;
     if label == "lying" && attitude == "upright" {
         return false; // physically inconsistent — hallucinated-leg artifact
@@ -219,8 +223,7 @@ impl BodyPrimaryPipeline {
 
         // ── Scene objects (phase 8.E) on a cadence ──────────────────────────
         if let Some(det) = &mut self.scene_detector {
-            if self.config.object_cadence <= 1
-                || frame_id % self.config.object_cadence as u64 == 0
+            if self.config.object_cadence <= 1 || frame_id % self.config.object_cadence as u64 == 0
             {
                 match det.detect(frame) {
                     Ok(objs) => {
@@ -268,10 +271,16 @@ impl BodyPrimaryPipeline {
                                     // Opt-in live A/B diagnostic (spike §3.3): how
                                     // many seg masks landed on tracked objects.
                                     if std::env::var("MVM_SEG_DEBUG").is_ok() {
-                                        let attached = self.latest_objects.iter().filter(|o| o.mask.is_some()).count();
+                                        let attached = self
+                                            .latest_objects
+                                            .iter()
+                                            .filter(|o| o.mask.is_some())
+                                            .count();
                                         eprintln!(
                                             "  seg-dbg: {} seg dets → {}/{} objects masked",
-                                            segs.len(), attached, self.latest_objects.len()
+                                            segs.len(),
+                                            attached,
+                                            self.latest_objects.len()
                                         );
                                     }
                                 }
@@ -294,7 +303,14 @@ impl BodyPrimaryPipeline {
             }
         }
 
-        FrameResult { detections, low_conf, landmarks, bodies, overlay, emotion_debug_entries }
+        FrameResult {
+            detections,
+            low_conf,
+            landmarks,
+            bodies,
+            overlay,
+            emotion_debug_entries,
+        }
     }
 
     /// Depth-anchor the latest objects to the (post-tick) tracker's people so
@@ -306,7 +322,13 @@ impl BodyPrimaryPipeline {
         frame: &image::DynamicImage,
     ) {
         if let Some(depth) = &self.latest_depth {
-            anchor_objects_depth(&mut self.latest_objects, depth, tracker, &self.config, frame);
+            anchor_objects_depth(
+                &mut self.latest_objects,
+                depth,
+                tracker,
+                &self.config,
+                frame,
+            );
         }
     }
 
@@ -520,7 +542,11 @@ fn covered_by_track(body: &mvm_core::BBox, regions: &[mvm_core::BBox]) -> bool {
 /// let all overlapping bodies skip, so phantoms near `id=0` never got re-ID'd).
 /// On a re-check frame every body runs. Returns one flag per body, aligned with
 /// `bodies`. Pure — unit-tested without models.
-fn identity_run_flags(bodies: &[mvm_core::BBox], locked: &[mvm_core::BBox], recheck: bool) -> Vec<bool> {
+fn identity_run_flags(
+    bodies: &[mvm_core::BBox],
+    locked: &[mvm_core::BBox],
+    recheck: bool,
+) -> Vec<bool> {
     let mut run = vec![true; bodies.len()];
     if recheck {
         return run;
@@ -569,7 +595,11 @@ fn face_center_in_any(face: &mvm_core::BBox, regions: &[mvm_core::BBox]) -> bool
 /// bboxes — a coarse body-bbox-center match swaps identities when two people are
 /// close (their person boxes overlap); the nose is physically inside its own
 /// face, so it never crosses over.
-fn best_face_for_nose(faces: &[mvm_detect::FaceDet], used: &[bool], nose: (f32, f32)) -> Option<usize> {
+fn best_face_for_nose(
+    faces: &[mvm_detect::FaceDet],
+    used: &[bool],
+    nose: (f32, f32),
+) -> Option<usize> {
     let area = |b: &mvm_core::BBox| (b.x2 - b.x1) * (b.y2 - b.y1);
     faces
         .iter()
@@ -613,7 +643,10 @@ fn build_body_primary(
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
     let body_dets = native_pose
         .as_deref_mut()
-        .map(|np| np.bodies_byte_recover(frame, predicted_rois).unwrap_or_default())
+        .map(|np| {
+            np.bodies_byte_recover(frame, predicted_rois)
+                .unwrap_or_default()
+        })
         .unwrap_or_default();
     let bodies = body_dets.bodies;
     // Weak boxes ride straight through to the tracker's recovery stage (9.4) —
@@ -687,7 +720,11 @@ fn build_body_primary(
             let hands = hl.infer_rois(rgb, &rois);
             for h in &hands {
                 body_hands.push(mvm_core::HandState {
-                    landmarks: h.landmarks_px.iter().map(|p| [p[0] / fw, p[1] / fh]).collect(),
+                    landmarks: h
+                        .landmarks_px
+                        .iter()
+                        .map(|p| [p[0] / fw, p[1] / fh])
+                        .collect(),
                     presence: h.score,
                     side: match h.side {
                         mvm_hands::HandSide::Left => "left",
@@ -699,7 +736,12 @@ fn build_body_primary(
             }
             overlay.hands.extend(hands); // flat list still feeds --scene-debug
         }
-        bodies_out.push(BodyData { bbox: *b, wrists, hands: body_hands, face_bbox: None });
+        bodies_out.push(BodyData {
+            bbox: *b,
+            wrists,
+            hands: body_hands,
+            face_bbox: None,
+        });
         // Match a frontal face by the body's NOSE landmark (lm[0]) → identity +
         // emotion (optional). Keypoint-in-bbox ties the face to the body whose
         // head is in it, so overlapping person bboxes never swap identities.
@@ -723,10 +765,18 @@ fn build_body_primary(
                 det.head_facing = Some(h.facing);
             }
             enrich_face_crop(
-                frame, &fb, Some(&lm5_px), &mut det,
-                emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(),
-                run_emotion, run_identity,
-                config, emotion_debug, idx, debug_out,
+                frame,
+                &fb,
+                Some(&lm5_px),
+                &mut det,
+                emotion_mod.as_deref_mut(),
+                identity_mod.as_deref_mut(),
+                run_emotion,
+                run_identity,
+                config,
+                emotion_debug,
+                idx,
+                debug_out,
             );
         }
         dets.push(det);
@@ -775,9 +825,18 @@ fn build_body_primary(
             det.head_facing = Some(h.facing);
         }
         enrich_face_crop(
-            frame, &fb, Some(&lm5_px), &mut det,
-            emotion_mod.as_deref_mut(), identity_mod.as_deref_mut(), true, true,
-            config, emotion_debug, idx, debug_out,
+            frame,
+            &fb,
+            Some(&lm5_px),
+            &mut det,
+            emotion_mod.as_deref_mut(),
+            identity_mod.as_deref_mut(),
+            true,
+            true,
+            config,
+            emotion_debug,
+            idx,
+            debug_out,
         );
         // Detection fix: the person detector missed this body but the face is
         // visible (desk/close view) — derive a body ROI below the face, pose it,
@@ -866,14 +925,20 @@ mod tests {
     fn emotion_runs_for_uncovered_body() {
         let body = bb(0.30, 0.30, 0.50, 0.50);
         assert!(should_run_emotion(&body, &[]), "no fresh track → run");
-        assert!(should_run_emotion(&body, &[bb(0.80, 0.80, 0.95, 0.95)]), "non-overlap → run");
+        assert!(
+            should_run_emotion(&body, &[bb(0.80, 0.80, 0.95, 0.95)]),
+            "non-overlap → run"
+        );
     }
 
     #[test]
     fn emotion_skipped_for_body_covered_by_fresh_track() {
         let body = bb(0.30, 0.30, 0.50, 0.50);
         let fresh = bb(0.31, 0.31, 0.51, 0.51);
-        assert!(!should_run_emotion(&body, std::slice::from_ref(&fresh)), "fresh → coast");
+        assert!(
+            !should_run_emotion(&body, std::slice::from_ref(&fresh)),
+            "fresh → coast"
+        );
     }
 
     #[test]
@@ -908,12 +973,20 @@ mod tests {
 
     #[test]
     fn face_center_in_any_suppresses_fallback() {
-        let body = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 0.5, y2: 1.0 };
+        let body = mvm_core::BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.5,
+            y2: 1.0,
+        };
         let inside = face(0.20, 0.10, 0.30, 0.20); // centre (0.25,0.15) ∈ body
         let outside = face(0.70, 0.10, 0.80, 0.20); // centre (0.75,0.15) ∉ body
         assert!(face_center_in_any(&inside.bbox, &[body]));
         assert!(!face_center_in_any(&outside.bbox, &[body]));
-        assert!(!face_center_in_any(&inside.bbox, &[]), "no regions → not suppressed");
+        assert!(
+            !face_center_in_any(&inside.bbox, &[]),
+            "no regions → not suppressed"
+        );
     }
 
     /// The swap-bug regression: two people whose person bboxes OVERLAP. A
@@ -936,7 +1009,10 @@ mod tests {
 
     fn pose(label: &'static str, coverage: BodyCoverage, attitude: &'static str) -> PoseResult {
         let mut probs = [0.0f32; 3];
-        let idx = mvm_posture::classifier::POSE_LABELS.iter().position(|l| *l == label).unwrap();
+        let idx = mvm_posture::classifier::POSE_LABELS
+            .iter()
+            .position(|l| *l == label)
+            .unwrap();
         probs[idx] = 0.9;
         PoseResult {
             label,
@@ -974,8 +1050,16 @@ mod tests {
         // THE live bug this closes: desk-sitting (legs occluded, upright torso)
         // → RF says `lying` → must NOT be claimed.
         assert!(!posture_claimable(BodyCoverage::Upper, "upright", "lying"));
-        assert!(!posture_claimable(BodyCoverage::Upper, "upright", "standing"));
-        assert!(!posture_claimable(BodyCoverage::Upper, "upright", "sitting"));
+        assert!(!posture_claimable(
+            BodyCoverage::Upper,
+            "upright",
+            "standing"
+        ));
+        assert!(!posture_claimable(
+            BodyCoverage::Upper,
+            "upright",
+            "sitting"
+        ));
         assert!(!posture_claimable(BodyCoverage::Upper, "inclined", "lying"));
     }
 
@@ -983,8 +1067,16 @@ mod tests {
     fn upper_coverage_keeps_safety_lying_when_torso_horizontal() {
         // A fallen person's legs are often occluded too — `lying` survives when
         // the 2D attitude independently attests horizontal.
-        assert!(posture_claimable(BodyCoverage::Upper, "horizontal", "lying"));
-        assert!(!posture_claimable(BodyCoverage::Upper, "horizontal", "standing"));
+        assert!(posture_claimable(
+            BodyCoverage::Upper,
+            "horizontal",
+            "lying"
+        ));
+        assert!(!posture_claimable(
+            BodyCoverage::Upper,
+            "horizontal",
+            "standing"
+        ));
     }
 
     #[test]
@@ -1024,11 +1116,20 @@ mod tests {
     fn anchor_no_people_leaves_objects_depthless() {
         let config = mvm_core::Config::default();
         let tracker = mvm_core::PersonTracker::with_config(&config); // empty → no active tracks
-        let depth = mvm_depth::DepthMap { data: vec![0.5; 16], w: 4, h: 4 };
+        let depth = mvm_depth::DepthMap {
+            data: vec![0.5; 16],
+            w: 4,
+            h: 4,
+        };
         let mut objects = vec![mvm_scene::TrackedObject {
             id: 10000,
             class_name: "cup",
-            bbox: mvm_core::BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.3 },
+            bbox: mvm_core::BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.3,
+                y2: 0.3,
+            },
             score: 0.9,
             age: 1,
             missed: 0,
@@ -1050,16 +1151,34 @@ mod tests {
         let frame = image::DynamicImage::new_rgb8(64, 64);
         let face = image::DynamicImage::new_rgb8(20, 24); // raw bbox crop, distinct size
         // Valid landmarks → aligned 112×112 crop fed to SFace (the fix).
-        let lm = [[12.0, 14.0], [40.0, 14.0], [26.0, 30.0], [16.0, 44.0], [38.0, 44.0]];
+        let lm = [
+            [12.0, 14.0],
+            [40.0, 14.0],
+            [26.0, 30.0],
+            [16.0, 44.0],
+            [38.0, 44.0],
+        ];
         let aligned = identity_crop(&frame, Some(&lm), &face);
-        assert_eq!((aligned.width(), aligned.height()), (112, 112), "aligned crop feeds SFace");
+        assert_eq!(
+            (aligned.width(), aligned.height()),
+            (112, 112),
+            "aligned crop feeds SFace"
+        );
         // No landmarks → raw crop fallback.
         let raw = identity_crop(&frame, None, &face);
-        assert_eq!((raw.width(), raw.height()), (20, 24), "no landmarks → raw crop");
+        assert_eq!(
+            (raw.width(), raw.height()),
+            (20, 24),
+            "no landmarks → raw crop"
+        );
         // Degenerate (all-identical) landmarks → also the raw fallback, no crash.
         let degen = [[5.0, 5.0]; 5];
         let d = identity_crop(&frame, Some(&degen), &face);
-        assert_eq!((d.width(), d.height()), (20, 24), "degenerate landmarks → raw crop");
+        assert_eq!(
+            (d.width(), d.height()),
+            (20, 24),
+            "degenerate landmarks → raw crop"
+        );
     }
 
     /// Phase 10.4: an object whose bbox straddles a near silhouette + far
@@ -1097,17 +1216,46 @@ mod tests {
         let frame = image::DynamicImage::new_rgb8(64, 64);
 
         // Object box = whole right half (straddles near object + far background).
-        let obj_bbox = mvm_core::BBox { x1: 0.5, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let obj_bbox = mvm_core::BBox {
+            x1: 0.5,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         let mk = |mask: Option<mvm_scene::InstanceMask>| mvm_scene::TrackedObject {
-            id: 10000, class_name: "cup", bbox: obj_bbox, score: 0.9, age: 1,
-            missed: 0, pos_3d: None, pos_conf: 0.0, mask,
+            id: 10000,
+            class_name: "cup",
+            bbox: obj_bbox,
+            score: 0.9,
+            age: 1,
+            missed: 0,
+            pos_3d: None,
+            pos_conf: 0.0,
+            mask,
         };
         // Mask = the near silhouette only (top-right quadrant).
         let r = mvm_scene::MASK_RES as u32;
-        let sil = mvm_core::BBox { x1: 0.5, y1: 0.0, x2: 1.0, y2: 0.5 };
+        let sil = mvm_core::BBox {
+            x1: 0.5,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 0.5,
+        };
         let mask = mvm_scene::mask::assemble_mask(
-            &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
-            &sil, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
+            &vec![10.0f32; (r * r) as usize],
+            1,
+            r as usize,
+            r as usize,
+            &[1.0],
+            &sil,
+            mvm_scene::Letterbox {
+                scale: 1.0,
+                pad_x: 0.0,
+                pad_y: 0.0,
+            },
+            r,
+            r,
+            r,
         );
 
         let mut bbox_only = vec![mk(None)];
@@ -1118,8 +1266,14 @@ mod tests {
         let z_bbox = bbox_only[0].pos_3d.expect("bbox anchored")[2];
         let z_mask = with_mask[0].pos_3d.expect("mask anchored")[2];
         // k=2.0; bbox median d=0.5 → Z=4.0; mask median d=2.0 → Z=1.0.
-        assert!((z_bbox - 4.0).abs() < 0.2, "bbox bled to background Z, got {z_bbox}");
-        assert!((z_mask - 1.0).abs() < 0.2, "mask reads the near silhouette Z, got {z_mask}");
+        assert!(
+            (z_bbox - 4.0).abs() < 0.2,
+            "bbox bled to background Z, got {z_bbox}"
+        );
+        assert!(
+            (z_mask - 1.0).abs() < 0.2,
+            "mask reads the near silhouette Z, got {z_mask}"
+        );
         assert!(z_mask < z_bbox, "mask depth must be nearer than bbox bleed");
     }
 }

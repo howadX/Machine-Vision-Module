@@ -22,9 +22,7 @@
 
 use mvm_core::posture::PostureStabilizer;
 use mvm_core::types::BodyObservation;
-use mvm_core::{
-    ActivityJournal, AnomalyScorer, BBox, Detection, PersonState, Position3D,
-};
+use mvm_core::{ActivityJournal, AnomalyScorer, BBox, Detection, PersonState, Position3D};
 use std::collections::HashMap;
 
 const FPS: f64 = 15.0;
@@ -34,7 +32,10 @@ const FPS: f64 = 15.0;
 /// `y_cam = CAM_H − height`. Matches `Config::camera_height_m` (and the lab
 /// `mocap_to_views.CAM_H`) so the E2 fall rule recovers the true floor endpoint.
 const CAM_H: f32 = 1.75;
-const DATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/data/golden_scenarios.json");
+const DATA: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/data/golden_scenarios.json"
+);
 
 fn arr4(v: &serde_json::Value) -> [f32; 4] {
     let a = v.as_array().expect("array");
@@ -77,7 +78,12 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
             mvm_core::ObjectState {
                 id: o["id"].as_u64().unwrap() as u32,
                 class: o["cls"].as_str().unwrap().to_string(),
-                bbox: BBox { x1: b[0], y1: b[1], x2: b[2], y2: b[3] },
+                bbox: BBox {
+                    x1: b[0],
+                    y1: b[1],
+                    x2: b[2],
+                    y2: b[3],
+                },
                 confidence: 0.8,
                 age: 2,
                 position_3d: None,
@@ -108,7 +114,12 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
             .iter()
             .map(|r| {
                 let b = arr4(&r["bbox"]);
-                BodyObservation::bare(BBox { x1: b[0], y1: b[1], x2: b[2], y2: b[3] })
+                BodyObservation::bare(BBox {
+                    x1: b[0],
+                    y1: b[1],
+                    x2: b[2],
+                    y2: b[3],
+                })
             })
             .collect();
         // Phase-9.5 inverted contract: geometry-only association, then enrichment.
@@ -135,7 +146,12 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
             let wr = r["wrists"].as_array().unwrap();
             people.push(PersonState {
                 track_id: tracker.all().get(&id).map(|t| t.display_id).unwrap_or(id),
-                bbox: BBox { x1: b[0], y1: b[1], x2: b[2], y2: b[3] },
+                bbox: BBox {
+                    x1: b[0],
+                    y1: b[1],
+                    x2: b[2],
+                    y2: b[3],
+                },
                 face_bbox: None,
                 identity: None,
                 emotion: None,
@@ -198,7 +214,12 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
             tid2p.insert(tid, person);
         }
     }
-    RunResult { episodes, anomaly: anomaly_trace, ids_of, tid2p }
+    RunResult {
+        episodes,
+        anomaly: anomaly_trace,
+        ids_of,
+        tid2p,
+    }
 }
 
 /// Score one instance's `expected` list against the run; panics with context on
@@ -222,10 +243,14 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
                     .and_then(|v| v.as_u64())
                     .map(|o| vec![o as u32])
                     .unwrap_or_default();
-                let (t_start, tol_s) =
-                    (exp["t_start"].as_f64().unwrap(), exp["tol_start"].as_f64().unwrap());
-                let (t_stop, tol_e) =
-                    (exp["t_end"].as_f64().unwrap(), exp["tol_end"].as_f64().unwrap());
+                let (t_start, tol_s) = (
+                    exp["t_start"].as_f64().unwrap(),
+                    exp["tol_start"].as_f64().unwrap(),
+                );
+                let (t_stop, tol_e) = (
+                    exp["t_end"].as_f64().unwrap(),
+                    exp["tol_end"].as_f64().unwrap(),
+                );
                 let hit = res.episodes.iter().enumerate().position(|(i, ep)| {
                     if used[i] || ep.label != label {
                         return false;
@@ -238,8 +263,12 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
                         .collect();
                     persons.sort_unstable();
                     persons.dedup();
-                    let objs: Vec<u32> =
-                        ep.participants.iter().copied().filter(|&p| p >= 10_000).collect();
+                    let objs: Vec<u32> = ep
+                        .participants
+                        .iter()
+                        .copied()
+                        .filter(|&p| p >= 10_000)
+                        .collect();
                     persons == want_p
                         && objs == want_o
                         && (ep.started_at - t_start).abs() <= tol_s
@@ -249,8 +278,10 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
                     "{id}: expected {label} [{t_start:.2}..{t_stop:.2}] not found; got: {:?}",
                     res.episodes
                         .iter()
-                        .map(|e| format!("{} {:?} {:.2}..{:.2}", e.label, e.participants,
-                                         e.started_at, e.ended_at))
+                        .map(|e| format!(
+                            "{} {:?} {:.2}..{:.2}",
+                            e.label, e.participants, e.started_at, e.ended_at
+                        ))
                         .collect::<Vec<_>>()
                 ));
                 used[hit] = true;
@@ -258,16 +289,20 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
             "anomaly_quiet" => {
                 let cap = exp["max"].as_f64().unwrap() as f32;
                 let peak = res.anomaly.iter().cloned().fold(0.0f32, f32::max);
-                assert!(peak < cap, "{id}: anomaly must stay quiet, peaked at {peak}");
+                assert!(
+                    peak < cap,
+                    "{id}: anomaly must stay quiet, peaked at {peak}"
+                );
             }
             "anomaly_fire" => {
                 let floor = exp["min"].as_f64().unwrap() as f32;
                 let a = (exp["t_from"].as_f64().unwrap() * FPS).max(0.0) as usize;
-                let b = ((exp["t_to"].as_f64().unwrap() * FPS) as usize + 1)
-                    .min(res.anomaly.len());
+                let b = ((exp["t_to"].as_f64().unwrap() * FPS) as usize + 1).min(res.anomaly.len());
                 let peak = res.anomaly[a..b].iter().cloned().fold(0.0f32, f32::max);
-                assert!(peak >= floor,
-                        "{id}: anomaly must fire in [{a}..{b}], peaked at {peak}");
+                assert!(
+                    peak >= floor,
+                    "{id}: anomaly must fire in [{a}..{b}], peaked at {peak}"
+                );
             }
             "tracks" => {
                 let person = exp["person"].as_i64().unwrap();
@@ -275,8 +310,11 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
                 let mut ids = res.ids_of.get(&person).cloned().unwrap_or_default();
                 ids.sort_unstable();
                 ids.dedup();
-                assert_eq!(ids.len(), n,
-                           "{id}: person {person} must hold exactly {n} track id(s), got {ids:?}");
+                assert_eq!(
+                    ids.len(),
+                    n,
+                    "{id}: person {person} must hold exactly {n} track id(s), got {ids:?}"
+                );
             }
             "no_swap" => {
                 // Every committed id maps to exactly one true person by majority —
@@ -286,8 +324,10 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
                         if pa < pb {
                             let shared: Vec<&u32> =
                                 ids_a.iter().filter(|i| ids_b.contains(i)).collect();
-                            assert!(shared.is_empty(),
-                                    "{id}: id shared across true persons: {shared:?}");
+                            assert!(
+                                shared.is_empty(),
+                                "{id}: id shared across true persons: {shared:?}"
+                            );
                         }
                     }
                 }
@@ -299,9 +339,14 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
     // No foreign events: every journalled episode must be accounted for by the
     // scenario (fragments/foreign both violate the FLOOR contract).
     for (i, ep) in res.episodes.iter().enumerate() {
-        assert!(used[i] || ep.label == "people_together" && inst["group"] == "G5",
-                "{id}: unexpected episode {} {:?} {:.2}..{:.2}",
-                ep.label, ep.participants, ep.started_at, ep.ended_at);
+        assert!(
+            used[i] || ep.label == "people_together" && inst["group"] == "G5",
+            "{id}: unexpected episode {} {:?} {:.2}..{:.2}",
+            ep.label,
+            ep.participants,
+            ep.started_at,
+            ep.ended_at
+        );
     }
 }
 
@@ -338,8 +383,10 @@ mod tests {
                 continue;
             }
             let res = run_instance(inst);
-            assert!(res.episodes.iter().all(|e| e.label != "people_together"),
-                    "phantom people_together on a lone walker");
+            assert!(
+                res.episodes.iter().all(|e| e.label != "people_together"),
+                "phantom people_together on a lone walker"
+            );
         }
     }
 }

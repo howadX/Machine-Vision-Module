@@ -93,7 +93,10 @@ impl DepthEstimator {
         let session = Session::builder()?
             .commit_from_file(path)
             .with_context(|| format!("Failed to load Depth-Anything from {}", path.display()))?;
-        Ok(Self { session, input_size: 518 })
+        Ok(Self {
+            session,
+            input_size: 518,
+        })
     }
 
     /// Estimate a relative depth map for the frame (resized to the model input;
@@ -110,14 +113,22 @@ impl DepthEstimator {
             [_, _, h, w] => (*h, *w),
             _ => (self.input_size as usize, self.input_size as usize),
         };
-        Ok(DepthMap { data: raw.to_vec(), w, h })
+        Ok(DepthMap {
+            data: raw.to_vec(),
+            w,
+            h,
+        })
     }
 
     /// Resize to input_size², RGB, /255, ImageNet-normalize, NCHW.
     fn preprocess(&self, image: &DynamicImage) -> anyhow::Result<Tensor<f32>> {
         let sz = self.input_size as usize;
         let resized = image
-            .resize_exact(self.input_size, self.input_size, image::imageops::FilterType::Triangle)
+            .resize_exact(
+                self.input_size,
+                self.input_size,
+                image::imageops::FilterType::Triangle,
+            )
             .to_rgb8();
         let mut flat = vec![0.0f32; 3 * sz * sz];
         for y in 0..sz {
@@ -172,22 +183,57 @@ mod tests {
     fn median_in_bbox_returns_central_value() {
         let m = grad_map();
         // Box centred on the map → samples around the middle columns (1..3).
-        let med = m.median_in_bbox(&BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 }).unwrap();
-        assert!((1.0..=2.0).contains(&med), "median {med} should be mid-range");
+        let med = m
+            .median_in_bbox(&BBox {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 1.0,
+                y2: 1.0,
+            })
+            .unwrap();
+        assert!(
+            (1.0..=2.0).contains(&med),
+            "median {med} should be mid-range"
+        );
     }
 
     #[test]
     fn median_in_bbox_rejects_degenerate() {
         let m = grad_map();
-        assert!(m.median_in_bbox(&BBox { x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.5 }).is_none());
+        assert!(
+            m.median_in_bbox(&BBox {
+                x1: 0.5,
+                y1: 0.5,
+                x2: 0.5,
+                y2: 0.5
+            })
+            .is_none()
+        );
     }
 
     #[test]
     fn median_in_bbox_right_box_is_nearer() {
         let m = grad_map();
-        let left = m.median_in_bbox(&BBox { x1: 0.0, y1: 0.0, x2: 0.4, y2: 1.0 }).unwrap();
-        let right = m.median_in_bbox(&BBox { x1: 0.6, y1: 0.0, x2: 1.0, y2: 1.0 }).unwrap();
-        assert!(right > left, "right box (nearer) should have larger depth value");
+        let left = m
+            .median_in_bbox(&BBox {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 0.4,
+                y2: 1.0,
+            })
+            .unwrap();
+        let right = m
+            .median_in_bbox(&BBox {
+                x1: 0.6,
+                y1: 0.0,
+                x2: 1.0,
+                y2: 1.0,
+            })
+            .unwrap();
+        assert!(
+            right > left,
+            "right box (nearer) should have larger depth value"
+        );
     }
 
     #[test]
@@ -195,9 +241,16 @@ mod tests {
         // grad_map depth = x-column value (0..3). Points on the right columns →
         // larger median than points on the left, and it ignores everything else.
         let m = grad_map();
-        let right = m.median_at_points([[0.9, 0.5], [0.85, 0.2], [0.95, 0.8]].into_iter()).unwrap();
-        let left = m.median_at_points([[0.1, 0.5], [0.05, 0.2], [0.15, 0.8]].into_iter()).unwrap();
-        assert!(right > left, "right points nearer: right={right} left={left}");
+        let right = m
+            .median_at_points([[0.9, 0.5], [0.85, 0.2], [0.95, 0.8]].into_iter())
+            .unwrap();
+        let left = m
+            .median_at_points([[0.1, 0.5], [0.05, 0.2], [0.15, 0.8]].into_iter())
+            .unwrap();
+        assert!(
+            right > left,
+            "right points nearer: right={right} left={left}"
+        );
     }
 
     #[test]
@@ -224,6 +277,11 @@ mod tests {
         assert_eq!(dm.w, 518);
         assert_eq!(dm.h, 518);
         assert_eq!(dm.data.len(), 518 * 518);
-        eprintln!("depth map {}x{}, sample center = {:.3}", dm.w, dm.h, dm.at_normalized(0.5, 0.5));
+        eprintln!(
+            "depth map {}x{}, sample center = {:.3}",
+            dm.w,
+            dm.h,
+            dm.at_normalized(0.5, 0.5)
+        );
     }
 }

@@ -23,7 +23,11 @@ pub(crate) struct DepthAgent {
 
 impl DepthAgent {
     pub(crate) fn new(estimator: mvm_depth::DepthEstimator, slot: DepthSlot, cadence: u32) -> Self {
-        Self { estimator, slot, cadence }
+        Self {
+            estimator,
+            slot,
+            cadence,
+        }
     }
 }
 
@@ -56,7 +60,11 @@ impl Agent for DepthAgent {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        AgentHealth { name: self.name(), ticks, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors,
+        }
     }
 }
 
@@ -70,7 +78,11 @@ mod tests {
         assert!(slot.lock().unwrap().is_none());
         // A reader (fusion) and writer (agent) share the same Arc.
         let writer = slot.clone();
-        *writer.lock().unwrap() = Some(Arc::new(mvm_depth::DepthMap { data: vec![0.5; 4], w: 2, h: 2 }));
+        *writer.lock().unwrap() = Some(Arc::new(mvm_depth::DepthMap {
+            data: vec![0.5; 4],
+            w: 2,
+            h: 2,
+        }));
         let got = slot.lock().unwrap();
         assert!(got.is_some(), "fusion sees the published map");
         assert_eq!(got.as_ref().unwrap().w, 2);

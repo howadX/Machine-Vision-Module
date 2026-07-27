@@ -83,7 +83,10 @@ pub fn run_doctor(product: &ProductConfig) -> Vec<Check> {
         Check {
             name: "models",
             status: Status::Ok,
-            detail: format!("{present}/{total} present in {}", product.models_dir.display()),
+            detail: format!(
+                "{present}/{total} present in {}",
+                product.models_dir.display()
+            ),
         }
     } else {
         Check {
@@ -145,13 +148,28 @@ mod tests {
     #[test]
     fn render_formats_aligned_rows_with_icons() {
         let checks = vec![
-            Check { name: "camera", status: Status::Ok, detail: "/dev/video2 (1280×720 MJPG)".into() },
-            Check { name: "models", status: Status::Warn, detail: "3/9 present (run `mvm setup`)".into() },
-            Check { name: "data dir", status: Status::Fail, detail: "/nope: permission denied".into() },
+            Check {
+                name: "camera",
+                status: Status::Ok,
+                detail: "/dev/video2 (1280×720 MJPG)".into(),
+            },
+            Check {
+                name: "models",
+                status: Status::Warn,
+                detail: "3/9 present (run `mvm setup`)".into(),
+            },
+            Check {
+                name: "data dir",
+                status: Status::Fail,
+                detail: "/nope: permission denied".into(),
+            },
         ];
         let out = render(&checks);
         assert!(out.starts_with("mvm doctor\n"), "{out}");
-        assert!(out.contains("  camera     ✅ /dev/video2 (1280×720 MJPG)\n"), "{out}");
+        assert!(
+            out.contains("  camera     ✅ /dev/video2 (1280×720 MJPG)\n"),
+            "{out}"
+        );
         assert!(out.contains("models"), "{out}");
         assert!(out.contains("⚠️"), "{out}");
         assert!(out.contains("❌ /nope"), "{out}");
@@ -170,7 +188,10 @@ mod tests {
         assert_eq!(total, MODELS.len());
         // The other four required models are reported missing (order = manifest).
         assert!(missing.contains(&"face_detection_yunet_2023mar.onnx".to_string()));
-        assert!(!missing.contains(&"yolo_seg.onnx".to_string()), "optional not flagged");
+        assert!(
+            !missing.contains(&"yolo_seg.onnx".to_string()),
+            "optional not flagged"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -54,19 +54,29 @@ fn sample_bilinear(img: &RgbImage, x: f32, y: f32) -> [f32; 3] {
 impl PoseEstimator {
     pub fn from_path(path: &std::path::Path) -> anyhow::Result<Self> {
         let session = Session::builder()?.commit_from_file(path)?;
-        Ok(Self { session, conf_threshold: 0.5 })
+        Ok(Self {
+            session,
+            conf_threshold: 0.5,
+        })
     }
 
     #[cfg(feature = "embed-model")]
     pub fn from_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
         let session = Session::builder()?.commit_from_memory(bytes)?;
-        Ok(Self { session, conf_threshold: 0.5 })
+        Ok(Self {
+            session,
+            conf_threshold: 0.5,
+        })
     }
 
     /// Run BlazePose using the person-detector ROI (mid-hip + full-body keypoints
     /// define a square ROI rotated so the torso is vertical). Returns 33 landmarks
     /// [x,y,z,visibility] in original-image pixel coords, or None if low conf.
-    pub fn infer(&mut self, img: &RgbImage, person: &Person) -> anyhow::Result<Option<[[f32; 4]; 33]>> {
+    pub fn infer(
+        &mut self,
+        img: &RgbImage,
+        person: &Person,
+    ) -> anyhow::Result<Option<[[f32; 4]; 33]>> {
         let mid = person.keypoints[0]; // mid-hip
         let full = person.keypoints[1]; // full-body point
         let full_dist = ((mid[0] - full[0]).powi(2) + (mid[1] - full[1]).powi(2)).sqrt();
@@ -74,8 +84,8 @@ impl PoseEstimator {
             return Ok(None);
         }
         // rotation so hip->body becomes vertical
-        let mut radians = std::f32::consts::FRAC_PI_2
-            - (-(full[1] - mid[1])).atan2(full[0] - mid[0]);
+        let mut radians =
+            std::f32::consts::FRAC_PI_2 - (-(full[1] - mid[1])).atan2(full[0] - mid[0]);
         let two_pi = std::f32::consts::TAU;
         radians -= two_pi * ((radians + std::f32::consts::PI) / two_pi).floor();
         let angle = radians.to_degrees();
@@ -196,45 +206,78 @@ mod tests {
         // [idx, x, y]: 0 nose (.552,.326); 11 L-sh (.696,.350); 12 R-sh (.519,.406);
         //              23 L-hip (.724,.668); 24 R-hip (.641,.708); 25 L-knee (.784,.881)
         let mut det = PersonDetector::from_path(
-            &models_dir().join("person_detection_mediapipe_2023mar.onnx")).unwrap();
-        let mut pe = PoseEstimator::from_path(
-            &models_dir().join("pose_estimation_mediapipe_2023mar.onnx")).unwrap();
+            &models_dir().join("person_detection_mediapipe_2023mar.onnx"),
+        )
+        .unwrap();
+        let mut pe =
+            PoseEstimator::from_path(&models_dir().join("pose_estimation_mediapipe_2023mar.onnx"))
+                .unwrap();
 
         let img = image::open(models_dir().join("references/p_V_03.jpg")).unwrap();
         let rgb = img.to_rgb8();
         let (w, h) = (rgb.width() as f32, rgb.height() as f32);
         let persons = det.detect(&img).unwrap();
-        let best = persons.iter().max_by(|a, b| a.score.partial_cmp(&b.score).unwrap()).unwrap();
+        let best = persons
+            .iter()
+            .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap())
+            .unwrap();
 
-        let lm = pe.infer(&rgb, best).unwrap().expect("expected pose for a clear person");
+        let lm = pe
+            .infer(&rgb, best)
+            .unwrap()
+            .expect("expected pose for a clear person");
         // normalize like the golden (x/w, y/h, z/w)
         let n = |k: usize| [lm[k][0] / w, lm[k][1] / h, lm[k][2] / w];
 
         let golden: [(usize, [f32; 2]); 6] = [
-            (0, [0.552, 0.326]), (11, [0.696, 0.350]), (12, [0.519, 0.406]),
-            (23, [0.724, 0.668]), (24, [0.641, 0.708]), (25, [0.784, 0.881]),
+            (0, [0.552, 0.326]),
+            (11, [0.696, 0.350]),
+            (12, [0.519, 0.406]),
+            (23, [0.724, 0.668]),
+            (24, [0.641, 0.708]),
+            (25, [0.784, 0.881]),
         ];
         for (k, g) in golden {
             let p = n(k);
-            assert!((p[0] - g[0]).abs() < 0.06 && (p[1] - g[1]).abs() < 0.06,
-                "landmark {k} = ({:.3},{:.3}) vs golden ({:.3},{:.3})", p[0], p[1], g[0], g[1]);
+            assert!(
+                (p[0] - g[0]).abs() < 0.06 && (p[1] - g[1]).abs() < 0.06,
+                "landmark {k} = ({:.3},{:.3}) vs golden ({:.3},{:.3})",
+                p[0],
+                p[1],
+                g[0],
+                g[1]
+            );
         }
 
         // topology plausibility: nose above shoulders above hips above knees (image y grows down)
         let (nose, sh, hip, knee) = (n(0)[1], n(11)[1], n(23)[1], n(25)[1]);
-        assert!(nose < sh && sh < hip && hip < knee,
-            "vertical order broken: nose {nose:.2} sh {sh:.2} hip {hip:.2} knee {knee:.2}");
+        assert!(
+            nose < sh && sh < hip && hip < knee,
+            "vertical order broken: nose {nose:.2} sh {sh:.2} hip {hip:.2} knee {knee:.2}"
+        );
     }
 
     #[test]
     fn black_image_low_conf_none() {
-        let mut pe = PoseEstimator::from_path(
-            &models_dir().join("pose_estimation_mediapipe_2023mar.onnx")).unwrap();
+        let mut pe =
+            PoseEstimator::from_path(&models_dir().join("pose_estimation_mediapipe_2023mar.onnx"))
+                .unwrap();
         let black = RgbImage::new(640, 480);
         // a fabricated ROI in the black frame -> model should report low conf
-        let fake = Person { bbox: [100.0, 100.0, 300.0, 400.0],
-            keypoints: [[200.0, 350.0], [200.0, 100.0], [200.0, 200.0], [200.0, 150.0]], score: 0.9 };
+        let fake = Person {
+            bbox: [100.0, 100.0, 300.0, 400.0],
+            keypoints: [
+                [200.0, 350.0],
+                [200.0, 100.0],
+                [200.0, 200.0],
+                [200.0, 150.0],
+            ],
+            score: 0.9,
+        };
         let out = pe.infer(&black, &fake).unwrap();
-        assert!(out.is_none(), "black image should yield no pose (low conf), got Some");
+        assert!(
+            out.is_none(),
+            "black image should yield no pose (low conf), got Some"
+        );
     }
 }

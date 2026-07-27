@@ -68,7 +68,9 @@ pub struct ExportConfig {
 
 impl Default for ExportConfig {
     fn default() -> Self {
-        ExportConfig { default_format: ExportFormat::Pytorch }
+        ExportConfig {
+            default_format: ExportFormat::Pytorch,
+        }
     }
 }
 
@@ -198,7 +200,10 @@ mod tests {
         assert_eq!(c.frame_cadence, 30);
         assert_eq!(c.frame_format, FrameFormat::Jpg);
         assert_eq!(c.frame_quality, 85);
-        assert!(c.save_frames, "frames saved by default (backward-compatible)");
+        assert!(
+            c.save_frames,
+            "frames saved by default (backward-compatible)"
+        );
         assert!(c.save_depth && c.save_masks && c.save_raw_embeddings && c.save_landmarks);
         assert!(c.vision_log, "text-only vision log on by default (§16.7-3)");
         assert_eq!(c.privacy, Privacy::Safe);
@@ -252,8 +257,13 @@ default_format = "webdataset"
 
     #[test]
     fn cli_overrides_win_over_file() {
-        let mut c: DatasetConfig = toml::from_str("enabled = false\ndir = \"/from/file\"\n").unwrap();
-        c.apply_cli_overrides(Some(true), Some("/from/cli".to_string()), Some(Privacy::Anonymous));
+        let mut c: DatasetConfig =
+            toml::from_str("enabled = false\ndir = \"/from/file\"\n").unwrap();
+        c.apply_cli_overrides(
+            Some(true),
+            Some("/from/cli".to_string()),
+            Some(Privacy::Anonymous),
+        );
         assert!(c.enabled);
         assert_eq!(c.dir, "/from/cli");
         assert_eq!(c.privacy, Privacy::Anonymous);
@@ -285,7 +295,10 @@ default_format = "webdataset"
         let eff = cfg.effective_recorder().expect("vision log on by default");
         assert!(eff.enabled, "recorder must be enabled to write");
         assert!(!eff.save_frames, "text-only: no pixels");
-        assert!(!eff.save_depth && !eff.save_masks, "text-only: no depth/masks");
+        assert!(
+            !eff.save_depth && !eff.save_masks,
+            "text-only: no depth/masks"
+        );
     }
 
     #[test]
@@ -295,7 +308,10 @@ default_format = "webdataset"
         cfg.enabled = true;
         let eff = cfg.effective_recorder().expect("recording enabled");
         assert!(eff.enabled);
-        assert!(eff.save_frames && eff.save_depth && eff.save_masks, "pixels preserved");
+        assert!(
+            eff.save_frames && eff.save_depth && eff.save_masks,
+            "pixels preserved"
+        );
     }
 
     #[test]
@@ -303,6 +319,9 @@ default_format = "webdataset"
         // `--no-vision-log` / vision_log=false with no --record → no recorder at all.
         let mut cfg = DatasetConfig::default();
         cfg.vision_log = false;
-        assert!(cfg.effective_recorder().is_none(), "recording fully disabled");
+        assert!(
+            cfg.effective_recorder().is_none(),
+            "recording fully disabled"
+        );
     }
 }

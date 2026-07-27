@@ -127,8 +127,7 @@ pub fn classify_gesture(lm: &[[f32; 3]; N_HAND_LM]) -> Option<HandGesture> {
         return None;
     }
     // (PIP, TIP) per finger: index, middle, ring, pinky.
-    let extended =
-        |pip: usize, tip: usize| dist(wrist, p(tip)) > dist(wrist, p(pip)) * 1.15;
+    let extended = |pip: usize, tip: usize| dist(wrist, p(tip)) > dist(wrist, p(pip)) * 1.15;
     let index = extended(6, 8);
     let rest = [extended(10, 12), extended(14, 16), extended(18, 20)];
     let rest_ext = rest.iter().filter(|&&e| e).count();
@@ -190,7 +189,13 @@ pub fn hand_rois_from_pose(lm: &[[f32; 4]; 33], vis_min: f32) -> Vec<HandRoi> {
         let center = (w.0 + (fc.0 - w.0) * 1.1, w.1 + (fc.1 - w.1) * 1.1);
         let span = dist(w, i).max(dist(w, p)).max(dist(w, t)).max(dist(w, fc));
         let side = (span * 2.4).max(24.0);
-        rois.push(HandRoi { cx: center.0, cy: center.1, side, which, vis: lm[wrist][3] });
+        rois.push(HandRoi {
+            cx: center.0,
+            cy: center.1,
+            side,
+            which,
+            vis: lm[wrist][3],
+        });
     }
     rois
 }
@@ -229,7 +234,10 @@ impl HandLandmarker {
         let session = Session::builder()?
             .commit_from_file(path)
             .with_context(|| format!("Failed to load handpose from {}", path.display()))?;
-        Ok(Self { session, conf_threshold: 0.5 })
+        Ok(Self {
+            session,
+            conf_threshold: 0.5,
+        })
     }
 
     #[cfg(feature = "embed-model")]
@@ -237,7 +245,10 @@ impl HandLandmarker {
         let session = Session::builder()?
             .commit_from_memory(bytes)
             .context("Failed to load handpose from embedded bytes")?;
-        Ok(Self { session, conf_threshold: 0.5 })
+        Ok(Self {
+            session,
+            conf_threshold: 0.5,
+        })
     }
 
     pub fn set_conf_threshold(&mut self, t: f32) {
@@ -247,7 +258,9 @@ impl HandLandmarker {
     /// Run handpose on a body's hand ROIs; returns the hands that pass the presence
     /// gate, with landmarks mapped back to original-image pixels.
     pub fn infer_rois(&mut self, img: &RgbImage, rois: &[HandRoi]) -> Vec<Hand> {
-        rois.iter().filter_map(|r| self.infer_square(img, r).ok().flatten()).collect()
+        rois.iter()
+            .filter_map(|r| self.infer_square(img, r).ok().flatten())
+            .collect()
     }
 
     /// Run handpose on one axis-aligned square ROI.
@@ -292,7 +305,12 @@ impl HandLandmarker {
         // downweighted by vis/0.5 (1.0 at/above the classic gate).
         let vis_weight = (roi.vis / 0.5).clamp(0.0, 1.0);
         let score = score * vis_weight;
-        Ok(Some(Hand { landmarks_px, handedness, score, side: roi.which }))
+        Ok(Some(Hand {
+            landmarks_px,
+            handedness,
+            score,
+            side: roi.which,
+        }))
     }
 }
 
@@ -321,7 +339,11 @@ mod tests {
         let r = rois[0];
         assert_eq!(r.which, HandSide::Left);
         // Centre is pushed from the wrist (100,100) toward the fingers (~y 71).
-        assert!(r.cy < 100.0, "centre should move toward the fingers, got {}", r.cy);
+        assert!(
+            r.cy < 100.0,
+            "centre should move toward the fingers, got {}",
+            r.cy
+        );
         assert!(r.side >= 24.0);
     }
 
@@ -349,7 +371,12 @@ mod tests {
         // All landmarks inside [64,96]..[192,240] so min/max are well-defined.
         let mut landmarks_px = [[64.0f32, 96.0, 0.0]; N_HAND_LM];
         landmarks_px[1] = [192.0, 240.0, 0.0];
-        let hand = Hand { landmarks_px, handedness: 0.9, score: 0.9, side: HandSide::Left };
+        let hand = Hand {
+            landmarks_px,
+            handedness: 0.9,
+            score: 0.9,
+            side: HandSide::Left,
+        };
         let b = hand.bbox_norm(640.0, 480.0);
         assert!((b.x1 - 0.1).abs() < 1e-4 && (b.x2 - 0.3).abs() < 1e-4);
         assert!((b.y1 - 0.2).abs() < 1e-4 && (b.y2 - 0.5).abs() < 1e-4);
@@ -371,10 +398,14 @@ mod tests {
         let mut lm = [[0.0f32; 3]; N_HAND_LM];
         lm[0] = [100.0, 200.0, 0.0]; // wrist
         // Finger columns at x = 90/100/110/120, MCP y=160, PIP y=145.
-        for (f, &(mcp, pip, dip, tip)) in
-            [(5, 6, 7, 8), (9, 10, 11, 12), (13, 14, 15, 16), (17, 18, 19, 20)]
-                .iter()
-                .enumerate()
+        for (f, &(mcp, pip, dip, tip)) in [
+            (5, 6, 7, 8),
+            (9, 10, 11, 12),
+            (13, 14, 15, 16),
+            (17, 18, 19, 20),
+        ]
+        .iter()
+        .enumerate()
         {
             let x = 90.0 + f as f32 * 10.0;
             lm[mcp] = [x, 160.0, 0.0];
@@ -451,10 +482,16 @@ mod tests {
     fn low_vis_wrist_yields_roi_with_recorded_vis() {
         let mut lm = pose_with_left_hand();
         lm[L_WRIST][3] = 0.3; // below the classic 0.5 gate
-        assert!(hand_rois_from_pose(&lm, 0.5).is_empty(), "0.5 floor still skips");
+        assert!(
+            hand_rois_from_pose(&lm, 0.5).is_empty(),
+            "0.5 floor still skips"
+        );
         let rois = hand_rois_from_pose(&lm, 0.2);
         assert_eq!(rois.len(), 1, "relaxed floor recovers the hand");
-        assert!((rois[0].vis - 0.3).abs() < 1e-6, "ROI records the wrist vis");
+        assert!(
+            (rois[0].vis - 0.3).abs() < 1e-6,
+            "ROI records the wrist vis"
+        );
     }
 
     // model-gated end-to-end load
@@ -471,7 +508,18 @@ mod tests {
         let mut hl = HandLandmarker::from_path(&p).unwrap();
         let img = RgbImage::new(640, 480);
         // Black ROI → low presence → None (must not panic).
-        let r = hl.infer_square(&img, &HandRoi { cx: 320.0, cy: 240.0, side: 200.0, which: HandSide::Left, vis: 0.9 }).unwrap();
+        let r = hl
+            .infer_square(
+                &img,
+                &HandRoi {
+                    cx: 320.0,
+                    cy: 240.0,
+                    side: 200.0,
+                    which: HandSide::Left,
+                    vis: 0.9,
+                },
+            )
+            .unwrap();
         eprintln!("black ROI hand = {:?}", r.map(|h| h.score));
     }
 }

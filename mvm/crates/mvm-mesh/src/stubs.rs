@@ -33,13 +33,21 @@ impl Agent for StubCaptureAgent {
             if !ctx.running() {
                 break;
             }
-            ctx.frames.publish(Frame::new(id, DynamicImage::new_rgb8(16, 16), Instant::now()));
+            ctx.frames.publish(Frame::new(
+                id,
+                DynamicImage::new_rgb8(16, 16),
+                Instant::now(),
+            ));
             ticks += 1;
             std::thread::sleep(period);
         }
         // Frame budget exhausted → tell the consumers to wind down.
         ctx.request_stop();
-        AgentHealth { name: self.name(), ticks, errors: 0 }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors: 0,
+        }
     }
 }
 
@@ -82,6 +90,10 @@ impl Agent for FrameCounterAgent {
             }
             std::thread::sleep(poll);
         }
-        AgentHealth { name: self.name(), ticks, errors: 0 }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors: 0,
+        }
     }
 }

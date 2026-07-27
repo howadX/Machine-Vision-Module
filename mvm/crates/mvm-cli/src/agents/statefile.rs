@@ -45,7 +45,16 @@ impl StateFileWriter {
         events_log: Option<SceneLog>,
         journal: Option<JournalCfg>,
     ) -> Self {
-        Self { state_file, dump_json, interval, max_writes, scene_log, events_log, journal, last: None }
+        Self {
+            state_file,
+            dump_json,
+            interval,
+            max_writes,
+            scene_log,
+            events_log,
+            journal,
+            last: None,
+        }
     }
 }
 
@@ -131,7 +140,11 @@ impl Agent for StateFileWriter {
             }
             std::thread::sleep(self.interval);
         }
-        AgentHealth { name: self.name(), ticks: writes, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks: writes,
+            errors,
+        }
     }
 }
 
@@ -164,7 +177,10 @@ mod tests {
         let now = Instant::now();
         let prev = Some((0u64, now - Duration::from_secs(1)));
         let fps = fps_between(prev, 30, now);
-        assert!((fps - 30.0).abs() < 1.0, "≈30 fps over 1s / 30 frames, got {fps}");
+        assert!(
+            (fps - 30.0).abs() < 1.0,
+            "≈30 fps over 1s / 30 frames, got {fps}"
+        );
     }
 
     #[test]
@@ -180,12 +196,22 @@ mod tests {
         world.frame_id = 7;
         world.people.push(PersonState {
             track_id: 10,
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
             face_bbox: None,
             identity: None,
             emotion: Some(("Neutral".into(), 0.4)),
             posture: Some(("sitting".into(), 0.9)),
-            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.5, confidence: 0.6 }),
+            position_3d: Some(Position3D {
+                x: 0.1,
+                y: 0.2,
+                z: 1.5,
+                confidence: 0.6,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -198,7 +224,8 @@ mod tests {
             recon_error: None,
             plausibility: None,
             torso_flexion: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             last_seen: now,
         });
         let ctx = MeshContext {
@@ -207,10 +234,17 @@ mod tests {
             stop: Arc::new(AtomicBool::new(false)),
         };
 
-        let path = std::env::temp_dir()
-            .join(format!("mvm_sfw_{}.md", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mvm_sfw_{}.md", std::process::id()));
         let sf = StateFile::open_at(path.clone()).unwrap();
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, None, None);
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            None,
+            None,
+            None,
+        );
         let health = agent.run(&ctx);
 
         assert_eq!(health.ticks, 1, "exactly one write");
@@ -231,12 +265,22 @@ mod tests {
         world.frame_id = 3;
         world.people.push(PersonState {
             track_id: 0,
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
             face_bbox: None,
             identity: Some(("Вадим".into(), 0.9)),
             emotion: None,
             posture: None,
-            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.0, confidence: 0.6 }),
+            position_3d: Some(Position3D {
+                x: 0.1,
+                y: 0.2,
+                z: 1.0,
+                confidence: 0.6,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -264,13 +308,27 @@ mod tests {
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let log = sf.open_scene_log(log_dir.clone());
         // dump_json = false → proves the log is fed independently of stdout.
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(log), None, None);
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            Some(log),
+            None,
+            None,
+        );
         agent.run(&ctx);
 
-        let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
+        let files: Vec<_> = std::fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
         assert_eq!(files.len(), 1, "one day's scene-*.jsonl written");
         let fname = files[0].file_name().into_string().unwrap();
-        assert!(fname.starts_with("scene-") && fname.ends_with(".jsonl"), "got {fname}");
+        assert!(
+            fname.starts_with("scene-") && fname.ends_with(".jsonl"),
+            "got {fname}"
+        );
         let content = std::fs::read_to_string(files[0].path()).unwrap();
         assert_eq!(content.lines().count(), 1, "one line per write");
         let v: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
@@ -305,13 +363,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&log_dir);
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let elog = sf.open_events_log(log_dir.clone());
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, Some(elog), None);
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            None,
+            Some(elog),
+            None,
+        );
         agent.run(&ctx);
 
-        let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
+        let files: Vec<_> = std::fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
         assert_eq!(files.len(), 1, "one day's events-*.jsonl");
         let fname = files[0].file_name().into_string().unwrap();
-        assert!(fname.starts_with("events-") && fname.ends_with(".jsonl"), "got {fname}");
+        assert!(
+            fname.starts_with("events-") && fname.ends_with(".jsonl"),
+            "got {fname}"
+        );
         let content = std::fs::read_to_string(files[0].path()).unwrap();
         assert_eq!(content.lines().count(), 1, "one line per episode");
         let v: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
@@ -332,12 +404,22 @@ mod tests {
         world.frame_id = 4;
         let mut p = PersonState {
             track_id: 0,
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
             face_bbox: None,
             identity: Some(("Вадим".into(), 0.9)),
             emotion: None,
             posture: Some(("sitting".into(), 0.8)),
-            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.0, confidence: 0.6 }),
+            position_3d: Some(Position3D {
+                x: 0.1,
+                y: 0.2,
+                z: 1.0,
+                confidence: 0.6,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -367,9 +449,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&log_dir);
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let scene = sf.open_scene_log(log_dir.clone());
-        let journal = JournalCfg { path: jrnl_path.clone(), log_dir: log_dir.clone(), cadence: 1 };
-        let mut agent =
-            StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(scene), None, Some(journal));
+        let journal = JournalCfg {
+            path: jrnl_path.clone(),
+            log_dir: log_dir.clone(),
+            cadence: 1,
+        };
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            Some(scene),
+            None,
+            Some(journal),
+        );
         agent.run(&ctx);
 
         let md = std::fs::read_to_string(&jrnl_path).expect("journal.md written");

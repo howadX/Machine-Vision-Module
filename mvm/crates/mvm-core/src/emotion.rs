@@ -176,12 +176,14 @@ mod tests {
         assert!(
             fused_uniform[0] > fused_conflict[0],
             "uniform {} should preserve class-0 mass better than conflict {}",
-            fused_uniform[0], fused_conflict[0]
+            fused_uniform[0],
+            fused_conflict[0]
         );
         assert!(
             fused_conflict[2] > fused_uniform[2],
             "conflicting evidence should raise the contested class more: {} vs {}",
-            fused_conflict[2], fused_uniform[2]
+            fused_conflict[2],
+            fused_uniform[2]
         );
     }
 }

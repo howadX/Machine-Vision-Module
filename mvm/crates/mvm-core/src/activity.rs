@@ -82,7 +82,10 @@ impl ActivityKey {
     pub fn from_activity(a: &Activity) -> Self {
         let mut participants = a.participants.clone();
         participants.sort_unstable();
-        Self { label: a.label.clone(), participants }
+        Self {
+            label: a.label.clone(),
+            participants,
+        }
     }
 
     /// Every participant is a durable id — gallery-reserved (0–9) or object
@@ -91,7 +94,6 @@ impl ActivityKey {
     pub fn stable_participants(&self) -> bool {
         self.participants.iter().all(|&id| id < 10 || id >= 10000)
     }
-
 }
 
 /// Churn class of an id (11.C6): `None` for reserved gallery ids (0–9 — sticky,
@@ -424,7 +426,11 @@ mod tests {
     use super::*;
 
     fn act(label: &str, participants: Vec<u32>, conf: f32) -> Activity {
-        Activity { label: label.into(), confidence: conf, participants }
+        Activity {
+            label: label.into(),
+            confidence: conf,
+            participants,
+        }
     }
 
     fn typing() -> Activity {
@@ -464,7 +470,10 @@ mod tests {
         let inst: Vec<_> = j.active().collect();
         assert_eq!(inst.len(), 1, "3rd consecutive tick activates");
         assert_eq!(inst[0].phase, ActivityPhase::Active);
-        assert_eq!(inst[0].started_at, 0.0, "started_at = first sighting, not activation");
+        assert_eq!(
+            inst[0].started_at, 0.0,
+            "started_at = first sighting, not activation"
+        );
         assert_eq!(inst[0].first_seen_frame, 0);
     }
 
@@ -482,7 +491,10 @@ mod tests {
         let inst: Vec<_> = j.active().collect();
         assert_eq!(inst[0].phase, ActivityPhase::Active);
         assert_eq!(inst[0].started_at, 0.0, "same instance survived");
-        assert!(j.drain_events().is_empty(), "no end event for a bridged gap");
+        assert!(
+            j.drain_events().is_empty(),
+            "no end event for a bridged gap"
+        );
     }
 
     #[test]
@@ -498,7 +510,10 @@ mod tests {
         assert_eq!(ev[0].label, "typing");
         assert_eq!(ev[0].participants, vec![0, 10001]);
         assert_eq!(ev[0].started_at, 0.0);
-        assert!((ev[0].ended_at - 2.9).abs() < 1e-6, "ended_at = last sighting, not + grace");
+        assert!(
+            (ev[0].ended_at - 2.9).abs() < 1e-6,
+            "ended_at = last sighting, not + grace"
+        );
         assert!((ev[0].duration_s - 2.9).abs() < 1e-6);
         assert!(j.drain_events().is_empty(), "drain empties the backlog");
     }
@@ -518,7 +533,10 @@ mod tests {
     fn duplicate_keys_and_participant_order_collapse() {
         let mut j = ActivityJournal::new();
         // Same instance spelled two ways (participant order + duplicate).
-        let raw = [act("typing", vec![10001, 0], 0.5), act("typing", vec![0, 10001], 0.9)];
+        let raw = [
+            act("typing", vec![10001, 0], 0.5),
+            act("typing", vec![0, 10001], 0.9),
+        ];
         drive(&mut j, &raw, 3, 0.0, 0);
         assert_eq!(j.active().count(), 1, "one instance, not two/three");
     }
@@ -526,17 +544,30 @@ mod tests {
     #[test]
     fn distinct_participant_sets_are_distinct_instances() {
         let mut j = ActivityJournal::new();
-        let raw = [act("typing", vec![0, 10001], 0.8), act("typing", vec![1, 10001], 0.8)];
+        let raw = [
+            act("typing", vec![0, 10001], 0.8),
+            act("typing", vec![1, 10001], 0.8),
+        ];
         drive(&mut j, &raw, 3, 0.0, 0);
-        assert_eq!(j.active().count(), 2, "different people typing = different instances");
+        assert_eq!(
+            j.active().count(),
+            2,
+            "different people typing = different instances"
+        );
     }
 
     #[test]
     fn emission_order_is_deterministic() {
         let mut a = ActivityJournal::new();
         let mut b = ActivityJournal::new();
-        let raw_ab = [act("typing", vec![0, 10001], 0.8), act("reading", vec![1, 10002], 0.8)];
-        let raw_ba = [act("reading", vec![1, 10002], 0.8), act("typing", vec![0, 10001], 0.8)];
+        let raw_ab = [
+            act("typing", vec![0, 10001], 0.8),
+            act("reading", vec![1, 10002], 0.8),
+        ];
+        let raw_ba = [
+            act("reading", vec![1, 10002], 0.8),
+            act("typing", vec![0, 10001], 0.8),
+        ];
         drive(&mut a, &raw_ab, 3, 0.0, 0);
         drive(&mut b, &raw_ba, 3, 0.0, 0);
         let ka: Vec<_> = a.active().map(|i| i.key.clone()).collect();
@@ -569,7 +600,10 @@ mod tests {
         let mut j = ActivityJournal::new();
         let (t, f) = drive(&mut j, &[act("typing", vec![12, 10001], 0.8)], 6, 0.0, 0);
         drive(&mut j, &[act("typing", vec![15, 10001], 0.8)], 12, t, f);
-        assert!(!j.drain_events().is_empty(), "default: old episode ends on churn");
+        assert!(
+            !j.drain_events().is_empty(),
+            "default: old episode ends on churn"
+        );
     }
 
     #[test]
@@ -582,7 +616,10 @@ mod tests {
         // id churns to 15 within the cooling window (immediate next frame).
         let (t, f) = drive(&mut j, &[act("typing", vec![15, 10001], 0.8)], 8, t, f);
         // No event emitted during the churn — it's one continuous episode.
-        assert!(j.drain_events().is_empty(), "churn must not split the episode");
+        assert!(
+            j.drain_events().is_empty(),
+            "churn must not split the episode"
+        );
         let inst: Vec<_> = j.active().collect();
         assert_eq!(inst.len(), 1, "one continuous instance, got {inst:?}");
         assert_eq!(inst[0].key.participants, vec![15, 10001]);
@@ -602,7 +639,10 @@ mod tests {
         let mut j = ActivityJournal::new().with_stitching(true);
         let (t, f) = drive(&mut j, &[act("typing", vec![12, 10001], 0.8)], 6, 0.0, 0);
         drive(&mut j, &[act("typing", vec![15, 10002], 0.8)], 8, t, f);
-        assert!(!j.drain_events().is_empty(), "two-participant churn → end+restart");
+        assert!(
+            !j.drain_events().is_empty(),
+            "two-participant churn → end+restart"
+        );
     }
 
     #[test]
@@ -613,7 +653,10 @@ mod tests {
         let mut j = ActivityJournal::new().with_stitching(true);
         let (t, f) = drive(&mut j, &[act("typing", vec![0, 10000], 0.8)], 30, 0.0, 0);
         let (t, f) = drive(&mut j, &[act("typing", vec![0, 10007], 0.8)], 8, t, f);
-        assert!(j.drain_events().is_empty(), "object churn must not split the episode");
+        assert!(
+            j.drain_events().is_empty(),
+            "object churn must not split the episode"
+        );
         let inst: Vec<_> = j.active().collect();
         assert_eq!(inst.len(), 1, "one continuous instance, got {inst:?}");
         assert_eq!(inst[0].key.participants, vec![0, 10007]);
@@ -632,14 +675,29 @@ mod tests {
         let mut j = ActivityJournal::new().with_stitching(true);
         let (t, f) = drive(&mut j, &[act("typing", vec![0, 10001], 0.8)], 6, 0.0, 0);
         drive(&mut j, &[act("typing", vec![5, 10001], 0.8)], 8, t, f);
-        assert!(!j.drain_events().is_empty(), "person 0 ≠ person 5 → honest end+restart");
+        assert!(
+            !j.drain_events().is_empty(),
+            "person 0 ≠ person 5 → honest end+restart"
+        );
     }
 
     #[test]
     fn stable_participants_reflects_id_spaces() {
         // reserved (0–9) + object (≥10000) → stable; ephemeral (10..10000) → not.
-        assert!(ActivityKey { label: "typing".into(), participants: vec![0, 10001] }.stable_participants());
-        assert!(!ActivityKey { label: "typing".into(), participants: vec![42, 10001] }.stable_participants());
+        assert!(
+            ActivityKey {
+                label: "typing".into(),
+                participants: vec![0, 10001]
+            }
+            .stable_participants()
+        );
+        assert!(
+            !ActivityKey {
+                label: "typing".into(),
+                participants: vec![42, 10001]
+            }
+            .stable_participants()
+        );
         let mut j = ActivityJournal::new();
         let (t, f) = drive(&mut j, &[act("typing", vec![0, 10001], 0.8)], 3, 0.0, 0);
         drive(&mut j, &[], ACTIVITY_EXIT_DWELL + 3, t, f);
@@ -662,9 +720,17 @@ mod tests {
         let ev = j.drain_events();
         assert!(!ev.is_empty(), "cap must have force-ended at least once");
         for e in &ev {
-            assert!(e.duration_s <= max_dwell_s("typing") + 1.0, "duration {} > cap", e.duration_s);
+            assert!(
+                e.duration_s <= max_dwell_s("typing") + 1.0,
+                "duration {} > cap",
+                e.duration_s
+            );
         }
-        assert_eq!(j.active().count(), 1, "activity restarts after the forced end");
+        assert_eq!(
+            j.active().count(),
+            1,
+            "activity restarts after the forced end"
+        );
     }
 
     #[test]
@@ -695,17 +761,26 @@ mod tests {
             f += 1;
         }
         drive(&mut j, &[], ACTIVITY_EXIT_DWELL_OLD, t, f);
-        assert_eq!(j.active().count(), 0, "old instance ends after the short dwell");
+        assert_eq!(
+            j.active().count(),
+            0,
+            "old instance ends after the short dwell"
+        );
         assert_eq!(j.drain_events().len(), 1);
     }
 
     #[test]
     fn instance_cap_bounds_memory() {
         let mut j = ActivityJournal::new();
-        let flood: Vec<Activity> =
-            (0..2 * ACTIVITY_INSTANCE_CAP as u32).map(|i| act("typing", vec![i, 10001], 0.5)).collect();
+        let flood: Vec<Activity> = (0..2 * ACTIVITY_INSTANCE_CAP as u32)
+            .map(|i| act("typing", vec![i, 10001], 0.5))
+            .collect();
         drive(&mut j, &flood, 3, 0.0, 0);
-        assert!(j.instances.len() <= ACTIVITY_INSTANCE_CAP, "len {}", j.instances.len());
+        assert!(
+            j.instances.len() <= ACTIVITY_INSTANCE_CAP,
+            "len {}",
+            j.instances.len()
+        );
     }
 
     #[test]
@@ -727,6 +802,10 @@ mod tests {
                 f += 1;
             }
         }
-        assert!(j.completed.len() <= ACTIVITY_EVENT_CAP, "len {}", j.completed.len());
+        assert!(
+            j.completed.len() <= ACTIVITY_EVENT_CAP,
+            "len {}",
+            j.completed.len()
+        );
     }
 }

@@ -90,15 +90,26 @@ impl Detection {
     pub fn bare(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
         Self {
             bbox: BBox { x1, y1, x2, y2 },
-            identity: None, identity_confidence: None,
-            emotion: None, emotion_confidence: None,
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None,
+            identity: None,
+            identity_confidence: None,
+            emotion: None,
+            emotion_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
             emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }
     }
@@ -131,7 +142,12 @@ pub struct BodyObservation {
 impl BodyObservation {
     /// Bbox-only observation (high-confidence by default, no landmarks, no mask).
     pub fn bare(bbox: BBox) -> Self {
-        Self { bbox, score: 1.0, landmarks: None, mask: None }
+        Self {
+            bbox,
+            score: 1.0,
+            landmarks: None,
+            mask: None,
+        }
     }
 
     /// Attach a person mask (phase 11.A3) — builder used by the mesh HumanAgent
@@ -324,7 +340,8 @@ impl PersonTrack {
             depth_ema: None,
             emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             // Seed the observation anchor from the birth bbox; velocity is unknown
             // until a second observation establishes a direction.
             last_obs_center: Some([(bbox.x1 + bbox.x2) * 0.5, (bbox.y1 + bbox.y2) * 0.5]),
@@ -440,67 +457,147 @@ mod tests {
 
     #[test]
     fn bbox_area_unit_square() {
-        let b = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let b = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         assert!((b.area() - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn bbox_area_half_frame() {
-        let b = BBox { x1: 0.25, y1: 0.25, x2: 0.75, y2: 0.75 };
+        let b = BBox {
+            x1: 0.25,
+            y1: 0.25,
+            x2: 0.75,
+            y2: 0.75,
+        };
         assert!((b.area() - 0.25).abs() < 1e-6);
     }
 
     #[test]
     fn bbox_area_zero_width() {
-        let b = BBox { x1: 0.5, y1: 0.0, x2: 0.5, y2: 1.0 };
+        let b = BBox {
+            x1: 0.5,
+            y1: 0.0,
+            x2: 0.5,
+            y2: 1.0,
+        };
         assert_eq!(b.area(), 0.0);
     }
 
     #[test]
     fn bbox_area_inverted() {
-        let b = BBox { x1: 0.8, y1: 0.8, x2: 0.2, y2: 0.2 };
+        let b = BBox {
+            x1: 0.8,
+            y1: 0.8,
+            x2: 0.2,
+            y2: 0.2,
+        };
         assert_eq!(b.area(), 0.0);
     }
 
     #[test]
     fn iou_identical() {
-        let a = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
-        let b = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let a = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let b = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         assert!((a.iou(&b) - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn iou_half_overlap() {
-        let a = BBox { x1: 0.0, y1: 0.0, x2: 0.6, y2: 1.0 };
-        let b = BBox { x1: 0.4, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let a = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.6,
+            y2: 1.0,
+        };
+        let b = BBox {
+            x1: 0.4,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         assert!((a.iou(&b) - 0.2).abs() < 1e-6);
     }
 
     #[test]
     fn iou_no_overlap() {
-        let a = BBox { x1: 0.0, y1: 0.0, x2: 0.4, y2: 1.0 };
-        let b = BBox { x1: 0.6, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let a = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.4,
+            y2: 1.0,
+        };
+        let b = BBox {
+            x1: 0.6,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         assert_eq!(a.iou(&b), 0.0);
     }
 
     #[test]
     fn iou_one_inside_another() {
-        let a = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
-        let b = BBox { x1: 0.2, y1: 0.2, x2: 0.8, y2: 0.8 };
+        let a = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let b = BBox {
+            x1: 0.2,
+            y1: 0.2,
+            x2: 0.8,
+            y2: 0.8,
+        };
         assert!((a.iou(&b) - 0.36).abs() < 1e-5);
     }
 
     #[test]
     fn iou_edge_touching() {
-        let a = BBox { x1: 0.0, y1: 0.0, x2: 0.5, y2: 1.0 };
-        let b = BBox { x1: 0.5, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let a = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.5,
+            y2: 1.0,
+        };
+        let b = BBox {
+            x1: 0.5,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         assert_eq!(a.iou(&b), 0.0);
     }
 
     #[test]
     fn iou_symmetric() {
-        let a = BBox { x1: 0.1, y1: 0.2, x2: 0.7, y2: 0.9 };
-        let b = BBox { x1: 0.3, y1: 0.1, x2: 0.9, y2: 0.8 };
+        let a = BBox {
+            x1: 0.1,
+            y1: 0.2,
+            x2: 0.7,
+            y2: 0.9,
+        };
+        let b = BBox {
+            x1: 0.3,
+            y1: 0.1,
+            x2: 0.9,
+            y2: 0.8,
+        };
         assert_eq!(a.iou(&b), b.iou(&a));
     }
 }

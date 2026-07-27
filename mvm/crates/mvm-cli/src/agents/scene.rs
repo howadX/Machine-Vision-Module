@@ -4,7 +4,7 @@
 //! happens on the fusion step (8.C.7) where both people and objects are visible.
 
 use crate::agents::{cadence_due, project_objects};
-use mvm_core::{mask::InstanceMask, BBox};
+use mvm_core::{BBox, mask::InstanceMask};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::{Arc, Mutex};
 
@@ -45,7 +45,15 @@ impl SceneAgent {
         min_area: f32,
         cadence: u32,
     ) -> Self {
-        Self { detector, seg_detector, person_masks, tracker, score_thresh, min_area, cadence }
+        Self {
+            detector,
+            seg_detector,
+            person_masks,
+            tracker,
+            score_thresh,
+            min_area,
+            cadence,
+        }
     }
 }
 
@@ -113,16 +121,27 @@ impl Agent for SceneAgent {
                                                 obj_segs.push(s);
                                             }
                                         }
-                                        mvm_scene::attach_masks(&mut tracked, &obj_segs, SEG_ATTACH_IOU);
+                                        mvm_scene::attach_masks(
+                                            &mut tracked,
+                                            &obj_segs,
+                                            SEG_ATTACH_IOU,
+                                        );
                                         if let Ok(mut slot) = self.person_masks.lock() {
                                             *slot = Some(Arc::new(person_masks));
                                         }
                                         if std::env::var("MVM_SEG_DEBUG").is_ok() {
-                                            let attached = tracked.iter().filter(|o| o.mask.is_some()).count();
+                                            let attached =
+                                                tracked.iter().filter(|o| o.mask.is_some()).count();
                                             eprintln!(
                                                 "  seg-dbg: {} obj-seg → {}/{} objects masked; {} person masks published",
-                                                obj_segs.len(), attached, tracked.len(),
-                                                self.person_masks.lock().ok().and_then(|s| s.as_ref().map(|v| v.len())).unwrap_or(0)
+                                                obj_segs.len(),
+                                                attached,
+                                                tracked.len(),
+                                                self.person_masks
+                                                    .lock()
+                                                    .ok()
+                                                    .and_then(|s| s.as_ref().map(|v| v.len()))
+                                                    .unwrap_or(0)
                                             );
                                         }
                                     }
@@ -142,7 +161,11 @@ impl Agent for SceneAgent {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        AgentHealth { name: self.name(), ticks, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors,
+        }
     }
 }
 
@@ -172,9 +195,24 @@ mod tests {
         let slot: PersonMaskSlot = Arc::new(Mutex::new(None));
         assert!(slot.lock().unwrap().is_none());
         let writer = slot.clone();
-        let mask = InstanceMask::from_bits(vec![0u8; mvm_core::mask::MASK_RES * mvm_core::mask::MASK_RES]);
-        *writer.lock().unwrap() = Some(Arc::new(vec![(BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.6 }, mask)]));
+        let mask = InstanceMask::from_bits(vec![
+            0u8;
+            mvm_core::mask::MASK_RES * mvm_core::mask::MASK_RES
+        ]);
+        *writer.lock().unwrap() = Some(Arc::new(vec![(
+            BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.3,
+                y2: 0.6,
+            },
+            mask,
+        )]));
         let got = slot.lock().unwrap();
-        assert_eq!(got.as_ref().unwrap().len(), 1, "reader sees the published person mask");
+        assert_eq!(
+            got.as_ref().unwrap().len(),
+            1,
+            "reader sees the published person mask"
+        );
     }
 }

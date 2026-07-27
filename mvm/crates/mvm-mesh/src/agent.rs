@@ -91,8 +91,16 @@ mod tests {
 
     #[test]
     fn agent_health_equality() {
-        let a = AgentHealth { name: "x".into(), ticks: 3, errors: 0 };
-        let b = AgentHealth { name: "x".into(), ticks: 3, errors: 0 };
+        let a = AgentHealth {
+            name: "x".into(),
+            ticks: 3,
+            errors: 0,
+        };
+        let b = AgentHealth {
+            name: "x".into(),
+            ticks: 3,
+            errors: 0,
+        };
         assert_eq!(a, b);
     }
 }

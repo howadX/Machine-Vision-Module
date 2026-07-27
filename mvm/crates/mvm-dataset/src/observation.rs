@@ -83,7 +83,10 @@ impl LabelStatus {
     pub fn is_asserted(self) -> bool {
         matches!(
             self,
-            LabelStatus::Observed | LabelStatus::Derived | LabelStatus::Temporal | LabelStatus::Weak
+            LabelStatus::Observed
+                | LabelStatus::Derived
+                | LabelStatus::Temporal
+                | LabelStatus::Weak
         )
     }
 
@@ -377,11 +380,13 @@ mod tests {
     #[test]
     fn mandatory_binding_keys_present() {
         let obs = sample();
-        let v: serde_json::Value =
-            serde_json::from_str(&obs.to_jsonl_line().unwrap()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&obs.to_jsonl_line().unwrap()).unwrap();
         // Уровень наблюдения.
         for key in ["dataset_id", "schema_version", "session_id", "frame_id"] {
-            assert!(v.get(key).is_some(), "missing observation binding key: {key}");
+            assert!(
+                v.get(key).is_some(),
+                "missing observation binding key: {key}"
+            );
         }
         // schema_version фиксируется автоматически.
         assert_eq!(v["schema_version"], serde_json::json!(SCHEMA_VERSION));
@@ -434,7 +439,10 @@ mod tests {
         assert!(!label.status.can_be_negative_class());
         // При сериализации отсутствующее значение не попадает в JSON.
         let v: serde_json::Value = serde_json::to_value(&label).unwrap();
-        assert!(v.get("value").is_none(), "withheld must not emit a value key");
+        assert!(
+            v.get("value").is_none(),
+            "withheld must not emit a value key"
+        );
         assert_eq!(v["status"], serde_json::json!("withheld"));
     }
 
@@ -443,9 +451,13 @@ mod tests {
         // §16.7 additive bump: a 16.0.1 line (no `activities` key) must still parse,
         // with `activities` defaulting to empty — old JSONL stays readable.
         let mut obs = sample();
-        obs.activities.push(serde_json::json!({ "label": "typing", "participants": ["p1"] }));
+        obs.activities
+            .push(serde_json::json!({ "label": "typing", "participants": ["p1"] }));
         let line = obs.to_jsonl_line().unwrap();
-        assert!(line.contains("\"activities\""), "new schema emits the activities key");
+        assert!(
+            line.contains("\"activities\""),
+            "new schema emits the activities key"
+        );
 
         // Simulate an old line by stripping the activities key entirely.
         let mut v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -453,7 +465,10 @@ mod tests {
         let old_line = serde_json::to_string(&v).unwrap();
         assert!(!old_line.contains("\"activities\""));
         let back = CanonicalObservation::from_jsonl_line(&old_line).expect("old line parses");
-        assert!(back.activities.is_empty(), "missing activities defaults to empty");
+        assert!(
+            back.activities.is_empty(),
+            "missing activities defaults to empty"
+        );
         assert_eq!(SCHEMA_VERSION, "16.7.0");
     }
 

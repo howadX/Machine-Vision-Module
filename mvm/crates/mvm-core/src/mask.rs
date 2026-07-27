@@ -22,13 +22,19 @@ pub struct InstanceMask {
 impl InstanceMask {
     /// An all-empty mask (no cells set).
     pub fn empty() -> Self {
-        Self { bits: vec![0u8; MASK_RES * MASK_RES] }
+        Self {
+            bits: vec![0u8; MASK_RES * MASK_RES],
+        }
     }
 
     /// Build a mask from a raw `MASK_RES²` occupancy grid (row-major, non-zero =
     /// inside). The constructor the out-of-crate assembler uses.
     pub fn from_bits(bits: Vec<u8>) -> Self {
-        assert_eq!(bits.len(), MASK_RES * MASK_RES, "mask grid must be MASK_RES²");
+        assert_eq!(
+            bits.len(),
+            MASK_RES * MASK_RES,
+            "mask grid must be MASK_RES²"
+        );
         Self { bits }
     }
 
@@ -104,7 +110,11 @@ impl InstanceMask {
                 union += 1;
             }
         }
-        if union == 0 { 0.0 } else { inter as f32 / union as f32 }
+        if union == 0 {
+            0.0
+        } else {
+            inter as f32 / union as f32
+        }
     }
 
     /// Normalized centres of the set cells — the sample points for
@@ -114,7 +124,10 @@ impl InstanceMask {
             if self.bits[i] != 0 {
                 let gx = i % MASK_RES;
                 let gy = i / MASK_RES;
-                Some([(gx as f32 + 0.5) / MASK_RES as f32, (gy as f32 + 0.5) / MASK_RES as f32])
+                Some([
+                    (gx as f32 + 0.5) / MASK_RES as f32,
+                    (gy as f32 + 0.5) / MASK_RES as f32,
+                ])
             } else {
                 None
             }
@@ -137,7 +150,10 @@ mod tests {
     fn from_bits_roundtrips_contains() {
         let m = one_cell(10, 20);
         assert_eq!(m.count(), 1);
-        let p = [(10.0 + 0.5) / MASK_RES as f32, (20.0 + 0.5) / MASK_RES as f32];
+        let p = [
+            (10.0 + 0.5) / MASK_RES as f32,
+            (20.0 + 0.5) / MASK_RES as f32,
+        ];
         assert!(m.contains_norm(p));
         assert!(!m.contains_norm([0.9, 0.9]));
     }
@@ -152,11 +168,20 @@ mod tests {
     fn dilated_contains_reaches_neighbours_only() {
         let m = one_cell(32, 32);
         // Two cells away from the set cell.
-        let p = [(34.0 + 0.5) / MASK_RES as f32, (32.0 + 0.5) / MASK_RES as f32];
+        let p = [
+            (34.0 + 0.5) / MASK_RES as f32,
+            (32.0 + 0.5) / MASK_RES as f32,
+        ];
         assert!(!m.contains_norm(p), "exact containment misses");
-        assert!(!m.contains_norm_within(p, 1), "1-cell dilation still misses");
+        assert!(
+            !m.contains_norm_within(p, 1),
+            "1-cell dilation still misses"
+        );
         assert!(m.contains_norm_within(p, 2), "2-cell dilation reaches");
-        assert!(!m.contains_norm_within([0.9, 0.9], 2), "far point never contained");
+        assert!(
+            !m.contains_norm_within([0.9, 0.9], 2),
+            "far point never contained"
+        );
     }
 
     #[test]

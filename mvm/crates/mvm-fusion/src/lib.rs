@@ -88,17 +88,25 @@ pub fn fuse(experts: &[Expert]) -> FusedEmotion {
     let sum: f32 = exps.iter().sum();
     let distribution: [f32; K] = std::array::from_fn(|k| exps[k] / sum);
 
-    let (label_idx, &prob) = distribution.iter().enumerate()
+    let (label_idx, &prob) = distribution
+        .iter()
+        .enumerate()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .unwrap_or((0, &0.0));
 
     let uncertainty = entropy_from_probs(&distribution);
 
-    FusedEmotion { label_idx, prob, distribution, uncertainty }
+    FusedEmotion {
+        label_idx,
+        prob,
+        distribution,
+        uncertainty,
+    }
 }
 
 fn entropy_from_probs(probs: &[f32]) -> f32 {
-    let h: f32 = probs.iter()
+    let h: f32 = probs
+        .iter()
         .map(|&p| if p > 0.0 { -p * p.log2() } else { 0.0 })
         .sum();
     // Normalise by log2(K) so result is in [0, 1].
@@ -151,7 +159,11 @@ pub fn build_scene(entities: Vec<Entity>) -> Scene {
 
     let zones = connected_components(&entities, &relations);
 
-    Scene { entities, relations, zones }
+    Scene {
+        entities,
+        relations,
+        zones,
+    }
 }
 
 fn euclidean_3d(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -188,7 +200,8 @@ fn connected_components(entities: &[Entity], relations: &[Relation]) -> Vec<Vec<
     }
 
     // Map entity id → index in entities slice.
-    let id_to_idx: std::collections::HashMap<u32, usize> = entities.iter()
+    let id_to_idx: std::collections::HashMap<u32, usize> = entities
+        .iter()
         .enumerate()
         .map(|(i, e)| (e.id, i))
         .collect();
@@ -210,9 +223,12 @@ fn connected_components(entities: &[Entity], relations: &[Relation]) -> Vec<Vec<
             return;
         }
         match rank[rx].cmp(&rank[ry]) {
-            std::cmp::Ordering::Less    => parent[rx] = ry,
+            std::cmp::Ordering::Less => parent[rx] = ry,
             std::cmp::Ordering::Greater => parent[ry] = rx,
-            std::cmp::Ordering::Equal   => { parent[ry] = rx; rank[rx] += 1; }
+            std::cmp::Ordering::Equal => {
+                parent[ry] = rx;
+                rank[rx] += 1;
+            }
         }
     }
 
@@ -223,7 +239,8 @@ fn connected_components(entities: &[Entity], relations: &[Relation]) -> Vec<Vec<
     }
 
     // Collect components.
-    let mut components: std::collections::HashMap<usize, Vec<u32>> = std::collections::HashMap::new();
+    let mut components: std::collections::HashMap<usize, Vec<u32>> =
+        std::collections::HashMap::new();
     for (i, entity) in entities.iter().enumerate() {
         let root = find(&mut parent, i);
         components.entry(root).or_default().push(entity.id);
@@ -242,7 +259,10 @@ fn connected_components(entities: &[Entity], relations: &[Relation]) -> Vec<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mvm_core::{BBox, types::{Entity, EntityKind}};
+    use mvm_core::{
+        BBox,
+        types::{Entity, EntityKind},
+    };
 
     fn one_hot(idx: usize) -> [f32; K] {
         let mut d = [0.0f32; K];
@@ -269,7 +289,12 @@ mod tests {
     }
 
     fn small_bbox(x1: f32, y1: f32) -> BBox {
-        BBox { x1, y1, x2: x1 + 0.05, y2: y1 + 0.05 }
+        BBox {
+            x1,
+            y1,
+            x2: x1 + 0.05,
+            y2: y1 + 0.05,
+        }
     }
 
     // ── Relational tests ──────────────────────────────────────────────────────
@@ -282,7 +307,11 @@ mod tests {
         let scene = build_scene(vec![e1, e2]);
         assert_eq!(scene.relations.len(), 1, "should have one Near edge");
         let rel = &scene.relations[0];
-        assert!((rel.distance_m - 1.0).abs() < 1e-4, "distance should be 1.0m, got {}", rel.distance_m);
+        assert!(
+            (rel.distance_m - 1.0).abs() < 1e-4,
+            "distance should be 1.0m, got {}",
+            rel.distance_m
+        );
         assert_eq!(rel.kind, RelationKind::Near);
     }
 
@@ -318,7 +347,11 @@ mod tests {
         object.kind = EntityKind::Object("cup".into());
         object.pos_conf = 0.0;
         let scene = build_scene(vec![person, object]);
-        assert_eq!(scene.relations.len(), 0, "depthless node must not get a Near edge");
+        assert_eq!(
+            scene.relations.len(),
+            0,
+            "depthless node must not get a Near edge"
+        );
         assert_eq!(scene.zones.len(), 2, "should be separate zones");
     }
 
@@ -326,9 +359,27 @@ mod tests {
     fn overlap_edge_survives_without_depth() {
         // Even with pos_conf = 0 on both, a 2D bbox overlap still yields an edge —
         // the meaningful "person ↔ held/nearby object" signal.
-        let mut person = entity(1, [0.0, 0.0, 1.0], BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut person = entity(
+            1,
+            [0.0, 0.0, 1.0],
+            BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         person.pos_conf = 0.9;
-        let mut object = entity(2, [0.0, 0.0, 0.0], BBox { x1: 0.4, y1: 0.4, x2: 0.55, y2: 0.6 });
+        let mut object = entity(
+            2,
+            [0.0, 0.0, 0.0],
+            BBox {
+                x1: 0.4,
+                y1: 0.4,
+                x2: 0.55,
+                y2: 0.6,
+            },
+        );
         object.kind = EntityKind::Object("cup".into());
         object.pos_conf = 0.0;
         let scene = build_scene(vec![person, object]);
@@ -344,7 +395,11 @@ mod tests {
         let mut e2 = entity(2, [0.3, 0.0, 1.0], small_bbox(0.5, 0.1));
         e2.kind = EntityKind::Object("cup".to_string());
         let scene = build_scene(vec![e1, e2]);
-        assert_eq!(scene.relations.len(), 1, "Person + Object should get a Near edge");
+        assert_eq!(
+            scene.relations.len(),
+            1,
+            "Person + Object should get a Near edge"
+        );
     }
 
     // ── Attribute fusion tests ────────────────────────────────────────────────
@@ -355,8 +410,14 @@ mod tests {
         // The dominant class is preserved; the distribution concentrates toward it.
         let d = [0.5_f32, 0.3, 0.1, 0.02, 0.02, 0.02, 0.02, 0.02];
         let experts = vec![
-            Expert { distribution: d, weight: 0.8 },
-            Expert { distribution: d, weight: 0.8 },
+            Expert {
+                distribution: d,
+                weight: 0.8,
+            },
+            Expert {
+                distribution: d,
+                weight: 0.8,
+            },
         ];
         let out = fuse(&experts);
         let sum: f32 = out.distribution.iter().sum();
@@ -364,8 +425,12 @@ mod tests {
         // Dominant class is preserved.
         assert_eq!(out.label_idx, 0, "argmax should be unchanged");
         // PoE sharpens: dominant class gets MORE mass than the input (p^2 renormalised).
-        assert!(out.distribution[0] > d[0],
-            "identical experts sharpen the distribution: {} should be > {}", out.distribution[0], d[0]);
+        assert!(
+            out.distribution[0] > d[0],
+            "identical experts sharpen the distribution: {} should be > {}",
+            out.distribution[0],
+            d[0]
+        );
     }
 
     #[test]
@@ -374,26 +439,44 @@ mod tests {
         let d_real = one_hot(3);
         let d_junk = one_hot(7);
         let experts = vec![
-            Expert { distribution: d_junk, weight: 0.0 },
-            Expert { distribution: d_real, weight: 1.0 },
+            Expert {
+                distribution: d_junk,
+                weight: 0.0,
+            },
+            Expert {
+                distribution: d_real,
+                weight: 1.0,
+            },
         ];
         let out = fuse(&experts);
         assert_eq!(out.label_idx, 3, "zero-weight expert must be ignored");
-        assert!(out.distribution[3] > 0.99, "output should be concentrated at class 3");
+        assert!(
+            out.distribution[3] > 0.99,
+            "output should be concentrated at class 3"
+        );
     }
 
     #[test]
     fn fuse_distribution_sums_to_one() {
         // Random-ish distributions — output must always sum to 1.
         let d1 = [0.3_f32, 0.2, 0.15, 0.1, 0.1, 0.07, 0.05, 0.03];
-        let d2 = [0.1_f32, 0.1, 0.1,  0.1, 0.2, 0.2,  0.1,  0.1];
+        let d2 = [0.1_f32, 0.1, 0.1, 0.1, 0.2, 0.2, 0.1, 0.1];
         let experts = vec![
-            Expert { distribution: d1, weight: 0.7 },
-            Expert { distribution: d2, weight: 0.5 },
+            Expert {
+                distribution: d1,
+                weight: 0.7,
+            },
+            Expert {
+                distribution: d2,
+                weight: 0.5,
+            },
         ];
         let out = fuse(&experts);
         let sum: f32 = out.distribution.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-5, "distribution must sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "distribution must sum to 1.0, got {sum}"
+        );
     }
 
     #[test]
@@ -404,21 +487,38 @@ mod tests {
         let d_a = one_hot(0);
         let d_b = one_hot(7);
         let experts_disagree = vec![
-            Expert { distribution: d_a, weight: 0.8 },
-            Expert { distribution: d_b, weight: 0.8 },
+            Expert {
+                distribution: d_a,
+                weight: 0.8,
+            },
+            Expert {
+                distribution: d_b,
+                weight: 0.8,
+            },
         ];
         let experts_agree = vec![
-            Expert { distribution: d_a, weight: 0.8 },
-            Expert { distribution: d_a, weight: 0.8 },
+            Expert {
+                distribution: d_a,
+                weight: 0.8,
+            },
+            Expert {
+                distribution: d_a,
+                weight: 0.8,
+            },
         ];
         let out_dis = fuse(&experts_disagree);
         let out_agr = fuse(&experts_agree);
-        assert!(out_dis.uncertainty > out_agr.uncertainty,
+        assert!(
+            out_dis.uncertainty > out_agr.uncertainty,
             "disagreement should yield higher uncertainty than agreement: {} vs {}",
-            out_dis.uncertainty, out_agr.uncertainty);
+            out_dis.uncertainty,
+            out_agr.uncertainty
+        );
         // Bimodal result: both class 0 and class 7 should have meaningful mass.
-        assert!(out_dis.distribution[0] > 0.1 && out_dis.distribution[7] > 0.1,
-            "disagreeing one-hots should produce bimodal output");
+        assert!(
+            out_dis.distribution[0] > 0.1 && out_dis.distribution[7] > 0.1,
+            "disagreeing one-hots should produce bimodal output"
+        );
     }
 
     #[test]
@@ -432,8 +532,14 @@ mod tests {
 
         for _ in 0..50 {
             let result = fuse(&[
-                Expert { distribution: prior, weight: LAMBDA },
-                Expert { distribution: one_hot(4), weight: 0.9 },
+                Expert {
+                    distribution: prior,
+                    weight: LAMBDA,
+                },
+                Expert {
+                    distribution: one_hot(4),
+                    weight: 0.9,
+                },
             ]);
             prior = result.distribution;
         }
@@ -443,13 +549,22 @@ mod tests {
         // somewhat — but with LAMBDA=0.5 forgetting it should not fully collapse to ~0 entropy.
         // The key invariant: distribution is valid (sums to 1, no NaN).
         let sum: f32 = prior.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-4, "temporal PoE must stay normalised, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-4,
+            "temporal PoE must stay normalised, got {sum}"
+        );
         assert!(h.is_finite(), "entropy must be finite after 50 rounds");
         // The dominant class after 50 rounds of one-hot(4) observation should be class 4.
-        let argmax = prior.iter().enumerate()
+        let argmax = prior
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .map(|(i, _)| i).unwrap();
-        assert_eq!(argmax, 4, "dominant class should be class 4 (repeated observation)");
+            .map(|(i, _)| i)
+            .unwrap();
+        assert_eq!(
+            argmax, 4,
+            "dominant class should be class 4 (repeated observation)"
+        );
     }
 }
 
@@ -620,7 +735,12 @@ mod zone_tests {
         Entity {
             id,
             kind,
-            bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 },
+            bbox: BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.2,
+                y2: 0.2,
+            },
             pos_3d: [0.0, 0.0, 0.0],
             radius_m: 0.1,
             pos_conf: 0.0,
@@ -653,19 +773,31 @@ mod zone_tests {
             t.update(&[], &ents);
         }
         assert_eq!(t.zones().len(), 1, "still alive at the cap");
-        assert_eq!(t.update(&[vec![0, 10001]], &ents)[0].id, id0, "revived with the same id");
+        assert_eq!(
+            t.update(&[vec![0, 10001]], &ents)[0].id,
+            id0,
+            "revived with the same id"
+        );
         // Now exceed the cap.
         for _ in 0..=ZONE_MISS_CAP {
             t.update(&[], &ents);
         }
         assert!(t.zones().is_empty(), "reaped past the cap");
-        assert_ne!(t.update(&[vec![0, 10001]], &ents)[0].id, id0, "reborn under a new id");
+        assert_ne!(
+            t.update(&[vec![0, 10001]], &ents)[0].id,
+            id0,
+            "reborn under a new id"
+        );
     }
 
     #[test]
     fn membership_drift_keeps_id() {
         let mut t = ZoneTracker::new();
-        let ents = [ent(0, EntityKind::Person), ent(1, EntityKind::Person), obj(10001, "keyboard")];
+        let ents = [
+            ent(0, EntityKind::Person),
+            ent(1, EntityKind::Person),
+            obj(10001, "keyboard"),
+        ];
         let id0 = t.update(&[vec![0, 10001]], &ents)[0].id;
         let z = &t.update(&[vec![0, 1, 10001]], &ents)[0];
         assert_eq!(z.id, id0, "a person joining does not re-mint the zone");
@@ -675,7 +807,11 @@ mod zone_tests {
     #[test]
     fn split_keeps_id_on_larger_part() {
         let mut t = ZoneTracker::new();
-        let ents = [ent(0, EntityKind::Person), ent(1, EntityKind::Person), obj(10001, "keyboard")];
+        let ents = [
+            ent(0, EntityKind::Person),
+            ent(1, EntityKind::Person),
+            obj(10001, "keyboard"),
+        ];
         let id0 = t.update(&[vec![0, 1, 10001]], &ents)[0].id;
         let zones: Vec<(u32, Vec<u32>)> = t
             .update(&[vec![0], vec![1, 10001]], &ents)
@@ -683,14 +819,21 @@ mod zone_tests {
             .map(|z| (z.id, z.members.clone()))
             .collect();
         assert_eq!(zones.len(), 2);
-        let keeper = zones.iter().find(|(id, _)| *id == id0).expect("id survives the split");
+        let keeper = zones
+            .iter()
+            .find(|(id, _)| *id == id0)
+            .expect("id survives the split");
         assert_eq!(keeper.1, vec![1, 10001], "the larger fragment keeps the id");
     }
 
     #[test]
     fn zone_labels_from_member_classes() {
         let mut t = ZoneTracker::new();
-        let ents = [ent(0, EntityKind::Person), obj(10001, "keyboard"), obj(10002, "couch")];
+        let ents = [
+            ent(0, EntityKind::Person),
+            obj(10001, "keyboard"),
+            obj(10002, "couch"),
+        ];
         let zones = t.update(&[vec![0, 10001], vec![10002]], &ents);
         assert_eq!(zones[0].label, Some("workstation"));
         assert_eq!(zones[1].label, Some("seating"));

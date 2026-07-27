@@ -52,7 +52,11 @@ fn entity_name(id: u32, world: &WorldState) -> String {
 /// Render the snapshot markdown for a world frame. `ts` is the caller-formatted
 /// timestamp string (kept out of the function so the output is deterministic).
 pub fn render_snapshot(world: &WorldState, fps: f64, ts: &str) -> String {
-    let status = if world.people.is_empty() { "empty" } else { "occupied" };
+    let status = if world.people.is_empty() {
+        "empty"
+    } else {
+        "occupied"
+    };
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -86,10 +90,18 @@ pub fn render_snapshot(world: &WorldState, fps: f64, ts: &str) -> String {
     } else {
         let mut people: Vec<&mvm_core::PersonState> = world.people.iter().collect();
         people.sort_by_key(|p| p.track_id);
-        let _ = writeln!(out, "\n| id | who | dist | posture | motion | emotion | head | hands |");
-        let _ = writeln!(out, "|----|-----|------|---------|--------|---------|------|-------|");
+        let _ = writeln!(
+            out,
+            "\n| id | who | dist | posture | motion | emotion | head | hands |"
+        );
+        let _ = writeln!(
+            out,
+            "|----|-----|------|---------|--------|---------|------|-------|"
+        );
         for p in people {
-            let _ = writeln!(out, "| {} | {} | {} | {} | {} | {} | {} | {} |",
+            let _ = writeln!(
+                out,
+                "| {} | {} | {} | {} | {} | {} | {} | {} |",
                 p.track_id,
                 who_cell(p),
                 dist_cell(p),
@@ -150,8 +162,12 @@ fn honesty_notes(world: &WorldState) -> Vec<String> {
     }
     for i in &world.activity_instances {
         if !i.key.stable_participants() {
-            let names: Vec<String> =
-                i.key.participants.iter().map(|&id| entity_name(id, world)).collect();
+            let names: Vec<String> = i
+                .key
+                .participants
+                .iter()
+                .map(|&id| entity_name(id, world))
+                .collect();
             notes.push(format!(
                 "{}({}): участники нестабильны (эфемерный id)",
                 i.key.label,
@@ -215,8 +231,12 @@ fn activity_lines(world: &WorldState) -> Vec<String> {
             .activity_instances
             .iter()
             .map(|i| {
-                let names: Vec<String> =
-                    i.key.participants.iter().map(|&id| entity_name(id, world)).collect();
+                let names: Vec<String> = i
+                    .key
+                    .participants
+                    .iter()
+                    .map(|&id| entity_name(id, world))
+                    .collect();
                 format!(
                     "{}({}) — {:.1}s ({})",
                     i.key.label,
@@ -231,9 +251,17 @@ fn activity_lines(world: &WorldState) -> Vec<String> {
             .activities
             .iter()
             .map(|a| {
-                let names: Vec<String> =
-                    a.participants.iter().map(|&id| entity_name(id, world)).collect();
-                format!("{}({}) ({})", a.label, names.join(","), conf_word(a.confidence))
+                let names: Vec<String> = a
+                    .participants
+                    .iter()
+                    .map(|&id| entity_name(id, world))
+                    .collect();
+                format!(
+                    "{}({}) ({})",
+                    a.label,
+                    names.join(","),
+                    conf_word(a.confidence)
+                )
             })
             .collect()
     }
@@ -391,7 +419,12 @@ mod tests {
             bbox,
             confidence: 0.8,
             age: 5,
-            position_3d: Some(Position3D { x: 0.2, y: 0.3, z: 0.9, confidence: 0.8 }),
+            position_3d: Some(Position3D {
+                x: 0.2,
+                y: 0.3,
+                z: 0.9,
+                confidence: 0.8,
+            }),
             mask: None,
             remembered: false,
             last_seen: Instant::now(),
@@ -411,50 +444,127 @@ mod tests {
     #[test]
     fn snapshot_two_people_table_and_zone() {
         let mut world = WorldState::new(Instant::now());
-        let mut vadim = person(0, BBox { x1: 0.4, y1: 0.2, x2: 0.6, y2: 0.9 });
+        let mut vadim = person(
+            0,
+            BBox {
+                x1: 0.4,
+                y1: 0.2,
+                x2: 0.6,
+                y2: 0.9,
+            },
+        );
         vadim.identity = Some(("Вадим".into(), 0.63));
         vadim.emotion = Some(("Surprise".into(), 0.59));
         vadim.posture = Some(("standing".into(), 0.53));
-        vadim.position_3d = Some(Position3D { x: 0.7, y: 0.2, z: 0.97, confidence: 0.8 });
+        vadim.position_3d = Some(Position3D {
+            x: 0.7,
+            y: 0.2,
+            z: 0.97,
+            confidence: 0.8,
+        });
         vadim.motion_state = Some("moving");
         vadim.velocity = Some(0.32);
         vadim.head_facing = Some("camera");
         vadim.hands = vec![
-            HandState { landmarks: vec![], presence: 0.9, side: "left", handedness: 0.1, gesture: Some("open") },
-            HandState { landmarks: vec![], presence: 0.9, side: "right", handedness: 0.9, gesture: Some("fist") },
+            HandState {
+                landmarks: vec![],
+                presence: 0.9,
+                side: "left",
+                handedness: 0.1,
+                gesture: Some("open"),
+            },
+            HandState {
+                landmarks: vec![],
+                presence: 0.9,
+                side: "right",
+                handedness: 0.9,
+                gesture: Some("fist"),
+            },
         ];
-        let mut anon = person(10, BBox { x1: 0.7, y1: 0.2, x2: 0.9, y2: 0.9 });
+        let mut anon = person(
+            10,
+            BBox {
+                x1: 0.7,
+                y1: 0.2,
+                x2: 0.9,
+                y2: 0.9,
+            },
+        );
         anon.emotion = Some(("Neutral".into(), 0.89));
         anon.posture = Some(("standing".into(), 0.62));
-        anon.position_3d = Some(Position3D { x: 1.8, y: 0.14, z: 1.17, confidence: 0.8 });
+        anon.position_3d = Some(Position3D {
+            x: 1.8,
+            y: 0.14,
+            z: 1.17,
+            confidence: 0.8,
+        });
         anon.motion_state = Some("idle");
         anon.head_facing = Some("left");
         world.people.push(vadim);
         world.people.push(anon);
         // A workstation object so the shared zone gets a label.
-        world.objects.push(object(mvm_scene::OBJECT_ID_BASE, "mouse", BBox { x1: 0.45, y1: 0.6, x2: 0.55, y2: 0.7 }));
+        world.objects.push(object(
+            mvm_scene::OBJECT_ID_BASE,
+            "mouse",
+            BBox {
+                x1: 0.45,
+                y1: 0.6,
+                x2: 0.55,
+                y2: 0.7,
+            },
+        ));
 
         let md = render_snapshot(&world, 18.0, "17:51:19");
         // Header + status.
-        assert!(md.starts_with("# Scene 17:51:19 · occupied · anomaly 0.00 · 18 fps\n"), "got:\n{md}");
+        assert!(
+            md.starts_with("# Scene 17:51:19 · occupied · anomaly 0.00 · 18 fps\n"),
+            "got:\n{md}"
+        );
         // Identity marks and tiered confidence words (not raw floats).
         assert!(md.contains("| 0 | Вадим ✓ | 1.0m | standing (med) | moving 0.3 t/s | Surprise (med) | camera | open+fist |"), "got:\n{md}");
-        assert!(md.contains("| 10 | anon ✓face | 1.2m | standing (med) | idle | Neutral (high) | left | — |"), "got:\n{md}");
+        assert!(
+            md.contains(
+                "| 10 | anon ✓face | 1.2m | standing (med) | idle | Neutral (high) | left | — |"
+            ),
+            "got:\n{md}"
+        );
         // Zone labelled from the workstation-class object.
-        assert!(md.contains("Zone «workstation»:") && md.contains("Вадим(0)") && md.contains("mouse"), "got:\n{md}");
+        assert!(
+            md.contains("Zone «workstation»:") && md.contains("Вадим(0)") && md.contains("mouse"),
+            "got:\n{md}"
+        );
         // No raw coordinates / bbox leaked into the human view.
-        assert!(!md.contains("0.97") && !md.contains("bbox"), "raw coords leaked:\n{md}");
+        assert!(
+            !md.contains("0.97") && !md.contains("bbox"),
+            "raw coords leaked:\n{md}"
+        );
     }
 
     #[test]
     fn snapshot_activity_line_with_duration() {
-        use mvm_core::activity::ActivityJournal;
         use mvm_core::Activity;
+        use mvm_core::activity::ActivityJournal;
         let mut world = WorldState::new(Instant::now());
-        let mut v = person(0, BBox { x1: 0.4, y1: 0.2, x2: 0.6, y2: 0.9 });
+        let mut v = person(
+            0,
+            BBox {
+                x1: 0.4,
+                y1: 0.2,
+                x2: 0.6,
+                y2: 0.9,
+            },
+        );
         v.identity = Some(("Вадим".into(), 0.63));
         world.people.push(v);
-        world.people.push(person(10, BBox { x1: 0.7, y1: 0.2, x2: 0.9, y2: 0.9 }));
+        world.people.push(person(
+            10,
+            BBox {
+                x1: 0.7,
+                y1: 0.2,
+                x2: 0.9,
+                y2: 0.9,
+            },
+        ));
         // Drive the real journal: present every tick from t=0.25 to t=22.75 →
         // confirmed Active with a 22.5 s observed duration.
         let mut j = ActivityJournal::new();
@@ -485,36 +595,74 @@ mod tests {
     fn snapshot_honesty_notes_for_unverified_and_withheld() {
         let mut world = WorldState::new(Instant::now());
         // A body with neither identity nor emotion → unverified (animal / fallen?).
-        let mut ghost = person(12, BBox { x1: 0.5, y1: 0.4, x2: 0.7, y2: 0.9 });
-        ghost.position_3d = Some(Position3D { x: 0.9, y: 0.2, z: 0.8, confidence: 0.6 });
+        let mut ghost = person(
+            12,
+            BBox {
+                x1: 0.5,
+                y1: 0.4,
+                x2: 0.7,
+                y2: 0.9,
+            },
+        );
+        ghost.position_3d = Some(Position3D {
+            x: 0.9,
+            y: 0.2,
+            z: 0.8,
+            confidence: 0.6,
+        });
         // Seated at desk: only the upper body is visible → posture withheld.
         ghost.body_coverage = Some("upper");
         ghost.plausibility = Some("low".into());
         world.people.push(ghost);
         let md = render_snapshot(&world, 18.0, "17:51:25");
-        assert!(md.contains("⚠️ id12: тело не подтверждено лицом"), "got:\n{md}");
-        assert!(md.contains("⚠️ id12: поза withheld (видна только upper)"), "got:\n{md}");
-        assert!(md.contains("⚠️ id12: поза OOD (plausibility low)"), "got:\n{md}");
+        assert!(
+            md.contains("⚠️ id12: тело не подтверждено лицом"),
+            "got:\n{md}"
+        );
+        assert!(
+            md.contains("⚠️ id12: поза withheld (видна только upper)"),
+            "got:\n{md}"
+        );
+        assert!(
+            md.contains("⚠️ id12: поза OOD (plausibility low)"),
+            "got:\n{md}"
+        );
     }
 
     #[test]
     fn snapshot_clean_scene_has_no_notes() {
         let mut world = WorldState::new(Instant::now());
-        let mut v = person(0, BBox { x1: 0.4, y1: 0.2, x2: 0.6, y2: 0.9 });
+        let mut v = person(
+            0,
+            BBox {
+                x1: 0.4,
+                y1: 0.2,
+                x2: 0.6,
+                y2: 0.9,
+            },
+        );
         v.identity = Some(("Вадим".into(), 0.9));
         v.emotion = Some(("Neutral".into(), 0.9));
         v.posture = Some(("standing".into(), 0.9));
         v.body_coverage = Some("full");
         v.plausibility = Some("ok".into());
-        v.position_3d = Some(Position3D { x: 0.7, y: 0.2, z: 1.0, confidence: 0.8 });
+        v.position_3d = Some(Position3D {
+            x: 0.7,
+            y: 0.2,
+            z: 1.0,
+            confidence: 0.8,
+        });
         world.people.push(v);
         let md = render_snapshot(&world, 18.0, "17:51:19");
-        assert!(!md.contains("⚠️"), "clean scene should carry no notes:\n{md}");
+        assert!(
+            !md.contains("⚠️"),
+            "clean scene should carry no notes:\n{md}"
+        );
     }
 
     #[test]
     fn render_recap_shape_and_phantom_note() {
-        use mvm_core::recap::{FrameObs, PersonObs, EpisodeObs, Recap};
+        use mvm_core::recap::{EpisodeObs, FrameObs, PersonObs, Recap};
         // 40-frame session: Вадим(0) throughout, phantom id12 mid-session; a book
         // re-ided across two object ids → one rolled-up `reading`.
         let mut frames = vec![FrameObs::default(); 40];
@@ -528,26 +676,64 @@ mod tests {
             f.object_classes.push("keyboard".into());
             f.zone_labels.push("workstation".into());
             if (20..24).contains(&i) {
-                f.people.push(PersonObs { id: 12, dist_m: Some(0.9), posture: Some("lying".into()), identity: None });
+                f.people.push(PersonObs {
+                    id: 12,
+                    dist_m: Some(0.9),
+                    posture: Some("lying".into()),
+                    identity: None,
+                });
             }
         }
         let eps = vec![
-            EpisodeObs { label: "reading".into(), participants: vec![0, 10002], duration_s: 2.0, peak_confidence: 0.4, stable_participants: true },
-            EpisodeObs { label: "reading".into(), participants: vec![0, 10003], duration_s: 3.0, peak_confidence: 0.6, stable_participants: true },
-            EpisodeObs { label: "typing".into(), participants: vec![0, 10004], duration_s: 10.0, peak_confidence: 0.5, stable_participants: true },
+            EpisodeObs {
+                label: "reading".into(),
+                participants: vec![0, 10002],
+                duration_s: 2.0,
+                peak_confidence: 0.4,
+                stable_participants: true,
+            },
+            EpisodeObs {
+                label: "reading".into(),
+                participants: vec![0, 10003],
+                duration_s: 3.0,
+                peak_confidence: 0.6,
+                stable_participants: true,
+            },
+            EpisodeObs {
+                label: "typing".into(),
+                participants: vec![0, 10004],
+                duration_s: 10.0,
+                peak_confidence: 0.5,
+                stable_participants: true,
+            },
         ];
         let recap = Recap::build(&frames, &eps);
         let md = render_recap(&recap, "18:55:01–18:57:39");
 
-        assert!(md.starts_with("# Recap 18:55:01–18:57:39 — 40 frames"), "got:\n{md}");
-        assert!(md.contains("**Вадим(0)** — 40/40 frames (100%)"), "got:\n{md}");
+        assert!(
+            md.starts_with("# Recap 18:55:01–18:57:39 — 40 frames"),
+            "got:\n{md}"
+        );
+        assert!(
+            md.contains("**Вадим(0)** — 40/40 frames (100%)"),
+            "got:\n{md}"
+        );
         // typing (10s) leads reading (5s, rolled from 2 episodes).
         let typing = md.find("typing").unwrap();
         let reading = md.find("reading").unwrap();
         assert!(typing < reading, "longer activity first:\n{md}");
-        assert!(md.contains("reading(Вадим(0)) — 5.0s total across 2 episodes"), "roll-up:\n{md}");
+        assert!(
+            md.contains("reading(Вадим(0)) — 5.0s total across 2 episodes"),
+            "roll-up:\n{md}"
+        );
         // Phantom surfaces as a note, not in the People list body.
-        assert!(md.contains("⚠️ id12 — вероятный фантом: 4 кадра"), "got:\n{md}");
-        assert!(md.contains("Objects: keyboard") && md.contains("Zones: workstation"), "scene:\n{md}");
+        assert!(
+            md.contains("⚠️ id12 — вероятный фантом: 4 кадра"),
+            "got:\n{md}"
+        );
+        assert!(
+            md.contains("Objects: keyboard") && md.contains("Zones: workstation"),
+            "scene:\n{md}"
+        );
     }
 }

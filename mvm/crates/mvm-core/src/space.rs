@@ -61,7 +61,14 @@ impl Pinhole {
         let w = cfg.width as f32;
         let h = cfg.height as f32;
         let fx = cfg.fx_ratio * w;
-        Self { fx, fy: fx, cx_px: w * 0.5, cy_px: h * 0.5, width: w, height: h }
+        Self {
+            fx,
+            fy: fx,
+            cx_px: w * 0.5,
+            cy_px: h * 0.5,
+            width: w,
+            height: h,
+        }
     }
 
     /// Estimate depth (metres) from a known real-world size and its pixel footprint.
@@ -71,7 +78,11 @@ impl Pinhole {
             return None;
         }
         let z = self.fx * real_size / pixel_size;
-        if z >= DEPTH_MIN_M && z <= DEPTH_MAX_M { Some(z) } else { None }
+        if z >= DEPTH_MIN_M && z <= DEPTH_MAX_M {
+            Some(z)
+        } else {
+            None
+        }
     }
 
     /// Back-project a pixel coordinate + depth to metric 3D (origin = camera).
@@ -220,7 +231,11 @@ impl ScaleCalibrator {
         let mut s = self.samples.clone();
         s.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let n = s.len();
-        Some(if n % 2 == 1 { s[n / 2] } else { 0.5 * (s[n / 2 - 1] + s[n / 2]) })
+        Some(if n % 2 == 1 {
+            s[n / 2]
+        } else {
+            0.5 * (s[n / 2 - 1] + s[n / 2])
+        })
     }
 
     /// Estimated focal length given a real-size prior (`fx = K / real`).
@@ -248,7 +263,14 @@ mod tests {
     use super::*;
 
     fn test_pinhole() -> Pinhole {
-        Pinhole { fx: 410.0, fy: 410.0, cx_px: 320.0, cy_px: 240.0, width: 640.0, height: 480.0 }
+        Pinhole {
+            fx: 410.0,
+            fy: 410.0,
+            cx_px: 320.0,
+            cy_px: 240.0,
+            width: 640.0,
+            height: 480.0,
+        }
     }
 
     /// Torso depth: vertical torso of the right pixel length → expected z.
@@ -258,8 +280,8 @@ mod tests {
         // real torso 0.5 m, want z=1.0 → pixel_len = fx·real/z = 410·0.5/1.0 = 205px
         let shoulder = (320.0, 140.0);
         let hip = (320.0, 345.0); // 205px below → vertical torso length 205
-        let (pos, z, conf) = super::torso_to_3d(&ph, shoulder, hip, 0.5)
-            .expect("torso depth should be in range");
+        let (pos, z, conf) =
+            super::torso_to_3d(&ph, shoulder, hip, 0.5).expect("torso depth should be in range");
         assert!((z - 1.0).abs() < 0.02, "z={z:.4} expected ~1.0m");
         assert!(pos[0].abs() < 1e-3, "centred torso → x≈0: {}", pos[0]);
         assert!(conf > 0.0, "ws_confidence should be positive at 1m");
@@ -273,9 +295,12 @@ mod tests {
         // diagonal torso, same 205px length: dx=123, dy=164 → sqrt = 205
         let shoulder = (320.0, 140.0);
         let hip = (443.0, 304.0);
-        let (_, z, _) = super::torso_to_3d(&ph, shoulder, hip, 0.5)
-            .expect("torso depth should be in range");
-        assert!((z - 1.0).abs() < 0.02, "leaning torso z={z:.4} expected ~1.0m");
+        let (_, z, _) =
+            super::torso_to_3d(&ph, shoulder, hip, 0.5).expect("torso depth should be in range");
+        assert!(
+            (z - 1.0).abs() < 0.02,
+            "leaning torso z={z:.4} expected ~1.0m"
+        );
     }
 
     /// Implausibly small torso (person too far / bad landmarks) → None.
@@ -293,7 +318,9 @@ mod tests {
         let ph = test_pinhole();
         // At 1m, face height ~78px: z = 410 * 0.19 / 78 ≈ 1.0
         let pixel_size = 410.0 * 0.19; // ~77.9px → z = 1.0m
-        let z = ph.distance_from_size(pixel_size, 0.19).expect("should be in range");
+        let z = ph
+            .distance_from_size(pixel_size, 0.19)
+            .expect("should be in range");
         assert!((z - 1.0).abs() < 0.01, "z={:.4} expected ~1.0m", z);
     }
 
@@ -304,7 +331,11 @@ mod tests {
         let pos = ph.pixel_to_3d(320.0, 240.0, 2.0);
         assert!(pos[0].abs() < 1e-4, "x should be ~0: {}", pos[0]);
         assert!(pos[1].abs() < 1e-4, "y should be ~0: {}", pos[1]);
-        assert!((pos[2] - 2.0).abs() < 1e-4, "z should equal input: {}", pos[2]);
+        assert!(
+            (pos[2] - 2.0).abs() < 1e-4,
+            "z should equal input: {}",
+            pos[2]
+        );
     }
 
     /// Right-of-centre pixel → positive x; below-centre → positive y.
@@ -324,7 +355,11 @@ mod tests {
         for _ in 0..30 {
             ema.update(1.0);
         }
-        assert!((ema.z - 1.0).abs() < 0.05, "EMA should converge to 1.0, got {:.4}", ema.z);
+        assert!(
+            (ema.z - 1.0).abs() < 0.05,
+            "EMA should converge to 1.0, got {:.4}",
+            ema.z
+        );
     }
 
     /// Implausible depth → None (uncalibrated).
@@ -332,11 +367,17 @@ mod tests {
     fn depth_rejects_implausible() {
         let ph = test_pinhole();
         // Very small bbox → z > 6m
-        assert!(ph.distance_from_size(1.0, 0.19).is_none(), "z > 6m should be None");
+        assert!(
+            ph.distance_from_size(1.0, 0.19).is_none(),
+            "z > 6m should be None"
+        );
         // Zero pixel size
         assert!(ph.distance_from_size(0.0, 0.19).is_none());
         // Very large bbox → z < 0.3m
-        assert!(ph.distance_from_size(1000.0, 0.19).is_none(), "z < 0.3m should be None");
+        assert!(
+            ph.distance_from_size(1000.0, 0.19).is_none(),
+            "z < 0.3m should be None"
+        );
     }
 
     /// Larger bbox (closer object) → smaller z. Monotonicity.
@@ -345,8 +386,13 @@ mod tests {
         let ph = test_pinhole();
         // close: bbox height = 156px (≈0.5m); far: 78px (≈1m)
         let z_close = ph.distance_from_size(156.0, 0.19).unwrap();
-        let z_far   = ph.distance_from_size(78.0,  0.19).unwrap();
-        assert!(z_close < z_far, "larger bbox should give smaller z: {:.4} vs {:.4}", z_close, z_far);
+        let z_far = ph.distance_from_size(78.0, 0.19).unwrap();
+        assert!(
+            z_close < z_far,
+            "larger bbox should give smaller z: {:.4} vs {:.4}",
+            z_close,
+            z_far
+        );
     }
 
     /// Identity-linked prior (personal height) overrides population prior.
@@ -357,7 +403,10 @@ mod tests {
         let z_pop = ph.distance_from_size(pixel_h, 0.19).unwrap();
         // Personal height 10% taller
         let z_personal = ph.distance_from_size(pixel_h, 0.19 * 1.1).unwrap();
-        assert!((z_personal - z_pop).abs() > 0.05, "personal prior should yield different z");
+        assert!(
+            (z_personal - z_pop).abs() > 0.05,
+            "personal prior should yield different z"
+        );
         // Personal z should be proportionally larger
         assert!(z_personal > z_pop, "taller face → farther estimated depth");
     }
@@ -399,7 +448,10 @@ mod tests {
             c.observe(pixel, d);
         }
         let est = c.real_given_fx(fx).unwrap();
-        assert!((est - real_torso).abs() < 1e-3, "recovered torso {est} ≠ {real_torso}");
+        assert!(
+            (est - real_torso).abs() < 1e-3,
+            "recovered torso {est} ≠ {real_torso}"
+        );
     }
 
     #[test]
@@ -407,8 +459,13 @@ mod tests {
         // The real 2.5 m YuNet calibration rows (models/calib_3d_yunet.csv):
         // (ground-truth distance, face bbox height px). Face prior 0.32 m.
         let rows: &[(f32, f32)] = &[
-            (0.5, 244.91), (1.0, 124.78), (1.5, 76.74), (2.0, 71.4),
-            (2.5, 58.82), (2.5, 57.27), (2.5, 59.84),
+            (0.5, 244.91),
+            (1.0, 124.78),
+            (1.5, 76.74),
+            (2.0, 71.4),
+            (2.5, 58.82),
+            (2.5, 57.27),
+            (2.5, 59.84),
         ];
         let real = 0.32;
         let mut c = ScaleCalibrator::new();
@@ -417,7 +474,14 @@ mod tests {
         }
         let fx_est = c.fx_given_real(real).unwrap();
         let mean_err = |fx: f32| -> f32 {
-            let ph = Pinhole { fx, fy: fx, cx_px: 320.0, cy_px: 240.0, width: 640.0, height: 480.0 };
+            let ph = Pinhole {
+                fx,
+                fy: fx,
+                cx_px: 320.0,
+                cy_px: 240.0,
+                width: 640.0,
+                height: 480.0,
+            };
             let s: f32 = rows
                 .iter()
                 .map(|&(d, px)| (ph.distance_from_size(px, real).unwrap_or(0.0) - d).abs())
@@ -426,7 +490,13 @@ mod tests {
         };
         let err_est = mean_err(fx_est);
         let err_bad = mean_err(250.0); // a deliberately wrong focal length
-        assert!(err_est < 0.2, "estimated fx should be close to tape, err {err_est}");
-        assert!(err_est < err_bad, "estimated {err_est} must beat wrong-fx {err_bad}");
+        assert!(
+            err_est < 0.2,
+            "estimated fx should be close to tape, err {err_est}"
+        );
+        assert!(
+            err_est < err_bad,
+            "estimated {err_est} must beat wrong-fx {err_bad}"
+        );
     }
 }

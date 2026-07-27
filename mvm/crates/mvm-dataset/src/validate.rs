@@ -23,7 +23,12 @@ use std::path::Path;
 /// are identity-grade PII and belong in the (separately gated) embeddings sidecar,
 /// not the self-describing label stream. Guards a future regression that would dump
 /// SFace vectors inline regardless of privacy mode.
-const EMBEDDING_KEYS: [&str; 4] = ["embedding", "descriptor", "sface_embedding", "face_embedding"];
+const EMBEDDING_KEYS: [&str; 4] = [
+    "embedding",
+    "descriptor",
+    "sface_embedding",
+    "face_embedding",
+];
 
 /// A finding's severity. Only [`Severity::Error`] fails the gate (unless `--strict`
 /// also promotes warnings — that policy lives in the CLI, not here).
@@ -91,10 +96,16 @@ pub struct SessionReport {
 
 impl SessionReport {
     pub fn errors(&self) -> usize {
-        self.findings.iter().filter(|f| f.severity == Severity::Error).count()
+        self.findings
+            .iter()
+            .filter(|f| f.severity == Severity::Error)
+            .count()
     }
     pub fn warns(&self) -> usize {
-        self.findings.iter().filter(|f| f.severity == Severity::Warn).count()
+        self.findings
+            .iter()
+            .filter(|f| f.severity == Severity::Warn)
+            .count()
     }
 }
 
@@ -143,7 +154,11 @@ pub fn check_session(session_dir: &Path, id: &str) -> SessionReport {
                 code: "no-labels",
                 msg: format!("no labels.jsonl under {}", session_dir.display()),
             });
-            return SessionReport { id: id.to_string(), findings, stats };
+            return SessionReport {
+                id: id.to_string(),
+                findings,
+                stats,
+            };
         }
     };
 
@@ -183,17 +198,31 @@ pub fn check_session(session_dir: &Path, id: &str) -> SessionReport {
         }
     }
 
-    SessionReport { id: id.to_string(), findings, stats }
+    SessionReport {
+        id: id.to_string(),
+        findings,
+        stats,
+    }
 }
 
 /// Push an error finding anchored to a frame.
 fn err(findings: &mut Vec<Finding>, fid: u64, code: &'static str, msg: String) {
-    findings.push(Finding { severity: Severity::Error, frame_id: Some(fid), code, msg });
+    findings.push(Finding {
+        severity: Severity::Error,
+        frame_id: Some(fid),
+        code,
+        msg,
+    });
 }
 
 /// Push a warning finding anchored to a frame.
 fn warn(findings: &mut Vec<Finding>, fid: u64, code: &'static str, msg: String) {
-    findings.push(Finding { severity: Severity::Warn, frame_id: Some(fid), code, msg });
+    findings.push(Finding {
+        severity: Severity::Warn,
+        frame_id: Some(fid),
+        code,
+        msg,
+    });
 }
 
 /// Validate one observation's binding keys, referenced artifacts, and entities;
@@ -209,16 +238,34 @@ fn check_observation(
 
     // Binding keys (§16.0.1).
     if obs.session_id != id {
-        err(findings, fid, "session-id-mismatch", format!("session_id={:?} but folder is {id:?}", obs.session_id));
+        err(
+            findings,
+            fid,
+            "session-id-mismatch",
+            format!("session_id={:?} but folder is {id:?}", obs.session_id),
+        );
     }
     if obs.schema_version != SCHEMA_VERSION {
-        warn(findings, fid, "schema-drift", format!("schema_version={:?}, checker expects {SCHEMA_VERSION:?}", obs.schema_version));
+        warn(
+            findings,
+            fid,
+            "schema-drift",
+            format!(
+                "schema_version={:?}, checker expects {SCHEMA_VERSION:?}",
+                obs.schema_version
+            ),
+        );
     }
 
     // Referenced RGB frame must exist on disk.
     if let Some(rel) = &obs.frame.frame_path {
         if !session_dir.join(rel).is_file() {
-            err(findings, fid, "missing-frame", format!("frame_path {rel:?} not on disk"));
+            err(
+                findings,
+                fid,
+                "missing-frame",
+                format!("frame_path {rel:?} not on disk"),
+            );
         }
     }
 
@@ -226,17 +273,37 @@ fn check_observation(
     if let Some(rel) = &obs.frame.depth_path {
         stats.with_depth += 1;
         if !session_dir.join(rel).is_file() {
-            err(findings, fid, "missing-depth", format!("depth_path {rel:?} not on disk"));
+            err(
+                findings,
+                fid,
+                "missing-depth",
+                format!("depth_path {rel:?} not on disk"),
+            );
         }
         match obs.frame.depth_range {
-            None => err(findings, fid, "bad-depth-range", "depth_path set but depth_range missing".into()),
+            None => err(
+                findings,
+                fid,
+                "bad-depth-range",
+                "depth_path set but depth_range missing".into(),
+            ),
             Some([lo, hi]) if !(lo.is_finite() && hi.is_finite() && lo <= hi) => {
-                err(findings, fid, "bad-depth-range", format!("depth_range [{lo}, {hi}] is not a valid [min ≤ max]"));
+                err(
+                    findings,
+                    fid,
+                    "bad-depth-range",
+                    format!("depth_range [{lo}, {hi}] is not a valid [min ≤ max]"),
+                );
             }
             Some(_) => {}
         }
     } else if obs.frame.depth_range.is_some() {
-        warn(findings, fid, "orphan-depth-range", "depth_range present without a depth_path".into());
+        warn(
+            findings,
+            fid,
+            "orphan-depth-range",
+            "depth_range present without a depth_path".into(),
+        );
     }
 
     // Entities.
@@ -244,13 +311,26 @@ fn check_observation(
     let mut object_entities = 0u32;
     for e in &obs.entities {
         if e.entity_id.trim().is_empty() {
-            err(findings, fid, "empty-entity-id", "entity has an empty entity_id".into());
+            err(
+                findings,
+                fid,
+                "empty-entity-id",
+                "entity has an empty entity_id".into(),
+            );
         }
         // Privacy: no raw face descriptor may ride inline in the labels.
         if let Some(map) = e.attributes.as_object() {
             for k in EMBEDDING_KEYS {
                 if map.contains_key(k) {
-                    err(findings, fid, "embedding-leak", format!("entity {:?} carries a raw {k:?} — face descriptors must not sit in labels.jsonl", e.entity_id));
+                    err(
+                        findings,
+                        fid,
+                        "embedding-leak",
+                        format!(
+                            "entity {:?} carries a raw {k:?} — face descriptors must not sit in labels.jsonl",
+                            e.entity_id
+                        ),
+                    );
                 }
             }
         }
@@ -265,16 +345,37 @@ fn check_observation(
                 stats.objects += 1;
                 accumulate_object(e, fid, findings, stats);
             }
-            other => warn(findings, fid, "unknown-kind", format!("entity {:?} has unknown kind {other:?}", e.entity_id)),
+            other => warn(
+                findings,
+                fid,
+                "unknown-kind",
+                format!("entity {:?} has unknown kind {other:?}", e.entity_id),
+            ),
         }
     }
 
     // Quality block must agree with the entities it summarizes.
     if obs.quality.people_count != person_entities {
-        warn(findings, fid, "quality-count-mismatch", format!("quality.people_count={} but {person_entities} person entities", obs.quality.people_count));
+        warn(
+            findings,
+            fid,
+            "quality-count-mismatch",
+            format!(
+                "quality.people_count={} but {person_entities} person entities",
+                obs.quality.people_count
+            ),
+        );
     }
     if obs.quality.object_count != object_entities {
-        warn(findings, fid, "quality-count-mismatch", format!("quality.object_count={} but {object_entities} object entities", obs.quality.object_count));
+        warn(
+            findings,
+            fid,
+            "quality-count-mismatch",
+            format!(
+                "quality.object_count={} but {object_entities} object entities",
+                obs.quality.object_count
+            ),
+        );
     }
 }
 
@@ -286,14 +387,22 @@ fn accumulate_person(attrs: &serde_json::Value, stats: &mut CheckStats) {
     } else {
         stats.anon_people += 1;
     }
-    if let Some(label) = attrs.get("posture").and_then(|p| p.get("label")).and_then(|l| l.as_str()) {
+    if let Some(label) = attrs
+        .get("posture")
+        .and_then(|p| p.get("label"))
+        .and_then(|l| l.as_str())
+    {
         *stats.posture_hist.entry(label.to_string()).or_default() += 1;
     }
     // A withheld posture is honest absence (§16.0.2) — track the rate, never error.
     if attrs.get("posture_status").and_then(|s| s.as_str()) == Some("withheld") {
         stats.withheld_posture += 1;
     }
-    if let Some(label) = attrs.get("emotion").and_then(|e| e.get("label")).and_then(|l| l.as_str()) {
+    if let Some(label) = attrs
+        .get("emotion")
+        .and_then(|e| e.get("label"))
+        .and_then(|l| l.as_str())
+    {
         *stats.emotion_hist.entry(label.to_string()).or_default() += 1;
     }
 }
@@ -321,18 +430,42 @@ fn validate_mask_rle(
     fid: u64,
     findings: &mut Vec<Finding>,
 ) {
-    let res = mask.get("res").and_then(|r| r.as_u64()).unwrap_or(MASK_RES as u64);
+    let res = mask
+        .get("res")
+        .and_then(|r| r.as_u64())
+        .unwrap_or(MASK_RES as u64);
     if res != MASK_RES as u64 {
-        err(findings, fid, "mask-res-drift", format!("object {:?} mask res={res}, checker expects {MASK_RES}", e.entity_id));
+        err(
+            findings,
+            fid,
+            "mask-res-drift",
+            format!(
+                "object {:?} mask res={res}, checker expects {MASK_RES}",
+                e.entity_id
+            ),
+        );
     }
     let Some(rle) = mask.get("rle").and_then(|r| r.as_array()) else {
-        err(findings, fid, "bad-mask-rle", format!("object {:?} mask has no rle array", e.entity_id));
+        err(
+            findings,
+            fid,
+            "bad-mask-rle",
+            format!("object {:?} mask has no rle array", e.entity_id),
+        );
         return;
     };
     let sum: u64 = rle.iter().filter_map(|v| v.as_u64()).sum();
     let expected = res * res;
     if sum != expected {
-        err(findings, fid, "bad-mask-rle", format!("object {:?} mask RLE covers {sum} cells, expected {expected}", e.entity_id));
+        err(
+            findings,
+            fid,
+            "bad-mask-rle",
+            format!(
+                "object {:?} mask RLE covers {sum} cells, expected {expected}",
+                e.entity_id
+            ),
+        );
     }
 }
 
@@ -413,9 +546,20 @@ mod tests {
             "s",
             0,
             vec![
-                person("p1", 0, serde_json::json!({ "identity": {"label":"Вадим","confidence":0.9}, "posture": {"label":"sitting","confidence":0.95}, "posture_status":"observed", "emotion":{"label":"Neutral","confidence":0.8} })),
-                person("p10", 10, serde_json::json!({ "posture_status":"withheld" })),
-                object("o10001", serde_json::json!({ "class":"cup", "confidence":0.7, "mask": full_bg_rle() })),
+                person(
+                    "p1",
+                    0,
+                    serde_json::json!({ "identity": {"label":"Вадим","confidence":0.9}, "posture": {"label":"sitting","confidence":0.95}, "posture_status":"observed", "emotion":{"label":"Neutral","confidence":0.8} }),
+                ),
+                person(
+                    "p10",
+                    10,
+                    serde_json::json!({ "posture_status":"withheld" }),
+                ),
+                object(
+                    "o10001",
+                    serde_json::json!({ "class":"cup", "confidence":0.7, "mask": full_bg_rle() }),
+                ),
             ],
         );
         f0.frame.frame_path = Some("frames/000000.jpg".into());
@@ -424,8 +568,18 @@ mod tests {
         let dir = write_session(&root, "s", &[f0]);
 
         let r = check_session(&dir, "s");
-        assert_eq!(r.errors(), 0, "clean session must not error: {:?}", r.findings);
-        assert_eq!(r.warns(), 0, "clean session must not warn: {:?}", r.findings);
+        assert_eq!(
+            r.errors(),
+            0,
+            "clean session must not error: {:?}",
+            r.findings
+        );
+        assert_eq!(
+            r.warns(),
+            0,
+            "clean session must not warn: {:?}",
+            r.findings
+        );
         assert_eq!(r.stats.frames, 1);
         assert_eq!(r.stats.people, 2);
         assert_eq!(r.stats.gallery_people, 1);
@@ -455,7 +609,10 @@ mod tests {
     #[test]
     fn bad_mask_rle_is_error() {
         let root = temp_root("badrle");
-        let bad = object("o10001", serde_json::json!({ "class":"cup", "mask": {"res":MASK_RES,"coverage":0.0,"rle":[10, 20]} }));
+        let bad = object(
+            "o10001",
+            serde_json::json!({ "class":"cup", "mask": {"res":MASK_RES,"coverage":0.0,"rle":[10, 20]} }),
+        );
         let dir = write_session(&root, "s", &[obs("s", 0, vec![bad])]);
         let r = check_session(&dir, "s");
         assert_eq!(r.errors(), 1, "{:?}", r.findings);
@@ -522,18 +679,35 @@ mod tests {
 
     #[test]
     fn frame_count_mismatch_with_session_toml_warns() {
-        use crate::session::{AnomaliesBlock, ObjectsBlock, ParticipantsBlock, SessionBlock, SessionMeta};
+        use crate::session::{
+            AnomaliesBlock, ObjectsBlock, ParticipantsBlock, SessionBlock, SessionMeta,
+        };
         let root = temp_root("countmismatch");
         let dir = write_session(&root, "s", &[obs("s", 0, vec![]), obs("s", 1, vec![])]);
         // Summary claims 5 saved frames; only 2 labels exist.
         let meta = SessionMeta {
-            session: SessionBlock { id: "s".into(), started: "a".into(), ended: "b".into(), saved_frames: 5 },
-            participants: ParticipantsBlock { known: vec![], anonymous: 0 },
+            session: SessionBlock {
+                id: "s".into(),
+                started: "a".into(),
+                ended: "b".into(),
+                saved_frames: 5,
+            },
+            participants: ParticipantsBlock {
+                known: vec![],
+                anonymous: 0,
+            },
             activities: Default::default(),
-            anomalies: AnomaliesBlock { max: 0.0, mean: 0.0 },
+            anomalies: AnomaliesBlock {
+                max: 0.0,
+                mean: 0.0,
+            },
             objects: ObjectsBlock { top: vec![] },
         };
-        std::fs::write(dir.join("session.toml"), toml::to_string_pretty(&meta).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("session.toml"),
+            toml::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
         let r = check_session(&dir, "s");
         assert_eq!(r.errors(), 0);
         assert_eq!(r.warns(), 1);
@@ -543,12 +717,20 @@ mod tests {
     #[test]
     fn check_dataset_reports_each_session() {
         let root = temp_root("dataset");
-        write_session(&root, "2026-07-23_100000", &[obs("2026-07-23_100000", 0, vec![])]);
+        write_session(
+            &root,
+            "2026-07-23_100000",
+            &[obs("2026-07-23_100000", 0, vec![])],
+        );
         // Second session has a leak.
         write_session(
             &root,
             "2026-07-23_110000",
-            &[obs("2026-07-23_110000", 0, vec![person("p0", 0, serde_json::json!({ "descriptor": [1.0] }))])],
+            &[obs(
+                "2026-07-23_110000",
+                0,
+                vec![person("p0", 0, serde_json::json!({ "descriptor": [1.0] }))],
+            )],
         );
         let rep = check_dataset(&root).unwrap();
         assert_eq!(rep.sessions.len(), 2);

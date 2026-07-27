@@ -6,31 +6,36 @@
 //! - Контракт: [`Module`] trait — каждый модуль MVM реализует его
 //! - Конфигурация: [`Config`] — глобальные настройки
 
-pub mod types;
-pub mod tracker;
-pub mod module;
-pub mod config;
-pub mod kalman;
-pub mod space;
-pub mod emotion;
-pub mod world;
-pub mod motion;
-pub mod assignment;
-pub mod posture;
-pub mod mask;
 pub mod activity;
 pub mod anomaly;
-pub mod recap;
+pub mod assignment;
 pub mod canonical;
+pub mod config;
+pub mod emotion;
+pub mod kalman;
+pub mod mask;
+pub mod module;
+pub mod motion;
+pub mod posture;
+pub mod recap;
+pub mod space;
+pub mod tracker;
+pub mod types;
+pub mod world;
 
-pub use types::{BBox, Detection, PersonTrack, EntityKind, Entity, RelationKind, Relation, Scene};
-pub use motion::{Landmarks33, LandmarkHistory};
-pub use world::{WorldState, PersonState, ObjectState, Position3D, AudioEvent, Activity, HandState};
-pub use mask::{InstanceMask, MASK_RES};
-pub use activity::{ActivityJournal, ActivityInstance, ActivityEvent, ActivityKey, ActivityPhase};
+pub use activity::{ActivityEvent, ActivityInstance, ActivityJournal, ActivityKey, ActivityPhase};
 pub use anomaly::AnomalyScorer;
-pub use space::ScaleCalibrator;
-pub use emotion::{EMOTION_LABELS, EMOTION_MAX_ENTROPY, emotion_entropy, emotion_label, emotion_label_gated, fuse_emotion_temporal};
-pub use tracker::PersonTracker;
-pub use module::{Module, ModuleMetadata};
 pub use config::Config;
+pub use emotion::{
+    EMOTION_LABELS, EMOTION_MAX_ENTROPY, emotion_entropy, emotion_label, emotion_label_gated,
+    fuse_emotion_temporal,
+};
+pub use mask::{InstanceMask, MASK_RES};
+pub use module::{Module, ModuleMetadata};
+pub use motion::{LandmarkHistory, Landmarks33};
+pub use space::ScaleCalibrator;
+pub use tracker::PersonTracker;
+pub use types::{BBox, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind, Scene};
+pub use world::{
+    Activity, AudioEvent, HandState, ObjectState, PersonState, Position3D, WorldState,
+};

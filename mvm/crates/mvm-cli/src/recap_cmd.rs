@@ -13,7 +13,7 @@
 //! directory prefers flat logs when present and falls back to semantic sessions —
 //! keeping recap working once phase 3 makes text-only sessions the default.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::DateTime;
 use mvm_core::recap::{EpisodeObs, FrameObs, PersonObs, Recap};
 use std::path::{Path, PathBuf};
@@ -34,11 +34,19 @@ pub struct RecapArgs {
 /// data_dir a default `mvm run` writes to. An unreadable product config falls
 /// back to cwd — recap is read-only, and `run`/`serve` already fail loudly.
 fn default_input() -> PathBuf {
-    crate::config_file::load().map(|p| p.data_dir).unwrap_or_else(|_| PathBuf::from("."))
+    crate::config_file::load()
+        .map(|p| p.data_dir)
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 pub fn parse_recap_args(raw: &[String]) -> RecapArgs {
-    let mut a = RecapArgs { input: default_input(), events: None, from: None, to: None, last: None };
+    let mut a = RecapArgs {
+        input: default_input(),
+        events: None,
+        from: None,
+        to: None,
+        last: None,
+    };
     let mut i = 2; // skip program name + "recap"
     while i < raw.len() {
         match raw[i].as_str() {
@@ -80,7 +88,13 @@ pub fn recap_markdown(
     from: Option<String>,
     to: Option<String>,
 ) -> Result<String> {
-    let args = RecapArgs { input: dir.to_path_buf(), events: None, from, to, last };
+    let args = RecapArgs {
+        input: dir.to_path_buf(),
+        events: None,
+        from,
+        to,
+        last,
+    };
     render_recap_string(&args)
 }
 
@@ -95,13 +109,22 @@ fn render_recap_string(args: &RecapArgs) -> Result<String> {
     episodes.sort_by(|a, b| a.0.cmp(&b.0));
 
     let window = resolve_window(args, &frames)?;
-    let kept_frames: Vec<FrameObs> =
-        frames.iter().filter(|(ts, _)| in_window(ts, &window)).map(|(_, o)| o.clone()).collect();
-    let kept_eps: Vec<EpisodeObs> =
-        episodes.iter().filter(|(ts, _)| in_window(ts, &window)).map(|(_, o)| o.clone()).collect();
+    let kept_frames: Vec<FrameObs> = frames
+        .iter()
+        .filter(|(ts, _)| in_window(ts, &window))
+        .map(|(_, o)| o.clone())
+        .collect();
+    let kept_eps: Vec<EpisodeObs> = episodes
+        .iter()
+        .filter(|(ts, _)| in_window(ts, &window))
+        .map(|(_, o)| o.clone())
+        .collect();
 
     if kept_frames.is_empty() && kept_eps.is_empty() {
-        bail!("no log entries in the selected window ({})", source.describe());
+        bail!(
+            "no log entries in the selected window ({})",
+            source.describe()
+        );
     }
 
     let recap = Recap::build(&kept_frames, &kept_eps);
@@ -112,8 +135,13 @@ fn render_recap_string(args: &RecapArgs) -> Result<String> {
 /// Where recap/inspect read frames from — flat per-day logs (`scene-*.jsonl` +
 /// `events-*.jsonl`) or semantic session `labels.jsonl` files (phase 16.7).
 enum Source {
-    Flat { scene: Vec<PathBuf>, events: Vec<PathBuf> },
-    Semantic { labels: Vec<PathBuf> },
+    Flat {
+        scene: Vec<PathBuf>,
+        events: Vec<PathBuf>,
+    },
+    Semantic {
+        labels: Vec<PathBuf>,
+    },
 }
 
 impl Source {
@@ -133,7 +161,9 @@ impl Source {
 fn resolve_source(input: &Path, events: Option<&PathBuf>) -> Result<Source> {
     if input.is_file() {
         if input.file_name().and_then(|n| n.to_str()) == Some("labels.jsonl") {
-            return Ok(Source::Semantic { labels: vec![input.to_path_buf()] });
+            return Ok(Source::Semantic {
+                labels: vec![input.to_path_buf()],
+            });
         }
         return Ok(Source::Flat {
             scene: vec![input.to_path_buf()],
@@ -148,7 +178,10 @@ fn resolve_source(input: &Path, events: Option<&PathBuf>) -> Result<Source> {
     if !scene.is_empty() {
         return Ok(Source::Flat { scene, events: ev });
     }
-    bail!("no scene-*.jsonl or semantic sessions (labels.jsonl) in {}", input.display());
+    bail!(
+        "no scene-*.jsonl or semantic sessions (labels.jsonl) in {}",
+        input.display()
+    );
 }
 
 /// Globbed `scene-*.jsonl` / `events-*.jsonl` in `dir` (sorted; may be empty).
@@ -211,7 +244,8 @@ fn collect_frames_and_episodes(
     match src {
         Source::Flat { scene, events } => {
             for f in scene {
-                let text = std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
+                let text =
+                    std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
                 for line in text.lines().filter(|l| !l.trim().is_empty()) {
                     if let Some(o) = parse_frame(line) {
                         frames.push(o);
@@ -219,7 +253,8 @@ fn collect_frames_and_episodes(
                 }
             }
             for f in events {
-                let text = std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
+                let text =
+                    std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
                 for line in text.lines().filter(|l| !l.trim().is_empty()) {
                     if let Some(o) = parse_episode(line) {
                         episodes.push(o);
@@ -229,9 +264,12 @@ fn collect_frames_and_episodes(
         }
         Source::Semantic { labels } => {
             for f in labels {
-                let text = std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
+                let text =
+                    std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
                 for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                    let Ok(obs) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                    let Ok(obs) = serde_json::from_str::<serde_json::Value>(line) else {
+                        continue;
+                    };
                     if let Some(sv) = scene_value_from_semantic(&obs) {
                         if let Some(o) = parse_frame_value(&sv) {
                             frames.push(o);
@@ -275,7 +313,11 @@ fn scene_value_from_semantic(obs: &serde_json::Value) -> Option<serde_json::Valu
         let attrs = e.get("attributes");
         match e.get("kind").and_then(|k| k.as_str()).unwrap_or("") {
             "person" => {
-                let id = e.get("entity_id").and_then(|x| x.as_str()).and_then(entity_num).unwrap_or(0);
+                let id = e
+                    .get("entity_id")
+                    .and_then(|x| x.as_str())
+                    .and_then(entity_num)
+                    .unwrap_or(0);
                 let mut face = serde_json::Map::new();
                 face.insert("id".into(), serde_json::json!(id));
                 if let Some(name) = attr_label(attrs, "identity") {
@@ -288,8 +330,10 @@ fn scene_value_from_semantic(obs: &serde_json::Value) -> Option<serde_json::Valu
                     face.insert("emotion".into(), serde_json::json!(emo));
                 }
                 // dist_m mirrors the flat log: the Z of the 3D position (not Euclidean).
-                if let Some(z) =
-                    attrs.and_then(|a| a.get("position_3d")).and_then(|p| p.get("z")).and_then(|x| x.as_f64())
+                if let Some(z) = attrs
+                    .and_then(|a| a.get("position_3d"))
+                    .and_then(|p| p.get("z"))
+                    .and_then(|x| x.as_f64())
                 {
                     face.insert("dist_m".into(), serde_json::json!(z));
                 }
@@ -335,16 +379,30 @@ fn scene_value_from_semantic(obs: &serde_json::Value) -> Option<serde_json::Valu
 /// `events-*.jsonl`-shaped values (ts from the frame; participants→u32; the
 /// semantic `stable` field → the flat `stable_participants`).
 fn event_values_from_semantic(obs: &serde_json::Value) -> Vec<serde_json::Value> {
-    let ts = obs.get("frame").and_then(|f| f.get("timestamp")).and_then(|x| x.as_str()).unwrap_or("");
+    let ts = obs
+        .get("frame")
+        .and_then(|f| f.get("timestamp"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
     let mut out = Vec::new();
-    for ev in obs.get("events").and_then(|e| e.as_array()).into_iter().flatten() {
+    for ev in obs
+        .get("events")
+        .and_then(|e| e.as_array())
+        .into_iter()
+        .flatten()
+    {
         if ev.get("kind").and_then(|k| k.as_str()) != Some("episode") {
             continue;
         }
         let participants: Vec<u64> = ev
             .get("participants")
             .and_then(|p| p.as_array())
-            .map(|arr| arr.iter().filter_map(|x| x.as_str()).filter_map(entity_num).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .filter_map(entity_num)
+                    .collect()
+            })
             .unwrap_or_default();
         let mut m = serde_json::Map::new();
         m.insert("ts".into(), serde_json::json!(ts));
@@ -394,8 +452,19 @@ fn parse_frame_value(v: &serde_json::Value) -> Option<(String, FrameObs)> {
         .unwrap_or_default();
     let object_classes = distinct_strings(v.get("objects"), "class");
     let zone_labels = distinct_strings(v.get("stable_zones"), "label");
-    let anomaly = v.get("anomaly_score").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-    Some((ts, FrameObs { people, object_classes, zone_labels, anomaly }))
+    let anomaly = v
+        .get("anomaly_score")
+        .and_then(|x| x.as_f64())
+        .unwrap_or(0.0) as f32;
+    Some((
+        ts,
+        FrameObs {
+            people,
+            object_classes,
+            zone_labels,
+            anomaly,
+        },
+    ))
 }
 
 /// Distinct string values of `field` across an array node (dedup within a frame).
@@ -434,8 +503,14 @@ fn parse_episode_value(v: &serde_json::Value) -> Option<(String, EpisodeObs)> {
             label: v.get("label")?.as_str()?.to_string(),
             participants,
             duration_s: v.get("duration_s").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            peak_confidence: v.get("peak_confidence").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32,
-            stable_participants: v.get("stable_participants").and_then(|x| x.as_bool()).unwrap_or(false),
+            peak_confidence: v
+                .get("peak_confidence")
+                .and_then(|x| x.as_f64())
+                .unwrap_or(0.0) as f32,
+            stable_participants: v
+                .get("stable_participants")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false),
         },
     ))
 }
@@ -454,8 +529,8 @@ fn resolve_window(args: &RecapArgs, frames: &[(String, FrameObs)]) -> Result<Win
         let latest = frames.last().map(|(ts, _)| ts.clone());
         let from = match &latest {
             Some(ts) => {
-                let dt = DateTime::parse_from_rfc3339(ts)
-                    .with_context(|| format!("parse ts {ts}"))?;
+                let dt =
+                    DateTime::parse_from_rfc3339(ts).with_context(|| format!("parse ts {ts}"))?;
                 let cutoff = dt - chrono::Duration::seconds(secs);
                 Some(cutoff.format("%Y-%m-%dT%H:%M:%S%:z").to_string())
             }
@@ -463,7 +538,10 @@ fn resolve_window(args: &RecapArgs, frames: &[(String, FrameObs)]) -> Result<Win
         };
         Ok(Window { from, to: None })
     } else {
-        Ok(Window { from: args.from.clone(), to: args.to.clone() })
+        Ok(Window {
+            from: args.from.clone(),
+            to: args.to.clone(),
+        })
     }
 }
 
@@ -492,13 +570,20 @@ fn parse_duration_secs(s: &str) -> Result<i64> {
     } else {
         (s, 1)
     };
-    let n: i64 = num.trim().parse().with_context(|| format!("bad duration '{s}'"))?;
+    let n: i64 = num
+        .trim()
+        .parse()
+        .with_context(|| format!("bad duration '{s}'"))?;
     Ok(n * mult)
 }
 
 /// A time-of-day span label from the kept frames (e.g. `18:55:01–18:57:39`).
 fn window_title(frames: &[(String, FrameObs)], w: &Window) -> String {
-    let kept: Vec<&String> = frames.iter().map(|(ts, _)| ts).filter(|ts| in_window(ts, w)).collect();
+    let kept: Vec<&String> = frames
+        .iter()
+        .map(|(ts, _)| ts)
+        .filter(|ts| in_window(ts, w))
+        .collect();
     match (kept.first(), kept.last()) {
         (Some(a), Some(b)) => format!("{}–{}", hms(a), hms(b)),
         _ => "—".to_string(),
@@ -527,7 +612,13 @@ pub struct InspectArgs {
 pub fn parse_inspect_args(raw: &[String]) -> InspectArgs {
     // md defaults true — compact markdown, aligned with the MCP `mvm_inspect`
     // tool (phase 13.A4). `--raw`/`--json` opts back into raw JSONL.
-    let mut a = InspectArgs { input: default_input(), around: None, window_s: 5.0, id: None, md: true };
+    let mut a = InspectArgs {
+        input: default_input(),
+        around: None,
+        window_s: 5.0,
+        id: None,
+        md: true,
+    };
     let mut i = 2; // skip program name + "inspect"
     while i < raw.len() {
         match raw[i].as_str() {
@@ -558,7 +649,13 @@ pub fn inspect_output(
     id: Option<u32>,
     md: bool,
 ) -> Result<String> {
-    inspect_collect(&InspectArgs { input: input.to_path_buf(), around, window_s, id, md })
+    inspect_collect(&InspectArgs {
+        input: input.to_path_buf(),
+        around,
+        window_s,
+        id,
+        md,
+    })
 }
 
 fn inspect_collect(args: &InspectArgs) -> Result<String> {
@@ -567,7 +664,8 @@ fn inspect_collect(args: &InspectArgs) -> Result<String> {
     match &source {
         Source::Flat { scene, .. } => {
             for f in scene {
-                let text = std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
+                let text =
+                    std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
                 for line in text.lines().filter(|l| !l.trim().is_empty()) {
                     if let Some(ts) = serde_json::from_str::<serde_json::Value>(line)
                         .ok()
@@ -582,9 +680,12 @@ fn inspect_collect(args: &InspectArgs) -> Result<String> {
         // md/filter/raw paths work unchanged (`--raw` then shows that projection).
         Source::Semantic { labels } => {
             for f in labels {
-                let text = std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
+                let text =
+                    std::fs::read_to_string(f).with_context(|| format!("read {}", f.display()))?;
                 for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                    let Ok(obs) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                    let Ok(obs) = serde_json::from_str::<serde_json::Value>(line) else {
+                        continue;
+                    };
                     if let Some(sv) = scene_value_from_semantic(&obs) {
                         if let Some(ts) = sv.get("ts").and_then(|x| x.as_str()).map(String::from) {
                             lines.push((ts, sv.to_string()));
@@ -687,7 +788,10 @@ mod tests {
     use super::*;
 
     fn line(ts: &str, id: u32) -> (String, String) {
-        (ts.into(), format!(r#"{{"ts":"{ts}","faces":[{{"id":{id}}}]}}"#))
+        (
+            ts.into(),
+            format!(r#"{{"ts":"{ts}","faces":[{{"id":{id}}}]}}"#),
+        )
     }
 
     #[test]
@@ -719,24 +823,33 @@ mod tests {
     fn inspect_md_defaults_true_and_raw_opts_out() {
         let base: Vec<String> = ["mvm", "inspect"].iter().map(|s| s.to_string()).collect();
         assert!(parse_inspect_args(&base).md, "markdown is the default");
-        let raw: Vec<String> = ["mvm", "inspect", "--raw"].iter().map(|s| s.to_string()).collect();
+        let raw: Vec<String> = ["mvm", "inspect", "--raw"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(!parse_inspect_args(&raw).md, "--raw switches to raw JSONL");
-        let json: Vec<String> = ["mvm", "inspect", "--json"].iter().map(|s| s.to_string()).collect();
+        let json: Vec<String> = ["mvm", "inspect", "--json"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(!parse_inspect_args(&json).md, "--json is an alias of --raw");
     }
 
     #[test]
     fn inspect_md_line_is_compact() {
         let raw = r#"{"ts":"2026-07-05T18:55:19+03:00","faces":[{"id":0,"identity":"Вадим","dist_m":1.02,"posture":"standing","emotion":"Neutral"}]}"#;
-        assert_eq!(inspect_md_line(raw), "18:55:19 · id0 Вадим 1.0m standing Neutral");
+        assert_eq!(
+            inspect_md_line(raw),
+            "18:55:19 · id0 Вадим 1.0m standing Neutral"
+        );
     }
 
     // ── §16.7 semantic-session reading (golden-parity with the flat logs) ──────
 
     use crate::state::StateFile;
-    use mvm_core::world::{ObjectState, PersonState, Position3D, WorldState};
     use mvm_core::BBox;
-    use mvm_dataset::{route_with_relations, RouteContext, SceneRelations, ZoneRel};
+    use mvm_core::world::{ObjectState, PersonState, Position3D, WorldState};
+    use mvm_dataset::{RouteContext, SceneRelations, ZoneRel, route_with_relations};
     use std::time::Instant;
 
     fn tmp_path(tag: &str) -> PathBuf {
@@ -746,13 +859,23 @@ mod tests {
     fn full_person(id: u32) -> PersonState {
         PersonState {
             track_id: id,
-            bbox: BBox { x1: 0.25, y1: 0.1, x2: 0.55, y2: 0.9 },
+            bbox: BBox {
+                x1: 0.25,
+                y1: 0.1,
+                x2: 0.55,
+                y2: 0.9,
+            },
             face_bbox: None,
             identity: Some(("Вадим".into(), 0.8)),
             emotion: Some(("Neutral".into(), 0.7)),
             posture: Some(("sitting".into(), 0.9)),
             // z = 1.5 survives the flat log's 3-dp rounding, so dist_m matches exactly.
-            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.5, confidence: 0.6 }),
+            position_3d: Some(Position3D {
+                x: 0.1,
+                y: 0.2,
+                z: 1.5,
+                confidence: 0.6,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -772,7 +895,12 @@ mod tests {
     }
 
     fn ctx_at(ts: &'static str) -> RouteContext<'static> {
-        RouteContext { dataset_id: "d", session_id: "s", timestamp: ts, seq_in_session: 0 }
+        RouteContext {
+            dataset_id: "d",
+            session_id: "s",
+            timestamp: ts,
+            seq_in_session: 0,
+        }
     }
 
     #[test]
@@ -786,7 +914,12 @@ mod tests {
         world.objects.push(ObjectState {
             id: 10001,
             class: "keyboard".into(),
-            bbox: BBox { x1: 0.3, y1: 0.4, x2: 0.5, y2: 0.6 }, // overlaps the person → one zone
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.4,
+                x2: 0.5,
+                y2: 0.6,
+            }, // overlaps the person → one zone
             confidence: 0.8,
             age: 5,
             position_3d: None,
@@ -803,7 +936,11 @@ mod tests {
 
         // Semantic: the real router with the matching persistent zone.
         let rel = SceneRelations {
-            zones: vec![ZoneRel { persistent_id: Some(1), label: Some("workstation".into()), members: vec![1, 10001] }],
+            zones: vec![ZoneRel {
+                persistent_id: Some(1),
+                label: Some("workstation".into()),
+                members: vec![1, 10001],
+            }],
             edges: vec![],
         };
         let obs = route_with_relations(&world, &ctx_at("2026-07-17T15:30:00.000+03:00"), &rel);
@@ -811,7 +948,10 @@ mod tests {
         let sv = scene_value_from_semantic(&v).expect("scene projection");
         let (_, sem) = parse_frame_value(&sv).expect("semantic frame parses");
 
-        assert_eq!(flat, sem, "FrameObs must match between flat and semantic sources");
+        assert_eq!(
+            flat, sem,
+            "FrameObs must match between flat and semantic sources"
+        );
         // Sanity: the shared content is actually populated (not an empty-equals-empty pass).
         assert_eq!(sem.people[0].identity.as_deref(), Some("Вадим"));
         assert_eq!(sem.people[0].dist_m, Some(1.5));
@@ -839,13 +979,20 @@ mod tests {
 
         let mut world = WorldState::new(Instant::now());
         world.events.push(ev);
-        let obs = route_with_relations(&world, &ctx_at("2026-07-17T15:30:00.000+03:00"), &SceneRelations::default());
+        let obs = route_with_relations(
+            &world,
+            &ctx_at("2026-07-17T15:30:00.000+03:00"),
+            &SceneRelations::default(),
+        );
         let v = serde_json::to_value(&obs).unwrap();
         let evs = event_values_from_semantic(&v);
         assert_eq!(evs.len(), 1, "one inline episode");
         let (_, sem) = parse_episode_value(&evs[0]).expect("semantic episode parses");
 
-        assert_eq!(flat, sem, "EpisodeObs must match between flat and semantic sources");
+        assert_eq!(
+            flat, sem,
+            "EpisodeObs must match between flat and semantic sources"
+        );
         assert_eq!(sem.participants, vec![0, 10001]);
         assert!(sem.stable_participants);
     }
@@ -878,12 +1025,26 @@ mod tests {
 
         let mut world = WorldState::new(Instant::now());
         world.people.push(full_person(1));
-        let obs = route_with_relations(&world, &ctx_at("2026-07-17T15:30:00.000+03:00"), &SceneRelations::default());
-        std::fs::write(sess.join("labels.jsonl"), format!("{}\n", serde_json::to_string(&obs).unwrap())).unwrap();
+        let obs = route_with_relations(
+            &world,
+            &ctx_at("2026-07-17T15:30:00.000+03:00"),
+            &SceneRelations::default(),
+        );
+        std::fs::write(
+            sess.join("labels.jsonl"),
+            format!("{}\n", serde_json::to_string(&obs).unwrap()),
+        )
+        .unwrap();
 
         let md = inspect_output(&root, None, 5.0, None, true).expect("inspect reads the session");
-        assert!(md.contains("id1 Вадим"), "compact md line from the semantic obs:\n{md}");
-        assert!(md.contains("1.5m sitting"), "dist + posture projected:\n{md}");
+        assert!(
+            md.contains("id1 Вадим"),
+            "compact md line from the semantic obs:\n{md}"
+        );
+        assert!(
+            md.contains("1.5m sitting"),
+            "dist + posture projected:\n{md}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -901,7 +1062,12 @@ mod tests {
         world.objects.push(ObjectState {
             id: 10001,
             class: "keyboard".into(),
-            bbox: BBox { x1: 0.3, y1: 0.4, x2: 0.5, y2: 0.6 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.4,
+                x2: 0.5,
+                y2: 0.6,
+            },
             confidence: 0.8,
             age: 5,
             position_3d: None,
@@ -910,11 +1076,21 @@ mod tests {
             last_seen: now,
         });
         let rel = SceneRelations {
-            zones: vec![ZoneRel { persistent_id: Some(1), label: Some("workstation".into()), members: vec![1, 10001] }],
+            zones: vec![ZoneRel {
+                persistent_id: Some(1),
+                label: Some("workstation".into()),
+                members: vec![1, 10001],
+            }],
             edges: vec![],
         };
         let mut out = String::new();
-        for (i, ts) in ["2026-07-17T15:30:00.000+03:00", "2026-07-17T15:30:01.000+03:00"].iter().enumerate() {
+        for (i, ts) in [
+            "2026-07-17T15:30:00.000+03:00",
+            "2026-07-17T15:30:01.000+03:00",
+        ]
+        .iter()
+        .enumerate()
+        {
             let mut ctx = ctx_at("");
             ctx.timestamp = ts;
             ctx.seq_in_session = i as u64;
@@ -925,8 +1101,14 @@ mod tests {
         std::fs::write(sess.join("labels.jsonl"), out).unwrap();
 
         let md = recap_markdown_from_dir(&root).expect("recap builds from the semantic session");
-        assert!(md.contains("Вадим"), "recap should surface the person:\n{md}");
-        assert!(md.contains("workstation"), "recap should surface the zone:\n{md}");
+        assert!(
+            md.contains("Вадим"),
+            "recap should surface the person:\n{md}"
+        );
+        assert!(
+            md.contains("workstation"),
+            "recap should surface the zone:\n{md}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

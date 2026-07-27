@@ -83,14 +83,23 @@ mod tests {
         assert_eq!(cap.ticks, 10);
         // Consumer saw at least one frame and advanced the blackboard.
         let cons = health.iter().find(|h| h.name == "frame-counter").unwrap();
-        assert!(cons.ticks >= 1, "consumer should process ≥1 frame, got {}", cons.ticks);
-        assert!(world.read().unwrap().frame_id >= 1, "world.frame_id should advance");
+        assert!(
+            cons.ticks >= 1,
+            "consumer should process ≥1 frame, got {}",
+            cons.ticks
+        );
+        assert!(
+            world.read().unwrap().frame_id >= 1,
+            "world.frame_id should advance"
+        );
     }
 
     #[test]
     fn mesh_shuts_down_cleanly_when_stop_set_externally() {
         let mut mesh = AgentMesh::new(Instant::now());
-        mesh.add(Box::new(FrameCounterAgent::with_poll(Duration::from_millis(1))));
+        mesh.add(Box::new(FrameCounterAgent::with_poll(
+            Duration::from_millis(1),
+        )));
         let stop = mesh.stop_flag();
         // No capture agent → consumer would loop forever; stop it from outside.
         let stopper = std::thread::spawn(move || {

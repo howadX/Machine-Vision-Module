@@ -9,18 +9,23 @@ use mvm_pipeline::Camera;
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn frame(frame_no: u64, detections_json: &str) -> String {
-    format!(
-        r#"{{"frame":{frame_no},"elapsed":0.033,"detections":[{detections_json}]}}"#
-    )
+    format!(r#"{{"frame":{frame_no},"elapsed":0.033,"detections":[{detections_json}]}}"#)
 }
 
 fn det(x1: f32, y1: f32, x2: f32, y2: f32) -> String {
     format!(r#"{{"x1":{x1},"y1":{y1},"x2":{x2},"y2":{y2}}}"#)
 }
 
-fn det_enriched(x1: f32, y1: f32, x2: f32, y2: f32,
-                identity: &str, id_conf: f32,
-                emotion: &str, em_conf: f32) -> String {
+fn det_enriched(
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    identity: &str,
+    id_conf: f32,
+    emotion: &str,
+    em_conf: f32,
+) -> String {
     format!(
         r#"{{"x1":{x1},"y1":{y1},"x2":{x2},"y2":{y2},"identity":"{identity}","identity_confidence":{id_conf},"emotion":"{emotion}","emotion_confidence":{em_conf}}}"#
     )
@@ -50,8 +55,14 @@ fn single_person_three_frames_yields_one_track_age_three() {
 fn identity_best_confidence_propagated_across_frames() {
     let mut tracker = PersonTracker::new();
 
-    let f1 = frame(1, &det_enriched(0.3, 0.3, 0.7, 0.7, "unknown", 0.25, "Neutral", 0.6));
-    let f2 = frame(2, &det_enriched(0.32, 0.31, 0.72, 0.71, "Вадим", 0.78, "Neutral", 0.7));
+    let f1 = frame(
+        1,
+        &det_enriched(0.3, 0.3, 0.7, 0.7, "unknown", 0.25, "Neutral", 0.6),
+    );
+    let f2 = frame(
+        2,
+        &det_enriched(0.32, 0.31, 0.72, 0.71, "Вадим", 0.78, "Neutral", 0.7),
+    );
 
     for line in [&f1, &f2] {
         let dets = Camera::parse_line(line).unwrap();
@@ -88,7 +99,10 @@ fn person_disappears_emotion_decays_then_track_expires() {
     tracker.timeout_frames = 10;
 
     // Appear with emotion
-    let appear = frame(1, &det_enriched(0.3, 0.3, 0.7, 0.7, "Вадим", 0.75, "Happiness", 0.9));
+    let appear = frame(
+        1,
+        &det_enriched(0.3, 0.3, 0.7, 0.7, "Вадим", 0.75, "Happiness", 0.9),
+    );
     tracker.tick(&Camera::parse_line(&appear).unwrap());
 
     // 5 empty frames → emotion decays  (0.9 * 0.5^5 = 0.028 < 0.05 → cleared)
@@ -99,7 +113,10 @@ fn person_disappears_emotion_decays_then_track_expires() {
     {
         let tracks: Vec<_> = tracker.all().values().collect();
         assert_eq!(tracks.len(), 1, "track still alive during timeout");
-        assert!(tracks[0].emotion.is_none(), "emotion should have decayed to None");
+        assert!(
+            tracks[0].emotion.is_none(),
+            "emotion should have decayed to None"
+        );
         assert_eq!(tracks[0].missed, 5);
     }
 
@@ -132,7 +149,10 @@ fn person_reappears_after_timeout_reuses_freed_id() {
     tracker.tick(&Camera::parse_line(&frame(6, &det(0.3, 0.3, 0.7, 0.7))).unwrap());
     let active: Vec<_> = tracker.active().collect();
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0].age, 1, "reappearance is a fresh track, not a continuation");
+    assert_eq!(
+        active[0].age, 1,
+        "reappearance is a fresh track, not a continuation"
+    );
     assert_eq!(active[0].id, first_id, "freed ephemeral id is reused");
 }
 
@@ -153,7 +173,10 @@ fn empty_frames_produce_no_tracks() {
 fn workspace_3d_fields_propagate_through_tracker() {
     let mut tracker = PersonTracker::new();
 
-    let line = frame(1, r#"{"x1":0.3,"y1":0.3,"x2":0.7,"y2":0.7,"distance":2.5,"position_x":0.1,"position_y":0.0,"position_z":2.5,"ws_confidence":0.88}"#);
+    let line = frame(
+        1,
+        r#"{"x1":0.3,"y1":0.3,"x2":0.7,"y2":0.7,"distance":2.5,"position_x":0.1,"position_y":0.0,"position_z":2.5,"ws_confidence":0.88}"#,
+    );
     tracker.tick(&Camera::parse_line(&line).unwrap());
 
     let active: Vec<_> = tracker.active().collect();

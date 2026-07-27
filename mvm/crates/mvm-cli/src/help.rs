@@ -309,9 +309,18 @@ mod tests {
 
     #[test]
     fn wants_help_detects_both_spellings() {
-        let long: Vec<String> = ["mvm", "run", "--help"].iter().map(|s| s.to_string()).collect();
-        let short: Vec<String> = ["mvm", "recap", "-h"].iter().map(|s| s.to_string()).collect();
-        let none: Vec<String> = ["mvm", "run", "--masks"].iter().map(|s| s.to_string()).collect();
+        let long: Vec<String> = ["mvm", "run", "--help"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let short: Vec<String> = ["mvm", "recap", "-h"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let none: Vec<String> = ["mvm", "run", "--masks"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(wants_help(&long));
         assert!(wants_help(&short));
         assert!(!wants_help(&none));

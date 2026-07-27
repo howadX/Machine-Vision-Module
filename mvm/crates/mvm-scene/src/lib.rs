@@ -24,22 +24,90 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 pub mod mask;
-pub use mask::{assemble_mask, InstanceMask, MASK_RES};
+pub use mask::{InstanceMask, MASK_RES, assemble_mask};
 
 /// COCO 80-class names, in the canonical ultralytics order.
 pub const COCO_CLASSES: [&str; 80] = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck",
-    "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench",
-    "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
-    "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee",
-    "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
-    "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup",
-    "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch",
-    "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
-    "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
-    "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-    "hair drier", "toothbrush",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
 ];
 
 /// One detected object. `bbox` is normalized [0,1] in the **original** image frame
@@ -62,12 +130,41 @@ pub const OBJECT_ID_BASE: u32 = 10_000;
 /// / animal / sports / perishable-food classes that are noise for a desk-mounted
 /// camera. Edit this list to tune what reaches the scene-graph.
 pub const RELEVANT_CLASSES: &[&str] = &[
-    "backpack", "umbrella", "handbag", "tie", "suitcase",
-    "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl",
-    "chair", "couch", "potted plant", "bed", "dining table", "tv", "laptop",
-    "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster",
-    "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-    "hair drier", "toothbrush",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
 ];
 
 /// Whether a COCO class is an interaction-relevant object worth a scene node.
@@ -98,8 +195,17 @@ pub const ANIMAL_IOU: f32 = 0.4;
 /// (couch ↔ bed ↔ chair confusion). These need a higher score bar than small
 /// interaction objects, which a single global threshold can't express.
 const HIGH_BAR_CLASSES: &[&str] = &[
-    "couch", "bed", "chair", "dining table", "potted plant", "tv",
-    "refrigerator", "oven", "microwave", "sink", "toaster",
+    "couch",
+    "bed",
+    "chair",
+    "dining table",
+    "potted plant",
+    "tv",
+    "refrigerator",
+    "oven",
+    "microwave",
+    "sink",
+    "toaster",
 ];
 
 /// Static desk fixtures that do not move during use and are routinely occluded
@@ -108,8 +214,14 @@ const HIGH_BAR_CLASSES: &[&str] = &[
 /// keyboard doesn't vanish — and `typing` with it — the moment the hands land on
 /// it. Kept deliberately narrow: things a person operates in place, not
 /// furniture they sit on / carry.
-pub const STATIC_CLASSES: &[&str] =
-    &["keyboard", "mouse", "laptop", "tv", "dining table", "remote"];
+pub const STATIC_CLASSES: &[&str] = &[
+    "keyboard",
+    "mouse",
+    "laptop",
+    "tv",
+    "dining table",
+    "remote",
+];
 
 /// Whether a class is a static desk fixture eligible for object-permanence hold.
 pub fn is_static(class_name: &str) -> bool {
@@ -383,7 +495,9 @@ pub fn attach_masks(objects: &mut [TrackedObject], segs: &[SegDetection], iou_th
     }
     // Greedy: highest bbox-IoU first, mask-IoU breaks ties; one seg per object.
     cands.sort_by(|a, b| {
-        b.2.partial_cmp(&a.2).unwrap().then(b.3.partial_cmp(&a.3).unwrap())
+        b.2.partial_cmp(&a.2)
+            .unwrap()
+            .then(b.3.partial_cmp(&a.3).unwrap())
     });
     let mut obj_used = vec![false; objects.len()];
     let mut seg_used = vec![false; segs.len()];
@@ -457,7 +571,11 @@ fn iou_xyxy(a: &RawBox, b: &RawBox) -> f32 {
 /// For each anchor the best class is taken; below `score_thresh` it is dropped.
 fn decode_yolo(raw: &[f32], num_classes: usize, score_thresh: f32) -> Vec<RawBox> {
     let num_attrs = num_classes + 4;
-    debug_assert_eq!(raw.len() % num_attrs, 0, "tensor length not divisible by attrs");
+    debug_assert_eq!(
+        raw.len() % num_attrs,
+        0,
+        "tensor length not divisible by attrs"
+    );
     let num_anchors = raw.len() / num_attrs;
     let mut out = Vec::new();
 
@@ -535,7 +653,11 @@ struct RawSeg {
 /// surviving boxes so the prototype combination can be assembled after NMS.
 fn decode_yolo_seg(raw: &[f32], num_classes: usize, score_thresh: f32) -> Vec<RawSeg> {
     let num_attrs = num_classes + 4 + N_PROTO;
-    debug_assert_eq!(raw.len() % num_attrs, 0, "seg tensor length not divisible by attrs");
+    debug_assert_eq!(
+        raw.len() % num_attrs,
+        0,
+        "seg tensor length not divisible by attrs"
+    );
     let num_anchors = raw.len() / num_attrs;
     let coeff_base = 4 + num_classes;
     let mut out = Vec::new();
@@ -559,7 +681,14 @@ fn decode_yolo_seg(raw: &[f32], num_classes: usize, score_thresh: f32) -> Vec<Ra
             *c = raw[(coeff_base + k) * num_anchors + a];
         }
         out.push(RawSeg {
-            boxb: RawBox { x1: cx - w * 0.5, y1: cy - h * 0.5, x2: cx + w * 0.5, y2: cy + h * 0.5, score: best_score, class_id },
+            boxb: RawBox {
+                x1: cx - w * 0.5,
+                y1: cy - h * 0.5,
+                x2: cx + w * 0.5,
+                y2: cy + h * 0.5,
+                score: best_score,
+                class_id,
+            },
             coeffs,
         });
     }
@@ -593,9 +722,9 @@ fn nms(mut boxes: Vec<RawBox>, iou_thresh: f32) -> Vec<RawBox> {
     boxes.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
     let mut kept: Vec<RawBox> = Vec::new();
     for cand in boxes {
-        let suppressed = kept.iter().any(|k| {
-            k.class_id == cand.class_id && iou_xyxy(k, &cand) > iou_thresh
-        });
+        let suppressed = kept
+            .iter()
+            .any(|k| k.class_id == cand.class_id && iou_xyxy(k, &cand) > iou_thresh);
         if !suppressed {
             kept.push(cand);
         }
@@ -691,11 +820,7 @@ impl YoloDetector {
     }
 
     /// Letterbox + RGB + NCHW + [0,1] normalization (ultralytics preprocessing).
-    fn preprocess(
-        &self,
-        image: &DynamicImage,
-        lb: &Letterbox,
-    ) -> anyhow::Result<Tensor<f32>> {
+    fn preprocess(&self, image: &DynamicImage, lb: &Letterbox) -> anyhow::Result<Tensor<f32>> {
         let sz = self.input_size as usize;
         let (orig_w, orig_h) = image.dimensions();
         let new_w = (orig_w as f32 * lb.scale).round() as u32;
@@ -724,8 +849,8 @@ impl YoloDetector {
             }
         }
         let shape = ndarray::IxDyn(&[1, 3, sz, sz]);
-        let array = ndarray::Array::from_shape_vec(shape, flat)
-            .context("Failed to create input array")?;
+        let array =
+            ndarray::Array::from_shape_vec(shape, flat).context("Failed to create input array")?;
         Tensor::from_array(array).context("Failed to create tensor")
     }
 }
@@ -753,7 +878,12 @@ impl YoloSegDetector {
         let session = Session::builder()?
             .commit_from_file(path)
             .with_context(|| format!("Failed to load YOLO-seg from {}", path.display()))?;
-        Ok(Self { session, input_size: 640, score_threshold: 0.35, nms_threshold: 0.45 })
+        Ok(Self {
+            session,
+            input_size: 640,
+            score_threshold: 0.35,
+            nms_threshold: 0.45,
+        })
     }
 
     /// Load from ONNX model bytes (embedded mode).
@@ -762,7 +892,12 @@ impl YoloSegDetector {
         let session = Session::builder()?
             .commit_from_memory(model_bytes)
             .context("Failed to load YOLO-seg from embedded bytes")?;
-        Ok(Self { session, input_size: 640, score_threshold: 0.35, nms_threshold: 0.45 })
+        Ok(Self {
+            session,
+            input_size: 640,
+            score_threshold: 0.35,
+            nms_threshold: 0.45,
+        })
     }
 
     pub fn set_score_threshold(&mut self, t: f32) {
@@ -789,7 +924,10 @@ impl YoloSegDetector {
             [_, n, h, w] => (*n, *h, *w),
             _ => anyhow::bail!("unexpected proto shape {d1:?}"),
         };
-        anyhow::ensure!(n_proto == N_PROTO, "expected {N_PROTO} prototypes, got {n_proto}");
+        anyhow::ensure!(
+            n_proto == N_PROTO,
+            "expected {N_PROTO} prototypes, got {n_proto}"
+        );
         // output0 may be [1, attrs, A] or [1, A, attrs]; decode_yolo_seg wants
         // channel-major [attrs, A]. Detect and transpose if needed.
         let raw0 = to_channel_major(raw0, &d0, COCO_CLASSES.len() + 4 + N_PROTO);
@@ -804,7 +942,16 @@ impl YoloSegDetector {
             .map(|s| {
                 let bbox = canvas_to_norm(&s.boxb, &lb, orig_w, orig_h);
                 let mask = assemble_mask(
-                    proto, n_proto, ph, pw, &s.coeffs, &bbox, lb, orig_w, orig_h, self.input_size,
+                    proto,
+                    n_proto,
+                    ph,
+                    pw,
+                    &s.coeffs,
+                    &bbox,
+                    lb,
+                    orig_w,
+                    orig_h,
+                    self.input_size,
                 );
                 SegDetection {
                     det: ObjectDetection {
@@ -845,13 +992,21 @@ fn to_channel_major(raw: &[f32], dims: &[usize], attrs: usize) -> Vec<f32> {
 }
 
 /// Shared letterbox + RGB + NCHW + [0,1] preprocess (used by both YOLO detectors).
-fn preprocess_letterbox(image: &DynamicImage, lb: &Letterbox, input_size: u32) -> anyhow::Result<Tensor<f32>> {
+fn preprocess_letterbox(
+    image: &DynamicImage,
+    lb: &Letterbox,
+    input_size: u32,
+) -> anyhow::Result<Tensor<f32>> {
     let sz = input_size as usize;
     let (orig_w, orig_h) = image.dimensions();
     let new_w = (orig_w as f32 * lb.scale).round() as u32;
     let new_h = (orig_h as f32 * lb.scale).round() as u32;
     let resized = image
-        .resize_exact(new_w.max(1), new_h.max(1), image::imageops::FilterType::Triangle)
+        .resize_exact(
+            new_w.max(1),
+            new_h.max(1),
+            image::imageops::FilterType::Triangle,
+        )
         .to_rgb8();
     let pad_val = 114.0f32 / 255.0;
     let mut flat = vec![pad_val; 3 * sz * sz];
@@ -886,8 +1041,10 @@ mod tests {
         let mut raw = vec![0.0f32; attrs * anchors];
         let put = |raw: &mut [f32], c: usize, a: usize, v: f32| raw[c * anchors + a] = v;
         // anchor 0: box (cx,cy,w,h)=(100,120,40,60), class 1 score 0.9, coeff[5]=2.0
-        put(&mut raw, 0, 0, 100.0); put(&mut raw, 1, 0, 120.0);
-        put(&mut raw, 2, 0, 40.0);  put(&mut raw, 3, 0, 60.0);
+        put(&mut raw, 0, 0, 100.0);
+        put(&mut raw, 1, 0, 120.0);
+        put(&mut raw, 2, 0, 40.0);
+        put(&mut raw, 3, 0, 60.0);
         put(&mut raw, 4 + 1, 0, 0.9);
         put(&mut raw, 4 + nc + 5, 0, 2.0);
         // anchor 1: below threshold (max class score 0.1) → dropped.
@@ -923,8 +1080,12 @@ mod tests {
     /// person instance mask with a sensible silhouette coverage (phase 10.4).
     #[test]
     fn seg_model_finds_person_mask_on_live_frame() {
-        let model = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models/yolo_seg.onnx"));
-        let frame = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/live0.jpg"));
+        let model = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../models/yolo_seg.onnx"
+        ));
+        let frame =
+            std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/live0.jpg"));
         if !model.exists() || !frame.exists() {
             eprintln!("Skipping seg live test: model or frame absent");
             return;
@@ -935,14 +1096,25 @@ mod tests {
         let dets = seg.detect(&img).unwrap();
         eprintln!("seg live: {} instances", dets.len());
         for d in &dets {
-            eprintln!("  {} score={:.2} mask_cov={:.3}", d.det.class_name, d.det.score, d.mask.frame_coverage());
+            eprintln!(
+                "  {} score={:.2} mask_cov={:.3}",
+                d.det.class_name,
+                d.det.score,
+                d.mask.frame_coverage()
+            );
         }
-        let person = dets.iter().find(|d| d.det.class_name == "person").expect("person detected");
+        let person = dets
+            .iter()
+            .find(|d| d.det.class_name == "person")
+            .expect("person detected");
         assert!(!person.mask.is_empty(), "person mask non-empty");
         // The mask must be tighter than its bbox (a real silhouette, not the box).
         let b = &person.det.bbox;
         let bbox_area = (b.x2 - b.x1) * (b.y2 - b.y1);
-        assert!(person.mask.frame_coverage() < bbox_area, "mask tighter than bbox");
+        assert!(
+            person.mask.frame_coverage() < bbox_area,
+            "mask tighter than bbox"
+        );
     }
 
     // ── letterbox (pure) ───────────────────────────────────────────────────
@@ -978,10 +1150,21 @@ mod tests {
         // 640x480 letterboxed into 640: a box that in canvas spans y 80..560
         // (the full image band) should map back to the full original height.
         let lb = compute_letterbox(640, 480, 640);
-        let b = RawBox { x1: 0.0, y1: 80.0, x2: 640.0, y2: 560.0, score: 0.9, class_id: 0 };
+        let b = RawBox {
+            x1: 0.0,
+            y1: 80.0,
+            x2: 640.0,
+            y2: 560.0,
+            score: 0.9,
+            class_id: 0,
+        };
         let n = canvas_to_norm(&b, &lb, 640, 480);
         assert!((n.x1 - 0.0).abs() < 1e-4 && (n.x2 - 1.0).abs() < 1e-4);
-        assert!((n.y1 - 0.0).abs() < 1e-4 && (n.y2 - 1.0).abs() < 1e-4, "y={:?}", (n.y1, n.y2));
+        assert!(
+            (n.y1 - 0.0).abs() < 1e-4 && (n.y2 - 1.0).abs() < 1e-4,
+            "y={:?}",
+            (n.y1, n.y2)
+        );
     }
 
     // ── decode (pure, synthetic tensor — no model file) ────────────────────
@@ -1062,7 +1245,14 @@ mod tests {
     // ── NMS (pure) ─────────────────────────────────────────────────────────
 
     fn rb(x1: f32, y1: f32, x2: f32, y2: f32, score: f32, class_id: usize) -> RawBox {
-        RawBox { x1, y1, x2, y2, score, class_id }
+        RawBox {
+            x1,
+            y1,
+            x2,
+            y2,
+            score,
+            class_id,
+        }
     }
 
     #[test]
@@ -1101,7 +1291,10 @@ mod tests {
     #[test]
     fn is_relevant_keeps_interaction_objects_drops_noise() {
         assert!(is_relevant("cup") && is_relevant("laptop") && is_relevant("chair"));
-        assert!(!is_relevant("person"), "person owned by body-primary tracker");
+        assert!(
+            !is_relevant("person"),
+            "person owned by body-primary tracker"
+        );
         assert!(!is_relevant("car") && !is_relevant("dog") && !is_relevant("banana"));
     }
 
@@ -1136,7 +1329,14 @@ mod tests {
 
     // ── object tracker (filter B) ──────────────────────────────────────────
 
-    fn od(class_name: &'static str, x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> ObjectDetection {
+    fn od(
+        class_name: &'static str,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        score: f32,
+    ) -> ObjectDetection {
         ObjectDetection {
             class_id: 0,
             class_name,
@@ -1210,7 +1410,12 @@ mod tests {
         for k in 0..10 {
             // absent (hands cover it) — well past timeout=3.
             let vis = t.update(&[]);
-            assert_eq!(vis.len(), 1, "held keyboard still emitted at miss {}", k + 1);
+            assert_eq!(
+                vis.len(),
+                1,
+                "held keyboard still emitted at miss {}",
+                k + 1
+            );
             assert_eq!(vis[0].id, id, "same id");
             assert!(vis[0].missed > 0, "flagged as remembered");
         }
@@ -1225,7 +1430,10 @@ mod tests {
         let mut t = ObjectTracker::with_params(0.3, 2, 0.5).with_static_hold(20);
         t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]); // age 1 only
         for _ in 0..4 {
-            assert!(t.update(&[]).is_empty(), "unconfirmed static object is not held");
+            assert!(
+                t.update(&[]).is_empty(),
+                "unconfirmed static object is not held"
+            );
         }
     }
 
@@ -1258,7 +1466,10 @@ mod tests {
         let mut t = ObjectTracker::with_params(0.3, 2, 0.5).with_static_hold(0);
         t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
         t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
-        assert!(t.update(&[]).is_empty(), "hold disabled → keyboard not emitted while absent");
+        assert!(
+            t.update(&[]).is_empty(),
+            "hold disabled → keyboard not emitted while absent"
+        );
     }
 
     #[test]
@@ -1267,7 +1478,10 @@ mod tests {
         let id1 = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
         let _ = t.update(&[]); // missed one frame (within timeout)
         let back = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
-        assert_eq!(back[0].id, id1, "object reappearing within timeout keeps its id");
+        assert_eq!(
+            back[0].id, id1,
+            "object reappearing within timeout keeps its id"
+        );
     }
 
     // ── attach_masks (phase 10.4 / 10.5, synthetic masks) ──────────────────
@@ -1288,7 +1502,11 @@ mod tests {
         p
     }
     fn id_lb() -> Letterbox {
-        Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }
+        Letterbox {
+            scale: 1.0,
+            pad_x: 0.0,
+            pad_y: 0.0,
+        }
     }
     fn mk_mask(proto: &[f32], coeff: f32, b: &BBox) -> InstanceMask {
         let r = MASK_RES as u32;
@@ -1297,28 +1515,53 @@ mod tests {
     /// A seg detection with a full-bbox uniform mask.
     fn full_seg(class: &'static str, b: BBox) -> SegDetection {
         SegDetection {
-            det: ObjectDetection { class_id: 0, class_name: class, bbox: b, score: 0.8 },
+            det: ObjectDetection {
+                class_id: 0,
+                class_name: class,
+                bbox: b,
+                score: 0.8,
+            },
             mask: mk_mask(&uniform_proto(), 1.0, &b),
         }
     }
     fn trk(id: u32, class: &'static str, b: BBox) -> TrackedObject {
         TrackedObject {
-            id, class_name: class, bbox: b, score: 0.8, age: 2, missed: 0,
-            pos_3d: None, pos_conf: 0.0, mask: None,
+            id,
+            class_name: class,
+            bbox: b,
+            score: 0.8,
+            age: 2,
+            missed: 0,
+            pos_3d: None,
+            pos_conf: 0.0,
+            mask: None,
         }
     }
 
     #[test]
     fn attach_masks_matches_overlapping_same_class() {
-        let b = BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 };
+        let b = BBox {
+            x1: 0.4,
+            y1: 0.4,
+            x2: 0.6,
+            y2: 0.6,
+        };
         let mut objs = vec![trk(10000, "cup", b)];
         attach_masks(&mut objs, &[full_seg("cup", b)], 0.3);
-        assert!(objs[0].mask.as_ref().is_some_and(|m| !m.is_empty()), "cup got its mask");
+        assert!(
+            objs[0].mask.as_ref().is_some_and(|m| !m.is_empty()),
+            "cup got its mask"
+        );
     }
 
     #[test]
     fn attach_masks_ignores_class_mismatch() {
-        let b = BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 };
+        let b = BBox {
+            x1: 0.4,
+            y1: 0.4,
+            x2: 0.6,
+            y2: 0.6,
+        };
         let mut objs = vec![trk(10000, "cup", b)];
         attach_masks(&mut objs, &[full_seg("laptop", b)], 0.3);
         assert!(objs[0].mask.is_none(), "class mismatch → no mask");
@@ -1326,29 +1569,67 @@ mod tests {
 
     #[test]
     fn attach_masks_ignores_disjoint_boxes() {
-        let mut objs = vec![trk(10000, "cup", BBox { x1: 0.0, y1: 0.0, x2: 0.1, y2: 0.1 })];
-        let far = full_seg("cup", BBox { x1: 0.8, y1: 0.8, x2: 0.9, y2: 0.9 });
+        let mut objs = vec![trk(
+            10000,
+            "cup",
+            BBox {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 0.1,
+                y2: 0.1,
+            },
+        )];
+        let far = full_seg(
+            "cup",
+            BBox {
+                x1: 0.8,
+                y1: 0.8,
+                x2: 0.9,
+                y2: 0.9,
+            },
+        );
         attach_masks(&mut objs, &[far], 0.3);
         assert!(objs[0].mask.is_none(), "no bbox overlap → no attach");
     }
 
     #[test]
     fn attach_masks_resets_stale_mask_when_no_seg() {
-        let b = BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 };
+        let b = BBox {
+            x1: 0.4,
+            y1: 0.4,
+            x2: 0.6,
+            y2: 0.6,
+        };
         let mut objs = vec![trk(10000, "cup", b)];
         objs[0].mask = Some(mk_mask(&uniform_proto(), 1.0, &b)); // stale mask
         attach_masks(&mut objs, &[], 0.3); // no seg this tick
-        assert!(objs[0].mask.is_none(), "stale mask cleared when no seg supports it");
+        assert!(
+            objs[0].mask.is_none(),
+            "stale mask cleared when no seg supports it"
+        );
     }
 
     #[test]
     fn attach_masks_one_seg_per_object_no_double_assign() {
         // Two distinct cups, two segs → each cup gets its own seg's mask.
-        let ba = BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 };
-        let bb = BBox { x1: 0.7, y1: 0.7, x2: 0.8, y2: 0.8 };
+        let ba = BBox {
+            x1: 0.1,
+            y1: 0.1,
+            x2: 0.2,
+            y2: 0.2,
+        };
+        let bb = BBox {
+            x1: 0.7,
+            y1: 0.7,
+            x2: 0.8,
+            y2: 0.8,
+        };
         let mut objs = vec![trk(10000, "cup", ba), trk(10001, "cup", bb)];
         attach_masks(&mut objs, &[full_seg("cup", ba), full_seg("cup", bb)], 0.3);
-        assert!(objs[0].mask.is_some() && objs[1].mask.is_some(), "both cups masked");
+        assert!(
+            objs[0].mask.is_some() && objs[1].mask.is_some(),
+            "both cups masked"
+        );
     }
 
     #[test]
@@ -1358,24 +1639,42 @@ mod tests {
         // half, obj B = right half); two segs carry the matching halves. The
         // mask-IoU tiebreak must route the left seg to A and the right seg to B
         // (phase 10.5 instance separation).
-        let full = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let full = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         let mut a = trk(10000, "book", full);
         let mut b = trk(10001, "book", full);
         a.mask = Some(mk_mask(&left_half_proto(), 1.0, &full)); // left silhouette
         b.mask = Some(mk_mask(&left_half_proto(), -1.0, &full)); // right silhouette
         let mut objs = vec![a, b];
         let seg_left = SegDetection {
-            det: ObjectDetection { class_id: 0, class_name: "book", bbox: full, score: 0.8 },
+            det: ObjectDetection {
+                class_id: 0,
+                class_name: "book",
+                bbox: full,
+                score: 0.8,
+            },
             mask: mk_mask(&left_half_proto(), 1.0, &full),
         };
         let seg_right = SegDetection {
-            det: ObjectDetection { class_id: 0, class_name: "book", bbox: full, score: 0.8 },
+            det: ObjectDetection {
+                class_id: 0,
+                class_name: "book",
+                bbox: full,
+                score: 0.8,
+            },
             mask: mk_mask(&left_half_proto(), -1.0, &full),
         };
         attach_masks(&mut objs, &[seg_left, seg_right], 0.3);
         // obj A should now carry a left-half mask (points all x<0.5).
         let am = objs[0].mask.as_ref().expect("A masked");
-        assert!(am.set_points().all(|p| p[0] < 0.5), "A got the LEFT seg (mask-IoU tiebreak)");
+        assert!(
+            am.set_points().all(|p| p[0] < 0.5),
+            "A got the LEFT seg (mask-IoU tiebreak)"
+        );
         let bm = objs[1].mask.as_ref().expect("B masked");
         assert!(bm.set_points().all(|p| p[0] >= 0.5), "B got the RIGHT seg");
     }
@@ -1398,7 +1697,10 @@ mod tests {
             "/../../models/yolo_object_detect.onnx"
         ));
         if !model_path.exists() {
-            eprintln!("Skipping: {} not found (download bootstrap weights)", model_path.display());
+            eprintln!(
+                "Skipping: {} not found (download bootstrap weights)",
+                model_path.display()
+            );
             return;
         }
         let mut det = YoloDetector::from_path(&model_path).unwrap();

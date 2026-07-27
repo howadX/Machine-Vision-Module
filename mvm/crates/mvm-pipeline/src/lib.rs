@@ -16,20 +16,36 @@ use std::process::{Child, Command, Stdio};
 /// Raw detection from Python bridge JSON.
 #[derive(Debug, Deserialize)]
 struct RawDetection {
-    x1: f32, y1: f32, x2: f32, y2: f32,
-    #[serde(default)] identity: Option<String>,
-    #[serde(default)] identity_confidence: Option<f32>,
-    #[serde(default)] emotion: Option<String>,
-    #[serde(default)] emotion_confidence: Option<f32>,
-    #[serde(default)] posture: Option<String>,
-    #[serde(default)] posture_confidence: Option<f32>,
-    #[serde(default)] distance: Option<f32>,
-    #[serde(default)] position_x: Option<f32>,
-    #[serde(default)] position_y: Option<f32>,
-    #[serde(default)] position_z: Option<f32>,
-    #[serde(default)] ws_confidence: Option<f32>,
-    #[serde(default)] recon_error: Option<f32>,
-    #[serde(default)] plausibility: Option<String>,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    #[serde(default)]
+    identity: Option<String>,
+    #[serde(default)]
+    identity_confidence: Option<f32>,
+    #[serde(default)]
+    emotion: Option<String>,
+    #[serde(default)]
+    emotion_confidence: Option<f32>,
+    #[serde(default)]
+    posture: Option<String>,
+    #[serde(default)]
+    posture_confidence: Option<f32>,
+    #[serde(default)]
+    distance: Option<f32>,
+    #[serde(default)]
+    position_x: Option<f32>,
+    #[serde(default)]
+    position_y: Option<f32>,
+    #[serde(default)]
+    position_z: Option<f32>,
+    #[serde(default)]
+    ws_confidence: Option<f32>,
+    #[serde(default)]
+    recon_error: Option<f32>,
+    #[serde(default)]
+    plausibility: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,11 +76,11 @@ impl Default for CameraConfig {
     fn default() -> Self {
         let home = std::env::var("HOME").unwrap_or_default();
         Self {
-        mvm_repo: PathBuf::from(home).join("repos/Machine Vision Module"),
-        python: None,
-        cpu: false,
-        device: "/dev/video0".into(),
-        frame_output: None,
+            mvm_repo: PathBuf::from(home).join("repos/Machine Vision Module"),
+            python: None,
+            cpu: false,
+            device: "/dev/video0".into(),
+            frame_output: None,
         }
     }
 }
@@ -80,9 +96,10 @@ impl Camera {
     pub fn open(config: &CameraConfig) -> Result<Self> {
         let bridge_path = config.mvm_repo.join("tools/mvm_bridge.py");
 
-        let python = config.python.clone().unwrap_or_else(|| {
-            config.mvm_repo.join("venv/bin/python3")
-        });
+        let python = config
+            .python
+            .clone()
+            .unwrap_or_else(|| config.mvm_repo.join("venv/bin/python3"));
 
         let mut cmd = Command::new(&python);
         cmd.arg(&bridge_path)
@@ -108,7 +125,9 @@ impl Camera {
             )
         })?;
 
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .context("Failed to capture bridge stdout")?;
 
         let reader = BufReader::new(stdout);
@@ -120,37 +139,46 @@ impl Camera {
     /// Parse a single JSON line into Detections.
     pub fn parse_line(line: &str) -> Result<Vec<Detection>> {
         let line = line.trim();
-        if line.is_empty() { return Ok(vec![]); }
+        if line.is_empty() {
+            return Ok(vec![]);
+        }
 
         let msg: BridgeMsg = serde_json::from_str(line)
             .with_context(|| format!("Failed to parse bridge JSON: {line}"))?;
 
-        Ok(msg.detections.into_iter().map(|d| Detection {
-            bbox: mvm_core::BBox {
-                x1: d.x1.clamp(0.0, 1.0), y1: d.y1.clamp(0.0, 1.0),
-                x2: d.x2.clamp(0.0, 1.0), y2: d.y2.clamp(0.0, 1.0),
-            },
-            identity: d.identity,
-            identity_confidence: d.identity_confidence,
-            emotion: d.emotion,
-            emotion_confidence: d.emotion_confidence,
-            posture: d.posture,
-            posture_confidence: d.posture_confidence,
-            distance: d.distance,
-            position_x: d.position_x,
-            position_y: d.position_y,
-            position_z: d.position_z,
-            ws_confidence: d.ws_confidence,
-            recon_error: d.recon_error,
-            plausibility: d.plausibility,
-            torso_flexion: None, // bridge path does not compute flexion (native only)
-            body_coverage: None, // bridge path does not compute the occlusion regime
-            torso_attitude: None,
-            emotion_distribution: None, // Python bridge doesn't output distributions
-            embedding: None,
-            head_yaw: None, head_facing: None,            // native SFace embedding attached in mvm-cli enrichment
-            mask: None,                                    // bridge path has no seg masks
-        }).collect())
+        Ok(msg
+            .detections
+            .into_iter()
+            .map(|d| Detection {
+                bbox: mvm_core::BBox {
+                    x1: d.x1.clamp(0.0, 1.0),
+                    y1: d.y1.clamp(0.0, 1.0),
+                    x2: d.x2.clamp(0.0, 1.0),
+                    y2: d.y2.clamp(0.0, 1.0),
+                },
+                identity: d.identity,
+                identity_confidence: d.identity_confidence,
+                emotion: d.emotion,
+                emotion_confidence: d.emotion_confidence,
+                posture: d.posture,
+                posture_confidence: d.posture_confidence,
+                distance: d.distance,
+                position_x: d.position_x,
+                position_y: d.position_y,
+                position_z: d.position_z,
+                ws_confidence: d.ws_confidence,
+                recon_error: d.recon_error,
+                plausibility: d.plausibility,
+                torso_flexion: None, // bridge path does not compute flexion (native only)
+                body_coverage: None, // bridge path does not compute the occlusion regime
+                torso_attitude: None,
+                emotion_distribution: None, // Python bridge doesn't output distributions
+                embedding: None,
+                head_yaw: None,
+                head_facing: None, // native SFace embedding attached in mvm-cli enrichment
+                mask: None,        // bridge path has no seg masks
+            })
+            .collect())
     }
 
     /// Read one JSON line from the bridge, skipping non-JSON noise.
@@ -161,7 +189,9 @@ impl Camera {
                 Ok(0) => return Err(anyhow::anyhow!("Bridge subprocess exited unexpectedly")),
                 Ok(_) => {
                     let trimmed = line.trim();
-                    if trimmed.is_empty() { continue; }
+                    if trimmed.is_empty() {
+                        continue;
+                    }
                     if !trimmed.starts_with('{') {
                         eprintln!("  bridge log: {trimmed}");
                         continue;
@@ -190,7 +220,8 @@ mod tests {
     fn parse_bare_detection() {
         let dets = Camera::parse_line(
             r#"{"frame":1,"elapsed":0.0,"detections":[{"x1":0.2,"y1":0.3,"x2":0.5,"y2":0.7}]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(dets.len(), 1);
         assert_eq!(dets[0].identity, None);
     }
@@ -214,9 +245,7 @@ mod tests {
 
     #[test]
     fn parse_empty_detections() {
-        let dets = Camera::parse_line(
-            r#"{"frame":1,"elapsed":0.033,"detections":[]}"#,
-        ).unwrap();
+        let dets = Camera::parse_line(r#"{"frame":1,"elapsed":0.033,"detections":[]}"#).unwrap();
         assert!(dets.is_empty());
     }
 
@@ -224,7 +253,8 @@ mod tests {
     fn parse_clamps_out_of_range() {
         let dets = Camera::parse_line(
             r#"{"frame":1,"elapsed":0.0,"detections":[{"x1":-0.5,"y1":-0.2,"x2":1.5,"y2":2.0}]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(dets[0].bbox.x1, 0.0);
         assert_eq!(dets[0].bbox.x2, 1.0);
     }
@@ -236,7 +266,8 @@ mod tests {
                 {"x1":0.1,"y1":0.1,"x2":0.3,"y2":0.5},
                 {"x1":0.6,"y1":0.2,"x2":0.9,"y2":0.7}
             ]}"#,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(dets.len(), 2);
     }
 }

@@ -48,7 +48,12 @@ pub fn people(dir: &Path) -> Vec<(String, Vec<PathBuf>)> {
 /// Sorted photo paths directly inside `person_dir`.
 fn photos_in(person_dir: &Path) -> Vec<PathBuf> {
     let mut photos: Vec<PathBuf> = std::fs::read_dir(person_dir)
-        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_file() && is_photo(p)).collect())
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.is_file() && is_photo(p))
+                .collect()
+        })
         .unwrap_or_default();
     photos.sort();
     photos
@@ -75,7 +80,10 @@ pub fn load_into(
             }
         }
     }
-    eprintln!("  gallery: {} people ({total} reference photos)", identity.gallery_size());
+    eprintln!(
+        "  gallery: {} people ({total} reference photos)",
+        identity.gallery_size()
+    );
     Ok(total)
 }
 
@@ -129,7 +137,11 @@ pub fn add(dir: &Path, name: &str, photos: &[PathBuf]) -> Result<usize> {
         if !src.is_file() {
             anyhow::bail!("gallery: {} not found", src.display());
         }
-        let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_ascii_lowercase();
+        let ext = src
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("jpg")
+            .to_ascii_lowercase();
         next += 1;
         let dest = person_dir.join(format!("{next:02}.{ext}"));
         std::fs::copy(src, &dest)
@@ -149,10 +161,15 @@ pub fn list(dir: &Path) -> Vec<(String, usize)> {
 pub fn run_gallery(dir: &Path, raw: &[String]) -> Result<()> {
     match raw.get(2).map(String::as_str) {
         Some("add") => {
-            let name = raw.get(3).context("usage: mvm gallery add <name> <photo>…")?;
+            let name = raw
+                .get(3)
+                .context("usage: mvm gallery add <name> <photo>…")?;
             let photos: Vec<PathBuf> = raw[4.min(raw.len())..].iter().map(PathBuf::from).collect();
             let n = add(dir, name, &photos)?;
-            eprintln!("gallery: added {n} photo(s) for '{name}' → {}", dir.join(name).display());
+            eprintln!(
+                "gallery: added {n} photo(s) for '{name}' → {}",
+                dir.join(name).display()
+            );
             Ok(())
         }
         Some("list") => {
@@ -242,8 +259,14 @@ mod tests {
         let txt = dir.join("x.txt");
         std::fs::write(&txt, b"x").unwrap();
         assert!(add(&dir, "D", &[txt]).is_err(), "non-image rejected");
-        assert!(add(&dir, "D", &[dir.join("nope.jpg")]).is_err(), "missing rejected");
-        assert!(add(&dir, "", &[]).is_err(), "empty name + no photos rejected");
+        assert!(
+            add(&dir, "D", &[dir.join("nope.jpg")]).is_err(),
+            "missing rejected"
+        );
+        assert!(
+            add(&dir, "", &[]).is_err(),
+            "empty name + no photos rejected"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

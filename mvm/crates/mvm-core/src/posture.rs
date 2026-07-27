@@ -220,9 +220,17 @@ mod tests {
         for _ in 0..(SL_DWELL - 1) {
             s.observe("lying", 0.99, true); // 11 confident lying frames
         }
-        assert_eq!(s.label(), Some("standing"), "< SL_DWELL → the impossible flip is vetoed");
+        assert_eq!(
+            s.label(),
+            Some("standing"),
+            "< SL_DWELL → the impossible flip is vetoed"
+        );
         s.observe("lying", 0.99, true); // SL_DWELL-th confident frame
-        assert_eq!(s.label(), Some("lying"), "a sustained SL_DWELL run does earn the flip");
+        assert_eq!(
+            s.label(),
+            Some("lying"),
+            "a sustained SL_DWELL run does earn the flip"
+        );
     }
 
     #[test]
@@ -233,7 +241,11 @@ mod tests {
         for _ in 0..(SL_DWELL - 1) {
             s.observe("standing", 0.99, true);
         }
-        assert_eq!(s.label(), Some("lying"), "lying→standing is vetoed below SL_DWELL too");
+        assert_eq!(
+            s.label(),
+            Some("lying"),
+            "lying→standing is vetoed below SL_DWELL too"
+        );
         s.observe("standing", 0.99, true);
         assert_eq!(s.label(), Some("standing"));
     }
@@ -272,7 +284,11 @@ mod tests {
             s.observe("lying_side", 0.95, true);
             s.observe("sitting", 0.95, true);
         }
-        assert_eq!(s.label(), Some("standing"), "chatter must not flip the label");
+        assert_eq!(
+            s.label(),
+            Some("standing"),
+            "chatter must not flip the label"
+        );
     }
 
     #[test]
@@ -283,7 +299,11 @@ mod tests {
         s.observe("sitting", 0.3, true); // below gate → ambiguous, resets streak
         s.observe("sitting", 0.9, true); // streak 1 again
         s.observe("sitting", 0.9, true); // streak 2 → NOT yet committed
-        assert_eq!(s.label(), Some("standing"), "interrupted streak must not commit");
+        assert_eq!(
+            s.label(),
+            Some("standing"),
+            "interrupted streak must not commit"
+        );
         s.observe("sitting", 0.9, true); // streak 3 → commit
         assert_eq!(s.label(), Some("sitting"));
     }
@@ -365,7 +385,11 @@ mod tests {
         s.observe("sitting", 0.9, true); // visible again → hidden streak resets
         s.observe_hidden();
         s.observe_hidden();
-        assert_eq!(s.label(), Some("sitting"), "interrupted hidden streak never clears");
+        assert_eq!(
+            s.label(),
+            Some("sitting"),
+            "interrupted hidden streak never clears"
+        );
     }
 
     #[test]
@@ -389,7 +413,11 @@ mod tests {
         s.observe_hidden(); // cleared
         assert_eq!(s.label(), None);
         s.observe("sitting", 0.9, true);
-        assert_eq!(s.label(), Some("sitting"), "first confident sight re-bootstraps");
+        assert_eq!(
+            s.label(),
+            Some("sitting"),
+            "first confident sight re-bootstraps"
+        );
     }
 
     #[test]

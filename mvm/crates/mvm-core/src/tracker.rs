@@ -13,10 +13,12 @@
 //! This replaces the previous EMA smoothing. Unlike EMA, missed-frame bboxes
 //! now move rather than stagnate, so IoU with re-appearing detections stays high.
 
+use crate::space::{DepthEma, Pinhole, face_bbox_to_3d};
+use crate::types::{
+    BBox, BodyObservation, Detection, FIRST_EPHEMERAL_ID, LifecycleState, PersonTrack,
+};
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
-use crate::types::{BBox, BodyObservation, Detection, LifecycleState, PersonTrack, FIRST_EPHEMERAL_ID};
-use crate::space::{Pinhole, DepthEma, face_bbox_to_3d};
 
 /// Multi-person tracker — the temporal fusion layer of MVM.
 pub struct PersonTracker {
@@ -59,7 +61,9 @@ pub struct PersonTracker {
 /// Cosine similarity of two L2-normalised embeddings (== dot product).
 /// Returns 0.0 on length mismatch (defensive; embeddings are fixed-dim).
 fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() { return 0.0; }
+    if a.len() != b.len() {
+        return 0.0;
+    }
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
@@ -202,7 +206,10 @@ impl PersonTracker {
             return id;
         }
         let id = self.user_ids.len() as u32;
-        debug_assert!(id < FIRST_EPHEMERAL_ID, "more than {FIRST_EPHEMERAL_ID} gallery users");
+        debug_assert!(
+            id < FIRST_EPHEMERAL_ID,
+            "more than {FIRST_EPHEMERAL_ID} gallery users"
+        );
         self.user_ids.insert(name.to_string(), id);
         id
     }
@@ -294,7 +301,9 @@ impl PersonTracker {
     fn associate_core(&mut self, high: &[Detection], low: &[BBox]) -> Vec<u32> {
         // ── Step 1: predict all tracks (State-Gating) ──────────────────────
         // KF is now in predicted state; predicted[id] = bbox to use for IoU.
-        let predicted: HashMap<u32, BBox> = self.tracks.iter_mut()
+        let predicted: HashMap<u32, BBox> = self
+            .tracks
+            .iter_mut()
             .map(|(&id, t)| (id, t.kalman.predict()))
             .collect();
 
@@ -409,7 +418,10 @@ impl PersonTracker {
         // whose person is being recognised elsewhere this very frame.
         let claimed_names: Vec<&str> = high
             .iter()
-            .filter(|d| d.identity_confidence.is_some_and(|c| c >= self.relink_min_conf))
+            .filter(|d| {
+                d.identity_confidence
+                    .is_some_and(|c| c >= self.relink_min_conf)
+            })
             .filter_map(|d| d.identity.as_deref())
             .collect();
 
@@ -428,8 +440,12 @@ impl PersonTracker {
                 if let Some(det_emb) = &det.embedding {
                     let mut best_cos = self.relink_cos_thresh;
                     for (&id, t) in &self.tracks {
-                        if matched_ids.contains(&id) { continue; }
-                        if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
+                        if matched_ids.contains(&id) {
+                            continue;
+                        }
+                        if t.missed == 0 || t.missed > self.relink_window_frames {
+                            continue;
+                        }
                         if let Some(track_emb) = &t.embedding {
                             let cos = cosine(det_emb, track_emb);
                             if cos > best_cos {
@@ -446,10 +462,16 @@ impl PersonTracker {
                     if conf >= self.relink_min_conf {
                         let mut best_missed = u64::MAX;
                         for (&id, t) in &self.tracks {
-                            if matched_ids.contains(&id) { continue; }
+                            if matched_ids.contains(&id) {
+                                continue;
+                            }
                             // Only recently-missed tracks (a gap), not active ones.
-                            if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
-                            if t.identity.as_deref() == Some(name.as_str()) && t.missed < best_missed {
+                            if t.missed == 0 || t.missed > self.relink_window_frames {
+                                continue;
+                            }
+                            if t.identity.as_deref() == Some(name.as_str())
+                                && t.missed < best_missed
+                            {
                                 best_missed = t.missed;
                                 best_id = Some(id);
                             }
@@ -468,14 +490,20 @@ impl PersonTracker {
             // its weak label must not block re-link. A confident identity still routes
             // through the label/cosine tiers above, not here.
             let det_id_blocks = det.identity.is_some()
-                && det.identity_confidence.is_none_or(|c| c >= self.relink_min_conf);
+                && det
+                    .identity_confidence
+                    .is_none_or(|c| c >= self.relink_min_conf);
             if best_id.is_none() && det.embedding.is_none() && !det_id_blocks {
                 let dcx = (det.bbox.x1 + det.bbox.x2) * 0.5;
                 let dcy = (det.bbox.y1 + det.bbox.y2) * 0.5;
                 let mut best_dist = self.relink_center_dist;
                 for (&id, t) in &self.tracks {
-                    if matched_ids.contains(&id) { continue; }
-                    if t.missed == 0 || t.missed > self.relink_window_frames { continue; }
+                    if matched_ids.contains(&id) {
+                        continue;
+                    }
+                    if t.missed == 0 || t.missed > self.relink_window_frames {
+                        continue;
+                    }
                     // LJ3 stale-identity fix: an identified track is STILL eligible for
                     // a geometric re-link — a body-primary walker gets one confident face
                     // early, `identity` sticks, and the old blanket skip then permanently
@@ -483,7 +511,9 @@ impl PersonTracker {
                     // phantom, 57% of walk frag). It is skipped ONLY when its name is
                     // actively claimed by a confident detection this frame.
                     if let Some(tname) = t.identity.as_deref() {
-                        if claimed_names.contains(&tname) { continue; }
+                        if claimed_names.contains(&tname) {
+                            continue;
+                        }
                     }
                     // OCR (OC-SORT, phase 9.2): compare against the track's VIRTUAL
                     // position — its last *observation* extrapolated along its
@@ -517,8 +547,13 @@ impl PersonTracker {
                     t.bbox = t.kalman.smoothed_bbox();
                     t.age += 1;
                     // Observation-centric velocity (OC-SORT, 9.2): BEFORE zeroing missed.
-                    record_obs(t, [(det.bbox.x1 + det.bbox.x2) * 0.5,
-                                   (det.bbox.y1 + det.bbox.y2) * 0.5]);
+                    record_obs(
+                        t,
+                        [
+                            (det.bbox.x1 + det.bbox.x2) * 0.5,
+                            (det.bbox.y1 + det.bbox.y2) * 0.5,
+                        ],
+                    );
                     t.missed = 0;
                     // Primary (Hungarian) matches are already reserved above; a
                     // cascade re-link match is not — reserve it now so later
@@ -553,10 +588,16 @@ impl PersonTracker {
             let mut best_score = f32::NEG_INFINITY;
             let mut best_id = None;
             for (&id, t) in &self.tracks {
-                if t.missed == 0 || matched_ids.contains(&id) { continue; }
-                let Some(&pred_bbox) = predicted.get(&id) else { continue; };
+                if t.missed == 0 || matched_ids.contains(&id) {
+                    continue;
+                }
+                let Some(&pred_bbox) = predicted.get(&id) else {
+                    continue;
+                };
                 let iou = low_bbox.iou(&pred_bbox);
-                if iou <= IOU_GATE { continue; }
+                if iou <= IOU_GATE {
+                    continue;
+                }
                 let momentum = match (t.obs_velocity, t.last_obs_center) {
                     (Some(v), Some(c)) => ocm_consistency(v, [lcx - c[0], lcy - c[1]]),
                     _ => 0.0,
@@ -700,7 +741,11 @@ impl PersonTracker {
                 // a still-line (0.15 torso/s). Speed catches the startup/settling
                 // case the committed state misses (ring not yet dwelled to Moving);
                 // a truly lying body is ~motionless and passes.
-                let speed = if t.motion.is_empty() { 0.0 } else { t.motion.speed() };
+                let speed = if t.motion.is_empty() {
+                    0.0
+                } else {
+                    t.motion.speed()
+                };
                 let moving = t.motion.state() == crate::motion::MotionState::Moving || speed > 0.15;
                 let trusted =
                     crate::posture::posture_trusted(det.plausibility.as_deref(), label, moving);
@@ -734,11 +779,21 @@ impl PersonTracker {
                 t.position_z = ema(t.position_z, det.position_z);
                 t.ws_confidence = det.ws_confidence;
             }
-            if det.recon_error.is_some() { t.recon_error = det.recon_error; }
-            if det.plausibility.is_some() { t.plausibility = det.plausibility.clone(); }
-            if det.torso_flexion.is_some() { t.torso_flexion = det.torso_flexion; }
-            if det.body_coverage.is_some() { t.body_coverage = det.body_coverage; }
-            if det.torso_attitude.is_some() { t.torso_attitude = det.torso_attitude; }
+            if det.recon_error.is_some() {
+                t.recon_error = det.recon_error;
+            }
+            if det.plausibility.is_some() {
+                t.plausibility = det.plausibility.clone();
+            }
+            if det.torso_flexion.is_some() {
+                t.torso_flexion = det.torso_flexion;
+            }
+            if det.body_coverage.is_some() {
+                t.body_coverage = det.body_coverage;
+            }
+            if det.torso_attitude.is_some() {
+                t.torso_attitude = det.torso_attitude;
+            }
             // Head orientation (phase 10.3): latest snapshot, like body_coverage.
             if det.head_yaw.is_some() {
                 t.head_yaw = det.head_yaw;
@@ -750,7 +805,9 @@ impl PersonTracker {
         if let Some(ph) = pinhole_opt {
             let real_h = {
                 let track = self.tracks.get(&id).unwrap();
-                track.identity.as_ref()
+                track
+                    .identity
+                    .as_ref()
                     .and_then(|n| self.personal_heights.get(n.as_str()))
                     .copied()
                     .unwrap_or(face_height_m)
@@ -762,7 +819,8 @@ impl PersonTracker {
             if let Some((_pos, z, ws_conf)) =
                 face_bbox_to_3d(&ph, b.y1, b.y2, bbox_cx, bbox_cy, real_h)
             {
-                let smoothed_z = t.depth_ema
+                let smoothed_z = t
+                    .depth_ema
                     .get_or_insert_with(|| DepthEma::new(z, depth_ema_alpha))
                     .update(z);
                 let pos_s = ph.pixel_to_3d(bbox_cx * ph.width, bbox_cy * ph.height, smoothed_z);
@@ -848,13 +906,24 @@ mod tests {
             bbox: BBox { x1, y1, x2, y2 },
             identity: Some(name.into()),
             identity_confidence: Some(conf),
-            emotion: None, emotion_confidence: None,
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None,
+            emotion: None,
+            emotion_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]
     }
@@ -892,7 +961,11 @@ mod tests {
         let id0 = t.active().next().unwrap().id;
         t.tick(&det_emb(0.7, 0.7, 0.9, 0.9, "Вадим", vec![0.99, 0.14, 0.0])); // cos≈0.99
         assert_eq!(t.track_count(), 1, "same embedding must re-link");
-        assert_eq!(t.active().next().unwrap().id, id0, "id persists via cosine re-link");
+        assert_eq!(
+            t.active().next().unwrap().id,
+            id0,
+            "id persists via cosine re-link"
+        );
     }
 
     #[test]
@@ -914,7 +987,11 @@ mod tests {
         let id0 = t.active().next().unwrap().id;
         t.tick(&det_id(0.7, 0.7, 0.9, 0.9, "Вадим", 0.9)); // disjoint bbox → IoU=0
         assert_eq!(t.track_count(), 1, "should re-link, not spawn a new track");
-        assert_eq!(t.active().next().unwrap().id, id0, "id must persist via re-link");
+        assert_eq!(
+            t.active().next().unwrap().id,
+            id0,
+            "id must persist via re-link"
+        );
     }
 
     #[test]
@@ -930,9 +1007,15 @@ mod tests {
         let mut t = PersonTracker::new();
         t.relink_window_frames = 2;
         t.tick(&det_id(0.1, 0.1, 0.3, 0.3, "Вадим", 0.9));
-        for _ in 0..3 { t.tick(&[]); }            // missed grows beyond the window
+        for _ in 0..3 {
+            t.tick(&[]);
+        } // missed grows beyond the window
         t.tick(&det_id(0.7, 0.7, 0.9, 0.9, "Вадим", 0.9));
-        assert_eq!(t.track_count(), 2, "stale track beyond window must NOT re-link");
+        assert_eq!(
+            t.track_count(),
+            2,
+            "stale track beyond window must NOT re-link"
+        );
     }
 
     #[test]
@@ -940,7 +1023,11 @@ mod tests {
         let mut t = PersonTracker::new();
         t.tick(&det_id(0.1, 0.1, 0.3, 0.3, "Вадим", 0.9));
         t.tick(&det_id(0.7, 0.7, 0.9, 0.9, "Вадим", 0.4)); // below relink_min_conf
-        assert_eq!(t.track_count(), 2, "low-confidence identity must NOT re-link");
+        assert_eq!(
+            t.track_count(),
+            2,
+            "low-confidence identity must NOT re-link"
+        );
     }
 
     #[test]
@@ -957,18 +1044,32 @@ mod tests {
     fn tracker_propagates_identity() {
         let mut t = PersonTracker::new();
         let enriched = vec![Detection {
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.7,
+                y2: 0.7,
+            },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.72),
             emotion: Some("Neutral".into()),
             emotion_confidence: Some(0.65),
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }];
         t.tick(&enriched);
@@ -993,7 +1094,10 @@ mod tests {
             ..Detection::bare(0.3, 0.3, 0.7, 0.7)
         };
         t.tick(std::slice::from_ref(&full));
-        assert_eq!(t.active().next().unwrap().posture.as_deref(), Some("standing"));
+        assert_eq!(
+            t.active().next().unwrap().posture.as_deref(),
+            Some("standing")
+        );
 
         let upper = Detection {
             body_coverage: Some("upper"),
@@ -1009,7 +1113,10 @@ mod tests {
         );
         t.tick(std::slice::from_ref(&upper)); // hidden 3 → cleared
         let tr = t.active().next().unwrap();
-        assert_eq!(tr.posture, None, "sustained occlusion clears the stale claim");
+        assert_eq!(
+            tr.posture, None,
+            "sustained occlusion clears the stale claim"
+        );
         assert_eq!(tr.body_coverage, Some("upper"));
         assert_eq!(tr.torso_attitude, Some("upright"));
     }
@@ -1018,29 +1125,61 @@ mod tests {
     fn tracker_keeps_best_identity() {
         let mut t = PersonTracker::new();
         t.tick(&[Detection {
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.7,
+                y2: 0.7,
+            },
             identity: Some("unknown".into()),
             identity_confidence: Some(0.30),
-            emotion: None, emotion_confidence: None,
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None,
+            emotion: None,
+            emotion_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
         t.tick(&[Detection {
-            bbox: BBox { x1: 0.31, y1: 0.31, x2: 0.71, y2: 0.71 },
+            bbox: BBox {
+                x1: 0.31,
+                y1: 0.31,
+                x2: 0.71,
+                y2: 0.71,
+            },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.72),
-            emotion: None, emotion_confidence: None,
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None,
+            emotion: None,
+            emotion_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
         let active: Vec<_> = t.active().collect();
@@ -1052,27 +1191,61 @@ mod tests {
     fn tracker_updates_emotion_on_match() {
         let mut t = PersonTracker::new();
         t.tick(&[Detection {
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.5 },
-            emotion: Some("Anger".into()), emotion_confidence: Some(0.6),
-            identity: None, identity_confidence: None,
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None,
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.5,
+                y2: 0.5,
+            },
+            emotion: Some("Anger".into()),
+            emotion_confidence: Some(0.6),
+            identity: None,
+            identity_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
         t.tick(&[Detection {
-            bbox: BBox { x1: 0.32, y1: 0.31, x2: 0.52, y2: 0.51 },
-            emotion: Some("Happiness".into()), emotion_confidence: Some(0.8),
-            identity: None, identity_confidence: None,
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None,
+            bbox: BBox {
+                x1: 0.32,
+                y1: 0.31,
+                x2: 0.52,
+                y2: 0.51,
+            },
+            emotion: Some("Happiness".into()),
+            emotion_confidence: Some(0.8),
+            identity: None,
+            identity_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
         let active: Vec<_> = t.active().collect();
@@ -1138,8 +1311,16 @@ mod tests {
         let active: Vec<_> = t.active().collect();
         let b = active[0].bbox;
         // bbox should move toward the new observation without jumping directly
-        assert!(b.x1 >= 0.3 && b.x1 <= 0.35, "x1={:.4} should be between initial and observed", b.x1);
-        assert!(b.x2 >= 0.5 && b.x2 <= 0.55, "x2={:.4} should be between initial and observed", b.x2);
+        assert!(
+            b.x1 >= 0.3 && b.x1 <= 0.35,
+            "x1={:.4} should be between initial and observed",
+            b.x1
+        );
+        assert!(
+            b.x2 >= 0.5 && b.x2 <= 0.55,
+            "x2={:.4} should be between initial and observed",
+            b.x2
+        );
     }
 
     #[test]
@@ -1194,7 +1375,10 @@ mod tests {
         t.tick(&dets);
         let active: Vec<_> = t.active().collect();
         assert_eq!(active.len(), 2);
-        let winner = active.iter().find(|x| x.display_id == 0).expect("one body holds id 0");
+        let winner = active
+            .iter()
+            .find(|x| x.display_id == 0)
+            .expect("one body holds id 0");
         assert_eq!(winner.identity_confidence, Some(0.9));
         assert!(winner.shown_identity().is_some());
         let other = active.iter().find(|x| x.display_id != 0).unwrap();
@@ -1211,7 +1395,11 @@ mod tests {
         let id0 = t.active().next().unwrap().id;
         t.tick(&det(0.42, 0.30, 0.50, 0.50)); // disjoint x (IoU 0), center (0.46,0.40) → 0.12 away
         assert_eq!(t.track_count(), 1, "center re-link should reuse the track");
-        assert_eq!(t.active().next().unwrap().id, id0, "ephemeral id stays stable");
+        assert_eq!(
+            t.active().next().unwrap().id,
+            id0,
+            "ephemeral id stays stable"
+        );
     }
 
     #[test]
@@ -1237,8 +1425,16 @@ mod tests {
         t.tick(&det(0.42, 0.30, 0.50, 0.60)); // center 0.34→0.46 (0.12 < 0.15)
         t.tick(&det(0.54, 0.30, 0.62, 0.60));
         t.tick(&det(0.66, 0.30, 0.74, 0.60));
-        assert_eq!(t.track_count(), 1, "identified walker re-links, spawns no phantoms");
-        assert_eq!(t.active().next().unwrap().id, id0, "keeps its id across the walk");
+        assert_eq!(
+            t.track_count(),
+            1,
+            "identified walker re-links, spawns no phantoms"
+        );
+        assert_eq!(
+            t.active().next().unwrap().id,
+            id0,
+            "keeps its id across the walk"
+        );
     }
 
     #[test]
@@ -1247,7 +1443,11 @@ mod tests {
         let mut t = PersonTracker::new();
         t.tick(&det(0.10, 0.10, 0.18, 0.30)); // center (0.14,0.20)
         t.tick(&det(0.70, 0.70, 0.78, 0.90)); // center (0.74,0.80) → ~0.85 away
-        assert_eq!(t.track_count(), 2, "far jump must spawn a new track, not re-link");
+        assert_eq!(
+            t.track_count(),
+            2,
+            "far jump must spawn a new track, not re-link"
+        );
     }
 
     #[test]
@@ -1259,14 +1459,21 @@ mod tests {
         d1[0].distance = Some(1.0);
         d1[0].position_z = Some(1.0);
         t.tick(&d1);
-        assert_eq!(t.active().next().unwrap().distance, Some(1.0), "first frame seeds raw");
+        assert_eq!(
+            t.active().next().unwrap().distance,
+            Some(1.0),
+            "first frame seeds raw"
+        );
         let mut d2 = det(0.3, 0.3, 0.7, 0.7); // same bbox → IoU match
         d2[0].distance = Some(2.0);
         d2[0].position_z = Some(2.0);
         t.tick(&d2);
         let sm = t.active().next().unwrap().distance.unwrap();
         // EMA: 0.3*2.0 + 0.7*1.0 = 1.3
-        assert!((sm - 1.3).abs() < 0.01, "expected EMA-smoothed 1.3, got {sm}");
+        assert!(
+            (sm - 1.3).abs() < 0.01,
+            "expected EMA-smoothed 1.3, got {sm}"
+        );
     }
 
     #[test]
@@ -1294,22 +1501,40 @@ mod tests {
     #[test]
     fn tracker_empty_ticks() {
         let mut t = PersonTracker::new();
-        for _ in 0..100 { t.tick(&[]); }
+        for _ in 0..100 {
+            t.tick(&[]);
+        }
         assert_eq!(t.track_count(), 0);
     }
 
     fn det_with_emotion(emotion: &str, conf: f32) -> Vec<Detection> {
         vec![Detection {
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.7,
+                y2: 0.7,
+            },
             emotion: Some(emotion.into()),
             emotion_confidence: Some(conf),
-            identity: None, identity_confidence: None,
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None, torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None,
+            identity: None,
+            identity_confidence: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
+            torso_flexion: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
             embedding: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]
     }
@@ -1320,7 +1545,9 @@ mod tests {
         t.decay_start_frames = 3;
         t.decay_factor = 0.8;
         t.tick(&det_with_emotion("Happiness", 0.9));
-        for _ in 0..3 { t.tick(&[]); }
+        for _ in 0..3 {
+            t.tick(&[]);
+        }
         let tracks: Vec<_> = t.all().values().collect();
         assert!((tracks[0].emotion_confidence.unwrap() - 0.9).abs() < 0.01);
         t.tick(&[]);
@@ -1334,7 +1561,9 @@ mod tests {
         t.decay_start_frames = 0;
         t.decay_factor = 0.5;
         t.tick(&det_with_emotion("Sadness", 0.8));
-        for _ in 0..10 { t.tick(&[]); }
+        for _ in 0..10 {
+            t.tick(&[]);
+        }
         let tracks: Vec<_> = t.all().values().collect();
         assert!(tracks[0].emotion.is_none());
         assert!(tracks[0].emotion_confidence.is_none());
@@ -1346,7 +1575,9 @@ mod tests {
         t.decay_start_frames = 0;
         t.decay_factor = 0.5;
         t.tick(&det_with_emotion("Sadness", 0.8));
-        for _ in 0..10 { t.tick(&[]); }
+        for _ in 0..10 {
+            t.tick(&[]);
+        }
         let tracks: Vec<_> = t.all().values().collect();
         assert!(tracks[0].emotion.is_none());
         t.tick(&det_with_emotion("Happiness", 0.75));
@@ -1360,11 +1591,26 @@ mod tests {
     #[test]
     fn ocm_consistency_aligned_opposed_perp_and_zero() {
         // Pure cosine of velocity vs bearing-to-detection.
-        assert!((ocm_consistency([1.0, 0.0], [2.0, 0.0]) - 1.0).abs() < 1e-6, "aligned → +1");
-        assert!((ocm_consistency([1.0, 0.0], [-2.0, 0.0]) + 1.0).abs() < 1e-6, "opposed → -1");
-        assert!(ocm_consistency([1.0, 0.0], [0.0, 2.0]).abs() < 1e-6, "perpendicular → 0");
-        assert!(ocm_consistency([0.0, 0.0], [1.0, 0.0]).abs() < 1e-6, "no velocity → 0");
-        assert!(ocm_consistency([1.0, 0.0], [0.0, 0.0]).abs() < 1e-6, "no displacement → 0");
+        assert!(
+            (ocm_consistency([1.0, 0.0], [2.0, 0.0]) - 1.0).abs() < 1e-6,
+            "aligned → +1"
+        );
+        assert!(
+            (ocm_consistency([1.0, 0.0], [-2.0, 0.0]) + 1.0).abs() < 1e-6,
+            "opposed → -1"
+        );
+        assert!(
+            ocm_consistency([1.0, 0.0], [0.0, 2.0]).abs() < 1e-6,
+            "perpendicular → 0"
+        );
+        assert!(
+            ocm_consistency([0.0, 0.0], [1.0, 0.0]).abs() < 1e-6,
+            "no velocity → 0"
+        );
+        assert!(
+            ocm_consistency([1.0, 0.0], [0.0, 0.0]).abs() < 1e-6,
+            "no displacement → 0"
+        );
     }
 
     #[test]
@@ -1373,7 +1619,10 @@ mod tests {
         t.tick(&det(0.25, 0.45, 0.35, 0.55));
         let tr = t.active().next().unwrap();
         assert!(tr.last_obs_center.is_some(), "anchor seeded at birth");
-        assert!(tr.obs_velocity.is_none(), "no direction from a single observation");
+        assert!(
+            tr.obs_velocity.is_none(),
+            "no direction from a single observation"
+        );
     }
 
     #[test]
@@ -1386,7 +1635,12 @@ mod tests {
             t.tick(&det(x1, 0.40, x1 + 0.20, 0.60));
         }
         assert_eq!(t.track_count(), 1, "drifting body stays one track");
-        let v = t.active().next().unwrap().obs_velocity.expect("velocity after motion");
+        let v = t
+            .active()
+            .next()
+            .unwrap()
+            .obs_velocity
+            .expect("velocity after motion");
         assert!(v[0] > 0.0, "observation velocity points right, got {v:?}");
         assert!(v[1].abs() < 1e-3, "no vertical drift, got {}", v[1]);
     }
@@ -1400,8 +1654,17 @@ mod tests {
         t.tick(&[]); // occluded one frame
         t.tick(&det(0.35, 0.45, 0.45, 0.55)); // center 0.40, re-linked
         assert_eq!(t.track_count(), 1, "should re-link across the 1-frame gap");
-        let v = t.active().next().unwrap().obs_velocity.expect("velocity after gap");
-        assert!((v[0] - 0.05).abs() < 0.01, "gap-normalised 0.05/frame, got {}", v[0]);
+        let v = t
+            .active()
+            .next()
+            .unwrap()
+            .obs_velocity
+            .expect("velocity after gap");
+        assert!(
+            (v[0] - 0.05).abs() < 0.01,
+            "gap-normalised 0.05/frame, got {}",
+            v[0]
+        );
     }
 
     #[test]
@@ -1419,7 +1682,12 @@ mod tests {
         let mut ids: Vec<u32> = t.all().keys().copied().collect();
         ids.sort();
         let (right_id, left_id) = (ids[0], ids[1]);
-        let box5 = BBox { x1: 0.45, y1: 0.45, x2: 0.55, y2: 0.55 };
+        let box5 = BBox {
+            x1: 0.45,
+            y1: 0.45,
+            x2: 0.55,
+            y2: 0.55,
+        };
         for &(id, vx) in [(right_id, 0.10_f32), (left_id, -0.10_f32)].iter() {
             let tr = t.tracks.get_mut(&id).unwrap();
             tr.kalman = KalmanBBox::new(box5);
@@ -1436,8 +1704,14 @@ mod tests {
         assert_eq!(t.track_count(), 2, "no churn — both tracks persist");
         let rc = t.tracks.get(&right_id).unwrap().last_obs_center.unwrap();
         let lc = t.tracks.get(&left_id).unwrap().last_obs_center.unwrap();
-        assert!(rc[0] > 0.5, "rightward track followed the right detection, got {rc:?}");
-        assert!(lc[0] < 0.5, "leftward track followed the left detection, got {lc:?}");
+        assert!(
+            rc[0] > 0.5,
+            "rightward track followed the right detection, got {rc:?}"
+        );
+        assert!(
+            lc[0] < 0.5,
+            "leftward track followed the left detection, got {lc:?}"
+        );
     }
 
     #[test]
@@ -1470,11 +1744,18 @@ mod tests {
             Detection::bare(0.43, 0.45, 0.53, 0.55), // D0 centre 0.48
             Detection::bare(0.38, 0.45, 0.48, 0.55), // D1 centre 0.43
         ]);
-        assert_eq!(t.track_count(), 2, "no phantom track — both detections matched");
+        assert_eq!(
+            t.track_count(),
+            2,
+            "no phantom track — both detections matched"
+        );
         let c0 = t.tracks.get(&t0).unwrap().last_obs_center.unwrap();
         let c1 = t.tracks.get(&t1).unwrap().last_obs_center.unwrap();
         // Optimal (Hungarian): T0 follows D1 (0.43), T1 follows D0 (0.48).
-        assert!((c0[0] - 0.43).abs() < 0.01, "T0 took the nearer detection D1, got {c0:?}");
+        assert!(
+            (c0[0] - 0.43).abs() < 0.01,
+            "T0 took the nearer detection D1, got {c0:?}"
+        );
         assert!((c1[0] - 0.48).abs() < 0.01, "T1 took D0, got {c1:?}");
     }
 
@@ -1484,8 +1765,15 @@ mod tests {
     /// bbox-IoU slightly favour the SWAP (D0→T1, D1→T0); each carries its true
     /// silhouette. `t1_established` toggles the ≥2-people gate. Returns (tracker,
     /// t0, t1, top, bottom).
-    fn crossing_with_masks(t1_established: bool)
-        -> (PersonTracker, u32, u32, crate::mask::InstanceMask, crate::mask::InstanceMask) {
+    fn crossing_with_masks(
+        t1_established: bool,
+    ) -> (
+        PersonTracker,
+        u32,
+        u32,
+        crate::mask::InstanceMask,
+        crate::mask::InstanceMask,
+    ) {
         let top = mask_rect(0.0, 0.0, 1.0, 0.5);
         let bottom = mask_rect(0.0, 0.5, 1.0, 1.0);
         let mut t = PersonTracker::new();
@@ -1497,17 +1785,32 @@ mod tests {
         ids.sort_unstable();
         let (t0, t1) = (ids[0], ids[1]);
         let setup = [
-            (t0, 0.35_f32, 0.55_f32, top.clone(), LifecycleState::Confirmed),
+            (
+                t0,
+                0.35_f32,
+                0.55_f32,
+                top.clone(),
+                LifecycleState::Confirmed,
+            ),
             (
                 t1,
                 0.45,
                 0.65,
                 bottom.clone(),
-                if t1_established { LifecycleState::Confirmed } else { LifecycleState::Tentative },
+                if t1_established {
+                    LifecycleState::Confirmed
+                } else {
+                    LifecycleState::Tentative
+                },
             ),
         ];
         for (id, x1, x2, mask, life) in setup {
-            let b = BBox { x1, y1: 0.40, x2, y2: 0.60 };
+            let b = BBox {
+                x1,
+                y1: 0.40,
+                x2,
+                y2: 0.60,
+            };
             let tr = t.tracks.get_mut(&id).unwrap();
             tr.kalman = KalmanBBox::new(b);
             tr.bbox = b;
@@ -1531,8 +1834,14 @@ mod tests {
         t.tick(&[d0, d1]);
         let m0 = t.tracks.get(&t0).unwrap().last_obs_mask.clone().unwrap();
         let m1 = t.tracks.get(&t1).unwrap().last_obs_mask.clone().unwrap();
-        assert!(m0.iou(&top) > 0.9, "T0 followed its top-silhouette detection (no swap)");
-        assert!(m1.iou(&bottom) > 0.9, "T1 followed its bottom-silhouette detection");
+        assert!(
+            m0.iou(&top) > 0.9,
+            "T0 followed its top-silhouette detection (no swap)"
+        );
+        assert!(
+            m1.iou(&bottom) > 0.9,
+            "T1 followed its bottom-silhouette detection"
+        );
     }
 
     #[test]
@@ -1548,7 +1857,10 @@ mod tests {
         t.tick(&[d0, d1]);
         // Swap: T0 takes D1 (bottom silhouette).
         let m0 = t.tracks.get(&t0).unwrap().last_obs_mask.clone().unwrap();
-        assert!(m0.iou(&bottom) > 0.9, "gate off → T0 took the IoU-preferred (swapped) detection");
+        assert!(
+            m0.iou(&bottom) > 0.9,
+            "gate off → T0 took the IoU-preferred (swapped) detection"
+        );
     }
 
     #[test]
@@ -1570,8 +1882,16 @@ mod tests {
             // kalman left stale at center 0.25 (velocity ~0)
         }
         t.tick(&det(0.60, 0.45, 0.70, 0.55)); // center 0.65 = virtual (0.25 + 0.10*4)
-        assert_eq!(t.track_count(), 1, "virtual trajectory recovers the moving body");
-        assert_eq!(t.active().next().unwrap().id, id0, "id persists via OCR, no churn");
+        assert_eq!(
+            t.track_count(),
+            1,
+            "virtual trajectory recovers the moving body"
+        );
+        assert_eq!(
+            t.active().next().unwrap().id,
+            id0,
+            "id persists via OCR, no churn"
+        );
     }
 
     #[test]
@@ -1584,10 +1904,20 @@ mod tests {
             t.tick(&det(x1, 0.40, x1 + 0.20, 0.60)); // centers 0.30..0.45
         }
         let id0 = t.active().next().unwrap().id;
-        for _ in 0..3 { t.tick(&[]); } // occluded
+        for _ in 0..3 {
+            t.tick(&[]);
+        } // occluded
         t.tick(&det(0.52, 0.40, 0.72, 0.60)); // center 0.62, ahead on the trajectory
-        assert_eq!(t.track_count(), 1, "occluded moving body recovers as one track");
-        assert_eq!(t.active().next().unwrap().id, id0, "id persists across occlusion");
+        assert_eq!(
+            t.track_count(),
+            1,
+            "occluded moving body recovers as one track"
+        );
+        assert_eq!(
+            t.active().next().unwrap().id,
+            id0,
+            "id persists across occlusion"
+        );
     }
 
     // ── per-track motion (phase 9.8) ────────────────────────────────────────
@@ -1632,7 +1962,10 @@ mod tests {
         // The no-landmarks path doesn't touch motion (stays Unknown).
         let mut t = PersonTracker::new();
         t.tick_byte(&det(0.3, 0.3, 0.5, 0.5), &[]);
-        assert_eq!(t.active().next().unwrap().motion.state(), crate::motion::MotionState::Unknown);
+        assert_eq!(
+            t.active().next().unwrap().motion.state(),
+            crate::motion::MotionState::Unknown
+        );
     }
 
     // ── lifecycle FSM (phase 9.3) ───────────────────────────────────────────
@@ -1641,25 +1974,72 @@ mod tests {
     fn next_lifecycle_transitions() {
         use LifecycleState::*;
         // Climbing the trust ladder on matches (missed == 0).
-        assert_eq!(next_lifecycle(Tentative, 2, 0, false), Tentative, "below confirm age");
-        assert_eq!(next_lifecycle(Tentative, 3, 0, false), Confirmed, "reaches confirm age");
-        assert_eq!(next_lifecycle(Confirmed, 5, 0, true), IdLocked, "locked + confirmed");
-        assert_eq!(next_lifecycle(Tentative, 2, 0, true), Tentative, "lock waits for confirm");
-        assert_eq!(next_lifecycle(Occluded, 6, 0, false), Confirmed, "re-match recovers");
-        assert_eq!(next_lifecycle(Lost, 6, 0, true), IdLocked, "even a Lost track recovers on match");
+        assert_eq!(
+            next_lifecycle(Tentative, 2, 0, false),
+            Tentative,
+            "below confirm age"
+        );
+        assert_eq!(
+            next_lifecycle(Tentative, 3, 0, false),
+            Confirmed,
+            "reaches confirm age"
+        );
+        assert_eq!(
+            next_lifecycle(Confirmed, 5, 0, true),
+            IdLocked,
+            "locked + confirmed"
+        );
+        assert_eq!(
+            next_lifecycle(Tentative, 2, 0, true),
+            Tentative,
+            "lock waits for confirm"
+        );
+        assert_eq!(
+            next_lifecycle(Occluded, 6, 0, false),
+            Confirmed,
+            "re-match recovers"
+        );
+        assert_eq!(
+            next_lifecycle(Lost, 6, 0, true),
+            IdLocked,
+            "even a Lost track recovers on match"
+        );
         // Losing the track on misses (missed >= 1).
-        assert_eq!(next_lifecycle(Tentative, 1, 1, false), Lost, "unconfirmed miss → Lost");
-        assert_eq!(next_lifecycle(Confirmed, 5, 1, false), Occluded, "established miss → Occluded");
-        assert_eq!(next_lifecycle(IdLocked, 5, 1, true), Occluded, "locked miss → Occluded too");
-        assert_eq!(next_lifecycle(Occluded, 5, LOST_AFTER_MISSED, false), Lost, "long gap → Lost");
-        assert_eq!(next_lifecycle(Lost, 5, 40, false), Lost, "Lost stays Lost while missing");
+        assert_eq!(
+            next_lifecycle(Tentative, 1, 1, false),
+            Lost,
+            "unconfirmed miss → Lost"
+        );
+        assert_eq!(
+            next_lifecycle(Confirmed, 5, 1, false),
+            Occluded,
+            "established miss → Occluded"
+        );
+        assert_eq!(
+            next_lifecycle(IdLocked, 5, 1, true),
+            Occluded,
+            "locked miss → Occluded too"
+        );
+        assert_eq!(
+            next_lifecycle(Occluded, 5, LOST_AFTER_MISSED, false),
+            Lost,
+            "long gap → Lost"
+        );
+        assert_eq!(
+            next_lifecycle(Lost, 5, 40, false),
+            Lost,
+            "Lost stays Lost while missing"
+        );
     }
 
     #[test]
     fn born_track_is_tentative() {
         let mut t = PersonTracker::new();
         t.tick(&det(0.3, 0.3, 0.5, 0.5));
-        assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Tentative);
+        assert_eq!(
+            t.active().next().unwrap().lifecycle,
+            LifecycleState::Tentative
+        );
     }
 
     #[test]
@@ -1667,10 +2047,16 @@ mod tests {
         let mut t = PersonTracker::new();
         for _ in 0..(CONFIRM_AGE - 1) {
             t.tick(&det(0.3, 0.3, 0.5, 0.5));
-            assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Tentative);
+            assert_eq!(
+                t.active().next().unwrap().lifecycle,
+                LifecycleState::Tentative
+            );
         }
         t.tick(&det(0.3, 0.3, 0.5, 0.5)); // age now == CONFIRM_AGE
-        assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Confirmed);
+        assert_eq!(
+            t.active().next().unwrap().lifecycle,
+            LifecycleState::Confirmed
+        );
     }
 
     #[test]
@@ -1689,12 +2075,25 @@ mod tests {
     #[test]
     fn confirmed_track_occludes_then_lost() {
         let mut t = PersonTracker::new();
-        for _ in 0..CONFIRM_AGE { t.tick(&det(0.3, 0.3, 0.5, 0.5)); }
-        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Confirmed);
+        for _ in 0..CONFIRM_AGE {
+            t.tick(&det(0.3, 0.3, 0.5, 0.5));
+        }
+        assert_eq!(
+            t.all().values().next().unwrap().lifecycle,
+            LifecycleState::Confirmed
+        );
         t.tick(&[]); // one miss
-        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Occluded);
-        for _ in 0..LOST_AFTER_MISSED { t.tick(&[]); } // long gap
-        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Lost);
+        assert_eq!(
+            t.all().values().next().unwrap().lifecycle,
+            LifecycleState::Occluded
+        );
+        for _ in 0..LOST_AFTER_MISSED {
+            t.tick(&[]);
+        } // long gap
+        assert_eq!(
+            t.all().values().next().unwrap().lifecycle,
+            LifecycleState::Lost
+        );
     }
 
     #[test]
@@ -1702,7 +2101,10 @@ mod tests {
         let mut t = PersonTracker::new();
         t.tick(&det(0.3, 0.3, 0.5, 0.5)); // Tentative (age 1)
         t.tick(&[]); // miss before confirming → Lost
-        assert_eq!(t.all().values().next().unwrap().lifecycle, LifecycleState::Lost);
+        assert_eq!(
+            t.all().values().next().unwrap().lifecycle,
+            LifecycleState::Lost
+        );
     }
 
     // ── ByteTrack two-stage (phase 9.4) ─────────────────────────────────────
@@ -1730,7 +2132,8 @@ mod tests {
         // 11.A3 plumbing: a mask on the observation must survive association and be
         // stashed as the track's lagged silhouette for the NEXT tick's cost.
         let mut t = PersonTracker::new();
-        let obs = BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50)).with_mask(mask_rect(0.30, 0.30, 0.50, 0.50));
+        let obs = BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50))
+            .with_mask(mask_rect(0.30, 0.30, 0.50, 0.50));
         let ids = t.associate(std::slice::from_ref(&obs), &[]);
         // associate → apply_detection (the mesh path both feed a Detection carrying
         // the mask through `associate`'s conversion, then enrichment stashes it).
@@ -1738,7 +2141,10 @@ mod tests {
         d.mask = obs.mask.clone();
         t.apply_detection(ids[0], &d);
         t.finalize();
-        assert!(t.all().get(&ids[0]).unwrap().last_obs_mask.is_some(), "mask stashed on track");
+        assert!(
+            t.all().get(&ids[0]).unwrap().last_obs_mask.is_some(),
+            "mask stashed on track"
+        );
     }
 
     #[test]
@@ -1752,7 +2158,10 @@ mod tests {
         t.apply_detection(ids[0], &d);
         // second apply with no mask
         t.apply_detection(ids[0], &Detection::bare(0.31, 0.31, 0.51, 0.51));
-        assert!(t.all().get(&ids[0]).unwrap().last_obs_mask.is_some(), "None must not clear the mask");
+        assert!(
+            t.all().get(&ids[0]).unwrap().last_obs_mask.is_some(),
+            "None must not clear the mask"
+        );
     }
 
     fn bbox(x1: f32, y1: f32, x2: f32, y2: f32) -> BBox {
@@ -1783,7 +2192,11 @@ mod tests {
         t.apply_detection(ids[0], &det);
         t.finalize();
         let tr = t.all().get(&ids[0]).unwrap();
-        assert_eq!(tr.identity.as_deref(), Some("Вадим"), "enrichment seeded post-match");
+        assert_eq!(
+            tr.identity.as_deref(),
+            Some("Вадим"),
+            "enrichment seeded post-match"
+        );
     }
 
     #[test]
@@ -1804,7 +2217,11 @@ mod tests {
         let id0 = t.associate(&[BodyObservation::bare(bbox(0.30, 0.30, 0.50, 0.50))], &[])[0];
         let ids = t.associate(&[], &[bbox(0.31, 0.31, 0.51, 0.51)]);
         assert!(ids.is_empty(), "no high observation → no ids");
-        assert_eq!(t.active().next().unwrap().id, id0, "low box recovered the track");
+        assert_eq!(
+            t.active().next().unwrap().id,
+            id0,
+            "low box recovered the track"
+        );
     }
 
     #[test]
@@ -1812,19 +2229,32 @@ mod tests {
         // THE contract: associate → apply_detection → finalize must produce the
         // exact same track state as the integrated tick_byte on one person.
         let det = Detection {
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.7, y2: 0.7 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.7,
+                y2: 0.7,
+            },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.72),
             emotion: Some("Neutral".into()),
             emotion_confidence: Some(0.65),
             posture: Some("сидит".into()),
             posture_confidence: Some(0.95),
-            distance: Some(1.5), position_x: Some(0.1), position_y: Some(0.2), position_z: Some(1.5),
-            ws_confidence: Some(0.8), recon_error: Some(0.01), plausibility: Some("normal".into()),
+            distance: Some(1.5),
+            position_x: Some(0.1),
+            position_y: Some(0.2),
+            position_z: Some(1.5),
+            ws_confidence: Some(0.8),
+            recon_error: Some(0.01),
+            plausibility: Some("normal".into()),
             torso_flexion: Some(5.0),
-            body_coverage: None, torso_attitude: None,
-            head_yaw: None, head_facing: None,
-            emotion_distribution: None, embedding: Some(vec![1.0, 0.0, 0.0]),
+            body_coverage: None,
+            torso_attitude: None,
+            head_yaw: None,
+            head_facing: None,
+            emotion_distribution: None,
+            embedding: Some(vec![1.0, 0.0, 0.0]),
             mask: None,
         };
 
@@ -1877,7 +2307,10 @@ mod tests {
         // box must NOT double-update it (it already sits at missed == 0).
         let mut t = PersonTracker::new();
         t.tick(&det(0.30, 0.30, 0.50, 0.50));
-        t.tick_byte(&det(0.30, 0.30, 0.50, 0.50), &[bbox(0.30, 0.30, 0.50, 0.50)]);
+        t.tick_byte(
+            &det(0.30, 0.30, 0.50, 0.50),
+            &[bbox(0.30, 0.30, 0.50, 0.50)],
+        );
         assert_eq!(t.active().next().unwrap().age, 2, "aged once, not twice");
     }
 
@@ -1889,7 +2322,11 @@ mod tests {
         t.tick(&det_id(0.30, 0.30, 0.50, 0.50, "Вадим", 0.9));
         t.tick_byte(&[], &[bbox(0.31, 0.31, 0.51, 0.51)]);
         let a = t.active().next().expect("recovered");
-        assert_eq!(a.identity.as_deref(), Some("Вадим"), "identity preserved through recovery");
+        assert_eq!(
+            a.identity.as_deref(),
+            Some("Вадим"),
+            "identity preserved through recovery"
+        );
     }
 
     #[test]
@@ -1897,8 +2334,13 @@ mod tests {
         // ByteTrack's headline: a Confirmed body the detector only half-saw stays
         // Confirmed via the low box, instead of slipping to Occluded.
         let mut t = PersonTracker::new();
-        for _ in 0..CONFIRM_AGE { t.tick(&det(0.30, 0.30, 0.50, 0.50)); }
-        assert_eq!(t.active().next().unwrap().lifecycle, LifecycleState::Confirmed);
+        for _ in 0..CONFIRM_AGE {
+            t.tick(&det(0.30, 0.30, 0.50, 0.50));
+        }
+        assert_eq!(
+            t.active().next().unwrap().lifecycle,
+            LifecycleState::Confirmed
+        );
         t.tick_byte(&[], &[bbox(0.31, 0.31, 0.51, 0.51)]);
         assert_eq!(
             t.active().next().unwrap().lifecycle,
@@ -1965,7 +2407,10 @@ mod tests {
         // A brand-new body has never been emotion-classified → it needs it.
         let mut t = PersonTracker::new();
         t.tick(&det(0.3, 0.3, 0.7, 0.7));
-        assert!(t.active().next().unwrap().needs_emotion(), "first sight needs emotion");
+        assert!(
+            t.active().next().unwrap().needs_emotion(),
+            "first sight needs emotion"
+        );
     }
 
     #[test]
@@ -1988,7 +2433,10 @@ mod tests {
         for _ in 0..crate::types::EMOTION_CADENCE {
             t.tick(&det(0.3, 0.3, 0.7, 0.7)); // matched, but no emotion observed
         }
-        assert!(t.active().next().unwrap().needs_emotion(), "coasted past cadence → stale");
+        assert!(
+            t.active().next().unwrap().needs_emotion(),
+            "coasted past cadence → stale"
+        );
     }
 
     #[test]
@@ -2001,7 +2449,11 @@ mod tests {
             t.tick(&det(0.3, 0.3, 0.7, 0.7)); // no emotion observed
         }
         let tr = t.active().next().unwrap();
-        assert_eq!(tr.emotion.as_deref(), Some("Happiness"), "label frozen, not dropped");
+        assert_eq!(
+            tr.emotion.as_deref(),
+            Some("Happiness"),
+            "label frozen, not dropped"
+        );
     }
 
     #[test]

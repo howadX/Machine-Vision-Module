@@ -28,7 +28,7 @@ mod statefile;
 pub(crate) use capture::CaptureAgent;
 pub(crate) use dataset_writer::DatasetWriterAgent;
 pub(crate) use depth::{DepthAgent, DepthSlot};
-pub(crate) use fusion::{infer_activities, FusionAgent};
+pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
 pub(crate) use scene::{PersonMaskSlot, SceneAgent};
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
@@ -112,9 +112,12 @@ pub(crate) fn project_objects(
             bbox: t.bbox,
             confidence: t.score,
             age: t.age,
-            position_3d: t
-                .pos_3d
-                .map(|[x, y, z]| Position3D { x, y, z, confidence: t.pos_conf }),
+            position_3d: t.pos_3d.map(|[x, y, z]| Position3D {
+                x,
+                y,
+                z,
+                confidence: t.pos_conf,
+            }),
             mask: t.mask.clone(),
             // Object-permanence: a held (occluded) static fixture has missed > 0
             // but is still emitted (phase 11) — surface it on mesh (12.B3 parity).
@@ -176,7 +179,12 @@ mod tests {
             mvm_scene::TrackedObject {
                 id: 10000,
                 class_name: "cup",
-                bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 },
+                bbox: BBox {
+                    x1: 0.1,
+                    y1: 0.1,
+                    x2: 0.2,
+                    y2: 0.2,
+                },
                 score: 0.8,
                 age: 3,
                 missed: 0,
@@ -187,7 +195,12 @@ mod tests {
             mvm_scene::TrackedObject {
                 id: 10001,
                 class_name: "bed",
-                bbox: BBox { x1: 0.6, y1: 0.6, x2: 0.9, y2: 0.9 },
+                bbox: BBox {
+                    x1: 0.6,
+                    y1: 0.6,
+                    x2: 0.9,
+                    y2: 0.9,
+                },
                 score: 0.6,
                 age: 1,
                 missed: 0,
@@ -204,6 +217,9 @@ mod tests {
         assert_eq!(w.objects[0].class, "cup");
         let p = w.objects[0].position_3d.as_ref().expect("cup has 3D");
         assert!((p.z - 0.7).abs() < 1e-6);
-        assert!(w.objects[1].position_3d.is_none(), "bed has no depth anchor → None");
+        assert!(
+            w.objects[1].position_3d.is_none(),
+            "bed has no depth anchor → None"
+        );
     }
 }

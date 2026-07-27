@@ -9,7 +9,10 @@ use mvm_posture::NativePose;
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
-    let secs: f64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(15.0);
+    let secs: f64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15.0);
     // optional 2nd arg: a dir to save each frame (for the 7.5.5 native-vs-Python oracle)
     let save_dir = std::env::args().nth(2);
     if let Some(d) = &save_dir {
@@ -51,17 +54,33 @@ fn main() -> anyhow::Result<()> {
         for (i, p) in poses.iter().enumerate() {
             let lm = &people[i];
             let head = (lm[0][0] / w, lm[0][1] / h);
-            let hip = ((lm[23][0] + lm[24][0]) / 2.0 / w, (lm[23][1] + lm[24][1]) / 2.0 / h);
+            let hip = (
+                (lm[23][0] + lm[24][0]) / 2.0 / w,
+                (lm[23][1] + lm[24][1]) / 2.0 / h,
+            );
             line += &format!(
                 " | P{i}: {}@{:.2} maha={:.2}{} head=({:.2},{:.2}) hip=({:.2},{:.2})",
-                p.label, p.confidence, p.maha_score, if p.ood { " OOD" } else { "" },
-                head.0, head.1, hip.0, hip.1,
+                p.label,
+                p.confidence,
+                p.maha_score,
+                if p.ood { " OOD" } else { "" },
+                head.0,
+                head.1,
+                hip.0,
+                hip.1,
             );
         }
         println!("{line}");
     }
     let fps = frames as f64 / t0.elapsed().as_secs_f64();
     println!("\n{frames} frames, {fps:.1} fps; max persons simultaneously = {max_people}");
-    println!("{}", if max_people > 0 { "=> native pose live ✓" } else { "=> no person tracked ✗" });
+    println!(
+        "{}",
+        if max_people > 0 {
+            "=> native pose live ✓"
+        } else {
+            "=> no person tracked ✗"
+        }
+    );
     Ok(())
 }

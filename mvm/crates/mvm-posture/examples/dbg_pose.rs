@@ -14,10 +14,20 @@ fn main() -> anyhow::Result<()> {
     let poses = np.poses(&img)?;
     let lm = &people[0];
     for k in 0..33 {
-        println!("{k} {:.4} {:.4} {:.4}", lm[k][0] / w, lm[k][1] / h, lm[k][2] / w);
+        println!(
+            "{k} {:.4} {:.4} {:.4}",
+            lm[k][0] / w,
+            lm[k][1] / h,
+            lm[k][2] / w
+        );
     }
-    eprintln!("CLASS {} @ {:.3} maha {:.2}{} flexion {:?}",
-        poses[0].label, poses[0].confidence, poses[0].maha_score,
-        if poses[0].ood { " OOD" } else { "" }, poses[0].torso_flexion);
+    eprintln!(
+        "CLASS {} @ {:.3} maha {:.2}{} flexion {:?}",
+        poses[0].label,
+        poses[0].confidence,
+        poses[0].maha_score,
+        if poses[0].ood { " OOD" } else { "" },
+        poses[0].torso_flexion
+    );
     Ok(())
 }

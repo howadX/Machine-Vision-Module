@@ -20,7 +20,11 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(id: u64, image: DynamicImage, captured: Instant) -> Self {
-        Self { id, image: Arc::new(image), captured }
+        Self {
+            id,
+            image: Arc::new(image),
+            captured,
+        }
     }
 }
 
@@ -33,7 +37,9 @@ pub struct LatestFrame {
 
 impl LatestFrame {
     pub fn new() -> Self {
-        Self { slot: Arc::new(Mutex::new(None)) }
+        Self {
+            slot: Arc::new(Mutex::new(None)),
+        }
     }
 
     /// Overwrite with the newest frame (producer).

@@ -21,8 +21,8 @@ static FOREST_BIN: &[u8] = include_bytes!("pose_rf_2dgrip_v2.bin");
 pub struct PoseResult {
     pub label: &'static str,
     pub label_idx: usize,
-    pub confidence: f32,        // max class probability
-    pub probs: [f32; N_CLASS],  // [lying, sitting, standing]
+    pub confidence: f32,       // max class probability
+    pub probs: [f32; N_CLASS], // [lying, sitting, standing]
     /// Continuous torso flexion = feature[0] `torso_inc` (2D, z-free), degrees to
     /// gravity-up. Pure arithmetic, +0 model weight (15.6). `Some` whenever a torso
     /// is present; the pipeline may still withhold it under `Head` coverage.
@@ -154,7 +154,11 @@ impl MahaOod {
         let rd_f32 = |b: &[u8], p: usize| f32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]);
         let n_cls = rd_u32(bytes, 0) as usize;
         let n_feat = rd_u32(bytes, 4) as usize;
-        assert_eq!(n_feat, N_FEAT, "pose_maha.bin feature count {} != {}", n_feat, N_FEAT);
+        assert_eq!(
+            n_feat, N_FEAT,
+            "pose_maha.bin feature count {} != {}",
+            n_feat, N_FEAT
+        );
         let thr = rd_f32(bytes, 8);
         let mut p = 12usize;
         let mut means = Vec::with_capacity(n_cls);
@@ -173,8 +177,18 @@ impl MahaOod {
             }
             inv_cov.push(ic);
         }
-        assert_eq!(p, bytes.len(), "pose_maha.bin length mismatch (used {} of {})", p, bytes.len());
-        MahaOod { thr, means, inv_cov }
+        assert_eq!(
+            p,
+            bytes.len(),
+            "pose_maha.bin length mismatch (used {} of {})",
+            p,
+            bytes.len()
+        );
+        MahaOod {
+            thr,
+            means,
+            inv_cov,
+        }
     }
 
     /// Minimum class-conditional Mahalanobis distance (lower = more familiar).
@@ -241,11 +255,23 @@ impl Forest {
                     *pr = rd_f32(bytes, p + 16 + k * 4);
                 }
                 p += 16 + N_CLASS * 4;
-                nodes.push(Node { feature, threshold, left, right, probs });
+                nodes.push(Node {
+                    feature,
+                    threshold,
+                    left,
+                    right,
+                    probs,
+                });
             }
             trees.push(nodes);
         }
-        assert_eq!(p, bytes.len(), "forest.bin length mismatch (used {} of {})", p, bytes.len());
+        assert_eq!(
+            p,
+            bytes.len(),
+            "forest.bin length mismatch (used {} of {})",
+            p,
+            bytes.len()
+        );
         Forest { trees }
     }
 
@@ -365,7 +391,11 @@ pub fn compute_features(lm: &[[f32; 4]; 33]) -> [f32; N_FEAT] {
     let p = |k: usize| [lm[k][0], lm[k][1], 0.0]; // z zeroed → 2D-GRIP
     let mid = |a: usize, b: usize| {
         let (x, y) = (p(a), p(b));
-        [(x[0] + y[0]) / 2.0, (x[1] + y[1]) / 2.0, (x[2] + y[2]) / 2.0]
+        [
+            (x[0] + y[0]) / 2.0,
+            (x[1] + y[1]) / 2.0,
+            (x[2] + y[2]) / 2.0,
+        ]
     };
     let hip = mid(23, 24);
     let sh = mid(11, 12);
@@ -453,8 +483,12 @@ mod tests {
         for (input, feat_g, ..) in GOLDEN {
             let feat = compute_features(input);
             for k in 0..N_FEAT {
-                assert!((feat[k] - feat_g[k]).abs() < 1e-2,
-                    "feat[{k}] {} vs golden {}", feat[k], feat_g[k]);
+                assert!(
+                    (feat[k] - feat_g[k]).abs() < 1e-2,
+                    "feat[{k}] {} vs golden {}",
+                    feat[k],
+                    feat_g[k]
+                );
             }
         }
     }
@@ -553,12 +587,25 @@ mod tests {
             let r = head.classify(input);
             assert_eq!(r.label, *pred, "label {} vs golden {}", r.label, pred);
             for k in 0..N_CLASS {
-                assert!((r.probs[k] - probs_g[k]).abs() < 5e-3,
-                    "prob[{k}] {} vs golden {}", r.probs[k], probs_g[k]);
+                assert!(
+                    (r.probs[k] - probs_g[k]).abs() < 5e-3,
+                    "prob[{k}] {} vs golden {}",
+                    r.probs[k],
+                    probs_g[k]
+                );
             }
-            assert!((r.maha_score - maha_g).abs() < 1e-2, "maha {} vs {}", r.maha_score, maha_g);
-            assert!((r.torso_flexion.unwrap() - flex_g).abs() < 1e-2,
-                "flexion {:?} vs {}", r.torso_flexion, flex_g);
+            assert!(
+                (r.maha_score - maha_g).abs() < 1e-2,
+                "maha {} vs {}",
+                r.maha_score,
+                maha_g
+            );
+            assert!(
+                (r.torso_flexion.unwrap() - flex_g).abs() < 1e-2,
+                "flexion {:?} vs {}",
+                r.torso_flexion,
+                flex_g
+            );
         }
     }
 }

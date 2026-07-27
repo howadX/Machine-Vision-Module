@@ -15,11 +15,11 @@
 use super::DepthSlot;
 use crate::state::{object_state_to_entity, person_to_entity, relation_kept};
 use image::{ImageFormat, RgbImage};
-use mvm_core::types::RelationKind;
 use mvm_core::BBox;
+use mvm_core::types::RelationKind;
 use mvm_dataset::{
-    blur_regions, DatasetConfig, DatasetWriter, EdgeRel, FrameRecord, PrivacyPerson, SceneRelations,
-    ZoneRel,
+    DatasetConfig, DatasetWriter, EdgeRel, FrameRecord, PrivacyPerson, SceneRelations, ZoneRel,
+    blur_regions,
 };
 use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
 use std::path::Path;
@@ -86,7 +86,11 @@ impl DatasetWriterAgent {
                     RelationKind::Overlapping => "overlapping",
                     RelationKind::PartOf => "part_of",
                 };
-                EdgeRel { a: r.a, b: r.b, rel: rel.into() }
+                EdgeRel {
+                    a: r.a,
+                    b: r.b,
+                    rel: rel.into(),
+                }
             })
             .collect();
 
@@ -121,12 +125,16 @@ impl DatasetWriterAgent {
         let stamp = chrono::Local::now().format("%Y-%m-%d_%H%M%S").to_string();
         // Full RFC3339 (with UTC offset) so downstream readers (`recap --last`,
         // `inspect --around`) can parse the semantic session timestamp (§16.7).
-        let iso = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string();
+        let iso = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+            .to_string();
 
         // Snapshot the latest relative depth map (if enabled + available) BEFORE
         // the lock, so its [min,max] range can go into the label the writer builds.
         let depth_map = if self.cfg.save_depth {
-            self.depth.as_ref().and_then(|s| s.lock().ok().and_then(|g| g.clone()))
+            self.depth
+                .as_ref()
+                .and_then(|s| s.lock().ok().and_then(|g| g.clone()))
         } else {
             None
         };
@@ -152,7 +160,9 @@ impl DatasetWriterAgent {
             // §16.7: compute zones+edges (ticks the persistent tracker) before the
             // record so the label carries the frame's relational scene-graph.
             let relations = self.scene_relations(&w);
-            let r = self.writer.record_frame(&mut w, now, &iso, &stamp, depth_range, &relations)?;
+            let r = self
+                .writer
+                .record_frame(&mut w, now, &iso, &stamp, depth_range, &relations)?;
             (r, pp)
         };
 
@@ -187,7 +197,10 @@ impl DatasetWriterAgent {
     ) -> anyhow::Result<()> {
         let mut rgb = img.to_rgb8();
         apply_blur(&mut rgb, blur);
-        let path = rec.frame_path.as_ref().expect("write_frame_image called only when a frame path exists");
+        let path = rec
+            .frame_path
+            .as_ref()
+            .expect("write_frame_image called only when a frame path exists");
         save_rgb(&rgb, path, &self.cfg)?;
         Ok(())
     }
@@ -227,11 +240,17 @@ impl Agent for DatasetWriterAgent {
             std::thread::sleep(Duration::from_millis(5));
         }
         // Finalize any open session on shutdown so its session.toml is written.
-        let ended = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z").to_string();
+        let ended = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+            .to_string();
         if let Ok(mut w) = ctx.world.write() {
             let _ = self.writer.close_open_session(&mut w, &ended);
         }
-        AgentHealth { name: self.name(), ticks: records, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks: records,
+            errors,
+        }
     }
 }
 
@@ -285,12 +304,9 @@ fn write_depth_png(map: &mvm_depth::DepthMap, range: [f32; 2], path: &Path) -> a
         .iter()
         .map(|&v| (((v - min) / span).clamp(0.0, 1.0) * 65535.0).round() as u16)
         .collect();
-    let img = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(
-        map.w as u32,
-        map.h as u32,
-        buf,
-    )
-    .ok_or_else(|| anyhow::anyhow!("depth buffer {}×{} mismatch", map.w, map.h))?;
+    let img =
+        image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(map.w as u32, map.h as u32, buf)
+            .ok_or_else(|| anyhow::anyhow!("depth buffer {}×{} mismatch", map.w, map.h))?;
     img.save_with_format(path, ImageFormat::Png)?;
     Ok(())
 }
@@ -305,8 +321,10 @@ fn save_rgb(rgb: &RgbImage, path: &Path, cfg: &DatasetConfig) -> anyhow::Result<
         mvm_dataset::FrameFormat::Jpg => {
             let file = std::fs::File::create(path)?;
             let mut w = std::io::BufWriter::new(file);
-            let mut enc =
-                image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, cfg.frame_quality_clamped());
+            let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut w,
+                cfg.frame_quality_clamped(),
+            );
             enc.encode_image(rgb)?;
         }
         mvm_dataset::FrameFormat::Png => {
@@ -334,9 +352,18 @@ mod tests {
     fn person(id: u32, now: Instant, anon: bool) -> PersonState {
         PersonState {
             track_id: id,
-            bbox: BBox { x1: 0.25, y1: 0.1, x2: 0.55, y2: 0.9 },
+            bbox: BBox {
+                x1: 0.25,
+                y1: 0.1,
+                x2: 0.55,
+                y2: 0.9,
+            },
             face_bbox: None,
-            identity: if anon { None } else { Some(("Вадим".into(), 0.9)) },
+            identity: if anon {
+                None
+            } else {
+                Some(("Вадим".into(), 0.9))
+            },
             emotion: None,
             posture: Some(("sitting".into(), 0.9)),
             position_3d: None,
@@ -370,7 +397,11 @@ mod tests {
     #[test]
     fn depth_png_is_16bit_and_reversible() {
         let root = temp_root("depthpng");
-        let map = mvm_depth::DepthMap { data: vec![0.0, 1.0, 2.0, 4.0], w: 2, h: 2 };
+        let map = mvm_depth::DepthMap {
+            data: vec![0.0, 1.0, 2.0, 4.0],
+            w: 2,
+            h: 2,
+        };
         let range = depth_minmax(&map.data).unwrap();
         assert_eq!(range, [0.0, 4.0]);
         let path = root.join("depth/000000.png");
@@ -401,18 +432,30 @@ mod tests {
             stop: Arc::new(AtomicBool::new(false)),
         };
         // Publish a captured frame the agent will record.
-        ctx.frames.publish(Frame::new(5, image::DynamicImage::new_rgb8(64, 48), now));
+        ctx.frames
+            .publish(Frame::new(5, image::DynamicImage::new_rgb8(64, 48), now));
 
         let health = agent.run(&ctx);
         assert_eq!(health.ticks, 1, "one recorded frame");
 
         // labels.jsonl + the RGB frame both exist under the session dir.
         let sessions = root.join("sessions");
-        let sess_dir = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        let sess_dir = std::fs::read_dir(&sessions)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         assert!(sess_dir.join("labels.jsonl").exists());
-        assert!(sess_dir.join("frames/000000.jpg").exists(), "RGB frame written");
+        assert!(
+            sess_dir.join("frames/000000.jpg").exists(),
+            "RGB frame written"
+        );
         // On shutdown the open session was finalized.
-        assert!(sess_dir.join("session.toml").exists(), "session.toml on shutdown");
+        assert!(
+            sess_dir.join("session.toml").exists(),
+            "session.toml on shutdown"
+        );
     }
 
     #[test]
@@ -420,7 +463,9 @@ mod tests {
         // §16.7-3: the default `mvm run` recorder (effective_recorder of a default
         // config) is text-only — labels.jsonl + session.toml, no frames/ pixels.
         let root = temp_root("textonly");
-        let mut cfg = DatasetConfig::default().effective_recorder().expect("vision log on by default");
+        let mut cfg = DatasetConfig::default()
+            .effective_recorder()
+            .expect("vision log on by default");
         assert!(!cfg.save_frames, "default recorder is text-only");
         cfg.frame_cadence = 1; // record every frame so the bounded run terminates
         let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None).with_max_records(1);
@@ -434,14 +479,29 @@ mod tests {
             world: Arc::new(RwLock::new(world)),
             stop: Arc::new(AtomicBool::new(false)),
         };
-        ctx.frames.publish(Frame::new(1, image::DynamicImage::new_rgb8(64, 48), now));
+        ctx.frames
+            .publish(Frame::new(1, image::DynamicImage::new_rgb8(64, 48), now));
         assert_eq!(agent.run(&ctx).ticks, 1);
 
         let sessions = root.join("sessions");
-        let sess_dir = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
-        assert!(sess_dir.join("labels.jsonl").is_file(), "semantic labels written");
-        assert!(sess_dir.join("session.toml").is_file(), "session finalized on shutdown");
-        assert!(!sess_dir.join("frames").exists(), "text-only: no pixel frames dir");
+        let sess_dir = std::fs::read_dir(&sessions)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(
+            sess_dir.join("labels.jsonl").is_file(),
+            "semantic labels written"
+        );
+        assert!(
+            sess_dir.join("session.toml").is_file(),
+            "session finalized on shutdown"
+        );
+        assert!(
+            !sess_dir.join("frames").exists(),
+            "text-only: no pixel frames dir"
+        );
     }
 
     #[test]
@@ -460,7 +520,12 @@ mod tests {
         world.objects.push(mvm_core::world::ObjectState {
             id: 10001,
             class: "keyboard".into(),
-            bbox: BBox { x1: 0.3, y1: 0.4, x2: 0.5, y2: 0.6 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.4,
+                x2: 0.5,
+                y2: 0.6,
+            },
             confidence: 0.8,
             age: 5,
             position_3d: None,
@@ -473,21 +538,29 @@ mod tests {
             world: Arc::new(RwLock::new(world)),
             stop: Arc::new(AtomicBool::new(false)),
         };
-        ctx.frames.publish(Frame::new(7, image::DynamicImage::new_rgb8(64, 48), now));
+        ctx.frames
+            .publish(Frame::new(7, image::DynamicImage::new_rgb8(64, 48), now));
         assert_eq!(agent.run(&ctx).ticks, 1);
 
         let sessions = root.join("sessions");
-        let sess_dir = std::fs::read_dir(&sessions).unwrap().next().unwrap().unwrap().path();
+        let sess_dir = std::fs::read_dir(&sessions)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         let content = std::fs::read_to_string(sess_dir.join("labels.jsonl")).unwrap();
         let obs: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
         let rels = obs["relations"].as_array().expect("relations array");
         assert!(
-            rels.iter().any(|r| r["kind"] == "zone" && r["label"] == "workstation"),
+            rels.iter()
+                .any(|r| r["kind"] == "zone" && r["label"] == "workstation"),
             "expected a workstation zone, got: {}",
             obs["relations"]
         );
         assert!(
-            rels.iter().any(|r| r["kind"] == "edge" && r["a"] == "p1" && r["b"] == "o10001"),
+            rels.iter()
+                .any(|r| r["kind"] == "edge" && r["a"] == "p1" && r["b"] == "o10001"),
             "expected a person↔object edge, got: {}",
             obs["relations"]
         );
@@ -514,7 +587,12 @@ mod tests {
             depth_path: None,
             observation: mvm_dataset::CanonicalObservation::new("d", "s", 0, "iso", 0),
         };
-        let regions = vec![BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 0.3 }];
+        let regions = vec![BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 0.3,
+        }];
         agent.write_frame_image(&dynimg, &rec, &regions).unwrap();
 
         let saved = image::open(rec.frame_path.as_ref().unwrap()).unwrap();
