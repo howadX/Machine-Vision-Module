@@ -1,8 +1,8 @@
 # Фаза 18 — Visual Cortex Layer: явный когнитивный слой MVM
 
 > **Версия:** 0.4 (27 июля 2026)
-> **Статус:** 🚧 реализация начата; 18.0 State Contract + Benchmark Baseline ✅;
-> 18.1 Typed Observation Bus + Canonical Fusion — в работе
+> **Статус:** 🚧 реализация; 18.0 State Contract + Benchmark Baseline ✅;
+> 18.1 Typed Observation Bus + Canonical Fusion ✅; далее 18.2 Cortex Skeleton
 > **Ветка:** `kaggle`
 > **Цель фазы:** сначала завершить канонический facts-слой `FusedSceneFrame`, затем добавить над ним явный, читаемый и проверяемый когнитивный слой `mvm-cortex`, превращающий perception pipeline в visual substrate for agency.
 > **Манифест:** `~/wiki/mvm/north-star-visual-cortex-agent.md`
@@ -899,7 +899,7 @@ Baseline report committed; ни один следующий feature gate не п
 
 ### 18.1 — Typed Observation Bus + Canonical Fusion
 
-**Статус:** 🚧 начата 27 июля 2026 г. Первый проверенный срез обобщил mesh-channel до
+**Статус:** ✅ закрыта 27 июля 2026 г. Первый проверенный срез обобщил mesh-channel до
 `LatestValue<T>`, ввёл runtime-only stamped Human/Scene/Depth observations, заменил unstamped
 depth/person-mask slots и убрал прямые `WorldState` write-sites из expert agents. Fusion теперь
 camera-driven. Второй срез добавил `mvm-fusion::canonical::CanonicalFusion`: incarnation-safe entities,
@@ -911,9 +911,11 @@ compatibility `WorldState` write-site в Fusion. Третий срез доба�
 `SceneEventPayload::ActivityEpisode` и запись canonical event delta в `labels.jsonl` через собственный
 cursor DatasetWriter; durable event сохраняет `event_seq`, `source_frame_id` и `source_timestamp`.
 Контрактные тесты фиксируют non-destructive независимые cursors, детерминированный replay при разной
-sink cadence и неизменность уже опубликованного packet при позднем expert result. Следующий срез —
-завершение legacy capture transition и fixture/live-проверка `mvm dataset check` для text-only и pixel
-режимов.
+sink cadence и неизменность уже опубликованного packet при позднем expert result. Финальный срез
+маршрутизировал корневой `--native-camera` в тот же canonical AgentMesh (`--once` и `--dump-interval`
+переводятся явно), оставил отдельным только deprecated Python `--native` compatibility path и добавил
+исполняемый `mvm dataset check` gate для сгенерированных text-only и pixel fixtures. Все workspace,
+strict Clippy, rustfmt и skill-contract gates зелёные.
 
 **Цель:** заменить multi-writer `WorldState` на stamped expert observations и один
 `LatestValue<FusedFramePacket>`.
@@ -1401,7 +1403,7 @@ v0.4.0 — Visual Cortex / фаза 18
 
 ---
 
-*План обновлён 27 июля 2026 г.; 18.0 реализована и проверена полным workspace gate.*
+*План обновлён 27 июля 2026 г.; 18.0 и 18.1 реализованы и проверены полным workspace gate.*
 *Основание: фазовый план 18 v0.2, актуальные runtime/dataset contracts, `north-star-visual-cortex-agent.md`,
 `north-star-conscious-vision.md`, академическая работа `deconstructing-consciousness-as-engineering-method.md`
 и утверждённые решения о canonical `FusedSceneFrame`, evidence split и едином `mvm-cortex`.*

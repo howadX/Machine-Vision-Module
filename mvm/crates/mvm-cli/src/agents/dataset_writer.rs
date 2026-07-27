@@ -690,6 +690,9 @@ mod tests {
             sess_dir.join("session.toml").exists(),
             "session.toml on shutdown"
         );
+        let report = mvm_dataset::check_dataset(&root).unwrap();
+        assert_eq!(report.errors(), 0, "{:?}", report.sessions[0].findings);
+        assert_eq!(report.warns(), 0, "{:?}", report.sessions[0].findings);
     }
 
     #[test]
@@ -736,6 +739,9 @@ mod tests {
             !sess_dir.join("frames").exists(),
             "text-only: no pixel frames dir"
         );
+        let report = mvm_dataset::check_dataset(&root).unwrap();
+        assert_eq!(report.errors(), 0, "{:?}", report.sessions[0].findings);
+        assert_eq!(report.warns(), 0, "{:?}", report.sessions[0].findings);
     }
 
     #[test]

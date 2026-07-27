@@ -8,9 +8,9 @@
 //!   mvm serve --mcp   MCP stdio server (snapshot/recap/inspect as tools)
 //!   mvm --help / --version
 //!
-//! Legacy sync/bridge path (hidden, reached by flags, not a subcommand):
-//!   mvm --native-camera        pure-Rust v4l2 hot-path
-//!   mvm --native               Python-bridge full pipeline (FFmpeg capture)
+//! Compatibility flags (hidden, not subcommands):
+//!   mvm --native-camera        deprecated alias of canonical `mvm run`
+//!   mvm --native               deprecated Python-bridge sync pipeline
 //!   mvm --once / --cpu / --bridge-path <DIR> / --no-camera
 
 mod agents;
@@ -185,6 +185,36 @@ mod tests {
         let a = parse_mesh_args(&raw);
         assert!(a.common.dump_json);
         assert_eq!(a.interval_ms, Some(50));
+    }
+
+    #[test]
+    fn native_camera_alias_maps_legacy_cadence_to_canonical_mesh() {
+        let raw: Vec<String> = [
+            "mvm",
+            "--once",
+            "--native-camera",
+            "--dump-interval",
+            "3",
+            "--dump-json",
+            "--record",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let args = parse_native_camera_alias(&raw).unwrap();
+        assert_eq!(args.max_frames, Some(1));
+        assert_eq!(args.interval_ms, Some(3_000));
+        assert!(args.common.dump_json);
+        assert!(args.common.record);
+    }
+
+    #[test]
+    fn native_camera_alias_rejects_retired_sync_only_debug_flags() {
+        for flag in ["--scene-debug", "--detect-ab"] {
+            let raw = vec!["mvm".into(), "--native-camera".into(), flag.into()];
+            let error = parse_native_camera_alias(&raw).err().unwrap().to_string();
+            assert!(error.contains("retired synchronous native-camera loop"));
+        }
     }
 
     /// The model-free stub mesh actually runs on threads and writes a valid
@@ -558,6 +588,74 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         i += 1;
     }
     a
+}
+
+/// Translate the hidden root-level `--native-camera` compatibility surface to
+/// the canonical AgentMesh arguments. The Rust v4l2 source already backs
+/// `mvm run`; this adapter prevents the legacy flag from selecting the old
+/// synchronous state pipeline.
+fn parse_native_camera_alias(raw: &[String]) -> Result<MeshArgs> {
+    let mut args = MeshArgs {
+        stub: false,
+        max_frames: None,
+        dump_landmarks: false,
+        interval_ms: None,
+        common: CommonFlags::default(),
+    };
+    let mut i = 1;
+    while i < raw.len() {
+        if parse_common(raw, &mut i, &mut args.common) {
+            i += 1;
+            continue;
+        }
+        match raw[i].as_str() {
+            "--native-camera" | "--native" | "--cpu" => {}
+            "--once" => args.max_frames = Some(1),
+            "--dump-landmarks" => args.dump_landmarks = true,
+            "--max-frames" => {
+                let value = raw
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--max-frames requires a value"))?;
+                args.max_frames = Some(value.parse().context("invalid --max-frames value")?);
+                i += 1;
+            }
+            "--interval-ms" => {
+                let value = raw
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--interval-ms requires a value"))?;
+                args.interval_ms = Some(value.parse().context("invalid --interval-ms value")?);
+                i += 1;
+            }
+            "--dump-interval" => {
+                let value = raw
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--dump-interval requires seconds"))?;
+                let seconds: u64 = value.parse().context("invalid --dump-interval value")?;
+                args.interval_ms = Some(
+                    seconds
+                        .checked_mul(1_000)
+                        .ok_or_else(|| anyhow::anyhow!("--dump-interval is too large"))?,
+                );
+                i += 1;
+            }
+            "--scene-debug" | "--detect-ab" => {
+                anyhow::bail!(
+                    "{} belonged to the retired synchronous native-camera loop; \
+                     use `mvm run --dump-json` on the canonical AgentMesh path",
+                    raw[i]
+                );
+            }
+            "--no-camera" => {
+                anyhow::bail!("--no-camera conflicts with the --native-camera compatibility alias");
+            }
+            "--bridge-path" => {
+                anyhow::bail!("--bridge-path applies only to the deprecated Python --native path");
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(args)
 }
 
 fn report_health(health: &[mvm_mesh::AgentHealth]) {
@@ -1094,6 +1192,16 @@ fn main() -> Result<()> {
         // `mvm dataset <list|info|stats|prune|export>` (phase 16.3).
         let product = config_file::load()?;
         return dataset_cmd::run_dataset(&product, &raw);
+    }
+
+    // Phase 18.1 legacy transition: root-level `--native-camera` is now only a
+    // compatibility spelling for the same Rust capture backend and canonical
+    // AgentMesh used by `mvm run`, regardless of flag order.
+    if raw.iter().skip(1).any(|arg| arg == "--native-camera") {
+        eprintln!(
+            "warning: root-level `--native-camera` is deprecated; routing to canonical `mvm run`"
+        );
+        return run_mesh(parse_native_camera_alias(&raw)?);
     }
 
     let args = parse_args(&raw);

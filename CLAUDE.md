@@ -49,9 +49,10 @@ Machine Vision Module/
 
 ## Как работает — два пути захвата
 
-- **`run` / `--native-camera`** (основной, фаза 7+): чистый Rust v4l2 MJPG → body-primary цепочка
+- **`run`** (основной, фаза 7+): чистый Rust v4l2 MJPG → body-primary цепочка
   (BlazePose-тело + YuNet-лицо + SFace + EmotiEffLib + YOLO26n-объекты + Depth-Anything + handpose)
-  → метрический 3D scene-graph. **Ноль Python.**
+  → метрический 3D scene-graph. **Ноль Python.** Корневой `--native-camera` — deprecated alias,
+  который маршрутизируется в тот же AgentMesh.
 - **`--native`** (bridge, для тестов/дебага): Python `tools/mvm_bridge.py` захватывает камеру и выдаёт
   JSON lines, Rust обогащает нативными ONNX-моделями. venv остаётся только для этого пути.
 
@@ -59,11 +60,11 @@ Machine Vision Module/
 cd mvm && target/release/mvm run --dump-json                 # основной: живой mesh, чистый Rust
 cd mvm && target/release/mvm run --record                    # + Dataset Factory: копить сессии на диск
 cd mvm && target/release/mvm dataset check                   # data-quality гейт накопленного (CI exit-code)
-cd mvm && target/release/mvm --native-camera --scene-debug   # sync-путь + визуальный дебаг → /tmp/mvm_scene.jpg
+cd mvm && target/release/mvm run --max-frames 1 --dump-json  # bounded canonical AgentMesh run
 cd mvm && target/release/mvm --native --once --dump-json     # bridge-путь (Python мост)
 ```
 
-**Камера:** `run`/`--native-camera` использует прямой v4l2 MJPG mmap; bridge использует `cv2.CAP_FFMPEG`
+**Камера:** `run` (и deprecated alias `--native-camera`) использует прямой v4l2 MJPG mmap; bridge использует `cv2.CAP_FFMPEG`
 (не V4L2) — обход PipeWire на Ubuntu 24+.
 
 ## Ветки и релизы
@@ -104,12 +105,13 @@ Repo-local validator + CI contract gate защищают frontmatter, honesty ma
 
 **Фаза 18 — Visual Cortex Layer 🚧:** 18.0 ✅ — canonical facts contract
 (`FusedSceneFrame`, `SceneFact<T>`, `EntityKey`+incarnation, stamped sources,
-non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 начата: generic
+non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 ✅: generic
 `LatestValue<T>` + stamped Human/Scene/Depth observations, `CanonicalFusion` публикует immutable
 `FusedFramePacket`; StateFile/DatasetWriter читают его без scene mutation, session lifecycle локален,
 а `current_state.md` пишется atomic. Canonical activity episodes пишутся в `labels.jsonl` через
 независимый DatasetWriter cursor с event/source provenance; replay/cursor/late-result gates добавлены.
-Следующий срез — legacy capture transition и dataset fixture/live gates. План —
+Корневой `--native-camera` маршрутизируется в canonical AgentMesh; text-only/pixel dataset fixtures
+проходят check gate. Далее — 18.2 Cortex Skeleton. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents

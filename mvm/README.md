@@ -212,7 +212,7 @@ flowchart TD
          └─ MCP stdio             (serve --mcp — snapshot/recap/inspect как инструменты)
 ```
 
-**Body-primary** (FRONTIER): человек без фронтального лица трекается по телу; identity/emotion дотягиваются при появлении лица. `mesh` = продакшн-путь; синхронный `--native-camera` и Python-bridge `--native` живы для тестов/истории.
+**Body-primary** (FRONTIER): человек без фронтального лица трекается по телу; identity/emotion дотягиваются при появлении лица. `run` = продакшн-путь; корневой `--native-camera` маршрутизируется в тот же AgentMesh как deprecated alias, Python-bridge `--native` оставлен для совместимости.
 
 ---
 
@@ -234,7 +234,7 @@ mvm <cmd> --help    # флаги с типами, единицами и прим
 mvm --version
 ```
 
-> `mvm mesh` — скрытый алиас `mvm run`. `--native-camera` / `--native` — скрытый legacy-путь (живой).
+> `mvm mesh` — скрытый алиас `mvm run`. Корневой `--native-camera` — deprecated alias `mvm run`; только Python `--native` остаётся отдельным legacy compatibility path.
 
 ---
 
