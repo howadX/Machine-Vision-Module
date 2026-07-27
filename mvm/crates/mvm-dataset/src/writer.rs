@@ -346,7 +346,20 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         let n = UNIQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("mvm_ds_test_{}_{}", std::process::id(), n));
+        // PID + a process-local counter is not sufficient in sandboxes that reuse
+        // the PID namespace between test runs: an old session directory can leak
+        // pixels or labels into a new test. Keep roots unique without deleting
+        // anything outside the test currently creating it.
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock after Unix epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mvm_ds_test_{}_{}_{}",
+            std::process::id(),
+            nonce,
+            n
+        ));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

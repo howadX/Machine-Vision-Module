@@ -1,0 +1,101 @@
+//! Thin optional AgentMesh adapter for `mvm-cortex` (phase 18.2).
+//!
+//! It is deliberately not wired into the production mesh yet. When a later
+//! phase enables it, this adapter reads immutable Fusion packets and publishes a
+//! separate cognitive view; it never writes `WorldState` or scene facts.
+
+use super::{CortexFrameBus, FusedFrameBus};
+use mvm_cortex::{CortexConfig, CortexInput, VisualCortex};
+use mvm_mesh::{Agent, AgentHealth, MeshContext};
+use std::sync::Arc;
+
+#[allow(
+    dead_code,
+    reason = "phase 18.2 keeps the adapter dormant to preserve runtime behaviour"
+)]
+pub(crate) struct CortexAgent {
+    fused_frames: FusedFrameBus,
+    cortex_frames: CortexFrameBus,
+    cortex: VisualCortex,
+    config: mvm_core::Config,
+    event_cursor: Option<u64>,
+    previous_scene: Option<Arc<mvm_core::canonical::FusedSceneFrame>>,
+    last_scene_frame: Option<u64>,
+}
+
+#[allow(
+    dead_code,
+    reason = "phase 18.2 keeps the adapter dormant to preserve runtime behaviour"
+)]
+impl CortexAgent {
+    pub(crate) fn new(
+        fused_frames: FusedFrameBus,
+        cortex_frames: CortexFrameBus,
+        config: mvm_core::Config,
+        cortex_config: CortexConfig,
+    ) -> Self {
+        Self {
+            fused_frames,
+            cortex_frames,
+            cortex: VisualCortex::new(cortex_config),
+            config,
+            event_cursor: None,
+            previous_scene: None,
+            last_scene_frame: None,
+        }
+    }
+}
+
+impl Agent for CortexAgent {
+    fn name(&self) -> String {
+        "cortex".into()
+    }
+
+    fn run(&mut self, ctx: &MeshContext) -> AgentHealth {
+        let mut ticks = 0;
+        while ctx.running() {
+            if self.cortex.config().enabled
+                && let Some(packet) = self.fused_frames.latest()
+                && self.last_scene_frame != Some(packet.scene.stamp.frame_id)
+            {
+                self.last_scene_frame = Some(packet.scene.stamp.frame_id);
+                let delta = packet.scene.events.delta_after(self.event_cursor);
+                self.event_cursor = delta.next_cursor;
+                let events = delta.events.into_iter().cloned().collect::<Vec<_>>();
+                let frame = self.cortex.update(CortexInput {
+                    previous_scene: self.previous_scene.as_deref(),
+                    current_scene: packet.scene.as_ref(),
+                    scene_events: &events,
+                    config: &self.config,
+                    now_unix_ms: packet.scene.stamp.published_at_unix_ms,
+                });
+                self.previous_scene = Some(Arc::clone(&packet.scene));
+                self.cortex_frames.publish(frame);
+                ticks += 1;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors: 0,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_adapter_is_named_and_constructible_without_runtime_wiring() {
+        let agent = CortexAgent::new(
+            FusedFrameBus::new(),
+            CortexFrameBus::new(),
+            mvm_core::Config::default(),
+            CortexConfig::default(),
+        );
+        assert_eq!(agent.name(), "cortex");
+        assert!(!agent.cortex.config().enabled);
+    }
+}

@@ -2,7 +2,7 @@
 
 > **Версия:** 0.4 (27 июля 2026)
 > **Статус:** 🚧 реализация; 18.0 State Contract + Benchmark Baseline ✅;
-> 18.1 Typed Observation Bus + Canonical Fusion ✅; далее 18.2 Cortex Skeleton
+> 18.1 Typed Observation Bus + Canonical Fusion ✅; 18.2 Cortex Skeleton ✅; далее 18.3 Scene Events + Cortex Interpretation
 > **Ветка:** `kaggle`
 > **Цель фазы:** сначала завершить канонический facts-слой `FusedSceneFrame`, затем добавить над ним явный, читаемый и проверяемый когнитивный слой `mvm-cortex`, превращающий perception pipeline в visual substrate for agency.
 > **Манифест:** `~/wiki/mvm/north-star-visual-cortex-agent.md`
@@ -949,6 +949,13 @@ strict Clippy, rustfmt и skill-contract gates зелёные.
 
 ### 18.2 — Cortex Skeleton
 
+**Статус:** ✅ закрыта 27 июля 2026 г. Добавлен единый `mvm-cortex` без новых
+интеллектуальных зависимостей: serializable `CortexFrame`, отдельный honesty-first
+`CognitiveClaim<T>` с evidence/reasons, `VisualCortex::update()` и typed module skeleton.
+`CortexAgent` читает только immutable Fusion packets, disabled-by-default и пока не
+подключён к production mesh; поэтому CLI/MCP/runtime outputs не изменены. Dataset writer
+tests получили уникальные temporary roots, устранив загрязнение повторных full-gate прогонов.
+
 **Цель:** создать каркас `mvm-cortex` без изменения поведения runtime.
 
 **Задачи:**
@@ -1403,7 +1410,7 @@ v0.4.0 — Visual Cortex / фаза 18
 
 ---
 
-*План обновлён 27 июля 2026 г.; 18.0 и 18.1 реализованы и проверены полным workspace gate.*
+*План обновлён 27 июля 2026 г.; 18.0–18.2 реализованы и проверены полным workspace gate.*
 *Основание: фазовый план 18 v0.2, актуальные runtime/dataset contracts, `north-star-visual-cortex-agent.md`,
 `north-star-conscious-vision.md`, академическая работа `deconstructing-consciousness-as-engineering-method.md`
 и утверждённые решения о canonical `FusedSceneFrame`, evidence split и едином `mvm-cortex`.*

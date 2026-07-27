@@ -32,7 +32,7 @@ MVM — **ансамбль независимых микро-агентов зр
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (13 крейтов, 698 тестов; фазы 5–17 закрыты, фаза 18 активна)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (14 крейтов, 717 тестов; фазы 5–17 закрыты, фаза 18 активна)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, dataset, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   ├── CHANGELOG.md#   версии бинаря (0.1.0 → 0.3.0)
@@ -111,7 +111,10 @@ non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 �
 а `current_state.md` пишется atomic. Canonical activity episodes пишутся в `labels.jsonl` через
 независимый DatasetWriter cursor с event/source provenance; replay/cursor/late-result gates добавлены.
 Корневой `--native-camera` маршрутизируется в canonical AgentMesh; text-only/pixel dataset fixtures
-проходят check gate. Далее — 18.2 Cortex Skeleton. План —
+проходят check gate. **18.2 ✅:** добавлен единый `mvm-cortex` с serializable
+honesty-first `CortexFrame`/`CognitiveClaim`, пустыми typed modules и disabled-by-default
+`CortexAgent`; runtime/MCP/CLI до включения Cortex не изменены. Далее — 18.3 Scene
+Events + Cortex Interpretation. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents

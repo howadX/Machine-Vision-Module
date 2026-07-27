@@ -88,6 +88,13 @@ pub(crate) type HumanObservationBus = LatestValue<HumanObservationFrame>;
 pub(crate) type SceneObservationBus = LatestValue<SceneObservationFrame>;
 pub(crate) type DepthObservationBus = LatestValue<DepthObservationFrame>;
 pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;
+/// Runtime output of the optional Cortex adapter. It is intentionally separate
+/// from canonical facts: Cortex publishes an interpretation, never a mutation.
+#[allow(
+    dead_code,
+    reason = "CortexAgent is deliberately not wired before phase 18.3"
+)]
+pub(crate) type CortexFrameBus = LatestValue<mvm_cortex::CortexFrame>;
 
 #[cfg(test)]
 mod tests {

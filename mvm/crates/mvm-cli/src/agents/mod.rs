@@ -14,6 +14,7 @@
 //! → no cycle).
 
 mod capture;
+mod cortex;
 mod dataset_writer;
 mod depth;
 mod fusion;
@@ -32,8 +33,8 @@ pub(crate) use depth::DepthAgent;
 pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
 pub(crate) use observations::{
-    DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
-    FusedFramePacket, HumanObservationBus, HumanObservationFrame, ObservationStamp,
+    CortexFrameBus, DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles,
+    FusedFrameBus, FusedFramePacket, HumanObservationBus, HumanObservationFrame, ObservationStamp,
     SceneObservationBus, SceneObservationFrame,
 };
 pub(crate) use scene::SceneAgent;
