@@ -41,20 +41,21 @@ impl Agent for DepthAgent {
         let mut errors = 0u64;
         let mut last_id: Option<u64> = None;
         while ctx.running() {
-            if let Some(frame) = ctx.frames.latest() {
-                if last_id != Some(frame.id) && cadence_due(frame.id, self.cadence) {
-                    last_id = Some(frame.id);
-                    match self.estimator.estimate(frame.image.as_ref()) {
-                        Ok(map) => {
-                            if let Ok(mut slot) = self.slot.lock() {
-                                *slot = Some(Arc::new(map));
-                            }
-                            ticks += 1;
+            if let Some(frame) = ctx.frames.latest()
+                && last_id != Some(frame.id)
+                && cadence_due(frame.id, self.cadence)
+            {
+                last_id = Some(frame.id);
+                match self.estimator.estimate(frame.image.as_ref()) {
+                    Ok(map) => {
+                        if let Ok(mut slot) = self.slot.lock() {
+                            *slot = Some(Arc::new(map));
                         }
-                        Err(e) => {
-                            eprintln!("  depth: estimate error: {e}");
-                            errors += 1;
-                        }
+                        ticks += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("  depth: estimate error: {e}");
+                        errors += 1;
                     }
                 }
             }

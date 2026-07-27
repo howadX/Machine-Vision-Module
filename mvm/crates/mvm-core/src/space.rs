@@ -78,7 +78,7 @@ impl Pinhole {
             return None;
         }
         let z = self.fx * real_size / pixel_size;
-        if z >= DEPTH_MIN_M && z <= DEPTH_MAX_M {
+        if (DEPTH_MIN_M..=DEPTH_MAX_M).contains(&z) {
             Some(z)
         } else {
             None

@@ -184,18 +184,18 @@ pub fn check_session(session_dir: &Path, id: &str) -> SessionReport {
     }
 
     // Cross-check the closed-session summary against what's actually on disk.
-    if let Ok(Some(meta)) = read_meta(session_dir) {
-        if meta.session.saved_frames != stats.frames {
-            findings.push(Finding {
-                severity: Severity::Warn,
-                frame_id: None,
-                code: "frame-count-mismatch",
-                msg: format!(
-                    "session.toml saved_frames={} but {} labels on disk",
-                    meta.session.saved_frames, stats.frames
-                ),
-            });
-        }
+    if let Ok(Some(meta)) = read_meta(session_dir)
+        && meta.session.saved_frames != stats.frames
+    {
+        findings.push(Finding {
+            severity: Severity::Warn,
+            frame_id: None,
+            code: "frame-count-mismatch",
+            msg: format!(
+                "session.toml saved_frames={} but {} labels on disk",
+                meta.session.saved_frames, stats.frames
+            ),
+        });
     }
 
     SessionReport {
@@ -258,15 +258,15 @@ fn check_observation(
     }
 
     // Referenced RGB frame must exist on disk.
-    if let Some(rel) = &obs.frame.frame_path {
-        if !session_dir.join(rel).is_file() {
-            err(
-                findings,
-                fid,
-                "missing-frame",
-                format!("frame_path {rel:?} not on disk"),
-            );
-        }
+    if let Some(rel) = &obs.frame.frame_path
+        && !session_dir.join(rel).is_file()
+    {
+        err(
+            findings,
+            fid,
+            "missing-frame",
+            format!("frame_path {rel:?} not on disk"),
+        );
     }
 
     // Depth: file must exist and carry a reversible range (§16.2.2).

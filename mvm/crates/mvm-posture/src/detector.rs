@@ -146,8 +146,8 @@ impl PersonDetector {
         let scores = outputs["Identity_1:0"].try_extract_tensor::<f32>()?.1; // [2254]
 
         let mut cand: Vec<Person> = Vec::new();
-        for i in 0..N_ANCHORS {
-            let raw = scores[i].clamp(-100.0, 100.0);
+        for (i, &raw_score) in scores.iter().enumerate().take(N_ANCHORS) {
+            let raw = raw_score.clamp(-100.0, 100.0);
             let s = 1.0 / (1.0 + (-raw).exp());
             if s < min_score {
                 continue;
@@ -254,12 +254,12 @@ mod tests {
         // differ sub-pixel from OpenCV, which the keypoint regression mildly amplifies.
         // The decisive oracle is the 33-landmark pose match (pose_oracle test).
         let gbox = [634.1, 105.9, 890.2, 362.0];
-        for i in 0..4 {
+        for (i, &golden_value) in gbox.iter().enumerate() {
             assert!(
-                (best.bbox[i] - gbox[i]).abs() < 20.0,
+                (best.bbox[i] - golden_value).abs() < 20.0,
                 "bbox[{i}] {} vs golden {} (>20px)",
                 best.bbox[i],
-                gbox[i]
+                golden_value
             );
         }
         // pose ROI keypoints: kp0 mid-hip, kp1 full-body (drive the pose ROI + rotation)

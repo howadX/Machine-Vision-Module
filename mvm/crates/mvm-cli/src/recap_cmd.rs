@@ -18,6 +18,10 @@ use chrono::DateTime;
 use mvm_core::recap::{EpisodeObs, FrameObs, PersonObs, Recap};
 use std::path::{Path, PathBuf};
 
+type TimestampedFrameObs = (String, FrameObs);
+type TimestampedEpisodeObs = (String, EpisodeObs);
+type CollectedObservations = (Vec<TimestampedFrameObs>, Vec<TimestampedEpisodeObs>);
+
 pub struct RecapArgs {
     /// A directory holding `scene-*.jsonl`/`events-*.jsonl`, or a single scene file.
     input: PathBuf,
@@ -236,11 +240,9 @@ fn find_session_labels(dir: &Path) -> Vec<PathBuf> {
 /// path projects each observation into the flat scene/event shape and reuses the
 /// exact same parsers — so a recap over a semantic session equals a recap over the
 /// flat logs of the same frames (see the golden-parity test).
-fn collect_frames_and_episodes(
-    src: &Source,
-) -> Result<(Vec<(String, FrameObs)>, Vec<(String, EpisodeObs)>)> {
-    let mut frames: Vec<(String, FrameObs)> = Vec::new();
-    let mut episodes: Vec<(String, EpisodeObs)> = Vec::new();
+fn collect_frames_and_episodes(src: &Source) -> Result<CollectedObservations> {
+    let mut frames: Vec<TimestampedFrameObs> = Vec::new();
+    let mut episodes: Vec<TimestampedEpisodeObs> = Vec::new();
     match src {
         Source::Flat { scene, events } => {
             for f in scene {
@@ -270,10 +272,10 @@ fn collect_frames_and_episodes(
                     let Ok(obs) = serde_json::from_str::<serde_json::Value>(line) else {
                         continue;
                     };
-                    if let Some(sv) = scene_value_from_semantic(&obs) {
-                        if let Some(o) = parse_frame_value(&sv) {
-                            frames.push(o);
-                        }
+                    if let Some(sv) = scene_value_from_semantic(&obs)
+                        && let Some(o) = parse_frame_value(&sv)
+                    {
+                        frames.push(o);
                     }
                     for ev in event_values_from_semantic(&obs) {
                         if let Some(o) = parse_episode_value(&ev) {
@@ -353,10 +355,10 @@ fn scene_value_from_semantic(obs: &serde_json::Value) -> Option<serde_json::Valu
     let mut stable_zones = Vec::new();
     if let Some(rels) = obs.get("relations").and_then(|r| r.as_array()) {
         for r in rels {
-            if r.get("kind").and_then(|k| k.as_str()) == Some("zone") {
-                if let Some(label) = r.get("label").and_then(|x| x.as_str()) {
-                    stable_zones.push(serde_json::json!({ "label": label }));
-                }
+            if r.get("kind").and_then(|k| k.as_str()) == Some("zone")
+                && let Some(label) = r.get("label").and_then(|x| x.as_str())
+            {
+                stable_zones.push(serde_json::json!({ "label": label }));
             }
         }
     }
@@ -472,10 +474,10 @@ fn distinct_strings(node: Option<&serde_json::Value>, field: &str) -> Vec<String
     let mut out: Vec<String> = Vec::new();
     if let Some(arr) = node.and_then(|n| n.as_array()) {
         for item in arr {
-            if let Some(s) = item.get(field).and_then(|x| x.as_str()) {
-                if !out.iter().any(|e| e == s) {
-                    out.push(s.to_string());
-                }
+            if let Some(s) = item.get(field).and_then(|x| x.as_str())
+                && !out.iter().any(|e| e == s)
+            {
+                out.push(s.to_string());
             }
         }
     }
@@ -546,15 +548,15 @@ fn resolve_window(args: &RecapArgs, frames: &[(String, FrameObs)]) -> Result<Win
 }
 
 fn in_window(ts: &str, w: &Window) -> bool {
-    if let Some(f) = &w.from {
-        if ts < f.as_str() {
-            return false;
-        }
+    if let Some(f) = &w.from
+        && ts < f.as_str()
+    {
+        return false;
     }
-    if let Some(t) = &w.to {
-        if ts > t.as_str() {
-            return false;
-        }
+    if let Some(t) = &w.to
+        && ts > t.as_str()
+    {
+        return false;
     }
     true
 }
@@ -686,10 +688,10 @@ fn inspect_collect(args: &InspectArgs) -> Result<String> {
                     let Ok(obs) = serde_json::from_str::<serde_json::Value>(line) else {
                         continue;
                     };
-                    if let Some(sv) = scene_value_from_semantic(&obs) {
-                        if let Some(ts) = sv.get("ts").and_then(|x| x.as_str()).map(String::from) {
-                            lines.push((ts, sv.to_string()));
-                        }
+                    if let Some(sv) = scene_value_from_semantic(&obs)
+                        && let Some(ts) = sv.get("ts").and_then(|x| x.as_str()).map(String::from)
+                    {
+                        lines.push((ts, sv.to_string()));
                     }
                 }
             }
@@ -974,7 +976,7 @@ mod tests {
             stable_participants: true,
         };
         let sf = StateFile::open_at(tmp_path("golden_ep").with_extension("md")).unwrap();
-        let flat_line = &sf.events_log_lines(&[ev.clone()])[0];
+        let flat_line = &sf.events_log_lines(std::slice::from_ref(&ev))[0];
         let (_, flat) = parse_episode(flat_line).expect("flat episode parses");
 
         let mut world = WorldState::new(Instant::now());

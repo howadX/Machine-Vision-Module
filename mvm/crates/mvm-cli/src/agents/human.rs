@@ -32,7 +32,7 @@ fn attach_person_masks(
                 continue;
             }
             let iou = det.bbox.iou(mbbox);
-            if iou > iou_thresh && best.map_or(true, |(_, b)| iou > b) {
+            if iou > iou_thresh && best.is_none_or(|(_, b)| iou > b) {
                 best = Some((i, iou));
             }
         }
@@ -76,71 +76,71 @@ impl Agent for HumanAgent {
         let mut last_id: Option<u64> = None;
         let mut epoch: Option<std::time::Instant> = None; // motion timestamp origin (9.8)
         while ctx.running() {
-            if let Some(frame) = ctx.frames.latest() {
-                if last_id != Some(frame.id) {
-                    last_id = Some(frame.id);
-                    let prev_tracks: Vec<mvm_core::BBox> =
-                        self.tracker.active().map(|t| t.bbox).collect();
-                    // Id-locked tracks (phase 9.6) → their bodies skip SFace this frame.
-                    let locked_tracks: Vec<mvm_core::BBox> = self
-                        .tracker
-                        .active()
-                        .filter(|t| t.is_id_locked())
-                        .map(|t| t.bbox)
-                        .collect();
-                    // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
-                    let emotion_fresh: Vec<mvm_core::BBox> = self
-                        .tracker
-                        .active()
-                        .filter(|t| !t.needs_emotion())
-                        .map(|t| t.bbox)
-                        .collect();
-                    // Id-locked tracks (phase 9.9) → pose-ROI recovery if the detector
-                    // drops them. Locked-only (not merely established) so a recognised /
-                    // cosine-stable body is sustained through a detector gap, but an anon
-                    // fragment is NOT propped up into a coexisting phantom.
-                    let predicted_rois: Vec<mvm_core::BBox> = self
-                        .tracker
-                        .active()
-                        .filter(|t| t.is_id_locked())
-                        .map(|t| t.bbox)
-                        .collect();
-                    let mut result = self.pipeline.process(
-                        frame.image.as_ref(),
-                        frame.id,
-                        &prev_tracks,
-                        &locked_tracks,
-                        &emotion_fresh,
-                        &predicted_rois,
-                    );
-                    // 11.A3: bind the SceneAgent's latest person silhouettes onto
-                    // this frame's body detections (bbox-IoU) so the tracker cost
-                    // can use them. Lagged (seg cadence) and cross-thread — a race
-                    // that misses just leaves detections maskless (term degrades to
-                    // zero). The ≥2-people gate lives in the tracker.
-                    if let Some(masks) = self.person_masks.lock().ok().and_then(|s| s.clone()) {
-                        attach_person_masks(&mut result.detections, &masks, PERSON_MASK_IOU);
-                    }
-                    // Monotonic seconds since the first frame → motion velocities (9.8).
-                    let t_secs = frame
-                        .captured
-                        .duration_since(*epoch.get_or_insert(frame.captured))
-                        .as_secs_f64();
-                    self.tracker.tick_motion(
-                        &result.detections,
-                        &result.low_conf,
-                        &result.landmarks,
-                        t_secs,
-                    );
-                    project_people(
-                        &ctx.world,
-                        &self.tracker,
-                        &result.bodies,
-                        frame.id,
-                        frame.captured,
-                    );
-                    ticks += 1;
+            if let Some(frame) = ctx.frames.latest()
+                && last_id != Some(frame.id)
+            {
+                last_id = Some(frame.id);
+                let prev_tracks: Vec<mvm_core::BBox> =
+                    self.tracker.active().map(|t| t.bbox).collect();
+                // Id-locked tracks (phase 9.6) → their bodies skip SFace this frame.
+                let locked_tracks: Vec<mvm_core::BBox> = self
+                    .tracker
+                    .active()
+                    .filter(|t| t.is_id_locked())
+                    .map(|t| t.bbox)
+                    .collect();
+                // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
+                let emotion_fresh: Vec<mvm_core::BBox> = self
+                    .tracker
+                    .active()
+                    .filter(|t| !t.needs_emotion())
+                    .map(|t| t.bbox)
+                    .collect();
+                // Id-locked tracks (phase 9.9) → pose-ROI recovery if the detector
+                // drops them. Locked-only (not merely established) so a recognised /
+                // cosine-stable body is sustained through a detector gap, but an anon
+                // fragment is NOT propped up into a coexisting phantom.
+                let predicted_rois: Vec<mvm_core::BBox> = self
+                    .tracker
+                    .active()
+                    .filter(|t| t.is_id_locked())
+                    .map(|t| t.bbox)
+                    .collect();
+                let mut result = self.pipeline.process(
+                    frame.image.as_ref(),
+                    frame.id,
+                    &prev_tracks,
+                    &locked_tracks,
+                    &emotion_fresh,
+                    &predicted_rois,
+                );
+                // 11.A3: bind the SceneAgent's latest person silhouettes onto
+                // this frame's body detections (bbox-IoU) so the tracker cost
+                // can use them. Lagged (seg cadence) and cross-thread — a race
+                // that misses just leaves detections maskless (term degrades to
+                // zero). The ≥2-people gate lives in the tracker.
+                if let Some(masks) = self.person_masks.lock().ok().and_then(|s| s.clone()) {
+                    attach_person_masks(&mut result.detections, &masks, PERSON_MASK_IOU);
                 }
+                // Monotonic seconds since the first frame → motion velocities (9.8).
+                let t_secs = frame
+                    .captured
+                    .duration_since(*epoch.get_or_insert(frame.captured))
+                    .as_secs_f64();
+                self.tracker.tick_motion(
+                    &result.detections,
+                    &result.low_conf,
+                    &result.landmarks,
+                    t_secs,
+                );
+                project_people(
+                    &ctx.world,
+                    &self.tracker,
+                    &result.bodies,
+                    frame.id,
+                    frame.captured,
+                );
+                ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }

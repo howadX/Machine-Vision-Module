@@ -158,10 +158,10 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
             if let Some(post) = &p.posture {
                 *a.posture_counts.entry(post.clone()).or_insert(0) += 1;
             }
-            if a.identity.is_none() {
-                if let Some(name) = &p.identity {
-                    a.identity = Some(name.clone());
-                }
+            if a.identity.is_none()
+                && let Some(name) = &p.identity
+            {
+                a.identity = Some(name.clone());
             }
         }
     }
@@ -170,8 +170,7 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
         .into_iter()
         .map(|(id, a)| {
             let presence_frac = a.frames as f32 / total;
-            let is_phantom = id >= EPHEMERAL_ID_BASE
-                && id < OBJECT_ID_BASE
+            let is_phantom = (EPHEMERAL_ID_BASE..OBJECT_ID_BASE).contains(&id)
                 && frames.len() >= PHANTOM_MIN_SESSION_FRAMES
                 && presence_frac < PHANTOM_MAX_PRESENCE_FRAC
                 && a.first > 0;

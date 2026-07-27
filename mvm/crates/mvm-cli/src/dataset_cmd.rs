@@ -69,8 +69,8 @@ fn cmd_list(root: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     println!(
-        "{:<20}  {:>6}  {:<9}  {}",
-        "SESSION", "FRAMES", "STATUS", "PARTICIPANTS"
+        "{:<20}  {:>6}  {:<9}  PARTICIPANTS",
+        "SESSION", "FRAMES", "STATUS"
     );
     for si in &sessions {
         let status = if si.meta.is_some() {

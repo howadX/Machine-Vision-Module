@@ -168,6 +168,7 @@ impl DatasetWriter {
     /// - `wallclock_iso` — ISO-8601 timestamp кадра (стенные часы вызывающего).
     /// - `new_session_stamp` — id для НОВОЙ сессии (`YYYY-MM-DD_HHMMSS`), если
     ///   на этом кадре нужно открыть сессию.
+    ///
     /// `depth_range` — `Some([min,max])` of the relative depth map the caller is
     /// about to write for this frame, or `None` when no depth is available. The
     /// depth path is recorded **only** when `save_depth` is on *and* a range is
@@ -320,9 +321,11 @@ mod tests {
     }
 
     fn writer(root: &Path) -> DatasetWriter {
-        let mut cfg = DatasetConfig::default();
-        cfg.session_timeout_secs = 30;
-        cfg.save_depth = false; // keep the layout minimal for tests
+        let cfg = DatasetConfig {
+            session_timeout_secs: 30,
+            save_depth: false, // keep the layout minimal for tests
+            ..Default::default()
+        };
         DatasetWriter::new(cfg, root.to_path_buf(), "mvm_sessions")
     }
 
@@ -410,9 +413,11 @@ mod tests {
     fn text_only_mode_writes_labels_without_a_frame_path() {
         // save_frames = false → semantic session: labels.jsonl + session.toml, no pixels.
         let root = temp_root();
-        let mut cfg = DatasetConfig::default();
-        cfg.save_frames = false;
-        cfg.save_depth = false;
+        let cfg = DatasetConfig {
+            save_frames: false,
+            save_depth: false,
+            ..Default::default()
+        };
         let mut w = DatasetWriter::new(cfg, root.clone(), "mvm_sessions");
 
         let t0 = Instant::now();
@@ -604,8 +609,10 @@ mod tests {
     #[test]
     fn depth_path_recorded_only_when_available() {
         let root = temp_root();
-        let mut cfg = DatasetConfig::default();
-        cfg.session_timeout_secs = 30; // save_depth stays default true
+        let cfg = DatasetConfig {
+            session_timeout_secs: 30, // save_depth stays default true
+            ..Default::default()
+        };
         let mut w = DatasetWriter::new(cfg, root.to_path_buf(), "mvm_sessions");
         let t0 = Instant::now();
         let mut world = WorldState::new(t0);

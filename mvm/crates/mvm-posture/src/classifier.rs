@@ -283,8 +283,8 @@ impl Forest {
             loop {
                 let n = &tree[i];
                 if n.left < 0 {
-                    for k in 0..N_CLASS {
-                        acc[k] += n.probs[k];
+                    for (k, total) in acc.iter_mut().enumerate() {
+                        *total += n.probs[k];
                     }
                     break;
                 }
@@ -586,12 +586,12 @@ mod tests {
         for (input, _, probs_g, maha_g, flex_g, pred) in GOLDEN {
             let r = head.classify(input);
             assert_eq!(r.label, *pred, "label {} vs golden {}", r.label, pred);
-            for k in 0..N_CLASS {
+            for (k, &golden_prob) in probs_g.iter().enumerate() {
                 assert!(
-                    (r.probs[k] - probs_g[k]).abs() < 5e-3,
+                    (r.probs[k] - golden_prob).abs() < 5e-3,
                     "prob[{k}] {} vs golden {}",
                     r.probs[k],
-                    probs_g[k]
+                    golden_prob
                 );
             }
             assert!(

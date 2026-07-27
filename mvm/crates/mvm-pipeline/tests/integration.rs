@@ -16,6 +16,9 @@ fn det(x1: f32, y1: f32, x2: f32, y2: f32) -> String {
     format!(r#"{{"x1":{x1},"y1":{y1},"x2":{x2},"y2":{y2}}}"#)
 }
 
+// Mirrors the bridge wire payload explicitly; a builder would obscure the JSON
+// contract this integration suite is meant to exercise.
+#[allow(clippy::too_many_arguments)]
 fn det_enriched(
     x1: f32,
     y1: f32,

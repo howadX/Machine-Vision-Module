@@ -78,14 +78,14 @@ impl Agent for FrameCounterAgent {
         let mut ticks = 0u64;
         let mut last_id: Option<u64> = None;
         while ctx.running() {
-            if let Some(f) = ctx.frames.latest() {
-                if last_id != Some(f.id) {
-                    last_id = Some(f.id);
-                    ticks += 1;
-                    if let Ok(mut w) = ctx.world.write() {
-                        w.frame_id = f.id;
-                        w.timestamp = f.captured;
-                    }
+            if let Some(f) = ctx.frames.latest()
+                && last_id != Some(f.id)
+            {
+                last_id = Some(f.id);
+                ticks += 1;
+                if let Ok(mut w) = ctx.world.write() {
+                    w.frame_id = f.id;
+                    w.timestamp = f.captured;
                 }
             }
             std::thread::sleep(poll);

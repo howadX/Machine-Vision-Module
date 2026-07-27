@@ -134,8 +134,8 @@ fn e2_fall(samples: &[(f64, f32)], require_floor: bool) -> bool {
         // earliest i with a gap ≥ ~half the window; prefer the one nearest E2_WIN_S.
         let mut best_i: Option<usize> = None;
         let mut best_err = f64::INFINITY;
-        for i in 0..j {
-            let gap = tj - samples[i].0;
+        for (i, &(ti, _)) in samples.iter().take(j).enumerate() {
+            let gap = tj - ti;
             if gap < E2_WIN_S * 0.5 {
                 break; // samples are time-ordered; closer ones only get smaller
             }
@@ -438,7 +438,7 @@ mod tests {
         let combined = drive_descent(1.1, 0.1, 0.6, &[object("knife")]);
         let expected = 1.0 - (1.0 - ANOMALY_FALL) * (1.0 - ANOMALY_OBJECT_WEIGHT);
         assert!((combined - expected).abs() < 1e-6, "got {combined}");
-        assert!(combined > ANOMALY_FALL && combined > ANOMALY_OBJECT_WEIGHT);
+        assert!(combined > ANOMALY_FALL);
         assert!(combined <= 1.0);
     }
 

@@ -10,6 +10,7 @@
 //!     (YOLOv10, **YOLO26** — the shipped model); already deduplicated, no NMS.
 //!   - **raw anchor grid** `[1, 4+num_classes, num_anchors]` (YOLOv8/v11); needs
 //!     argmax-decode + class-aware NMS.
+//!
 //! So YOLO26n ↔ YOLOv8n is a pure file swap.
 //!
 //! The decode / letterbox / NMS math is split into pure functions so the chain is
@@ -1048,7 +1049,7 @@ mod tests {
         put(&mut raw, 4 + 1, 0, 0.9);
         put(&mut raw, 4 + nc + 5, 0, 2.0);
         // anchor 1: below threshold (max class score 0.1) → dropped.
-        put(&mut raw, 4 + 0, 1, 0.1);
+        put(&mut raw, 4, 1, 0.1);
         let segs = decode_yolo_seg(&raw, nc, 0.35);
         assert_eq!(segs.len(), 1, "only anchor 0 survives");
         let s = &segs[0];
@@ -1202,7 +1203,7 @@ mod tests {
     fn decode_drops_everything_below_threshold() {
         let mut raw = synth_raw(10, 80, 42);
         // Lower the only hot score under threshold.
-        raw[(4 + 42) * 10 + 0] = 0.10;
+        raw[(4 + 42) * 10] = 0.10;
         let boxes = decode_yolo(&raw, 80, 0.35);
         assert!(boxes.is_empty());
     }

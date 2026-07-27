@@ -97,21 +97,21 @@ impl Agent for StateFileWriter {
                 if self.dump_json {
                     println!("{line}");
                 }
-                if let Some(log) = self.scene_log.as_mut() {
-                    if let Err(e) = log.append(&line) {
-                        eprintln!("  scene-log: append error: {e}");
-                    }
+                if let Some(log) = self.scene_log.as_mut()
+                    && let Err(e) = log.append(&line)
+                {
+                    eprintln!("  scene-log: append error: {e}");
                 }
             }
             // Drain completed episodes to the events log (phase 12.C1). The
             // snapshot holds this write's events (cleared from the shared world
             // above), so each episode is logged exactly once.
-            if let Some(elog) = self.events_log.as_mut() {
-                if !snapshot.events.is_empty() {
-                    for line in self.state_file.events_log_lines(&snapshot.events) {
-                        if let Err(e) = elog.append(&line) {
-                            eprintln!("  events-log: append error: {e}");
-                        }
+            if let Some(elog) = self.events_log.as_mut()
+                && !snapshot.events.is_empty()
+            {
+                for line in self.state_file.events_log_lines(&snapshot.events) {
+                    if let Err(e) = elog.append(&line) {
+                        eprintln!("  events-log: append error: {e}");
                     }
                 }
             }
@@ -120,23 +120,24 @@ impl Agent for StateFileWriter {
             // Rolling journal.md (phase 12.D1): re-render the day's recap from the
             // logs every `cadence` writes. Quietly skips while the logs are still
             // empty (recap bails with no entries).
-            if let Some(j) = &self.journal {
-                if j.cadence > 0 && writes % j.cadence == 0 {
-                    match crate::recap_cmd::recap_markdown_from_dir(&j.log_dir) {
-                        Ok(md) => {
-                            if let Err(e) = std::fs::write(&j.path, md) {
-                                eprintln!("  journal: write error: {e}");
-                            }
+            if let Some(j) = &self.journal
+                && j.cadence > 0
+                && writes.is_multiple_of(j.cadence)
+            {
+                match crate::recap_cmd::recap_markdown_from_dir(&j.log_dir) {
+                    Ok(md) => {
+                        if let Err(e) = std::fs::write(&j.path, md) {
+                            eprintln!("  journal: write error: {e}");
                         }
-                        Err(_) => { /* no entries yet — nothing to summarise */ }
                     }
+                    Err(_) => { /* no entries yet — nothing to summarise */ }
                 }
             }
 
-            if let Some(max) = self.max_writes {
-                if writes >= max {
-                    break;
-                }
+            if let Some(max) = self.max_writes
+                && writes >= max
+            {
+                break;
             }
             std::thread::sleep(self.interval);
         }

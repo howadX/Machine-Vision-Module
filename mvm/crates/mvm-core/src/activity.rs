@@ -92,7 +92,9 @@ impl ActivityKey {
     /// (≥10000). Ephemeral person ids (10..10000) are reused across track churn,
     /// so an event keyed on one is not safely attributable over time.
     pub fn stable_participants(&self) -> bool {
-        self.participants.iter().all(|&id| id < 10 || id >= 10000)
+        self.participants
+            .iter()
+            .all(|&id| !(10..10000).contains(&id))
     }
 }
 

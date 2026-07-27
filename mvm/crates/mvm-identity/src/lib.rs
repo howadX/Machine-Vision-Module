@@ -443,8 +443,15 @@ mod tests {
         let b = vec![0.0_f32, 1.0, 0.0];
         assert!((dot_product(&a, &b) - 0.0).abs() < 1e-6);
 
-        let c = vec![0.7071_f32, 0.7071, 0.0];
+        let c = vec![
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+            0.0,
+        ];
         let sim = dot_product(&a, &c);
-        assert!((sim - 0.7071).abs() < 0.01, "dot = {sim}");
+        assert!(
+            (sim - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01,
+            "dot = {sim}"
+        );
     }
 }

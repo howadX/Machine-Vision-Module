@@ -135,8 +135,7 @@ pub fn solve(cost: &[Vec<f32>]) -> Vec<Option<usize>> {
     // the ORIGINAL orientation, dropping any pair that fell on a forbidden
     // sentinel (its original cost was non-finite).
     let mut result = vec![None; rows];
-    for j in 1..=m {
-        let i = p[j];
+    for (j, &i) in p.iter().enumerate().take(m + 1).skip(1) {
         if i == 0 {
             continue; // column unused (n < m)
         }

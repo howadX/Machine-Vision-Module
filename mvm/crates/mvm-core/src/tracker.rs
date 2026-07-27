@@ -121,6 +121,7 @@ const LOST_AFTER_MISSED: u64 = 30;
 /// - missed this frame: an unconfirmed (`Tentative`) track drops straight to
 ///   `Lost`; an established/occluded track goes `Occluded`, then `Lost` once the
 ///   gap reaches `LOST_AFTER_MISSED`.
+///
 /// Fold one observation centre into a track's observation-centric velocity
 /// (OC-SORT, phase 9.2/9.4). MUST be called BEFORE zeroing `missed` — `missed`
 /// is the frame gap since the last observation, so dividing by it yields a
@@ -161,6 +162,10 @@ fn next_lifecycle(prev: LifecycleState, age: u64, missed: u64, locked: bool) -> 
     }
 }
 
+// `new()` deliberately means a headless/test tracker; runtime callers must use
+// `with_config()` to opt into calibrated 3D. A generic `Default` would hide that
+// distinction at call sites.
+#[allow(clippy::new_without_default)]
 impl PersonTracker {
     /// Create tracker without 3D capability (tests, headless use).
     pub fn new() -> Self {
@@ -261,10 +266,10 @@ impl PersonTracker {
         for (i, det) in high.iter().enumerate() {
             let id = ids[i];
             self.apply_detection(id, det);
-            if let Some(Some(lm)) = landmarks.get(i) {
-                if let Some(t) = self.tracks.get_mut(&id) {
-                    t.motion.observe(*lm, t_secs);
-                }
+            if let Some(Some(lm)) = landmarks.get(i)
+                && let Some(t) = self.tracks.get_mut(&id)
+            {
+                t.motion.observe(*lm, t_secs);
             }
         }
         self.finalize();
@@ -313,13 +318,13 @@ impl PersonTracker {
             // Emotion-cadence age (phase 9.7): climbs every tick; apply_detection
             // resets it to 0 when an emotion observation lands.
             t.frames_since_emotion = t.frames_since_emotion.saturating_add(1);
-            if t.missed > self.decay_start_frames {
-                if let Some(conf) = t.emotion_confidence.as_mut() {
-                    *conf *= self.decay_factor;
-                    if *conf < 0.05 {
-                        t.emotion = None;
-                        t.emotion_confidence = None;
-                    }
+            if t.missed > self.decay_start_frames
+                && let Some(conf) = t.emotion_confidence.as_mut()
+            {
+                *conf *= self.decay_factor;
+                if *conf < 0.05 {
+                    t.emotion = None;
+                    t.emotion_confidence = None;
                 }
             }
         }
@@ -436,46 +441,44 @@ impl PersonTracker {
             // vectors, not just the assigned label. Two different "Вадим"s never
             // merge. Falls back to label-equality only when no embedding is present
             // (Python-only signal).
-            if best_id.is_none() {
-                if let Some(det_emb) = &det.embedding {
-                    let mut best_cos = self.relink_cos_thresh;
-                    for (&id, t) in &self.tracks {
-                        if matched_ids.contains(&id) {
-                            continue;
-                        }
-                        if t.missed == 0 || t.missed > self.relink_window_frames {
-                            continue;
-                        }
-                        if let Some(track_emb) = &t.embedding {
-                            let cos = cosine(det_emb, track_emb);
-                            if cos > best_cos {
-                                best_cos = cos;
-                                best_id = Some(id);
-                            }
+            if best_id.is_none()
+                && let Some(det_emb) = &det.embedding
+            {
+                let mut best_cos = self.relink_cos_thresh;
+                for (&id, t) in &self.tracks {
+                    if matched_ids.contains(&id) {
+                        continue;
+                    }
+                    if t.missed == 0 || t.missed > self.relink_window_frames {
+                        continue;
+                    }
+                    if let Some(track_emb) = &t.embedding {
+                        let cos = cosine(det_emb, track_emb);
+                        if cos > best_cos {
+                            best_cos = cos;
+                            best_id = Some(id);
                         }
                     }
                 }
             }
             // Fallback: label-based re-link (no embedding available).
-            if best_id.is_none() && det.embedding.is_none() {
-                if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
-                    if conf >= self.relink_min_conf {
-                        let mut best_missed = u64::MAX;
-                        for (&id, t) in &self.tracks {
-                            if matched_ids.contains(&id) {
-                                continue;
-                            }
-                            // Only recently-missed tracks (a gap), not active ones.
-                            if t.missed == 0 || t.missed > self.relink_window_frames {
-                                continue;
-                            }
-                            if t.identity.as_deref() == Some(name.as_str())
-                                && t.missed < best_missed
-                            {
-                                best_missed = t.missed;
-                                best_id = Some(id);
-                            }
-                        }
+            if best_id.is_none()
+                && det.embedding.is_none()
+                && let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence)
+                && conf >= self.relink_min_conf
+            {
+                let mut best_missed = u64::MAX;
+                for (&id, t) in &self.tracks {
+                    if matched_ids.contains(&id) {
+                        continue;
+                    }
+                    // Only recently-missed tracks (a gap), not active ones.
+                    if t.missed == 0 || t.missed > self.relink_window_frames {
+                        continue;
+                    }
+                    if t.identity.as_deref() == Some(name.as_str()) && t.missed < best_missed {
+                        best_missed = t.missed;
+                        best_id = Some(id);
                     }
                 }
             }
@@ -510,10 +513,10 @@ impl PersonTracker {
                     // disabled the anonymous fallback for it (every IoU gap spawned a
                     // phantom, 57% of walk frag). It is skipped ONLY when its name is
                     // actively claimed by a confident detection this frame.
-                    if let Some(tname) = t.identity.as_deref() {
-                        if claimed_names.contains(&tname) {
-                            continue;
-                        }
+                    if let Some(tname) = t.identity.as_deref()
+                        && claimed_names.contains(&tname)
+                    {
+                        continue;
                     }
                     // OCR (OC-SORT, phase 9.2): compare against the track's VIRTUAL
                     // position — its last *observation* extrapolated along its
@@ -623,10 +626,10 @@ impl PersonTracker {
         // ── Step 4: advance missed tracks by inertia ───────────────────────
         // KF predict() was already called in step 1; update bbox to predicted position.
         for (&id, t) in self.tracks.iter_mut() {
-            if !matched_ids.contains(&id) {
-                if let Some(&pred) = predicted.get(&id) {
-                    t.bbox = pred;
-                }
+            if !matched_ids.contains(&id)
+                && let Some(&pred) = predicted.get(&id)
+            {
+                t.bbox = pred;
             }
         }
 
@@ -685,11 +688,11 @@ impl PersonTracker {
                 t.last_obs_mask = det.mask.clone();
             }
             // Propagate metadata: keep best identity, latest emotion/posture.
-            if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence) {
-                if t.identity_confidence.map_or(true, |c| conf > c) {
-                    t.identity = Some(name.clone());
-                    t.identity_confidence = Some(conf);
-                }
+            if let (Some(name), Some(conf)) = (&det.identity, det.identity_confidence)
+                && t.identity_confidence.is_none_or(|c| conf > c)
+            {
+                t.identity = Some(name.clone());
+                t.identity_confidence = Some(conf);
             }
             // Emotion: temporal Product-of-Experts fusion (phase 6.4b). A full
             // distribution folds into the track's prior with forgetting, then the
@@ -869,10 +872,10 @@ impl PersonTracker {
                         .unwrap()
                 })
                 .map(|t| t.id);
-            if let Some(bid) = best {
-                if let Some(t) = self.tracks.get_mut(&bid) {
-                    t.display_id = uid;
-                }
+            if let Some(bid) = best
+                && let Some(t) = self.tracks.get_mut(&bid)
+            {
+                t.display_id = uid;
             }
         }
     }
@@ -1730,7 +1733,7 @@ mod tests {
         // so D0→T1. Each track follows its NEAREST detection: T0→0.43, T1→0.48.
         let mut t = PersonTracker::new();
         // Tick 1 — seed the two tracks (centres 0.45 and 0.52).
-        t.tick(&vec![
+        t.tick(&[
             Detection::bare(0.40, 0.45, 0.50, 0.55), // centre 0.45 → smaller id (T0)
             Detection::bare(0.47, 0.45, 0.57, 0.55), // centre 0.52 → T1
         ]);
@@ -1740,7 +1743,7 @@ mod tests {
         let (t0, t1) = (ids[0], ids[1]);
 
         // Tick 2 — the ambiguous pair.
-        t.tick(&vec![
+        t.tick(&[
             Detection::bare(0.43, 0.45, 0.53, 0.55), // D0 centre 0.48
             Detection::bare(0.38, 0.45, 0.48, 0.55), // D1 centre 0.43
         ]);

@@ -336,8 +336,8 @@ mod tests {
         let mut p = [0.0f32; K];
         p[0] = 0.95;
         let tiny = 0.05 / (K - 1) as f32;
-        for i in 1..K {
-            p[i] = tiny;
+        for value in p.iter_mut().skip(1) {
+            *value = tiny;
         }
         let h = entropy_from_probs(&p);
         let cal = p[0] * (1.0 - h);

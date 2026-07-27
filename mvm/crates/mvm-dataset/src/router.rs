@@ -219,7 +219,7 @@ fn activity_records(world: &WorldState) -> Vec<serde_json::Value> {
                 let stable = a
                     .participants
                     .iter()
-                    .all(|&id| id < 10 || id >= OBJECT_ID_BASE);
+                    .all(|&id| !(10..OBJECT_ID_BASE).contains(&id));
                 serde_json::json!({
                     "label": a.label,
                     "participants": participants,
@@ -623,7 +623,7 @@ mod tests {
         let mut decoded = Vec::with_capacity(MASK_RES * MASK_RES);
         let mut sym = 0u8;
         for run in rle {
-            decoded.extend(std::iter::repeat(sym).take(run as usize));
+            decoded.extend(std::iter::repeat_n(sym, run as usize));
             sym ^= 1;
         }
         assert_eq!(decoded, bits, "RLE must round-trip the mask grid");

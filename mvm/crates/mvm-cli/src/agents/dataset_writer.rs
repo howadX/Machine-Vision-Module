@@ -229,10 +229,10 @@ impl Agent for DatasetWriterAgent {
                                 errors += 1;
                             }
                         }
-                        if let Some(max) = self.max_records {
-                            if records >= max {
-                                break;
-                            }
+                        if let Some(max) = self.max_records
+                            && records >= max
+                        {
+                            break;
                         }
                     }
                 }
@@ -418,8 +418,10 @@ mod tests {
     #[test]
     fn records_frame_pixels_and_jsonl() {
         let root = temp_root("rec");
-        let mut cfg = DatasetConfig::default();
-        cfg.frame_cadence = 1;
+        let cfg = DatasetConfig {
+            frame_cadence: 1,
+            ..Default::default()
+        };
         let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None).with_max_records(1);
 
         let now = Instant::now();
@@ -509,8 +511,10 @@ mod tests {
         // §16.7: the agent computes zones+edges from the world and they reach the
         // semantic label — a person + an overlapping keyboard form one "workstation".
         let root = temp_root("zones");
-        let mut cfg = DatasetConfig::default();
-        cfg.frame_cadence = 1;
+        let cfg = DatasetConfig {
+            frame_cadence: 1,
+            ..Default::default()
+        };
         let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None).with_max_records(1);
 
         let now = Instant::now();

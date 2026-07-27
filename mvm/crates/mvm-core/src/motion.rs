@@ -386,17 +386,16 @@ impl LandmarkHistory {
     /// *reaching*; otherwise `None`. Reach is read from the latest frame, speed
     /// from the window. Returns `None` (the variant) when geometry is unavailable.
     pub fn arm_gesture(&self, side: Side, th: &GestureThresholds) -> ArmGesture {
-        if let Some(v) = self.wrist_speed(side) {
-            if v >= th.wave_above {
-                return ArmGesture::Waving;
-            }
+        if let Some(v) = self.wrist_speed(side)
+            && v >= th.wave_above
+        {
+            return ArmGesture::Waving;
         }
-        if let Some((_, lm)) = self.latest() {
-            if let Some(r) = arm_reach(lm, side) {
-                if r >= th.reach_above {
-                    return ArmGesture::Reaching;
-                }
-            }
+        if let Some((_, lm)) = self.latest()
+            && let Some(r) = arm_reach(lm, side)
+            && r >= th.reach_above
+        {
+            return ArmGesture::Reaching;
         }
         ArmGesture::None
     }

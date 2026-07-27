@@ -169,14 +169,12 @@ pub(crate) fn anchor_objects(
 
     let mut ks: Vec<f32> = Vec::new();
     for p in people {
-        if let Some(q) = p.position_3d {
-            if q.z > 0.0 {
-                if let Some(d) = depth.median_in_bbox(&p.bbox) {
-                    if d > 1e-3 {
-                        ks.push(q.z * d);
-                    }
-                }
-            }
+        if let Some(q) = p.position_3d
+            && q.z > 0.0
+            && let Some(d) = depth.median_in_bbox(&p.bbox)
+            && d > 1e-3
+        {
+            ks.push(q.z * d);
         }
     }
     if ks.is_empty() {
@@ -400,6 +398,7 @@ fn upper_upright_stationary(p: &PersonState) -> bool {
 ///     `holding_drink`). Body-landmark contact, not body-bbox overlap — on a
 ///     ceiling cam the wrists reach the desk while the body bbox (head/shoulders)
 ///     does not.
+///
 /// Furniture is context only (no activity).
 pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) -> Vec<Activity> {
     let mut acts = Vec::new();
@@ -431,10 +430,10 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
         let centre = contact_centre(o);
         let mut best: Option<ContactClaim> = None;
         for p in people {
-            if let Some(claim) = contact_claim(p, o, centre) {
-                if best.as_ref().is_none_or(|b| claim.beats(b)) {
-                    best = Some(claim);
-                }
+            if let Some(claim) = contact_claim(p, o, centre)
+                && best.as_ref().is_none_or(|b| claim.beats(b))
+            {
+                best = Some(claim);
             }
         }
         if let Some(winner) = best {
@@ -456,17 +455,17 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
         // locomoting, adjacent to a workstation object. This is the desk case:
         // sitting-vs-standing is geometrically mute without legs, but "at the
         // workstation, stationary, upright" is exactly the occupancy signal.
-        if upper_upright_stationary(p) {
-            if let Some(o) = objects.iter().find(|o| {
+        if upper_upright_stationary(p)
+            && let Some(o) = objects.iter().find(|o| {
                 WORKSTATION_CLASSES.contains(&o.class.as_str())
                     && bbox_adjacent(&p.bbox, &o.bbox, WORKSTATION_MARGIN)
-            }) {
-                acts.push(Activity {
-                    label: "seated_at_workstation".into(),
-                    confidence: o.confidence.clamp(0.0, 1.0),
-                    participants: vec![p.track_id, o.id],
-                });
-            }
+            })
+        {
+            acts.push(Activity {
+                label: "seated_at_workstation".into(),
+                confidence: o.confidence.clamp(0.0, 1.0),
+                participants: vec![p.track_id, o.id],
+            });
         }
         // Clipped by the frame border with partial coverage: the body is
         // half-outside the camera's view — flag it so consumers don't read the

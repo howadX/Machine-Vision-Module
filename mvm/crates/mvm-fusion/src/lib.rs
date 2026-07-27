@@ -65,9 +65,9 @@ pub fn fuse(experts: &[Expert]) -> FusedEmotion {
             continue;
         }
         any = true;
-        for k in 0..K {
+        for (k, sum) in log_sum.iter_mut().enumerate() {
             let p = expert.distribution[k].max(1e-10);
-            log_sum[k] += w * p.ln();
+            *sum += w * p.ln();
         }
     }
 
@@ -216,7 +216,7 @@ fn connected_components(entities: &[Entity], relations: &[Relation]) -> Vec<Vec<
         parent[x]
     }
 
-    fn union(parent: &mut Vec<usize>, rank: &mut Vec<u8>, x: usize, y: usize) {
+    fn union(parent: &mut Vec<usize>, rank: &mut [u8], x: usize, y: usize) {
         let rx = find(parent, x);
         let ry = find(parent, y);
         if rx == ry {

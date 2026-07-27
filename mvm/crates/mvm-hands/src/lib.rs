@@ -118,6 +118,7 @@ impl HandGesture {
 /// - **fist**: no finger extended;
 /// - **point**: index extended, middle/ring/pinky all curled;
 /// - **open**: ≥3 fingers extended.
+///
 /// `None` when the shape matches nothing cleanly or the palm is degenerate.
 pub fn classify_gesture(lm: &[[f32; 3]; N_HAND_LM]) -> Option<HandGesture> {
     let p = |i: usize| (lm[i][0], lm[i][1]);
@@ -294,11 +295,11 @@ impl HandLandmarker {
         let lm = outputs["Identity"].try_extract_tensor::<f32>()?.1; // [63] = 21*3, in 224 px
 
         let mut landmarks_px = [[0f32; 3]; N_HAND_LM];
-        for k in 0..N_HAND_LM {
+        for (k, point) in landmarks_px.iter_mut().enumerate() {
             let b = k * 3;
-            landmarks_px[k][0] = x1 + lm[b] * s;
-            landmarks_px[k][1] = y1 + lm[b + 1] * s;
-            landmarks_px[k][2] = lm[b + 2] * s; // relative z
+            point[0] = x1 + lm[b] * s;
+            point[1] = y1 + lm[b + 1] * s;
+            point[2] = lm[b + 2] * s; // relative z
         }
         // Phase 10.2 relaxation: a hand whose ROI came from a low-vis wrist keeps
         // the model presence gate above, but its emitted score is honestly

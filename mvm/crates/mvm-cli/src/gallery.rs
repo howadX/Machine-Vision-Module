@@ -244,8 +244,8 @@ mod tests {
         let dir = tmp();
         let src = dir.join("src.jpg");
         std::fs::write(&src, b"fake").unwrap();
-        assert_eq!(add(&dir, "Carol", &[src.clone()]).unwrap(), 1);
-        assert_eq!(add(&dir, "Carol", &[src.clone()]).unwrap(), 1);
+        assert_eq!(add(&dir, "Carol", std::slice::from_ref(&src)).unwrap(), 1);
+        assert_eq!(add(&dir, "Carol", std::slice::from_ref(&src)).unwrap(), 1);
         let photos = photos_in(&dir.join("Carol"));
         assert_eq!(photos.len(), 2);
         assert!(photos[0].ends_with("01.jpg"));

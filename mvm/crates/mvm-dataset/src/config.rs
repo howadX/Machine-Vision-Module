@@ -275,8 +275,10 @@ default_format = "webdataset"
 
     #[test]
     fn frame_quality_is_clamped() {
-        let mut c = DatasetConfig::default();
-        c.frame_quality = 200;
+        let mut c = DatasetConfig {
+            frame_quality: 200,
+            ..Default::default()
+        };
         assert_eq!(c.frame_quality_clamped(), 100);
         c.frame_quality = 0;
         assert_eq!(c.frame_quality_clamped(), 1);
@@ -304,8 +306,10 @@ default_format = "webdataset"
     #[test]
     fn effective_recorder_record_flag_keeps_pixels() {
         // `--record` / [dataset].enabled → full pixel dataset (save_* untouched).
-        let mut cfg = DatasetConfig::default();
-        cfg.enabled = true;
+        let cfg = DatasetConfig {
+            enabled: true,
+            ..Default::default()
+        };
         let eff = cfg.effective_recorder().expect("recording enabled");
         assert!(eff.enabled);
         assert!(
@@ -317,8 +321,10 @@ default_format = "webdataset"
     #[test]
     fn effective_recorder_none_when_vision_log_off() {
         // `--no-vision-log` / vision_log=false with no --record → no recorder at all.
-        let mut cfg = DatasetConfig::default();
-        cfg.vision_log = false;
+        let cfg = DatasetConfig {
+            vision_log: false,
+            ..Default::default()
+        };
         assert!(
             cfg.effective_recorder().is_none(),
             "recording fully disabled"

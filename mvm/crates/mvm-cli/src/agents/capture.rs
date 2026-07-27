@@ -50,10 +50,10 @@ impl Agent for CaptureAgent {
         let mut ticks = 0u64;
         let mut errors = 0u64;
         while ctx.running() {
-            if let Some(max) = self.max_frames {
-                if frame_id >= max {
-                    break;
-                }
+            if let Some(max) = self.max_frames
+                && frame_id >= max
+            {
+                break;
             }
             match self.source.read() {
                 Ok(img) => {

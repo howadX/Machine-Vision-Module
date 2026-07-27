@@ -197,7 +197,7 @@ impl BodyPrimaryPipeline {
 
         // SFace re-check cadence (phase 9.6): every Nth frame re-identify all bodies
         // (defend locked identities); between, locked bodies skip SFace.
-        let recheck = SFACE_RECHECK_CADENCE <= 1 || frame_id % SFACE_RECHECK_CADENCE == 0;
+        let recheck = SFACE_RECHECK_CADENCE <= 1 || frame_id.is_multiple_of(SFACE_RECHECK_CADENCE);
 
         // ── Body-primary enrichment (was build_body_primary) ────────────────
         let detections = build_body_primary(
@@ -222,84 +222,85 @@ impl BodyPrimaryPipeline {
         );
 
         // ── Scene objects (phase 8.E) on a cadence ──────────────────────────
-        if let Some(det) = &mut self.scene_detector {
-            if self.config.object_cadence <= 1 || frame_id % self.config.object_cadence as u64 == 0
-            {
-                match det.detect(frame) {
-                    Ok(objs) => {
-                        // Animals (dog/cat/bird…): not scene nodes, but kept so a
-                        // body track overlapping one is flagged likely-animal
-                        // (model-corroborated anti-phantom gate).
-                        self.latest_animals = objs
-                            .iter()
-                            .filter(|o| mvm_scene::is_animal(o.class_name))
-                            .filter(|o| o.score >= self.config.object_score_thresh)
-                            .cloned()
-                            .collect();
-                        let filtered: Vec<_> = objs
-                            .into_iter()
-                            .filter(|o| mvm_scene::is_relevant(o.class_name))
-                            .filter(|o| {
-                                o.score
-                                    >= mvm_scene::class_score_threshold(
-                                        o.class_name,
-                                        self.config.object_score_thresh,
-                                    )
-                            })
-                            .filter(|o| {
-                                let area = (o.bbox.x2 - o.bbox.x1) * (o.bbox.y2 - o.bbox.y1);
-                                area >= self.config.object_min_area
-                            })
-                            .collect();
-                        self.latest_objects = self.object_tracker.update(&filtered);
+        if let Some(det) = &mut self.scene_detector
+            && (self.config.object_cadence <= 1
+                || frame_id.is_multiple_of(self.config.object_cadence as u64))
+        {
+            match det.detect(frame) {
+                Ok(objs) => {
+                    // Animals (dog/cat/bird…): not scene nodes, but kept so a
+                    // body track overlapping one is flagged likely-animal
+                    // (model-corroborated anti-phantom gate).
+                    self.latest_animals = objs
+                        .iter()
+                        .filter(|o| mvm_scene::is_animal(o.class_name))
+                        .filter(|o| o.score >= self.config.object_score_thresh)
+                        .cloned()
+                        .collect();
+                    let filtered: Vec<_> = objs
+                        .into_iter()
+                        .filter(|o| mvm_scene::is_relevant(o.class_name))
+                        .filter(|o| {
+                            o.score
+                                >= mvm_scene::class_score_threshold(
+                                    o.class_name,
+                                    self.config.object_score_thresh,
+                                )
+                        })
+                        .filter(|o| {
+                            let area = (o.bbox.x2 - o.bbox.x1) * (o.bbox.y2 - o.bbox.y1);
+                            area >= self.config.object_min_area
+                        })
+                        .collect();
+                    self.latest_objects = self.object_tracker.update(&filtered);
 
-                        // Phase 10.4: the YOLO-seg expert (opt-in) runs over the
-                        // same frame and its masks are attached onto the tracker's
-                        // objects — YOLO26n stays the detection/tracking authority.
-                        if let Some(seg) = &mut self.seg_detector {
-                            match seg.detect(frame) {
-                                Ok(segs) => {
-                                    let segs: Vec<_> = segs
-                                        .into_iter()
-                                        .filter(|s| mvm_scene::is_relevant(s.det.class_name))
-                                        .collect();
-                                    mvm_scene::attach_masks(
-                                        &mut self.latest_objects,
-                                        &segs,
-                                        SEG_ATTACH_IOU,
+                    // Phase 10.4: the YOLO-seg expert (opt-in) runs over the
+                    // same frame and its masks are attached onto the tracker's
+                    // objects — YOLO26n stays the detection/tracking authority.
+                    if let Some(seg) = &mut self.seg_detector {
+                        match seg.detect(frame) {
+                            Ok(segs) => {
+                                let segs: Vec<_> = segs
+                                    .into_iter()
+                                    .filter(|s| mvm_scene::is_relevant(s.det.class_name))
+                                    .collect();
+                                mvm_scene::attach_masks(
+                                    &mut self.latest_objects,
+                                    &segs,
+                                    SEG_ATTACH_IOU,
+                                );
+                                // Opt-in live A/B diagnostic (spike §3.3): how
+                                // many seg masks landed on tracked objects.
+                                if std::env::var("MVM_SEG_DEBUG").is_ok() {
+                                    let attached = self
+                                        .latest_objects
+                                        .iter()
+                                        .filter(|o| o.mask.is_some())
+                                        .count();
+                                    eprintln!(
+                                        "  seg-dbg: {} seg dets → {}/{} objects masked",
+                                        segs.len(),
+                                        attached,
+                                        self.latest_objects.len()
                                     );
-                                    // Opt-in live A/B diagnostic (spike §3.3): how
-                                    // many seg masks landed on tracked objects.
-                                    if std::env::var("MVM_SEG_DEBUG").is_ok() {
-                                        let attached = self
-                                            .latest_objects
-                                            .iter()
-                                            .filter(|o| o.mask.is_some())
-                                            .count();
-                                        eprintln!(
-                                            "  seg-dbg: {} seg dets → {}/{} objects masked",
-                                            segs.len(),
-                                            attached,
-                                            self.latest_objects.len()
-                                        );
-                                    }
                                 }
-                                Err(e) => eprintln!("  seg: detect error: {e}"),
                             }
+                            Err(e) => eprintln!("  seg: detect error: {e}"),
                         }
                     }
-                    Err(e) => eprintln!("  scene: detect error: {e}"),
                 }
+                Err(e) => eprintln!("  scene: detect error: {e}"),
             }
         }
 
         // ── Monocular depth (phase 8.E.2) on a sparse cadence ───────────────
-        if let Some(est) = &mut self.depth_estimator {
-            if self.config.depth_cadence <= 1 || frame_id % self.config.depth_cadence as u64 == 0 {
-                match est.estimate(frame) {
-                    Ok(dm) => self.latest_depth = Some(dm),
-                    Err(e) => eprintln!("  depth: estimate error: {e}"),
-                }
+        if let Some(est) = &mut self.depth_estimator
+            && (self.config.depth_cadence <= 1
+                || frame_id.is_multiple_of(self.config.depth_cadence as u64))
+        {
+            match est.estimate(frame) {
+                Ok(dm) => self.latest_depth = Some(dm),
+                Err(e) => eprintln!("  depth: estimate error: {e}"),
             }
         }
 
@@ -367,10 +368,11 @@ fn anchor_objects_depth(
 
     let mut ks: Vec<f32> = Vec::new();
     for t in tracker.active() {
-        if let (Some(z), Some(d)) = (t.position_z, depth.median_in_bbox(&t.bbox)) {
-            if d > 1e-3 && z > 0.0 {
-                ks.push(z * d);
-            }
+        if let (Some(z), Some(d)) = (t.position_z, depth.median_in_bbox(&t.bbox))
+            && d > 1e-3
+            && z > 0.0
+        {
+            ks.push(z * d);
         }
     }
     if ks.is_empty() {
@@ -410,11 +412,6 @@ fn anchor_objects_depth(
     }
 }
 
-/// Crop a face from `face_bbox` (normalized) and enrich `det` with emotion +
-/// identity. Shared by the body-primary path (matched face) and the face-entity
-/// fallback. Mirrors the bridge-path enrichment so behaviour is identical.
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 /// The crop fed to SFace. LJ5 (phase 15.5) measured that production shipped the
 /// **raw bbox rectangle** — SFace merely `resize_exact`s it, so head roll/offset
 /// smears the embedding (LFW aligned 0.978 vs unaligned 0.783 → +19.5 pt;
@@ -431,6 +428,13 @@ fn identity_crop(
         .unwrap_or_else(|| face.clone())
 }
 
+/// Crop a face from `face_bbox` (normalized) and enrich `det` with emotion +
+/// identity. Shared by the body-primary path (matched face) and the face-entity
+/// fallback. Mirrors the bridge-path enrichment so behaviour is identical.
+///
+/// The explicit arguments represent both inference-module ownership and the
+/// body-primary runtime context; a parameter struct would only obscure that seam.
+#[allow(clippy::too_many_arguments)]
 fn enrich_face_crop(
     frame: &image::DynamicImage,
     face_bbox: &mvm_core::BBox,
@@ -493,20 +497,18 @@ fn enrich_face_crop(
     // already covered by an id-locked track (its identity persists on the track),
     // so this whole block — the embed + gallery match — is skipped until the
     // re-check cadence or the track unlocks. Emotion above still runs every frame.
-    if run_identity {
-        if let Some(id) = identity_mod {
-            // SFace align-fix (LJ5): feed the ArcFace-aligned crop, not the raw bbox.
-            let id_input = identity_crop(frame, face_lm5_px, &face);
-            if let Ok((name, sim, emb)) = id.identify_margin(
-                &id_input,
-                config.identity_abs_thresh,
-                config.identity_margin_thresh,
-            ) {
-                det.embedding = Some(emb);
-                if det.identity.is_none() && name != "unknown" {
-                    det.identity = Some(name);
-                    det.identity_confidence = Some(sim);
-                }
+    if run_identity && let Some(id) = identity_mod {
+        // SFace align-fix (LJ5): feed the ArcFace-aligned crop, not the raw bbox.
+        let id_input = identity_crop(frame, face_lm5_px, &face);
+        if let Ok((name, sim, emb)) = id.identify_margin(
+            &id_input,
+            config.identity_abs_thresh,
+            config.identity_margin_thresh,
+        ) {
+            det.embedding = Some(emb);
+            if det.identity.is_none() && name != "unknown" {
+                det.identity = Some(name);
+                det.identity_confidence = Some(sim);
             }
         }
     }
@@ -844,14 +846,13 @@ fn build_body_primary(
         // actually visible. Stays a face-3D entity (A1); posture is just an added
         // attribute, so this never fabricates a posture from an empty patch.
         let mut face_lm = None;
-        if let (Some(np), Some(rgb)) = (native_pose.as_deref_mut(), face_rgb.as_ref()) {
-            if let Ok(Some((pose, lm))) =
+        if let (Some(np), Some(rgb)) = (native_pose.as_deref_mut(), face_rgb.as_ref())
+            && let Ok(Some((pose, lm))) =
                 np.pose_from_face(rgb, fw, fh, [fb.x1, fb.y1, fb.x2, fb.y2])
-            {
-                attach_posture(&mut det, &pose);
-                overlay.poses.push(lm);
-                face_lm = Some(lm);
-            }
+        {
+            attach_posture(&mut det, &pose);
+            overlay.poses.push(lm);
+            face_lm = Some(lm);
         }
         dets.push(det);
         landmarks_out.push(face_lm); // Some when posture recovered from the face ROI
@@ -1187,8 +1188,10 @@ mod tests {
     /// it). Same object, same box — only the mask differs.
     #[test]
     fn anchor_depth_by_mask_beats_bbox_bleed() {
-        let mut config = mvm_core::Config::default();
-        config.torso_length_m = 0.5;
+        let config = mvm_core::Config {
+            torso_length_m: 0.5,
+            ..Default::default()
+        };
         // Person anchor on the LEFT half (d=1.0), z=2.0 → k = z·d = 2.0.
         let mut tracker = mvm_core::PersonTracker::with_config(&config);
         tracker.pinhole = None; // body-primary: 3D from detection, not face pinhole

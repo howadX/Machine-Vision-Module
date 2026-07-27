@@ -825,11 +825,11 @@ impl StateFile {
                 lines.push(format!("  - posture: {posture}{pos_conf}"));
                 // Occlusion-aware regime: name what the camera actually saw when
                 // the lower body is occluded (posture is then honestly "—").
-                if let Some(cov) = t.body_coverage {
-                    if cov != "full" {
-                        let att = t.torso_attitude.unwrap_or("?");
-                        lines.push(format!("  - body_coverage: {cov} (torso {att})"));
-                    }
+                if let Some(cov) = t.body_coverage
+                    && cov != "full"
+                {
+                    let att = t.torso_attitude.unwrap_or("?");
+                    lines.push(format!("  - body_coverage: {cov} (torso {att})"));
                 }
                 if let Some(fl) = t.torso_flexion {
                     lines.push(format!("  - torso_flexion: {fl:.1}°"));

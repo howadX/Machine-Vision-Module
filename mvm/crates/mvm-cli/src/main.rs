@@ -465,10 +465,10 @@ fn run_native_loop(
                 if args.common.dump_json {
                     println!("{line}");
                 }
-                if let Some(log) = scene_log.as_mut() {
-                    if let Err(e) = log.append(&line) {
-                        eprintln!("  scene-log: append error: {e}");
-                    }
+                if let Some(log) = scene_log.as_mut()
+                    && let Err(e) = log.append(&line)
+                {
+                    eprintln!("  scene-log: append error: {e}");
                 }
             }
 
@@ -807,10 +807,9 @@ fn build_live_mesh(
             config.models_path.display()
         );
         setup::fetch_specific(&config.models_path, &missing).with_context(|| {
-            format!(
-                "auto-setup failed — run `mvm setup` manually, or point [models].dir \
+            "auto-setup failed — run `mvm setup` manually, or point [models].dir \
                  in ~/.config/mvm/config.toml (or MVM_MODELS_DIR) at a populated dir"
-            )
+                .to_string()
         })?;
     }
 
@@ -1025,13 +1024,12 @@ fn main() -> Result<()> {
 
     // Subcommand tree. `run` is the canonical live path; `mesh` is a hidden alias
     // (phase 13.A2). Per-command `--help` prints that command's screen.
-    if let Some(name) = sub {
-        if let Some(screen) = help::subcommand(name) {
-            if help::wants_help(&raw) {
-                print!("{screen}");
-                return Ok(());
-            }
-        }
+    if let Some(name) = sub
+        && let Some(screen) = help::subcommand(name)
+        && help::wants_help(&raw)
+    {
+        print!("{screen}");
+        return Ok(());
     }
     if matches!(sub, Some("run") | Some("mesh")) {
         return run_mesh(parse_mesh_args(&raw));
@@ -1112,8 +1110,10 @@ fn main() -> Result<()> {
 
     #[cfg(not(feature = "embed-models"))]
     let mut _detector = {
-        let mut config = mvm_core::Config::default();
-        config.models_path = product.models_dir.clone();
+        let config = mvm_core::Config {
+            models_path: product.models_dir.clone(),
+            ..Default::default()
+        };
         eprintln!(
             "  detect: loading YuNet from {}",
             config.models_path.display()
@@ -1175,8 +1175,10 @@ fn main() -> Result<()> {
     }
 
     // Native inference modules
-    let mut config = mvm_core::Config::default();
-    config.models_path = product.models_dir.clone();
+    let mut config = mvm_core::Config {
+        models_path: product.models_dir.clone(),
+        ..Default::default()
+    };
     // Native (YuNet) capture uses YuNet-calibrated face height for 3D — the
     // SCRFD-tuned 0.44 would bias depth (phase 7.1 recalibration target).
     if args.native_camera {
@@ -1372,25 +1374,25 @@ fn main() -> Result<()> {
     // early return means its references to the moved values are never reached
     // (flow-sensitive), and `.take()` leaves `native_camera = None` on the
     // open-failed fallthrough so the old "idle stub" behaviour is preserved.
-    if args.native_camera {
-        if let Some(nc) = native_camera.take() {
-            let pipeline = pipeline::BodyPrimaryPipeline::new(
-                config,
-                args.common.emotion_debug,
-                _detector,
-                native_pose,
-                emotion_mod,
-                identity_mod,
-                hand_landmarker,
-                scene_detector,
-                seg_detector,
-                object_tracker,
-                depth_estimator,
-            );
-            return run_native_loop(nc, pipeline, tracker, state_file, &args, dump_interval);
-        }
-        // Native camera failed to open → fall through to the idle bridge loop.
+    if args.native_camera
+        && let Some(nc) = native_camera.take()
+    {
+        let pipeline = pipeline::BodyPrimaryPipeline::new(
+            config,
+            args.common.emotion_debug,
+            _detector,
+            native_pose,
+            emotion_mod,
+            identity_mod,
+            hand_landmarker,
+            scene_detector,
+            seg_detector,
+            object_tracker,
+            depth_estimator,
+        );
+        return run_native_loop(nc, pipeline, tracker, state_file, &args, dump_interval);
     }
+    // Native camera failed to open → fall through to the idle bridge loop.
 
     loop {
         // ── Frame + detections acquisition ──────────────────────────────────
@@ -1439,75 +1441,78 @@ fn main() -> Result<()> {
 
         // A/B detector coverage (phase 7.1, G4) — bridge path only (the native
         // path already IS YuNet, so there's nothing to compare against).
-        if native && args.detect_ab && native_camera.is_none() {
-            if let Some(frame) = &tick_frame {
-                if let Ok(yunet) = _detector.detect(frame) {
-                    let cov = mvm_detect::compare_coverage(&yunet, &detections, 0.5);
-                    ab_cov.matched += cov.matched;
-                    ab_cov.a_only += cov.a_only;
-                    ab_cov.b_only += cov.b_only;
-                    ab_frames += 1;
-                }
-            }
+        if native
+            && args.detect_ab
+            && native_camera.is_none()
+            && let Some(frame) = &tick_frame
+            && let Ok(yunet) = _detector.detect(frame)
+        {
+            let cov = mvm_detect::compare_coverage(&yunet, &detections, 0.5);
+            ab_cov.matched += cov.matched;
+            ab_cov.a_only += cov.a_only;
+            ab_cov.b_only += cov.b_only;
+            ab_frames += 1;
         }
 
         // Bridge-path enrichment: emotion + identity per face (the native-camera
         // path is handled above by build_body_primary).
-        if native && native_camera.is_none() && !detections.is_empty() {
-            if let Some(frame) = &tick_frame {
-                let (fw, fh) = (frame.width(), frame.height());
-                for (det_idx, det) in detections.iter_mut().enumerate() {
-                    // Crop face
-                    let x1 = (det.bbox.x1 * fw as f32) as u32;
-                    let y1 = (det.bbox.y1 * fh as f32) as u32;
-                    let x2 = (det.bbox.x2 * fw as f32) as u32;
-                    let y2 = (det.bbox.y2 * fh as f32) as u32;
-                    let face = frame.crop_imm(x1, y1, x2 - x1, y2 - y1);
+        if native
+            && native_camera.is_none()
+            && !detections.is_empty()
+            && let Some(frame) = &tick_frame
+        {
+            let (fw, fh) = (frame.width(), frame.height());
+            for (det_idx, det) in detections.iter_mut().enumerate() {
+                // Crop face
+                let x1 = (det.bbox.x1 * fw as f32) as u32;
+                let y1 = (det.bbox.y1 * fh as f32) as u32;
+                let x2 = (det.bbox.x2 * fw as f32) as u32;
+                let y2 = (det.bbox.y2 * fh as f32) as u32;
+                let face = frame.crop_imm(x1, y1, x2 - x1, y2 - y1);
 
-                    // Emotion: keep higher calibrated-confidence prediction (Rust or Python bridge)
-                    if let Some(ref mut emo) = emotion_mod {
-                        if let Ok(result) = emo.classify(&face) {
-                            let py_emotion = det.emotion.clone();
-                            let py_conf = det.emotion_confidence;
-                            // Always store the full distribution for PoE fusion (6.4).
-                            det.emotion_distribution = Some(result.distribution);
-                            let winner = if emotion_wins(&result, det.emotion_confidence) {
-                                det.emotion = Some(result.label.clone());
-                                det.emotion_confidence = Some(result.calibrated_conf);
-                                "rust"
-                            } else {
-                                "python"
-                            };
-                            if args.common.emotion_debug {
-                                emotion_debug_entries.push(state::EmotionDebugEntry {
-                                    id: det_idx as u32,
-                                    rust_emotion: result.label,
-                                    rust_conf: result.calibrated_conf,
-                                    py_emotion,
-                                    py_conf,
-                                    winner,
-                                });
-                            }
-                        }
+                // Emotion: keep higher calibrated-confidence prediction (Rust or Python bridge)
+                if let Some(ref mut emo) = emotion_mod
+                    && let Ok(result) = emo.classify(&face)
+                {
+                    let py_emotion = det.emotion.clone();
+                    let py_conf = det.emotion_confidence;
+                    // Always store the full distribution for PoE fusion (6.4).
+                    det.emotion_distribution = Some(result.distribution);
+                    let winner = if emotion_wins(&result, det.emotion_confidence) {
+                        det.emotion = Some(result.label.clone());
+                        det.emotion_confidence = Some(result.calibrated_conf);
+                        "rust"
+                    } else {
+                        "python"
+                    };
+                    if args.common.emotion_debug {
+                        emotion_debug_entries.push(state::EmotionDebugEntry {
+                            id: det_idx as u32,
+                            rust_emotion: result.label,
+                            rust_conf: result.calibrated_conf,
+                            py_emotion,
+                            py_conf,
+                            winner,
+                        });
                     }
+                }
 
-                    // Identity + embedding (phase 7.5).
-                    // Always embed the face (for cosine re-link #6, even unknown
-                    // faces). Apply the SFace label only when the Python bridge
-                    // didn't already set one (ArcFace > SFace), and only through
-                    // the margin gate (fixes #5: stranger no longer → "Вадим").
-                    if let Some(ref mut id) = identity_mod {
-                        if let Ok((name, sim, emb)) = id.identify_margin(
-                            &face,
-                            config.identity_abs_thresh,
-                            config.identity_margin_thresh,
-                        ) {
-                            det.embedding = Some(emb);
-                            if det.identity.is_none() && name != "unknown" {
-                                det.identity = Some(name);
-                                det.identity_confidence = Some(sim);
-                            }
-                        }
+                // Identity + embedding (phase 7.5).
+                // Always embed the face (for cosine re-link #6, even unknown
+                // faces). Apply the SFace label only when the Python bridge
+                // didn't already set one (ArcFace > SFace), and only through
+                // the margin gate (fixes #5: stranger no longer → "Вадим").
+                if let Some(ref mut id) = identity_mod
+                    && let Ok((name, sim, emb)) = id.identify_margin(
+                        &face,
+                        config.identity_abs_thresh,
+                        config.identity_margin_thresh,
+                    )
+                {
+                    det.embedding = Some(emb);
+                    if det.identity.is_none() && name != "unknown" {
+                        det.identity = Some(name);
+                        det.identity_confidence = Some(sim);
                     }
                 }
             }

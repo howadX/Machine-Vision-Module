@@ -32,6 +32,7 @@ static POSE_EST_BYTES: &[u8] =
 
 /// One detected **body** (phase 8 body-primary, FRONTIER): normalized body bbox
 /// + pixel landmarks (for torso-3D) + posture, all together. Produced by
+///
 /// [`NativePose::bodies`] — the carrying-entity source for `--native-camera`.
 #[derive(Debug, Clone)]
 pub struct BodyPose {

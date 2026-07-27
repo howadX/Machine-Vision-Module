@@ -13,12 +13,12 @@ fn main() -> anyhow::Result<()> {
     let people = np.landmarks_per_person(&img)?;
     let poses = np.poses(&img)?;
     let lm = &people[0];
-    for k in 0..33 {
+    for (k, point) in lm.iter().enumerate() {
         println!(
             "{k} {:.4} {:.4} {:.4}",
-            lm[k][0] / w,
-            lm[k][1] / h,
-            lm[k][2] / w
+            point[0] / w,
+            point[1] / h,
+            point[2] / w
         );
     }
     eprintln!(

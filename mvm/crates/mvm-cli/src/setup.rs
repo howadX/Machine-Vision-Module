@@ -175,7 +175,7 @@ fn fetch_once(spec: &ModelSpec, url: &str, part: &Path) -> Result<()> {
         file.write_all(&buf[..n]).context("write .part")?;
         written += n as u64;
         let pct = (written * 100 / spec.size.max(1)).min(100);
-        if pct != last_pct && pct % 10 == 0 && pct < 100 {
+        if pct != last_pct && pct.is_multiple_of(10) && pct < 100 {
             eprint!("\r    {pct}%   ");
             let _ = std::io::stderr().flush();
             last_pct = pct;

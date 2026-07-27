@@ -42,7 +42,7 @@ use std::time::Instant;
 /// <= 1` means every frame. Mirrors the synchronous loop's
 /// `frame_id % object_cadence == 0`, now per-agent.
 pub(crate) fn cadence_due(frame_id: u64, cadence: u32) -> bool {
-    cadence <= 1 || frame_id % cadence as u64 == 0
+    cadence <= 1 || frame_id.is_multiple_of(cadence as u64)
 }
 
 /// Project the tracker's active people into `WorldState.people` and advance the

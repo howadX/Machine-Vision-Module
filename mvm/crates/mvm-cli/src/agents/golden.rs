@@ -274,16 +274,18 @@ fn assert_expected(inst: &serde_json::Value, res: &RunResult) {
                         && (ep.started_at - t_start).abs() <= tol_s
                         && (if ep.open { t_end } else { ep.ended_at } - t_stop).abs() <= tol_e
                 });
-                let hit = hit.expect(&format!(
-                    "{id}: expected {label} [{t_start:.2}..{t_stop:.2}] not found; got: {:?}",
-                    res.episodes
-                        .iter()
-                        .map(|e| format!(
-                            "{} {:?} {:.2}..{:.2}",
-                            e.label, e.participants, e.started_at, e.ended_at
-                        ))
-                        .collect::<Vec<_>>()
-                ));
+                let hit = hit.unwrap_or_else(|| {
+                    panic!(
+                        "{id}: expected {label} [{t_start:.2}..{t_stop:.2}] not found; got: {:?}",
+                        res.episodes
+                            .iter()
+                            .map(|e| format!(
+                                "{} {:?} {:.2}..{:.2}",
+                                e.label, e.participants, e.started_at, e.ended_at
+                            ))
+                            .collect::<Vec<_>>()
+                    )
+                });
                 used[hit] = true;
             }
             "anomaly_quiet" => {

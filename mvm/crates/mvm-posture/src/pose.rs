@@ -172,7 +172,7 @@ impl PoseEstimator {
         let cr = rot_mat(0.0, 0.0, angle);
 
         let mut out = [[0f32; 4]; 33];
-        for k in 0..33 {
+        for (k, point) in out.iter_mut().enumerate() {
             let b = k * 5;
             // (lm - 128) * scale_factor
             let lx = (lm[b] - IN as f32 / 2.0) * s;
@@ -181,10 +181,10 @@ impl PoseEstimator {
             // rotate by angle around origin: [lx,ly] @ cr[:, :2]
             let rxx = lx * cr[0][0] + ly * cr[1][0];
             let ryy = lx * cr[0][1] + ly * cr[1][1];
-            out[k][0] = rxx + original_center[0] + roi0[0];
-            out[k][1] = ryy + original_center[1] + roi0[1];
-            out[k][2] = lz;
-            out[k][3] = 1.0 / (1.0 + (-lm[b + 3]).exp()); // visibility = sigmoid(logit)
+            point[0] = rxx + original_center[0] + roi0[0];
+            point[1] = ryy + original_center[1] + roi0[1];
+            point[2] = lz;
+            point[3] = 1.0 / (1.0 + (-lm[b + 3]).exp()); // visibility = sigmoid(logit)
         }
         let _ = N_LM;
         Ok(Some(out))
