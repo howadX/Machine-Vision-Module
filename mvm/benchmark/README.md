@@ -18,6 +18,10 @@ required signals, questions and expected events; captured/replayed frame packets
 are added before the feature whose gate consumes them. `status="skeleton"` must
 never be reported as a measured benchmark result.
 
+Synthetic replay fixtures 013–015 exercise the 18.5 forecast comparator. Fixture
+016 exercises the 18.6 uncertainty inventory with positive and negative cases;
+its score is a deterministic contract result, not a live-camera measurement.
+
 ## Invariants
 
 1. Canonical facts are deterministic under sink cadence changes.

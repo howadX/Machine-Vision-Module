@@ -1,18 +1,13 @@
-//! Thin optional AgentMesh adapter for `mvm-cortex` (phase 18.2).
+//! AgentMesh adapter for `mvm-cortex`.
 //!
-//! It is deliberately not wired into the production mesh yet. When a later
-//! phase enables it, this adapter reads immutable Fusion packets and publishes a
-//! separate cognitive view; it never writes `WorldState` or scene facts.
+//! It reads immutable Fusion packets and publishes a separate cognitive view;
+//! it never writes `WorldState` or scene facts.
 
 use super::{AttentionPolicyBus, CortexFrameBus, FusedFrameBus};
 use mvm_cortex::{CortexConfig, CortexInput, VisualCortex};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
 
-#[allow(
-    dead_code,
-    reason = "phase 18.2 keeps the adapter dormant to preserve runtime behaviour"
-)]
 pub(crate) struct CortexAgent {
     fused_frames: FusedFrameBus,
     cortex_frames: CortexFrameBus,
@@ -24,10 +19,6 @@ pub(crate) struct CortexAgent {
     last_scene_frame: Option<u64>,
 }
 
-#[allow(
-    dead_code,
-    reason = "phase 18.2 keeps the adapter dormant to preserve runtime behaviour"
-)]
 impl CortexAgent {
     pub(crate) fn new(
         fused_frames: FusedFrameBus,
@@ -63,12 +54,14 @@ impl Agent for CortexAgent {
             {
                 self.last_scene_frame = Some(packet.scene.stamp.frame_id);
                 let delta = packet.scene.events.delta_after(self.event_cursor);
+                let scene_event_gap = delta.gap.is_some();
                 self.event_cursor = delta.next_cursor;
                 let events = delta.events.into_iter().cloned().collect::<Vec<_>>();
                 let input = CortexInput {
                     previous_scene: self.previous_scene.as_deref(),
                     current_scene: packet.scene.as_ref(),
                     scene_events: &events,
+                    scene_event_gap,
                     config: &self.config,
                     now_unix_ms: packet.scene.stamp.published_at_unix_ms,
                 };
@@ -76,6 +69,7 @@ impl Agent for CortexAgent {
                     previous_scene: input.previous_scene,
                     current_scene: input.current_scene,
                     scene_events: input.scene_events,
+                    scene_event_gap: input.scene_event_gap,
                     config: input.config,
                     now_unix_ms: input.now_unix_ms,
                 });
@@ -100,7 +94,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn disabled_adapter_is_named_and_constructible_without_runtime_wiring() {
+    fn adapter_defaults_disabled_when_constructed_directly() {
         let agent = CortexAgent::new(
             FusedFrameBus::new(),
             CortexFrameBus::new(),

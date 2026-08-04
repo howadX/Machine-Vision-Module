@@ -27,6 +27,12 @@ pub enum ReasonCode {
     InsufficientEvidence,
     MissingSource,
     StaleSource,
+    CoastedSource,
+    LowConfidence,
+    Occluded,
+    Uncalibrated,
+    EventGap,
+    OrdinalOnly,
     Skeleton,
     UnexpectedAppearance,
     HighUncertaintySceneSource,
@@ -178,6 +184,10 @@ pub struct CortexInput<'a> {
     pub previous_scene: Option<&'a FusedSceneFrame>,
     pub current_scene: &'a FusedSceneFrame,
     pub scene_events: &'a [SceneEvent],
+    /// Consumer-local gap in the bounded canonical event tail. A gap is not a
+    /// scene fact, so it travels with this Cortex read instead of mutating the
+    /// immutable `FusedSceneFrame`.
+    pub scene_event_gap: bool,
     pub config: &'a Config,
     pub now_unix_ms: i64,
 }
@@ -203,6 +213,188 @@ pub struct CortexFrame {
     /// second durable event log or an observed scene fact.
     #[serde(default)]
     pub memory: MemoryContext,
+    /// Observer-relative spatial limits and calibration honesty for this tick.
+    #[serde(default)]
+    pub self_model: VisualSelfModel,
+    /// Deterministic inventory of claims the observer cannot safely assert.
+    #[serde(default)]
+    pub uncertainty: UncertaintyReport,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinateFrame {
+    #[default]
+    CameraRelative,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AxisDirection {
+    Right,
+    Down,
+    Forward,
+}
+
+/// Coordinate convention of the current MVM spatial substrate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpatialSelf {
+    pub coordinate_frame: CoordinateFrame,
+    pub x_axis: AxisDirection,
+    pub y_axis: AxisDirection,
+    pub z_axis: AxisDirection,
+}
+
+impl Default for SpatialSelf {
+    fn default() -> Self {
+        Self {
+            coordinate_frame: CoordinateFrame::CameraRelative,
+            x_axis: AxisDirection::Right,
+            y_axis: AxisDirection::Down,
+            z_axis: AxisDirection::Forward,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CameraPose {
+    pub reference_frame: CoordinateFrame,
+    pub position_m: [f32; 3],
+    pub orientation_rpy_degrees: [f32; 3],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VisibilityState {
+    /// All currently registered members have usable image evidence. This does
+    /// not claim that the zone's unmodelled spatial extent is fully visible.
+    ObservedMembers,
+    PartiallyObserved,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ZoneVisibility {
+    pub zone_id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub visibility: CognitiveClaim<VisibilityState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalibrationBasis {
+    ConfiguredPrior,
+    UnverifiedPrior,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalibrationValue {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<f32>,
+    pub basis: CalibrationBasis,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalibrationReport {
+    pub fx_ratio: CalibrationValue,
+    pub torso_length_m: CalibrationValue,
+    pub camera_height_m: CalibrationValue,
+    pub world_extrinsics: CalibrationBasis,
+}
+
+impl Default for CalibrationReport {
+    fn default() -> Self {
+        Self {
+            fx_ratio: CalibrationValue {
+                value: None,
+                basis: CalibrationBasis::Unavailable,
+            },
+            torso_length_m: CalibrationValue {
+                value: None,
+                basis: CalibrationBasis::Unavailable,
+            },
+            camera_height_m: CalibrationValue {
+                value: None,
+                basis: CalibrationBasis::Unavailable,
+            },
+            world_extrinsics: CalibrationBasis::Unavailable,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VisualSelfModel {
+    pub source_scene_frame_id: u64,
+    pub spatial: SpatialSelf,
+    pub camera_relative_pose: CognitiveClaim<CameraPose>,
+    pub world_pose: CognitiveClaim<CameraPose>,
+    pub zones: Vec<ZoneVisibility>,
+    pub calibration: CalibrationReport,
+}
+
+impl Default for VisualSelfModel {
+    fn default() -> Self {
+        Self {
+            source_scene_frame_id: 0,
+            spatial: SpatialSelf::default(),
+            camera_relative_pose: CognitiveClaim::unknown(ReasonCode::MissingSource),
+            world_pose: CognitiveClaim::unknown(ReasonCode::MissingSource),
+            zones: Vec::new(),
+            calibration: CalibrationReport::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UncertaintyCode {
+    Posture,
+    EmotionDistribution,
+    Identity,
+    Existence,
+    SourceFreshness,
+    MissingExpert,
+    EventDelivery,
+    EntityMetricPosition,
+    MetricCalibration,
+    ZoneVisibility,
+    CameraWorldPose,
+    SceneFactInventory,
+}
+
+/// One evidence-linked item in the answer to "what do you not know?".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UncertainClaim {
+    pub code: UncertaintyCode,
+    pub status: ClaimStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity: Option<EntityKey>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<mvm_core::canonical::FactSource>,
+    pub reasons: Vec<ReasonCode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<EvidenceRef>,
+}
+
+impl UncertainClaim {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.status == ClaimStatus::Asserted {
+            return Err("an uncertain claim cannot be asserted".into());
+        }
+        if self.reasons.is_empty() {
+            return Err("an uncertain claim requires an explicit reason".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct UncertaintyReport {
+    pub source_scene_frame_id: u64,
+    pub claims: Vec<UncertainClaim>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

@@ -111,13 +111,15 @@ non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 �
 а `current_state.md` пишется atomic. Canonical activity episodes пишутся в `labels.jsonl` через
 независимый DatasetWriter cursor с event/source provenance; replay/cursor/late-result gates добавлены.
 Корневой `--native-camera` маршрутизируется в canonical AgentMesh; text-only/pixel dataset fixtures
-проходят check gate. **18.2–18.5 ✅:** единый `mvm-cortex` теперь включает serializable
+проходят check gate. **18.2–18.6 ✅:** единый `mvm-cortex` теперь включает serializable
 honesty-first `CortexFrame`/`CognitiveClaim`, canonical Scene Events + evidence-linked interpretation,
 bounded advisory re-observation, runtime-only Event Memory и evidence-linked constant-velocity /
-persistence forecast с typed prediction errors. `CortexAgent` включён в AgentMesh,
+persistence forecast с typed prediction errors, camera-relative `VisualSelfModel` и детерминированный
+`UncertaintyReport`. World camera pose, полная видимость зон, emotion entropy и metric calibration
+явно остаются unknown/withheld, когда canonical evidence недостаточно. `CortexAgent` включён в AgentMesh,
 публикует отдельный cognitive frame и не мутирует canonical facts; scheduler исполняет только
 ограниченные one-shot permits, а `labels.jsonl` остаётся единственным durable semantic store.
-Далее — 18.6 Visual Self-Model + Uncertainty. План —
+Далее — 18.7 Affordance Layer. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents

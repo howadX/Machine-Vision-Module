@@ -5,8 +5,7 @@ use crate::{
     self_model::SelfModelLayer, uncertainty::UncertaintyLayer,
 };
 
-/// Owner of Cortex ordering and runtime-only temporal state. Feature logic is
-/// intentionally absent until later Phase 18 slices.
+/// Owner of Cortex ordering and runtime-only temporal state.
 pub struct VisualCortex {
     config: CortexConfig,
     predictor: PredictiveLayer,
@@ -52,15 +51,19 @@ impl VisualCortex {
         let memory = self
             .memory
             .update(input.current_scene, input.scene_events, input.now_unix_ms);
+        let self_model = self.self_model.build(input.current_scene, input.config);
+        let uncertainty = self.uncertainty.build(
+            input.current_scene,
+            &self_model,
+            input.config,
+            input.scene_event_gap,
+        );
         let _ = (
             &self.events,
             &self.affordance,
             &self.attention,
-            &self.self_model,
-            &self.uncertainty,
             &self.report,
             input.previous_scene,
-            input.config,
         );
         CortexFrame {
             timestamp_unix_ms: input.now_unix_ms,
@@ -78,6 +81,8 @@ impl VisualCortex {
             forecast: Some(forecast),
             prediction_errors,
             memory,
+            self_model,
+            uncertainty,
         }
     }
 }
@@ -106,13 +111,14 @@ mod tests {
     }
 
     #[test]
-    fn skeleton_emits_no_unevidenced_claims() {
+    fn empty_scene_emits_no_unevidenced_interpretations() {
         let scene = scene();
         let mut cortex = VisualCortex::new(CortexConfig::default());
         let frame = cortex.update(CortexInput {
             previous_scene: None,
             current_scene: &scene,
             scene_events: &[],
+            scene_event_gap: false,
             config: &mvm_core::Config::default(),
             now_unix_ms: 1_002,
         });
@@ -145,6 +151,8 @@ mod tests {
         assert!(frame.memory.relevant.is_empty());
         assert!(frame.forecast.is_none());
         assert!(frame.prediction_errors.is_empty());
+        assert_eq!(frame.self_model.source_scene_frame_id, 0);
+        assert_eq!(frame.uncertainty.source_scene_frame_id, 0);
     }
 
     #[test]
@@ -180,6 +188,7 @@ mod tests {
             previous_scene: None,
             current_scene: &scene,
             scene_events: &[event],
+            scene_event_gap: false,
             config: &mvm_core::Config::default(),
             now_unix_ms: 1_002,
         });
@@ -218,6 +227,7 @@ mod tests {
             previous_scene: None,
             current_scene: &scene,
             scene_events: &[event],
+            scene_event_gap: false,
             config: &mvm_core::Config::default(),
             now_unix_ms: 1_002,
         });
