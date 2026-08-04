@@ -1,0 +1,10 @@
+{
+  "fixture_version": "18.5.0",
+  "scenario_id": "014",
+  "name": "constant_velocity_left",
+  "status": "synthetic_replay",
+  "horizon_ms": 1000,
+  "source_bbox": [0.60, 0.20, 0.80, 0.60],
+  "bbox_velocity_per_second": [-0.20, 0.00],
+  "observed_bbox": [0.40, 0.20, 0.60, 0.60]
+}

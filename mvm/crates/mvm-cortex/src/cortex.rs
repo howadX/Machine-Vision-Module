@@ -23,7 +23,7 @@ impl VisualCortex {
     pub fn new(config: CortexConfig) -> Self {
         Self {
             config,
-            predictor: PredictiveLayer,
+            predictor: PredictiveLayer::default(),
             events: EventInterpretationLayer,
             memory: EventMemoryLayer::default(),
             affordance: AffordanceLayer,
@@ -48,11 +48,11 @@ impl VisualCortex {
     /// Interpret only canonical Fusion events. Cortex never performs a second
     /// scene diff: each asserted interpretation carries its event evidence.
     pub fn update(&mut self, input: CortexInput<'_>) -> CortexFrame {
+        let (forecast, prediction_errors) = self.predictor.update(input.current_scene);
         let memory = self
             .memory
             .update(input.current_scene, input.scene_events, input.now_unix_ms);
         let _ = (
-            &self.predictor,
             &self.events,
             &self.affordance,
             &self.attention,
@@ -75,6 +75,8 @@ impl VisualCortex {
                     event_seq: Some(event.event_seq),
                 })
                 .collect(),
+            forecast: Some(forecast),
+            prediction_errors,
             memory,
         }
     }
@@ -141,6 +143,8 @@ mod tests {
         .unwrap();
         assert!(frame.memory.recent.is_empty());
         assert!(frame.memory.relevant.is_empty());
+        assert!(frame.forecast.is_none());
+        assert!(frame.prediction_errors.is_empty());
     }
 
     #[test]

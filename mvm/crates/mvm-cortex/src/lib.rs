@@ -1,8 +1,9 @@
 //! `mvm-cortex` — cognitive interpretation over immutable fused scene facts.
 //!
-//! Phase 18.2 deliberately provides only the stable skeleton. Fusion remains
-//! the sole authority for observed scene facts; this crate neither invokes
-//! experts nor mutates [`mvm_core::canonical::FusedSceneFrame`].
+//! Fusion remains the sole authority for observed scene facts. Cortex adds
+//! evidence-linked interpretation, bounded runtime memory, forecast and
+//! prediction error; it neither invokes experts nor mutates
+//! [`mvm_core::canonical::FusedSceneFrame`].
 
 mod affordance;
 mod attention;
@@ -17,7 +18,8 @@ mod uncertainty;
 
 pub use cortex::VisualCortex;
 pub use types::{
-    AttentionPolicy, ClaimStatus, CognitiveClaim, CortexConfig, CortexFrame, CortexInput,
-    EvidenceRef, MemoryConfig, MemoryContext, MemoryEvent, ObservationRequest, ObservationTarget,
-    ReasonCode, RequestOutcome, Resolution,
+    ActivityForecast, AttentionPolicy, ClaimStatus, CognitiveClaim, CortexConfig, CortexFrame,
+    CortexInput, EntityForecast, EvidenceRef, ForecastPosition3D, MemoryConfig, MemoryContext,
+    MemoryEvent, ObservationRequest, ObservationTarget, PredictionError, PredictionErrorKind,
+    ReasonCode, RelationForecast, RequestOutcome, Resolution, SceneForecast,
 };

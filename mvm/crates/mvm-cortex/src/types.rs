@@ -1,5 +1,5 @@
 use mvm_core::{
-    Config,
+    BBox, Config,
     canonical::{EntityKey, FusedSceneFrame, SceneEvent, SceneEventKind},
 };
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,8 @@ pub enum ReasonCode {
     Skeleton,
     UnexpectedAppearance,
     HighUncertaintySceneSource,
+    RememberedSource,
+    WeakSource,
     Other(String),
 }
 
@@ -190,10 +192,86 @@ pub struct CortexFrame {
     pub claims: Vec<CognitiveClaim<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scene_event_refs: Vec<EvidenceRef>,
+    /// One-second cognitive projection derived from the current immutable scene.
+    /// It is never an observed fact and may contain withheld component claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forecast: Option<SceneForecast>,
+    /// Differences between the newest due forecast and the current observation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub prediction_errors: Vec<PredictionError>,
     /// Bounded runtime-only episodic context. It is a cognitive view, never a
     /// second durable event log or an observed scene fact.
     #[serde(default)]
     pub memory: MemoryContext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ForecastPosition3D {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntityForecast {
+    pub key: EntityKey,
+    pub existence: CognitiveClaim<mvm_core::canonical::Existence>,
+    pub bbox: CognitiveClaim<BBox>,
+    pub position_3d: CognitiveClaim<ForecastPosition3D>,
+    pub posture: CognitiveClaim<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivityForecast {
+    pub label: String,
+    pub participants: Vec<EntityKey>,
+    pub persistence: CognitiveClaim<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationForecast {
+    pub a: EntityKey,
+    pub b: EntityKey,
+    pub kind: mvm_core::canonical::SceneRelationKind,
+    pub persistence: CognitiveClaim<bool>,
+}
+
+/// Bounded forecast produced from one canonical scene revision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SceneForecast {
+    pub source_scene_frame_id: u64,
+    pub source_timestamp_unix_ms: i64,
+    pub target_timestamp_unix_ms: i64,
+    pub horizon_ms: i64,
+    pub entities: Vec<EntityForecast>,
+    pub activities: Vec<ActivityForecast>,
+    pub relations: Vec<RelationForecast>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictionErrorKind {
+    BboxDrift,
+    Position3dDrift,
+    EntityAppeared,
+    EntityDisappeared,
+    ActivityChanged,
+    RelationBroken,
+    PostureChanged,
+}
+
+/// Evidence-linked mismatch between a due cognitive forecast and observation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PredictionError {
+    pub kind: PredictionErrorKind,
+    pub forecast_source_scene_frame_id: u64,
+    pub observed_scene_frame_id: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entities: Vec<EntityKey>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub magnitude: Option<f32>,
+    pub confidence: f32,
+    pub evidence: Vec<EvidenceRef>,
 }
 
 /// Configuration for bounded in-process event memory. This configuration is
