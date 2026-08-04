@@ -38,8 +38,8 @@ impl VisualCortex {
         self.config
     }
 
-    /// Produce the schema-stable empty cognitive view. Event references are
-    /// retained as provenance, but no interpretation is asserted in 18.2.
+    /// Interpret only canonical Fusion events. Cortex never performs a second
+    /// scene diff: each asserted interpretation carries its event evidence.
     pub fn update(&mut self, input: CortexInput<'_>) -> CortexFrame {
         let _ = (
             &self.predictor,
@@ -56,7 +56,7 @@ impl VisualCortex {
         CortexFrame {
             timestamp_unix_ms: input.now_unix_ms,
             scene_frame_id: input.current_scene.stamp.frame_id,
-            claims: Vec::new(),
+            claims: self.events.interpret(input.scene_events),
             scene_event_refs: input
                 .scene_events
                 .iter()
@@ -75,7 +75,8 @@ mod tests {
     use super::*;
     use crate::{ClaimStatus, CognitiveClaim, ReasonCode};
     use mvm_core::canonical::{
-        EventTailView, FactReason, FrameStamp, FusedSceneFrame, SceneFact, SceneQuality,
+        EventTailView, FactEvidenceRef, FactReason, FactSource, FactStatus, FrameStamp,
+        FusedSceneFrame, SceneEvent, SceneEventKind, SceneFact, SceneQuality,
     };
 
     fn scene() -> FusedSceneFrame {
@@ -123,5 +124,43 @@ mod tests {
     #[test]
     fn asserted_claim_requires_evidence() {
         assert!(CognitiveClaim::asserted("forecast".to_string(), 0.8, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn interpretation_is_linked_to_a_canonical_event_not_a_scene_diff() {
+        let scene = scene();
+        let event = SceneEvent {
+            event_seq: 12,
+            source_frame_id: 7,
+            source_timestamp_unix_ms: 1_001,
+            kind: SceneEventKind::AnomalySpike,
+            entity_keys: Vec::new(),
+            fact: SceneFact::claimed(
+                FactStatus::Temporal,
+                true,
+                0.8,
+                vec![FactEvidenceRef {
+                    source: FactSource::Fusion,
+                    source_frame_id: 7,
+                    entity: None,
+                    event_seq: Some(12),
+                }],
+            )
+            .unwrap(),
+            payload: None,
+        };
+        let mut cortex = VisualCortex::new(CortexConfig::default());
+        let frame = cortex.update(CortexInput {
+            previous_scene: None,
+            current_scene: &scene,
+            scene_events: &[event],
+            config: &mvm_core::Config::default(),
+            now_unix_ms: 1_002,
+        });
+        assert_eq!(
+            frame.claims[0].value.as_deref(),
+            Some("anomaly_requires_attention")
+        );
+        assert_eq!(frame.claims[0].evidence[0].event_seq, Some(12));
     }
 }
