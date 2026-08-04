@@ -965,6 +965,9 @@ fn build_live_mesh(
     let scene_observations = agents::SceneObservationBus::new();
     let depth_observations = agents::DepthObservationBus::new();
     let fused_frames = agents::FusedFrameBus::new();
+    let cortex_frames = agents::CortexFrameBus::new();
+    let attention_policies = agents::AttentionPolicyBus::new();
+    let scene_control = agents::SceneExecutionControl::default();
     let run_id = format!(
         "{}-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"),
@@ -1008,6 +1011,7 @@ fn build_live_mesh(
             config.object_score_thresh,
             config.object_min_area,
             config.object_cadence,
+            scene_control.clone(),
         )));
     }
     if let Some(depth) = depth {
@@ -1020,10 +1024,22 @@ fn build_live_mesh(
     mesh.add(Box::new(agents::FusionAgent::new(
         config.clone(),
         human_observations,
-        scene_observations,
+        scene_observations.clone(),
         depth_observations.clone(),
         fused_frames.clone(),
         run_id,
+    )));
+    mesh.add(Box::new(agents::CortexAgent::new(
+        fused_frames.clone(),
+        cortex_frames,
+        attention_policies.clone(),
+        config.clone(),
+        mvm_cortex::CortexConfig { enabled: true },
+    )));
+    mesh.add(Box::new(agents::PolicySchedulerAgent::new(
+        attention_policies,
+        scene_observations.clone(),
+        scene_control,
     )));
     mesh.add(Box::new(
         agents::StateFileWriter::new(

@@ -4,7 +4,8 @@
 //! happens on the fusion step (8.C.7) where both people and objects are visible.
 
 use crate::agents::{
-    ObservationStamp, SceneObservationBus, SceneObservationFrame, cadence_due, collect_objects,
+    ObservationStamp, SceneExecutionControl, SceneObservationBus, SceneObservationFrame,
+    cadence_due, collect_objects,
 };
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
@@ -25,9 +26,14 @@ pub(crate) struct SceneAgent {
     score_thresh: f32,
     min_area: f32,
     cadence: u32,
+    control: SceneExecutionControl,
 }
 
 impl SceneAgent {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the existing SceneAgent constructor keeps each detector/runtime seam explicit; 18.3b adds one bounded control seam"
+    )]
     pub(crate) fn new(
         detector: mvm_scene::YoloDetector,
         seg_detector: Option<mvm_scene::YoloSegDetector>,
@@ -36,6 +42,7 @@ impl SceneAgent {
         score_thresh: f32,
         min_area: f32,
         cadence: u32,
+        control: SceneExecutionControl,
     ) -> Self {
         Self {
             detector,
@@ -46,6 +53,7 @@ impl SceneAgent {
             score_thresh,
             min_area,
             cadence,
+            control,
         }
     }
 }
@@ -62,105 +70,107 @@ impl Agent for SceneAgent {
         while ctx.running() {
             if let Some(frame) = ctx.frames.latest()
                 && last_id != Some(frame.id)
-                && cadence_due(frame.id, self.cadence)
             {
-                last_id = Some(frame.id);
-                match self.detector.detect(frame.image.as_ref()) {
-                    Ok(objs) => {
-                        // Animal-class detections (dog/cat/…) are NOT scene
-                        // nodes (dropped by `is_relevant`), but fusion needs
-                        // them to drop a pet-overlapping body from relational
-                        // activities (anti-pet gate) — capture before filtering.
-                        let animal_detections: Vec<_> = objs
-                            .iter()
-                            .filter(|o| mvm_scene::is_animal(o.class_name))
-                            .cloned()
-                            .collect();
-                        let animals: Vec<_> = self
-                            .animal_tracker
-                            .update(&animal_detections)
-                            .into_iter()
-                            .map(|animal| mvm_fusion::canonical::AnimalObservation {
-                                track_id: animal.id,
-                                class_name: animal.class_name.to_owned(),
-                                bbox: animal.bbox,
-                                confidence: animal.score,
-                                remembered: animal.missed > 0,
-                            })
-                            .collect();
-                        // Filters A/C/D (mirror the synchronous loop): relevant
-                        // classes, per-class score floor, minimum bbox area.
-                        let filtered: Vec<_> = objs
-                            .into_iter()
-                            .filter(|o| mvm_scene::is_relevant(o.class_name))
-                            .filter(|o| {
-                                o.score
-                                    >= mvm_scene::class_score_threshold(
-                                        o.class_name,
-                                        self.score_thresh,
-                                    )
-                            })
-                            .filter(|o| {
-                                let area = (o.bbox.x2 - o.bbox.x1) * (o.bbox.y2 - o.bbox.y1);
-                                area >= self.min_area
-                            })
-                            .collect();
-                        let mut tracked = self.tracker.update(&filtered);
-                        let mut person_masks = Vec::new();
+                let permit = self.control.take_for(frame.id);
+                if cadence_due(frame.id, self.cadence) || permit.is_some() {
+                    last_id = Some(frame.id);
+                    match self.detector.detect(frame.image.as_ref()) {
+                        Ok(objs) => {
+                            // Animal-class detections (dog/cat/…) are NOT scene
+                            // nodes (dropped by `is_relevant`), but fusion needs
+                            // them to drop a pet-overlapping body from relational
+                            // activities (anti-pet gate) — capture before filtering.
+                            let animal_detections: Vec<_> = objs
+                                .iter()
+                                .filter(|o| mvm_scene::is_animal(o.class_name))
+                                .cloned()
+                                .collect();
+                            let animals: Vec<_> = self
+                                .animal_tracker
+                                .update(&animal_detections)
+                                .into_iter()
+                                .map(|animal| mvm_fusion::canonical::AnimalObservation {
+                                    track_id: animal.id,
+                                    class_name: animal.class_name.to_owned(),
+                                    bbox: animal.bbox,
+                                    confidence: animal.score,
+                                    remembered: animal.missed > 0,
+                                })
+                                .collect();
+                            // Filters A/C/D (mirror the synchronous loop): relevant
+                            // classes, per-class score floor, minimum bbox area.
+                            let filtered: Vec<_> = objs
+                                .into_iter()
+                                .filter(|o| mvm_scene::is_relevant(o.class_name))
+                                .filter(|o| {
+                                    o.score
+                                        >= mvm_scene::class_score_threshold(
+                                            o.class_name,
+                                            self.score_thresh,
+                                        )
+                                })
+                                .filter(|o| {
+                                    let area = (o.bbox.x2 - o.bbox.x1) * (o.bbox.y2 - o.bbox.y1);
+                                    area >= self.min_area
+                                })
+                                .collect();
+                            let mut tracked = self.tracker.update(&filtered);
+                            let mut person_masks = Vec::new();
 
-                        // Phase 10.4/11: the YOLO-seg expert (opt-in `--masks`)
-                        // runs over the same frame; its object masks are attached
-                        // onto the tracked objects (YOLO26n stays the detection
-                        // authority) → mask-contact + mask-median depth on the
-                        // production mesh path. Person masks (11.A3) are handled
-                        // separately (published to the tracker, not attached).
-                        if let Some(seg) = &mut self.seg_detector {
-                            match seg.detect(frame.image.as_ref()) {
-                                Ok(segs) => {
-                                    // Split the single seg forward: object masks
-                                    // attach to tracked objects; person masks are
-                                    // published for the body tracker (11.A3).
-                                    let mut obj_segs = Vec::new();
-                                    for s in segs {
-                                        if s.det.class_name == "person" {
-                                            person_masks.push((s.det.bbox, s.mask));
-                                        } else if mvm_scene::is_relevant(s.det.class_name) {
-                                            obj_segs.push(s);
+                            // Phase 10.4/11: the YOLO-seg expert (opt-in `--masks`)
+                            // runs over the same frame; its object masks are attached
+                            // onto the tracked objects (YOLO26n stays the detection
+                            // authority) → mask-contact + mask-median depth on the
+                            // production mesh path. Person masks (11.A3) are handled
+                            // separately (published to the tracker, not attached).
+                            if let Some(seg) = &mut self.seg_detector {
+                                match seg.detect(frame.image.as_ref()) {
+                                    Ok(segs) => {
+                                        // Split the single seg forward: object masks
+                                        // attach to tracked objects; person masks are
+                                        // published for the body tracker (11.A3).
+                                        let mut obj_segs = Vec::new();
+                                        for s in segs {
+                                            if s.det.class_name == "person" {
+                                                person_masks.push((s.det.bbox, s.mask));
+                                            } else if mvm_scene::is_relevant(s.det.class_name) {
+                                                obj_segs.push(s);
+                                            }
+                                        }
+                                        mvm_scene::attach_masks(
+                                            &mut tracked,
+                                            &obj_segs,
+                                            SEG_ATTACH_IOU,
+                                        );
+                                        if std::env::var("MVM_SEG_DEBUG").is_ok() {
+                                            let attached =
+                                                tracked.iter().filter(|o| o.mask.is_some()).count();
+                                            eprintln!(
+                                                "  seg-dbg: {} obj-seg → {}/{} objects masked; {} person masks published",
+                                                obj_segs.len(),
+                                                attached,
+                                                tracked.len(),
+                                                person_masks.len()
+                                            );
                                         }
                                     }
-                                    mvm_scene::attach_masks(
-                                        &mut tracked,
-                                        &obj_segs,
-                                        SEG_ATTACH_IOU,
-                                    );
-                                    if std::env::var("MVM_SEG_DEBUG").is_ok() {
-                                        let attached =
-                                            tracked.iter().filter(|o| o.mask.is_some()).count();
-                                        eprintln!(
-                                            "  seg-dbg: {} obj-seg → {}/{} objects masked; {} person masks published",
-                                            obj_segs.len(),
-                                            attached,
-                                            tracked.len(),
-                                            person_masks.len()
-                                        );
-                                    }
+                                    Err(e) => eprintln!("  seg: detect error: {e}"),
                                 }
-                                Err(e) => eprintln!("  seg: detect error: {e}"),
                             }
-                        }
 
-                        let stamp = ObservationStamp::from_frame(&frame);
-                        self.observations.publish(SceneObservationFrame {
-                            stamp,
-                            objects: Arc::new(collect_objects(&tracked, stamp.produced_at)),
-                            animals: Arc::new(animals),
-                            person_masks: Arc::new(person_masks),
-                        });
-                        ticks += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("  scene: detect error: {e}");
-                        errors += 1;
+                            let stamp = ObservationStamp::from_frame(&frame);
+                            self.observations.publish(SceneObservationFrame {
+                                stamp,
+                                objects: Arc::new(collect_objects(&tracked, stamp.produced_at)),
+                                animals: Arc::new(animals),
+                                person_masks: Arc::new(person_masks),
+                            });
+                            ticks += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("  scene: detect error: {e}");
+                            errors += 1;
+                        }
                     }
                 }
             }

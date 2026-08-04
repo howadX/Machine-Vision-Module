@@ -95,6 +95,7 @@ pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;
     reason = "CortexAgent is deliberately not wired before phase 18.3"
 )]
 pub(crate) type CortexFrameBus = LatestValue<mvm_cortex::CortexFrame>;
+pub(crate) type AttentionPolicyBus = LatestValue<mvm_cortex::AttentionPolicy>;
 
 #[cfg(test)]
 mod tests {

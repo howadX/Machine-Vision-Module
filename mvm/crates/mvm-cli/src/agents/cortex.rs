@@ -4,7 +4,7 @@
 //! phase enables it, this adapter reads immutable Fusion packets and publishes a
 //! separate cognitive view; it never writes `WorldState` or scene facts.
 
-use super::{CortexFrameBus, FusedFrameBus};
+use super::{AttentionPolicyBus, CortexFrameBus, FusedFrameBus};
 use mvm_cortex::{CortexConfig, CortexInput, VisualCortex};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
@@ -16,6 +16,7 @@ use std::sync::Arc;
 pub(crate) struct CortexAgent {
     fused_frames: FusedFrameBus,
     cortex_frames: CortexFrameBus,
+    policies: AttentionPolicyBus,
     cortex: VisualCortex,
     config: mvm_core::Config,
     event_cursor: Option<u64>,
@@ -31,12 +32,14 @@ impl CortexAgent {
     pub(crate) fn new(
         fused_frames: FusedFrameBus,
         cortex_frames: CortexFrameBus,
+        policies: AttentionPolicyBus,
         config: mvm_core::Config,
         cortex_config: CortexConfig,
     ) -> Self {
         Self {
             fused_frames,
             cortex_frames,
+            policies,
             cortex: VisualCortex::new(cortex_config),
             config,
             event_cursor: None,
@@ -62,15 +65,24 @@ impl Agent for CortexAgent {
                 let delta = packet.scene.events.delta_after(self.event_cursor);
                 self.event_cursor = delta.next_cursor;
                 let events = delta.events.into_iter().cloned().collect::<Vec<_>>();
-                let frame = self.cortex.update(CortexInput {
+                let input = CortexInput {
                     previous_scene: self.previous_scene.as_deref(),
                     current_scene: packet.scene.as_ref(),
                     scene_events: &events,
                     config: &self.config,
                     now_unix_ms: packet.scene.stamp.published_at_unix_ms,
+                };
+                let policy = self.cortex.attention_policy(CortexInput {
+                    previous_scene: input.previous_scene,
+                    current_scene: input.current_scene,
+                    scene_events: input.scene_events,
+                    config: input.config,
+                    now_unix_ms: input.now_unix_ms,
                 });
+                let frame = self.cortex.update(input);
                 self.previous_scene = Some(Arc::clone(&packet.scene));
                 self.cortex_frames.publish(frame);
+                self.policies.publish(policy);
                 ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(15));
@@ -92,6 +104,7 @@ mod tests {
         let agent = CortexAgent::new(
             FusedFrameBus::new(),
             CortexFrameBus::new(),
+            AttentionPolicyBus::new(),
             mvm_core::Config::default(),
             CortexConfig::default(),
         );

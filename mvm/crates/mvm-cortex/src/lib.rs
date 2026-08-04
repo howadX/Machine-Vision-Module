@@ -17,5 +17,6 @@ mod uncertainty;
 
 pub use cortex::VisualCortex;
 pub use types::{
-    ClaimStatus, CognitiveClaim, CortexConfig, CortexFrame, CortexInput, EvidenceRef, ReasonCode,
+    AttentionPolicy, ClaimStatus, CognitiveClaim, CortexConfig, CortexFrame, CortexInput,
+    EvidenceRef, ObservationRequest, ObservationTarget, ReasonCode, RequestOutcome, Resolution,
 };

@@ -24,19 +24,22 @@ mod fusion;
 mod golden;
 mod human;
 mod observations;
+mod policy;
 mod scene;
 mod statefile;
 
 pub(crate) use capture::CaptureAgent;
+pub(crate) use cortex::CortexAgent;
 pub(crate) use dataset_writer::DatasetWriterAgent;
 pub(crate) use depth::DepthAgent;
 pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
 pub(crate) use observations::{
-    CortexFrameBus, DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles,
-    FusedFrameBus, FusedFramePacket, HumanObservationBus, HumanObservationFrame, ObservationStamp,
-    SceneObservationBus, SceneObservationFrame,
+    AttentionPolicyBus, CortexFrameBus, DepthObservationBus, DepthObservationFrame,
+    FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
+    HumanObservationFrame, ObservationStamp, SceneObservationBus, SceneObservationFrame,
 };
+pub(crate) use policy::{PolicySchedulerAgent, SceneExecutionControl};
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
 

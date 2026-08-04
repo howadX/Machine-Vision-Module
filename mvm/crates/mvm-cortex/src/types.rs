@@ -28,7 +28,62 @@ pub enum ReasonCode {
     MissingSource,
     StaleSource,
     Skeleton,
+    UnexpectedAppearance,
+    HighUncertaintySceneSource,
     Other(String),
+}
+
+/// A bounded, advisory request for one additional observation. It never
+/// changes canonical facts and expires without implying confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttentionPolicy {
+    pub source_scene_frame_id: u64,
+    pub requests: Vec<ObservationRequest>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservationRequest {
+    pub request_id: u64,
+    pub source_scene_frame_id: u64,
+    pub target: ObservationTarget,
+    pub reason: ReasonCode,
+    pub evidence: Vec<EvidenceRef>,
+    pub priority: u8,
+    pub max_extra_runs: u8,
+    pub expires_at_frame: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationTarget {
+    Scene,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Resolution {
+    Supported,
+    Contradicted,
+    Inconclusive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestOutcome {
+    Proposed,
+    Accepted {
+        dispatch_deadline_frame: u64,
+    },
+    Deferred {
+        retry_at_frame: u64,
+        reason: String,
+    },
+    Dispatched,
+    Resolved {
+        source_frame_id: u64,
+        outcome: Resolution,
+    },
+    Expired,
 }
 
 /// Reference to canonical evidence supporting a cognitive claim.

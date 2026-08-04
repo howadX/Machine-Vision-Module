@@ -1,8 +1,8 @@
 use crate::{
-    CortexConfig, CortexFrame, CortexInput, EvidenceRef, affordance::AffordanceLayer,
-    attention::AttentionLayer, events::EventInterpretationLayer, memory::EventMemoryLayer,
-    predict::PredictiveLayer, report::ReportLayer, self_model::SelfModelLayer,
-    uncertainty::UncertaintyLayer,
+    AttentionPolicy, CortexConfig, CortexFrame, CortexInput, EvidenceRef,
+    affordance::AffordanceLayer, attention::AttentionLayer, events::EventInterpretationLayer,
+    memory::EventMemoryLayer, predict::PredictiveLayer, report::ReportLayer,
+    self_model::SelfModelLayer, uncertainty::UncertaintyLayer,
 };
 
 /// Owner of Cortex ordering and runtime-only temporal state. Feature logic is
@@ -36,6 +36,13 @@ impl VisualCortex {
 
     pub fn config(&self) -> CortexConfig {
         self.config
+    }
+
+    /// Pure proposal generation; scheduler acceptance and expert execution are
+    /// runtime-owned and cannot alter this Cortex state.
+    pub fn attention_policy(&self, input: CortexInput<'_>) -> AttentionPolicy {
+        self.events
+            .policy(input.current_scene.stamp.frame_id, input.scene_events)
     }
 
     /// Interpret only canonical Fusion events. Cortex never performs a second
@@ -162,5 +169,41 @@ mod tests {
             Some("anomaly_requires_attention")
         );
         assert_eq!(frame.claims[0].evidence[0].event_seq, Some(12));
+    }
+
+    #[test]
+    fn unexpected_appearance_proposes_one_bounded_scene_refresh() {
+        let scene = scene();
+        let event = SceneEvent {
+            event_seq: 13,
+            source_frame_id: 7,
+            source_timestamp_unix_ms: 1_001,
+            kind: SceneEventKind::EntityAppeared,
+            entity_keys: Vec::new(),
+            fact: SceneFact::claimed(
+                FactStatus::Temporal,
+                true,
+                0.8,
+                vec![FactEvidenceRef {
+                    source: FactSource::Fusion,
+                    source_frame_id: 7,
+                    entity: None,
+                    event_seq: Some(13),
+                }],
+            )
+            .unwrap(),
+            payload: None,
+        };
+        let cortex = VisualCortex::new(CortexConfig::default());
+        let policy = cortex.attention_policy(CortexInput {
+            previous_scene: None,
+            current_scene: &scene,
+            scene_events: &[event],
+            config: &mvm_core::Config::default(),
+            now_unix_ms: 1_002,
+        });
+        assert_eq!(policy.requests.len(), 1);
+        assert_eq!(policy.requests[0].max_extra_runs, 1);
+        assert_eq!(policy.requests[0].evidence[0].event_seq, Some(13));
     }
 }
