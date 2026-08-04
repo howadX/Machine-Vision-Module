@@ -1,6 +1,6 @@
 use mvm_core::{
     Config,
-    canonical::{EntityKey, FusedSceneFrame, SceneEvent},
+    canonical::{EntityKey, FusedSceneFrame, SceneEvent, SceneEventKind},
 };
 use serde::{Deserialize, Serialize};
 
@@ -190,4 +190,54 @@ pub struct CortexFrame {
     pub claims: Vec<CognitiveClaim<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scene_event_refs: Vec<EvidenceRef>,
+    /// Bounded runtime-only episodic context. It is a cognitive view, never a
+    /// second durable event log or an observed scene fact.
+    #[serde(default)]
+    pub memory: MemoryContext,
+}
+
+/// Configuration for bounded in-process event memory. This configuration is
+/// deliberately independent from persistent MVM configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    pub capacity: usize,
+    pub recent_limit: usize,
+    pub relevant_limit: usize,
+    pub time_window_ms: i64,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            capacity: 128,
+            recent_limit: 5,
+            relevant_limit: 5,
+            time_window_ms: 30_000,
+        }
+    }
+}
+
+/// An evidence-preserving runtime projection of one canonical scene event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemoryEvent {
+    pub event_seq: u64,
+    pub source_frame_id: u64,
+    pub source_timestamp_unix_ms: i64,
+    pub kind: SceneEventKind,
+    pub entities: Vec<EntityKey>,
+    pub confidence: f32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub object_classes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact_duration_ms: Option<u64>,
+}
+
+/// Compact bounded context emitted for a single cognitive tick.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct MemoryContext {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent: Vec<MemoryEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relevant: Vec<MemoryEvent>,
+    pub summary: String,
 }

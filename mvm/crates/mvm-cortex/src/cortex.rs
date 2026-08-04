@@ -25,7 +25,7 @@ impl VisualCortex {
             config,
             predictor: PredictiveLayer,
             events: EventInterpretationLayer,
-            memory: EventMemoryLayer,
+            memory: EventMemoryLayer::default(),
             affordance: AffordanceLayer,
             attention: AttentionLayer,
             self_model: SelfModelLayer,
@@ -48,10 +48,12 @@ impl VisualCortex {
     /// Interpret only canonical Fusion events. Cortex never performs a second
     /// scene diff: each asserted interpretation carries its event evidence.
     pub fn update(&mut self, input: CortexInput<'_>) -> CortexFrame {
+        let memory = self
+            .memory
+            .update(input.current_scene, input.scene_events, input.now_unix_ms);
         let _ = (
             &self.predictor,
             &self.events,
-            &self.memory,
             &self.affordance,
             &self.attention,
             &self.self_model,
@@ -73,6 +75,7 @@ impl VisualCortex {
                     event_seq: Some(event.event_seq),
                 })
                 .collect(),
+            memory,
         }
     }
 }
@@ -126,6 +129,18 @@ mod tests {
         assert!(claim.value.is_none());
         assert!(claim.confidence.is_none());
         assert!(claim.validate().is_ok());
+    }
+
+    #[test]
+    fn older_cortex_frame_without_memory_remains_readable() {
+        let frame: CortexFrame = serde_json::from_value(serde_json::json!({
+            "timestamp_unix_ms": 1_002,
+            "scene_frame_id": 7,
+            "claims": []
+        }))
+        .unwrap();
+        assert!(frame.memory.recent.is_empty());
+        assert!(frame.memory.relevant.is_empty());
     }
 
     #[test]
