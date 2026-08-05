@@ -1,0 +1,10 @@
+{
+  "fixture_version": "18.10.0",
+  "scenario_id": "022",
+  "name": "bounded_policy_overload",
+  "status": "synthetic_replay",
+  "loop": {"trigger": "prediction_error", "expected_transition": "accepted_to_deferred"},
+  "cases": [
+    {"name": "overload defers the competing request", "action": "overload", "expected": "deferred"}
+  ]
+}

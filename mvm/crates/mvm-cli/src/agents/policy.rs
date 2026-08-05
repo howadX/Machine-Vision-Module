@@ -894,110 +894,121 @@ mod tests {
 
     #[test]
     fn active_reobservation_lifecycle_matches_synthetic_replay_contract() {
-        let fixture: PolicyFixture =
-            serde_json::from_str(include_str!("../../../../benchmark/scenarios/019.json")).unwrap();
+        let fixtures: Vec<PolicyFixture> = [
+            include_str!("../../../../benchmark/scenarios/019.json"),
+            include_str!("../../../../benchmark/scenarios/020.json"),
+            include_str!("../../../../benchmark/scenarios/021.json"),
+            include_str!("../../../../benchmark/scenarios/022.json"),
+        ]
+        .into_iter()
+        .map(|raw| serde_json::from_str(raw).unwrap())
+        .collect();
 
-        for (index, case) in fixture.cases.iter().enumerate() {
-            let scene_control = SceneExecutionControl::default();
-            let depth_control = DepthExecutionControl::default();
-            let mut scheduler = PolicyScheduler::with_controls(
-                scene_control.clone(),
-                depth_control.clone(),
-                SchedulerBudget {
-                    global_min_interval_frames: 0,
-                    ..SchedulerBudget::default()
-                },
-            );
-            let id = u64::try_from(index).unwrap().saturating_add(100);
-            let mut primary = request(id, 12);
-            match case.action.as_str() {
-                "duplicate" => {
-                    let mut duplicate = primary.clone();
-                    duplicate.request_id = id + 1;
-                    scheduler.submit(
-                        AttentionPolicy {
-                            source_scene_frame_id: 7,
-                            requests: vec![primary, duplicate],
-                        },
-                        8,
-                    );
+        for (fixture_index, fixture) in fixtures.iter().enumerate() {
+            for (index, case) in fixture.cases.iter().enumerate() {
+                let scene_control = SceneExecutionControl::default();
+                let depth_control = DepthExecutionControl::default();
+                let mut scheduler = PolicyScheduler::with_controls(
+                    scene_control.clone(),
+                    depth_control.clone(),
+                    SchedulerBudget {
+                        global_min_interval_frames: 0,
+                        ..SchedulerBudget::default()
+                    },
+                );
+                let id = u64::try_from(fixture_index * 100 + index)
+                    .unwrap()
+                    .saturating_add(100);
+                let mut primary = request(id, 12);
+                match case.action.as_str() {
+                    "duplicate" => {
+                        let mut duplicate = primary.clone();
+                        duplicate.request_id = id + 1;
+                        scheduler.submit(
+                            AttentionPolicy {
+                                source_scene_frame_id: 7,
+                                requests: vec![primary, duplicate],
+                            },
+                            8,
+                        );
+                    }
+                    "expired" => {
+                        primary.expires_at_frame = 7;
+                        scheduler.submit(
+                            AttentionPolicy {
+                                source_scene_frame_id: 7,
+                                requests: vec![primary],
+                            },
+                            8,
+                        );
+                    }
+                    "depth" => {
+                        primary.target = ObservationTarget::Depth;
+                        scheduler.submit(
+                            AttentionPolicy {
+                                source_scene_frame_id: 7,
+                                requests: vec![primary],
+                            },
+                            8,
+                        );
+                        let dispatched = depth_control.take_for(8).unwrap().request_id;
+                        scheduler.dispatched(dispatched, 8);
+                    }
+                    "resolve" => {
+                        scheduler.submit(
+                            AttentionPolicy {
+                                source_scene_frame_id: 7,
+                                requests: vec![primary],
+                            },
+                            8,
+                        );
+                        let dispatched = scene_control.take_for(8).unwrap().request_id;
+                        scheduler.dispatched(dispatched, 8);
+                        scheduler.resolve(dispatched, 8, Resolution::Inconclusive);
+                    }
+                    "external" => {
+                        primary.target = ObservationTarget::ExternalAgent {
+                            question: "confirm observation".into(),
+                        };
+                        scheduler.submit(
+                            AttentionPolicy {
+                                source_scene_frame_id: 7,
+                                requests: vec![primary],
+                            },
+                            8,
+                        );
+                    }
+                    "overload" => {
+                        let mut competing = primary.clone();
+                        competing.request_id = id + 1;
+                        competing.reason = ReasonCode::HighUncertaintySceneSource;
+                        scheduler.submit(
+                            AttentionPolicy {
+                                source_scene_frame_id: 7,
+                                requests: vec![primary, competing],
+                            },
+                            8,
+                        );
+                    }
+                    action => panic!("unknown fixture action: {action}"),
                 }
-                "expired" => {
-                    primary.expires_at_frame = 7;
-                    scheduler.submit(
-                        AttentionPolicy {
-                            source_scene_frame_id: 7,
-                            requests: vec![primary],
-                        },
-                        8,
-                    );
-                }
-                "depth" => {
-                    primary.target = ObservationTarget::Depth;
-                    scheduler.submit(
-                        AttentionPolicy {
-                            source_scene_frame_id: 7,
-                            requests: vec![primary],
-                        },
-                        8,
-                    );
-                    let dispatched = depth_control.take_for(8).unwrap().request_id;
-                    scheduler.dispatched(dispatched, 8);
-                }
-                "resolve" => {
-                    scheduler.submit(
-                        AttentionPolicy {
-                            source_scene_frame_id: 7,
-                            requests: vec![primary],
-                        },
-                        8,
-                    );
-                    let dispatched = scene_control.take_for(8).unwrap().request_id;
-                    scheduler.dispatched(dispatched, 8);
-                    scheduler.resolve(dispatched, 8, Resolution::Inconclusive);
-                }
-                "external" => {
-                    primary.target = ObservationTarget::ExternalAgent {
-                        question: "confirm observation".into(),
-                    };
-                    scheduler.submit(
-                        AttentionPolicy {
-                            source_scene_frame_id: 7,
-                            requests: vec![primary],
-                        },
-                        8,
-                    );
-                }
-                "overload" => {
-                    let mut competing = primary.clone();
-                    competing.request_id = id + 1;
-                    competing.reason = ReasonCode::HighUncertaintySceneSource;
-                    scheduler.submit(
-                        AttentionPolicy {
-                            source_scene_frame_id: 7,
-                            requests: vec![primary, competing],
-                        },
-                        8,
-                    );
-                }
-                action => panic!("unknown fixture action: {action}"),
+
+                let matched = scheduler.outcomes().iter().any(|(_, outcome)| {
+                    matches!(
+                        (case.expected.as_str(), outcome),
+                        ("deferred", RequestOutcome::Deferred { .. })
+                            | ("expired", RequestOutcome::Expired)
+                            | ("dispatched", RequestOutcome::Dispatched)
+                            | ("resolved", RequestOutcome::Resolved { .. })
+                            | ("unavailable", RequestOutcome::Unavailable)
+                    )
+                });
+                assert!(
+                    matched,
+                    "fixture action {} did not produce {}",
+                    case.action, case.expected
+                );
             }
-
-            let matched = scheduler.outcomes().iter().any(|(_, outcome)| {
-                matches!(
-                    (case.expected.as_str(), outcome),
-                    ("deferred", RequestOutcome::Deferred { .. })
-                        | ("expired", RequestOutcome::Expired)
-                        | ("dispatched", RequestOutcome::Dispatched)
-                        | ("resolved", RequestOutcome::Resolved { .. })
-                        | ("unavailable", RequestOutcome::Unavailable)
-                )
-            });
-            assert!(
-                matched,
-                "fixture action {} did not produce {}",
-                case.action, case.expected
-            );
         }
     }
 }

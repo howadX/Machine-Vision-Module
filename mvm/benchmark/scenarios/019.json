@@ -3,6 +3,7 @@
   "scenario_id": "019",
   "name": "bounded_active_reobservation",
   "status": "synthetic_replay",
+  "loop": {"trigger": "uncertainty", "expected_transition": "request_to_outcome"},
   "cases": [
     {"name": "semantic duplicate is deferred", "action": "duplicate", "expected": "deferred"},
     {"name": "stale request expires without assertion", "action": "expired", "expected": "expired"},

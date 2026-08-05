@@ -1,0 +1,113 @@
+{
+  "core_claims": [
+    "temporal_qa",
+    "identity_continuity",
+    "object_permanence",
+    "uncertainty_honesty",
+    "forecast_iou",
+    "attention_recall_at_3"
+  ],
+  "evaluator_version": "18.10.0",
+  "excluded_scenarios": [
+    "001",
+    "004",
+    "007",
+    "009",
+    "011",
+    "012"
+  ],
+  "fixture_version": "18.0.0",
+  "honesty": {
+    "malformed_input": "fail_closed",
+    "withheld_unknown_are_missing_claims": true
+  },
+  "included_scenarios": [
+    "013",
+    "014",
+    "015",
+    "016",
+    "017",
+    "018",
+    "019",
+    "020",
+    "021",
+    "022"
+  ],
+  "loop_scenarios": [
+    "019",
+    "020",
+    "021",
+    "022"
+  ],
+  "metrics": {
+    "advisory_reobservation": {
+      "scenario_ids": [
+        "019",
+        "020",
+        "021",
+        "022"
+      ],
+      "source": "mvm-cli Rust replay test",
+      "status": "contract_evidence"
+    },
+    "affordance_accuracy": {
+      "scenario_id": "017",
+      "source": "mvm-cortex Rust replay test",
+      "status": "contract_evidence"
+    },
+    "attention_recall_at_3": {
+      "scenario_id": "018",
+      "source": "mvm-cortex Rust replay test",
+      "status": "contract_evidence"
+    },
+    "forecast_iou": {
+      "baseline_mean": 0.03030303030303029,
+      "candidate_mean": 0.9999999999999996,
+      "cases": [
+        {
+          "baseline_iou": 0.0,
+          "candidate_iou": 0.9999999999999997,
+          "scenario_id": "013"
+        },
+        {
+          "baseline_iou": 0.0,
+          "candidate_iou": 0.999999999999999,
+          "scenario_id": "014"
+        },
+        {
+          "baseline_iou": 0.09090909090909087,
+          "candidate_iou": 1.0,
+          "scenario_id": "015"
+        }
+      ],
+      "count": 3,
+      "improved_cases": 3,
+      "status": "measured_synthetic_replay"
+    },
+    "identity_continuity": {
+      "reason": "required scenarios are skeleton fixtures",
+      "status": "not_measured"
+    },
+    "memory_precision_at_5": {
+      "source": "mvm-cortex Rust unit replay test",
+      "status": "contract_evidence"
+    },
+    "object_permanence": {
+      "reason": "required scenarios are skeleton fixtures",
+      "status": "not_measured"
+    },
+    "self_model_claim_accuracy": {
+      "source": "mvm-cortex Rust unit replay test",
+      "status": "contract_evidence"
+    },
+    "temporal_qa": {
+      "reason": "required scenarios are skeleton fixtures",
+      "status": "not_measured"
+    },
+    "uncertainty_honesty": {
+      "scenario_id": "016",
+      "source": "mvm-cortex Rust replay test",
+      "status": "contract_evidence"
+    }
+  }
+}
