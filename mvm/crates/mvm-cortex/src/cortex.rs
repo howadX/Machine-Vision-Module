@@ -58,6 +58,7 @@ impl VisualCortex {
             input.config,
             input.scene_event_gap,
         );
+        let affordances = self.affordance.build(input.current_scene, &memory);
         let _ = (
             &self.events,
             &self.affordance,
@@ -83,6 +84,7 @@ impl VisualCortex {
             memory,
             self_model,
             uncertainty,
+            affordances,
         }
     }
 }
@@ -102,6 +104,7 @@ mod tests {
             sources: Vec::new(),
             entities: Vec::new(),
             relations: Vec::new(),
+            hand_interactions: Vec::new(),
             zones: Vec::new(),
             activities: Vec::new(),
             events: EventTailView::default(),

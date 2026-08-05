@@ -317,8 +317,8 @@ mod tests {
     use crate::{UncertaintyCode, self_model::SelfModelLayer};
     use mvm_core::canonical::{
         EntityKey, EventTailView, Existence, FactEvidenceRef, FactReason, FactSource, FactStatus,
-        FrameStamp, FusedSceneFrame, GalleryIdentity, PersonFacts, SceneEntity, SceneEntityKind,
-        SceneFact, SceneQuality, SourceFreshness, SourceStamp, TrackDomain,
+        FrameStamp, FusedSceneFrame, GalleryIdentity, PersonFacts, PersonSensoryFacts, SceneEntity,
+        SceneEntityKind, SceneFact, SceneQuality, SourceFreshness, SourceStamp, TrackDomain,
     };
     use mvm_core::{BBox, Position3D};
     use serde::Deserialize;
@@ -387,6 +387,7 @@ mod tests {
                     ),
                     posture: fact(7, &key, "standing".into(), 0.9),
                     emotion: fact(7, &key, "neutral".into(), 0.9),
+                    sensory: Box::new(PersonSensoryFacts::default()),
                 }),
                 existence: fact(7, &key, Existence::Present, 0.9),
                 bbox: fact(
@@ -414,6 +415,7 @@ mod tests {
                 kinematics: SceneFact::unknown(FactReason::MissingSource),
             }],
             relations: Vec::new(),
+            hand_interactions: Vec::new(),
             zones: Vec::new(),
             activities: Vec::new(),
             events: EventTailView::default(),

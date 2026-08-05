@@ -553,8 +553,9 @@ mod tests {
     use crate::{ClaimStatus, PredictionErrorKind};
     use mvm_core::canonical::{
         EntityKey, EventTailView, Existence, FactEvidenceRef, FactReason, FactSource, FactStatus,
-        FrameStamp, FusedSceneFrame, Kinematics, PersonFacts, SceneActivity, SceneEntity,
-        SceneEntityKind, SceneFact, SceneQuality, SceneRelation, SceneRelationKind, TrackDomain,
+        FrameStamp, FusedSceneFrame, Kinematics, PersonFacts, PersonSensoryFacts, SceneActivity,
+        SceneEntity, SceneEntityKind, SceneFact, SceneQuality, SceneRelation, SceneRelationKind,
+        TrackDomain,
     };
     use mvm_core::{BBox, Position3D};
     use serde::Deserialize;
@@ -611,6 +612,7 @@ mod tests {
                 gallery_identity: SceneFact::unknown(FactReason::MissingSource),
                 posture: fact(frame_id, &key, posture.to_owned()),
                 emotion: SceneFact::unknown(FactReason::MissingSource),
+                sensory: Box::new(PersonSensoryFacts::default()),
             }),
             existence: fact(frame_id, &key, Existence::Present),
             bbox: fact(frame_id, &key, bbox),
@@ -643,6 +645,7 @@ mod tests {
             sources: Vec::new(),
             entities: vec![person(frame_id, 10, bbox, velocity, "standing")],
             relations: Vec::new(),
+            hand_interactions: Vec::new(),
             zones: Vec::new(),
             activities: Vec::new(),
             events: EventTailView::default(),

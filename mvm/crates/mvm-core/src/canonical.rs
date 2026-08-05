@@ -363,6 +363,88 @@ pub struct PersonFacts {
     pub gallery_identity: SceneFact<GalleryIdentity>,
     pub posture: SceneFact<String>,
     pub emotion: SceneFact<String>,
+    /// Compact sensory observations, boxed to keep object/animal scene entities
+    /// cheap while retaining an additive canonical contract.
+    #[serde(default)]
+    pub sensory: Box<PersonSensoryFacts>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PersonSensoryFacts {
+    /// Compact observation regime. This is evidence about visible body coverage,
+    /// not an inferred posture.
+    #[serde(default = "unknown_fact")]
+    pub body_coverage: SceneFact<BodyCoverage>,
+    /// Visual head pose only. It is never a gaze target, attention, or intent.
+    #[serde(default = "unknown_fact")]
+    pub head_orientation: SceneFact<HeadOrientationFact>,
+    /// Bounded hand summary; raw hand landmarks remain outside canonical facts.
+    #[serde(default = "unknown_fact")]
+    pub hands: SceneFact<Vec<HandFact>>,
+}
+
+impl Default for PersonSensoryFacts {
+    fn default() -> Self {
+        Self {
+            body_coverage: unknown_fact(),
+            head_orientation: unknown_fact(),
+            hands: unknown_fact(),
+        }
+    }
+}
+
+fn unknown_fact<T>() -> SceneFact<T> {
+    SceneFact::unknown(FactReason::MissingSource)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyCoverage {
+    Full,
+    Upper,
+    Head,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadFacing {
+    Camera,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HeadOrientationFact {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yaw_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub facing: Option<HeadFacing>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandSide {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandGesture {
+    Open,
+    Fist,
+    Point,
+    Pinch,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HandFact {
+    pub side: HandSide,
+    pub presence: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gesture: Option<HandGesture>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -412,6 +494,25 @@ pub struct SceneRelation {
     pub kind: SceneRelationKind,
     pub distance_m: SceneFact<f32>,
     pub overlap: SceneFact<f32>,
+}
+
+/// Hand-to-object candidate derived by Fusion from present hand evidence. A
+/// candidate is deliberately not equivalent to a physical hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandInteractionKind {
+    Near,
+    TouchingCandidate,
+    HoldingCandidate,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HandInteractionFact {
+    pub person: EntityKey,
+    pub hand_side: HandSide,
+    pub target_entity: EntityKey,
+    pub kind: HandInteractionKind,
+    pub fact: SceneFact<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -542,6 +643,8 @@ pub struct FusedSceneFrame {
     pub sources: Vec<SourceStamp>,
     pub entities: Vec<SceneEntity>,
     pub relations: Vec<SceneRelation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hand_interactions: Vec<HandInteractionFact>,
     pub zones: Vec<SceneZone>,
     pub activities: Vec<SceneActivity>,
     pub events: EventTailView,
@@ -556,6 +659,14 @@ impl FusedSceneFrame {
         self.entities.sort_by(|a, b| a.key.cmp(&b.key));
         self.relations
             .sort_by(|a, b| (&a.a, &a.b, a.kind).cmp(&(&b.a, &b.b, b.kind)));
+        self.hand_interactions.sort_by(|a, b| {
+            (&a.person, a.hand_side, &a.target_entity, a.kind).cmp(&(
+                &b.person,
+                b.hand_side,
+                &b.target_entity,
+                b.kind,
+            ))
+        });
         for zone in &mut self.zones {
             zone.members.sort();
         }
@@ -597,6 +708,9 @@ impl FusedSceneFrame {
                     facts.gallery_identity.validate()?;
                     facts.posture.validate()?;
                     facts.emotion.validate()?;
+                    facts.sensory.body_coverage.validate()?;
+                    facts.sensory.head_orientation.validate()?;
+                    facts.sensory.hands.validate()?;
                 }
                 SceneEntityKind::Object(facts) => facts.class_name.validate()?,
                 SceneEntityKind::Animal(facts) => facts.class_name.validate()?,
@@ -610,6 +724,16 @@ impl FusedSceneFrame {
             }
             relation.distance_m.validate()?;
             relation.overlap.validate()?;
+        }
+        for interaction in &self.hand_interactions {
+            if interaction.person.run_id != self.stamp.run_id
+                || interaction.target_entity.run_id != self.stamp.run_id
+            {
+                return Err(CanonicalContractError::new(
+                    "hand interaction endpoint run_id differs from frame run_id",
+                ));
+            }
+            interaction.fact.validate()?;
         }
         for zone in &self.zones {
             if zone

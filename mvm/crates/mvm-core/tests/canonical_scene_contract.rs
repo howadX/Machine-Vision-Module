@@ -168,6 +168,7 @@ fn canonical_scene_contract_fused_frame_round_trip_is_deterministic() {
         ],
         entities: Vec::new(),
         relations: Vec::new(),
+        hand_interactions: Vec::new(),
         zones: Vec::new(),
         activities: Vec::new(),
         events: EventTailView::default(),

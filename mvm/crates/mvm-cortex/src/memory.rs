@@ -265,6 +265,7 @@ mod tests {
             sources: Vec::new(),
             entities: vec![object],
             relations: Vec::new(),
+            hand_interactions: Vec::new(),
             zones: Vec::new(),
             activities: Vec::new(),
             events: EventTailView::default(),

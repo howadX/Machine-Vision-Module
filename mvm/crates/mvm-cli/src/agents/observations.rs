@@ -107,6 +107,7 @@ mod tests {
             sources: Vec::new(),
             entities: Vec::new(),
             relations: Vec::new(),
+            hand_interactions: Vec::new(),
             zones: Vec::new(),
             activities: Vec::new(),
             events: EventTailView::default(),

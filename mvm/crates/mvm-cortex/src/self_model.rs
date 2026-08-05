@@ -128,6 +128,7 @@ mod tests {
             sources: Vec::new(),
             entities: Vec::new(),
             relations: Vec::new(),
+            hand_interactions: Vec::new(),
             zones: vec![SceneZone {
                 id: 3,
                 label: Some("desk".into()),

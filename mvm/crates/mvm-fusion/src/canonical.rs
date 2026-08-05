@@ -6,11 +6,13 @@
 
 use crate::{ZoneTracker, build_scene};
 use mvm_core::canonical::{
-    AnimalFacts, EntityKey, EventTailView, Existence, FactEvidenceRef, FactReason, FactSource,
-    FactStatus, FrameStamp, FusedSceneFrame, GalleryIdentity, IncarnationRegistry, Kinematics,
-    ObjectFacts, PersonFacts, SceneActivity, SceneEntity, SceneEntityKind, SceneEvent,
-    SceneEventKind, SceneEventPayload, SceneFact, SceneQuality, SceneRelation, SceneRelationKind,
-    SceneZone, SourceFreshness, SourceStamp, TrackDomain,
+    AnimalFacts, BodyCoverage, EntityKey, EventTailView, Existence, FactEvidenceRef, FactReason,
+    FactSource, FactStatus, FrameStamp, FusedSceneFrame, GalleryIdentity, HandFact, HandGesture,
+    HandInteractionFact, HandInteractionKind, HandSide, HeadFacing, HeadOrientationFact,
+    IncarnationRegistry, Kinematics, ObjectFacts, PersonFacts, PersonSensoryFacts, SceneActivity,
+    SceneEntity, SceneEntityKind, SceneEvent, SceneEventKind, SceneEventPayload, SceneFact,
+    SceneQuality, SceneRelation, SceneRelationKind, SceneZone, SourceFreshness, SourceStamp,
+    TrackDomain,
 };
 use mvm_core::types::{Entity, EntityKind, RelationKind};
 use mvm_core::{Activity, ActivityEvent, BBox, ObjectState, PersonState, Position3D};
@@ -128,6 +130,13 @@ impl CanonicalFusion {
         self.apply_kinematics(&mut entities, &input.stamp)?;
 
         let (relations, zones) = self.relations_and_zones(&entities, input.stamp.frame_id)?;
+        let hand_interactions = canonical_hand_interactions(
+            input.people,
+            input.objects,
+            &entities,
+            human_source,
+            scene_source,
+        )?;
         let activities = canonical_activities(input.activities, &entities, input.stamp.frame_id)?;
         self.append_events(
             input.ended_activities,
@@ -163,6 +172,7 @@ impl CanonicalFusion {
             sources: input.sources,
             entities,
             relations,
+            hand_interactions,
             zones,
             activities,
             events: EventTailView {
@@ -706,6 +716,11 @@ fn person_entity(
             gallery_identity,
             posture,
             emotion,
+            sensory: Box::new(PersonSensoryFacts {
+                body_coverage: body_coverage_fact(person.body_coverage, source, &key),
+                head_orientation: head_orientation_fact(person, source, &key),
+                hands: hands_fact(person, source, &key),
+            }),
         }),
         existence: observed(Existence::Present, 1.0, FactSource::Human, source, &key),
         bbox: observed(person.bbox, 1.0, FactSource::Human, source, &key),
@@ -714,6 +729,170 @@ fn person_entity(
         // cannot honestly populate vector-valued canonical kinematics.
         kinematics: SceneFact::unknown(FactReason::MissingSource),
     }
+}
+
+fn body_coverage_fact(
+    coverage: Option<&str>,
+    source: Option<&SourceStamp>,
+    key: &EntityKey,
+) -> SceneFact<BodyCoverage> {
+    let value = match coverage {
+        Some("full") => Some(BodyCoverage::Full),
+        Some("upper") => Some(BodyCoverage::Upper),
+        Some("head") => Some(BodyCoverage::Head),
+        Some("unknown") => Some(BodyCoverage::Unknown),
+        _ => None,
+    };
+    value.map_or_else(
+        || SceneFact::unknown(FactReason::MissingSource),
+        |value| observed(value, 1.0, FactSource::Human, source, key),
+    )
+}
+
+fn head_orientation_fact(
+    person: &PersonState,
+    source: Option<&SourceStamp>,
+    key: &EntityKey,
+) -> SceneFact<HeadOrientationFact> {
+    let yaw_deg = person.head_yaw.filter(|yaw| yaw.is_finite());
+    let facing = match person.head_facing {
+        Some("camera") => Some(HeadFacing::Camera),
+        Some("left") => Some(HeadFacing::Left),
+        Some("right") => Some(HeadFacing::Right),
+        _ => None,
+    };
+    if yaw_deg.is_none() && facing.is_none() {
+        return SceneFact::unknown(FactReason::MissingSource);
+    }
+    // The tracker currently exposes no orientation confidence. Preserve this as
+    // a weak visual observation instead of inventing detector certainty.
+    SceneFact::claimed(
+        FactStatus::Weak,
+        HeadOrientationFact { yaw_deg, facing },
+        0.5,
+        source_evidence(FactSource::Human, source, key),
+    )
+    .expect("finite head orientation is a valid weak fact")
+}
+
+fn hands_fact(
+    person: &PersonState,
+    source: Option<&SourceStamp>,
+    key: &EntityKey,
+) -> SceneFact<Vec<HandFact>> {
+    if person.hands.is_empty() {
+        return SceneFact::unknown(FactReason::MissingSource);
+    }
+    let hands = person
+        .hands
+        .iter()
+        .filter_map(|hand| {
+            let side = match hand.side {
+                "left" => HandSide::Left,
+                "right" => HandSide::Right,
+                _ => return None,
+            };
+            let gesture = match hand.gesture {
+                Some("open") => Some(HandGesture::Open),
+                Some("fist") => Some(HandGesture::Fist),
+                Some("point") => Some(HandGesture::Point),
+                Some("pinch") => Some(HandGesture::Pinch),
+                Some(_) => Some(HandGesture::Unknown),
+                None => None,
+            };
+            Some(HandFact {
+                side,
+                presence: hand.presence.is_finite() && hand.presence > 0.0,
+                gesture,
+            })
+        })
+        .collect::<Vec<_>>();
+    if hands.is_empty() {
+        return SceneFact::unknown(FactReason::MissingSource);
+    }
+    let confidence = person
+        .hands
+        .iter()
+        .filter_map(|hand| hand.presence.is_finite().then_some(hand.presence))
+        .fold(1.0f32, f32::min)
+        .clamp(0.0, 1.0);
+    observed(hands, confidence, FactSource::Human, source, key)
+}
+
+fn canonical_hand_interactions(
+    people: &[PersonState],
+    objects: &[ObjectState],
+    entities: &[SceneEntity],
+    human_source: Option<&SourceStamp>,
+    scene_source: Option<&SourceStamp>,
+) -> anyhow::Result<Vec<HandInteractionFact>> {
+    let person_keys: BTreeMap<_, _> = entities
+        .iter()
+        .filter(|entity| matches!(entity.kind, SceneEntityKind::Person(_)))
+        .map(|entity| (entity.display_id, entity.key.clone()))
+        .collect();
+    let object_keys: BTreeMap<_, _> = entities
+        .iter()
+        .filter(|entity| matches!(entity.kind, SceneEntityKind::Object(_)))
+        .map(|entity| (entity.display_id, entity.key.clone()))
+        .collect();
+    let mut interactions = Vec::new();
+    for person in people {
+        let Some(person_key) = person_keys.get(&person.track_id) else {
+            continue;
+        };
+        for hand in &person.hands {
+            let hand_side = match hand.side {
+                "left" => HandSide::Left,
+                "right" => HandSide::Right,
+                _ => continue,
+            };
+            if !hand.presence.is_finite() || hand.presence <= 0.0 {
+                continue;
+            }
+            for object in objects {
+                let Some(target_entity) = object_keys.get(&object.id) else {
+                    continue;
+                };
+                if !hand
+                    .landmarks
+                    .iter()
+                    .any(|point| point_in_bbox(*point, object.bbox))
+                {
+                    continue;
+                }
+                let evidence = [
+                    source_evidence(FactSource::Human, human_source, person_key),
+                    source_evidence(FactSource::Scene, scene_source, target_entity),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                interactions.push(HandInteractionFact {
+                    person: person_key.clone(),
+                    hand_side,
+                    target_entity: target_entity.clone(),
+                    kind: HandInteractionKind::TouchingCandidate,
+                    fact: SceneFact::claimed(
+                        FactStatus::Derived,
+                        true,
+                        hand.presence.min(object.confidence).clamp(0.0, 1.0),
+                        evidence,
+                    )?,
+                });
+            }
+        }
+    }
+    Ok(interactions)
+}
+
+fn point_in_bbox(point: [f32; 2], bbox: BBox) -> bool {
+    point[0].is_finite()
+        && point[1].is_finite()
+        && point[0] >= bbox.x1
+        && point[0] <= bbox.x2
+        && point[1] >= bbox.y1
+        && point[1] <= bbox.y2
 }
 
 fn object_entity(
@@ -965,6 +1144,75 @@ mod tests {
         };
         assert_eq!(facts.posture.status, FactStatus::Withheld);
         assert!(facts.posture.value.is_none());
+    }
+
+    #[test]
+    fn canonical_person_semantics_and_hand_contact_keep_evidence_boundary() {
+        let mut fusion = CanonicalFusion::new("run");
+        let mut person = person(10);
+        person.body_coverage = Some("upper");
+        person.head_yaw = Some(18.0);
+        person.head_facing = Some("right");
+        person.hands = vec![mvm_core::HandState {
+            landmarks: vec![[0.2, 0.3]],
+            presence: 0.9,
+            side: "right",
+            handedness: 0.9,
+            gesture: Some("pinch"),
+        }];
+        let object = object(20);
+        let people = [person];
+        let mut frame_input = input(7, &people);
+        frame_input.objects = std::slice::from_ref(&object);
+        frame_input.sources.push(
+            SourceStamp::at_frame(FactSource::Scene, 7, 1_701)
+                .relative_to(7, 2, 4)
+                .unwrap(),
+        );
+        let frame = fusion.assemble(frame_input).unwrap();
+        let SceneEntityKind::Person(facts) = &frame.entities[0].kind else {
+            panic!("person entity");
+        };
+        assert_eq!(facts.sensory.body_coverage.value, Some(BodyCoverage::Upper));
+        assert_eq!(facts.sensory.head_orientation.status, FactStatus::Weak);
+        assert_eq!(
+            facts
+                .sensory
+                .head_orientation
+                .value
+                .as_ref()
+                .unwrap()
+                .yaw_deg,
+            Some(18.0)
+        );
+        assert_eq!(
+            facts.sensory.hands.value.as_ref().unwrap()[0].side,
+            HandSide::Right
+        );
+        assert_eq!(
+            facts.sensory.hands.value.as_ref().unwrap()[0].gesture,
+            Some(HandGesture::Pinch)
+        );
+        assert_eq!(frame.hand_interactions.len(), 1);
+        assert_eq!(
+            frame.hand_interactions[0].kind,
+            HandInteractionKind::TouchingCandidate
+        );
+        assert!(
+            frame.hand_interactions[0]
+                .fact
+                .evidence
+                .iter()
+                .any(|item| item.source == FactSource::Human)
+        );
+        assert!(
+            frame.hand_interactions[0]
+                .fact
+                .evidence
+                .iter()
+                .any(|item| item.source == FactSource::Scene)
+        );
+        assert!(frame.hand_interactions[0].fact.value == Some(true));
     }
 
     #[test]

@@ -21,6 +21,8 @@ never be reported as a measured benchmark result.
 Synthetic replay fixtures 013–015 exercise the 18.5 forecast comparator. Fixture
 016 exercises the 18.6 uncertainty inventory with positive and negative cases;
 its score is a deterministic contract result, not a live-camera measurement.
+Fixture 017 exercises the 18.7 hand-interaction affordance boundary, including
+withheld attention and blocked claims; it is likewise synthetic replay only.
 
 ## Invariants
 
