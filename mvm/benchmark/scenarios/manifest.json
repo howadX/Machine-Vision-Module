@@ -11,6 +11,7 @@
     {"id": "014", "name": "constant_velocity_left", "status": "synthetic_replay"},
     {"id": "015", "name": "constant_velocity_diagonal", "status": "synthetic_replay"},
     {"id": "016", "name": "uncertainty_inventory", "status": "synthetic_replay"},
-    {"id": "017", "name": "affordance_v1_hand_interaction", "status": "synthetic_replay"}
+    {"id": "017", "name": "affordance_v1_hand_interaction", "status": "synthetic_replay"},
+    {"id": "018", "name": "attention_v1_salience", "status": "synthetic_replay"}
   ]
 }

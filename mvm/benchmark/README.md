@@ -23,6 +23,9 @@ Synthetic replay fixtures 013–015 exercise the 18.5 forecast comparator. Fixtu
 its score is a deterministic contract result, not a live-camera measurement.
 Fixture 017 exercises the 18.7 hand-interaction affordance boundary, including
 withheld attention and blocked claims; it is likewise synthetic replay only.
+Fixture 018 exercises the 18.8 evidence-backed attention ranking signals. Its
+top-3 coverage is a deterministic synthetic-replay contract, not a live-camera
+event-recall measurement.
 
 ## Invariants
 

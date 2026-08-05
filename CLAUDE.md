@@ -111,18 +111,21 @@ non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 �
 а `current_state.md` пишется atomic. Canonical activity episodes пишутся в `labels.jsonl` через
 независимый DatasetWriter cursor с event/source provenance; replay/cursor/late-result gates добавлены.
 Корневой `--native-camera` маршрутизируется в canonical AgentMesh; text-only/pixel dataset fixtures
-проходят check gate. **18.2–18.7 ✅:** единый `mvm-cortex` теперь включает serializable
+проходят check gate. **18.2–18.8 ✅:** единый `mvm-cortex` теперь включает serializable
 honesty-first `CortexFrame`/`CognitiveClaim`, canonical Scene Events + evidence-linked interpretation,
 bounded advisory re-observation, runtime-only Event Memory и evidence-linked constant-velocity /
 persistence forecast с typed prediction errors, camera-relative `VisualSelfModel` и детерминированный
 `UncertaintyReport`, а также evidence-linked Affordance V1. Canonical `PersonFacts` сохраняет
 body-coverage, visual-only head orientation и bounded hand summary; Fusion публикует только
-hand-to-object `touching_candidate`, не подменяя его physical hold. World camera pose, полная видимость
+hand-to-object `touching_candidate`, не подменяя его physical hold. Evidence-backed `AttentionMap`
+детерминированно ранжирует top-3 focus из novelty, prediction error, uncertainty, event recency,
+activity, anomaly, identity и affordance; без canonical zone-violation fact этот компонент остаётся
+нулевым. World camera pose, полная видимость
 зон, emotion entropy и metric calibration явно остаются unknown/withheld, когда canonical evidence
 недостаточно. `CortexAgent` включён в AgentMesh,
 публикует отдельный cognitive frame и не мутирует canonical facts; scheduler исполняет только
 ограниченные one-shot permits, а `labels.jsonl` остаётся единственным durable semantic store.
-Далее — 18.8 Attention Layer. План —
+Далее — 18.8b Advisory Attention Policy / Active Re-observation. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents

@@ -222,6 +222,9 @@ pub struct CortexFrame {
     /// Evidence-backed action possibilities, never physical commands or scene facts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub affordances: Vec<AffordanceResult>,
+    /// Bounded read-only salience ranking over this cognitive tick's inputs.
+    #[serde(default)]
+    pub attention: AttentionMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -253,6 +256,96 @@ pub struct AffordanceResult {
 impl AffordanceResult {
     pub fn validate(&self) -> Result<(), String> {
         self.claim.validate()
+    }
+}
+
+/// The factual subject currently ranked by Cortex. A target is a reference to
+/// the immutable scene, not a new scene fact or an execution instruction.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttentionTarget {
+    Scene,
+    Entity(EntityKey),
+    Zone(u64),
+}
+
+/// Interpretable normalized salience inputs. Every component is finite and in
+/// `[0, 1]`; a zero means that this tick has no evidence for that signal.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct AttentionBreakdown {
+    pub novelty: f32,
+    pub prediction_error: f32,
+    pub uncertainty: f32,
+    pub event_recent: f32,
+    pub activity: f32,
+    pub anomaly: f32,
+    pub identity: f32,
+    pub affordance: f32,
+    pub zone_violation: f32,
+}
+
+/// One evidence-backed ranking result. It is a priority hint only: it never
+/// promotes a hypothesis to an observed fact and has no actuator authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AttentionScore {
+    pub target: AttentionTarget,
+    pub score: f32,
+    pub breakdown: AttentionBreakdown,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<EvidenceRef>,
+}
+
+impl AttentionScore {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.score.is_finite() || !(0.0..=1.0).contains(&self.score) {
+            return Err("attention score must be finite and within [0,1]".into());
+        }
+        let components = [
+            self.breakdown.novelty,
+            self.breakdown.prediction_error,
+            self.breakdown.uncertainty,
+            self.breakdown.event_recent,
+            self.breakdown.activity,
+            self.breakdown.anomaly,
+            self.breakdown.identity,
+            self.breakdown.affordance,
+            self.breakdown.zone_violation,
+        ];
+        if components
+            .iter()
+            .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err("attention breakdown must be finite and within [0,1]".into());
+        }
+        if self.score > 0.0 && self.evidence.is_empty() {
+            return Err("non-zero attention score requires evidence".into());
+        }
+        Ok(())
+    }
+}
+
+/// Bounded read-only focus map for one immutable fused scene revision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AttentionMap {
+    pub source_scene_frame_id: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_k: Vec<AttentionScore>,
+}
+
+impl AttentionMap {
+    pub fn validate(&self) -> Result<(), String> {
+        let mut previous: Option<&AttentionScore> = None;
+        for score in &self.top_k {
+            score.validate()?;
+            if let Some(previous) = previous
+                && (previous.score < score.score
+                    || (previous.score == score.score && previous.target > score.target))
+            {
+                return Err("attention scores must be deterministically sorted".into());
+            }
+            previous = Some(score);
+        }
+        Ok(())
     }
 }
 

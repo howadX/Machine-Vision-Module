@@ -32,16 +32,19 @@
   `current_state.md` atomic. Typed activity episodes попадают в `labels.jsonl` через независимый
   event cursor с source provenance; replay/cursor/late-result gates добавлены. Корневой
   `--native-camera` маршрутизируется в canonical AgentMesh, text-only/pixel fixtures проходят
-  dataset check. **18.2–18.7 ✅:** единый `mvm-cortex` публикует serializable honesty-first
+  dataset check. **18.2–18.8 ✅:** единый `mvm-cortex` публикует serializable honesty-first
   `CortexFrame`: canonical Scene Events + interpretations, bounded re-observation policy,
   runtime-only Event Memory, constant-velocity/persistence forecast + typed prediction errors,
   camera-relative `VisualSelfModel`, evidence-linked `UncertaintyReport` и Affordance V1. Canonical
   `PersonFacts` теперь несёт body-coverage, visual-only head orientation и bounded hand summary; Fusion
-  публикует только hand-to-object `touching_candidate`, не physical hold. `CortexAgent` включён в
+  публикует только hand-to-object `touching_candidate`, не physical hold. Evidence-backed
+  `AttentionMap` детерминированно ранжирует top-3 focus из novelty, prediction error, uncertainty,
+  event recency, activity, anomaly, identity и affordance; без canonical zone-violation fact этот
+  компонент остаётся нулевым. `CortexAgent` включён в
   production AgentMesh, но не мутирует `FusedSceneFrame`; scheduler выдаёт только bounded one-shot
   permits, durable semantic store остаётся один (`labels.jsonl`). 18.6 не выдумывает world camera
   pose, полную геометрию зон или отсутствующую emotion entropy: они явно unknown/withheld.
-  Далее — 18.8 Attention Layer. План — `docs/phase-18-plan.md`.
+  Далее — 18.8b Advisory Attention Policy / Active Re-observation. План — `docs/phase-18-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,

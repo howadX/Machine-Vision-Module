@@ -19,11 +19,12 @@ mod uncertainty;
 
 pub use cortex::VisualCortex;
 pub use types::{
-    ActivityForecast, AffordanceKind, AffordanceResult, AttentionPolicy, AxisDirection,
-    CalibrationBasis, CalibrationReport, CalibrationValue, CameraPose, ClaimStatus, CognitiveClaim,
-    CoordinateFrame, CortexConfig, CortexFrame, CortexInput, EntityForecast, EvidenceRef,
-    ForecastPosition3D, MemoryConfig, MemoryContext, MemoryEvent, ObservationRequest,
-    ObservationTarget, PredictionError, PredictionErrorKind, ReasonCode, RelationForecast,
-    RequestOutcome, Resolution, SceneForecast, SpatialSelf, UncertainClaim, UncertaintyCode,
-    UncertaintyReport, VisibilityState, VisualSelfModel, ZoneVisibility,
+    ActivityForecast, AffordanceKind, AffordanceResult, AttentionBreakdown, AttentionMap,
+    AttentionPolicy, AttentionScore, AttentionTarget, AxisDirection, CalibrationBasis,
+    CalibrationReport, CalibrationValue, CameraPose, ClaimStatus, CognitiveClaim, CoordinateFrame,
+    CortexConfig, CortexFrame, CortexInput, EntityForecast, EvidenceRef, ForecastPosition3D,
+    MemoryConfig, MemoryContext, MemoryEvent, ObservationRequest, ObservationTarget,
+    PredictionError, PredictionErrorKind, ReasonCode, RelationForecast, RequestOutcome, Resolution,
+    SceneForecast, SpatialSelf, UncertainClaim, UncertaintyCode, UncertaintyReport,
+    VisibilityState, VisualSelfModel, ZoneVisibility,
 };

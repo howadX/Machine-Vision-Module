@@ -59,10 +59,17 @@ impl VisualCortex {
             input.scene_event_gap,
         );
         let affordances = self.affordance.build(input.current_scene, &memory);
+        let attention = self.attention.build(
+            input.current_scene,
+            &prediction_errors,
+            &memory,
+            &affordances,
+            &uncertainty,
+            &self_model,
+        );
         let _ = (
             &self.events,
             &self.affordance,
-            &self.attention,
             &self.report,
             input.previous_scene,
         );
@@ -85,6 +92,7 @@ impl VisualCortex {
             self_model,
             uncertainty,
             affordances,
+            attention,
         }
     }
 }
@@ -127,6 +135,8 @@ mod tests {
         });
         assert_eq!(frame.scene_frame_id, 7);
         assert!(frame.claims.is_empty());
+        assert_eq!(frame.attention.source_scene_frame_id, 7);
+        assert!(frame.attention.validate().is_ok());
         assert_eq!(
             serde_json::to_value(&frame).unwrap()["claims"],
             serde_json::json!([])
