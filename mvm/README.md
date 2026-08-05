@@ -4,7 +4,7 @@
 
 evidence-backed visual subsystem будущего робота, который отдаёт **факты, а не пиксели.**
 
-Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо. Факты питают LLM/MCP и **Dataset Factory**; поверх них Phase 18 добавляет evidence-linked Visual Cortex без mutation facts. Следующий слой — bounded visual spatial world model Phase 19.
+Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо. Факты питают LLM/MCP и **Dataset Factory**; поверх них Phase 18 добавляет evidence-linked Visual Cortex без mutation facts. Следующий слой — bounded visual spatial world model.
 
 ![version](https://img.shields.io/badge/version-0.4.0-8A2BE2)
 ![phase](https://img.shields.io/badge/phase-18%20Visual%20Cortex-8A2BE2)
