@@ -3,7 +3,39 @@
 All notable changes to MVM. Format loosely follows [Keep a Changelog]; versions
 are the `mvm` binary / workspace version.
 
-## [Unreleased] — branch `kaggle` — Semantic Session Log (phase 16.7)
+## [Unreleased]
+
+## [0.4.0] — 2026-08-06 — Visual Cortex (phase 18) + Semantic Session Log (phase 16.7)
+
+MVM now publishes one immutable, stamped `FusedSceneFrame` as the canonical
+facts layer and a separate evidence-linked `CortexFrame` as the cognitive view.
+The Cortex never rewrites scene facts: forecasts, working memory, affordances,
+attention, uncertainty and advisory re-observation remain explicitly bounded by
+their evidence. The release also includes the default-on semantic-session-log
+work completed after v0.3.0.
+
+### Added
+
+- **`mvm-cortex` crate and canonical facts contract.** Typed observation bus,
+  `SceneFact<T>`, incarnation-safe `EntityKey`, source freshness and immutable
+  `FusedFramePacket` make Fusion the sole factual authority.
+- **Cognitive layers.** Evidence-linked scene-event interpretations, bounded
+  runtime Event Memory, constant-velocity/persistence forecasts at 1 s and 2 s,
+  prediction errors, camera-relative self-model, explicit uncertainty inventory,
+  affordance V1 and deterministic top-3 attention.
+- **Bounded active re-observation.** Cortex can only propose a serializable
+  advisory `AttentionPolicy`; the CLI-owned scheduler grants temporary Scene or
+  Depth permits with TTL, dedupe, cooldown and explicit outcomes. Only a new
+  stamped Experts → Fusion observation can resolve a request.
+- **Public cognitive pull interface.** Atomic `current_cortex.json`, read-only
+  `mvm cortex` views and MCP `mvm_cortex`; `current_state.md` remains facts and
+  `labels.jsonl` remains the sole durable semantic history.
+- **Closure evidence.** Frozen replay validates 6/6 pinned cognitive claims
+  against the no-Cortex comparator with zero honesty regressions. The controlled
+  adaptive runtime gate is +0.31% (within the ≤5% budget); final live validation
+  confirmed the production path, 1 s/2 s forecasts and semantic-session pull.
+
+### Included semantic-session log
 
 Converges MVM's **two parallel scene-history stores into one**. Until now vision
 history lived in flat per-day `scene-*.jsonl`/`events-*.jsonl` logs, while the
@@ -29,7 +61,7 @@ stays a pure WorldState consumer.
   one code path, golden-parity-tested against the flat emitters. A `Source` resolver
   prefers flat logs when present and falls back to semantic sessions. Retention via
   `mvm dataset prune --keep`.
-- Workspace **689** tests green (was 670). Live-validated on camera (2026-07-24, ~4 min):
+- Workspace gate is green (one live-camera test ignored). Live-validated on camera (2026-07-24, ~4 min):
   default-on text-only session with relations/activities/events, no flat logs written,
   `dataset check` clean, recap/inspect correct.
 

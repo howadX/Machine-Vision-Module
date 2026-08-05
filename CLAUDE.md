@@ -1,7 +1,7 @@
 # Machine Vision Module
 
 *Structured Decomposed Agentic Vision — гибридный Python+Rust проект: камера → **метрический 3D
-scene-graph** каждый кадр (не VLM). Прод — **v0.3.0** (GitHub Releases). Активная разработка — ветка `kaggle`.*
+scene-graph** каждый кадр (не VLM). Прод — **v0.4.0** (GitHub Releases). Активная разработка — ветка `kaggle`.*
 
 ## Ориентир: что это и по каким принципам
 
@@ -32,7 +32,7 @@ MVM — **ансамбль независимых микро-агентов зр
 
 ```
 Machine Vision Module/
-├── mvm/            # ★ Rust workspace — ПРОДАКШН (14 крейтов, 717 тестов; фазы 5–17 закрыты, фаза 18 активна)
+├── mvm/            # ★ Rust workspace — ПРОДАКШН (14 крейтов; фазы 5–18 закрыты)
 │   ├── crates/     #   core, detect, identity, emotion, posture, scene, depth, hands, fusion, mesh, pipeline, dataset, cli
 │   ├── docs/       #   phase-* prompts/runbooks
 │   ├── CHANGELOG.md#   версии бинаря (0.1.0 → 0.3.0)
@@ -69,9 +69,9 @@ cd mvm && target/release/mvm --native --once --dump-json     # bridge-путь (
 
 ## Ветки и релизы
 
-`master` — опубликованный прод (**v0.3.0**, после мёржа `kaggle`→`master` 2026-07-23). `kaggle` — активная
-разработка (фаза 16). Релиз триггерится пушем тега `v*` → CI `release.yml` собирает x86_64+aarch64 бинари.
-История: **v0.1.0** (Продукт, фаза 14) · **v0.3.0** (Dataset Factory, фаза 16); **v0.2.0** (ML Refactor,
+`master` — опубликованный прод (**v0.4.0**, после мёржа `kaggle`→`master` 2026-08-06). `kaggle` — активная
+разработка (следующая фаза требует отдельного approval). Релиз триггерится пушем тега `v*` → CI `release.yml` собирает x86_64+aarch64 бинари.
+История: **v0.1.0** (Продукт, фаза 14) · **v0.3.0** (Dataset Factory, фаза 16) · **v0.4.0** (Visual Cortex, фаза 18); **v0.2.0** (ML Refactor,
 фаза 15) свёрнута в код v0.3.0, отдельным тегом не выпускалась.
 
 ## Текущая фаза

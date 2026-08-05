@@ -22,7 +22,7 @@
   `mvm-vision` и `mvm-dataset`; stdlib-only validator и GitHub Actions защищают minimal frontmatter,
   honesty markers, stale-stack запреты и public-surface drift. Официальный `skills-ref` и fresh-agent
   forward-tests прошли; профиль Hermes `sight` читает repo skills напрямую, legacy flow архивирован.
-- **Фаза 18 — Visual Cortex Layer 🚧:** 18.0 ✅ — в `mvm-core::canonical` зафиксированы
+- **Фаза 18 — Visual Cortex Layer ✅:** 18.0 ✅ — в `mvm-core::canonical` зафиксированы
   `FusedSceneFrame`, `SceneFact<T>`, `EntityKey`+incarnation, stamped sources, event-tail cursor с
   `EventGap` и read-only compatibility projection. `benchmark/` содержит replay-контракт, шесть
   обязательных сценариев и честный pre-Cortex baseline. **18.1 ✅:** добавлен generic
@@ -60,8 +60,8 @@
   Фаза 18 завершена replay+live runtime evidence; Phase 19 остаётся отдельной approved фазой и требует
   собственного slice approval.
   План — `docs/phase-18-plan.md`.
-- **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
-  пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
+- **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`
+  пушнут → CI `release.yml` собирает x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory) · **v0.4.0** (Visual Cortex);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,
   версия из `Cargo.toml`. Активная разработка продолжается на `kaggle`.
 - **Фаза 14 «Продукт» — ЗАКРЫТА целиком** (2026-07-06, live с нуля: `git clone` → `cargo build` →
@@ -120,7 +120,7 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 689 тестов
+cargo test --workspace         # полный workspace gate (1 live-camera test ignored)
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
@@ -148,7 +148,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 
 ---
 
-## Крейты (13)
+## Крейты (14)
 
 | Крейт | Содержимое |
 |-------|------------|
