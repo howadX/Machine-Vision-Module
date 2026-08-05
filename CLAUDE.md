@@ -103,7 +103,7 @@ Repo-local validator + CI contract gate защищают frontmatter, honesty ma
 читает skills напрямую из repo, а legacy Python/wiki flow архивирован. Ядро/версия не затронуты. План —
 `mvm/docs/phase-17-plan.md`.
 
-**Фаза 18 — Visual Cortex Layer 🚧:** 18.0 ✅ — canonical facts contract
+**Фаза 18 — Visual Cortex Layer ✅ (закрыта):** 18.0 ✅ — canonical facts contract
 (`FusedSceneFrame`, `SceneFact<T>`, `EntityKey`+incarnation, stamped sources,
 non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 ✅: generic
 `LatestValue<T>` + stamped Human/Scene/Depth observations, `CanonicalFusion` публикует immutable
@@ -126,10 +126,12 @@ activity, anomaly, identity и affordance; без canonical zone-violation fact 
 публикует отдельный cognitive frame и не мутирует canonical facts; scheduler исполняет только
 ограниченные Scene/Depth one-shot permits с TTL, semantic dedupe, cooldown, budget/fairness и
 explicit outcomes; внешний request без executor становится `Unavailable`, а `labels.jsonl` остаётся
-единственным durable semantic store. 18.8b live-проверена на 300 camera frames: Scene 130 и Depth 11
-ticks при fixed-cadence ожидании около 100/10, Human/Fusion/Cortex без agent errors, delivery ~23.5 FPS.
-Это подтверждает permit path, но не закрывает controlled ≤5% A/B throughput gate — он остаётся в
-18.8b.1 Adaptive Mesh Scheduling Spike. План —
+единственным durable semantic store. 18.8b.1 closed controlled A/B/C runtime gate: worst wall-time
+delta +0.31% ≤5%, no agent errors. 18.9 adds atomic `current_cortex.json`, read-only `mvm cortex`
+views and MCP `mvm_cortex`; 18.10 frozen replay passes 6/6 pinned claims with zero honesty
+regressions and three `Accepted → Dispatched → Resolved` advisory loops. Final live validation on the
+closing binary confirmed 25 FPS, 1s/2s forecasts, evidence-linked Cortex output, preserved
+withheld/unknown facts and semantic-session recap. Phase 19 requires its own slice approval. Plan —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents
