@@ -2,7 +2,7 @@
 
 # MVM — Machine Vision Module
 
-**Structured Decomposed Agentic Vision** — evidence-backed visual subsystem будущего робота, который отдаёт **факты, а не пиксели.**
+evidence-backed visual subsystem будущего робота, который отдаёт **факты, а не пиксели.**
 
 Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо. Факты питают LLM/MCP и **Dataset Factory**; поверх них Phase 18 добавляет evidence-linked Visual Cortex без mutation facts. Следующий слой — bounded visual spatial world model Phase 19.
 
