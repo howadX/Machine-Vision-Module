@@ -24,7 +24,7 @@ pub use types::{
     CalibrationReport, CalibrationValue, CameraPose, ClaimStatus, CognitiveClaim, CoordinateFrame,
     CortexConfig, CortexFrame, CortexInput, EntityForecast, EvidenceRef, ForecastPosition3D,
     MemoryConfig, MemoryContext, MemoryEvent, ObservationRequest, ObservationTarget,
-    PredictionError, PredictionErrorKind, ReasonCode, RelationForecast, RequestOutcome, Resolution,
-    SceneForecast, SpatialSelf, UncertainClaim, UncertaintyCode, UncertaintyReport,
-    VisibilityState, VisualSelfModel, ZoneVisibility,
+    PolicyOutcomeFrame, PredictionError, PredictionErrorKind, ReasonCode, RelationForecast,
+    RequestOutcome, Resolution, SceneForecast, SpatialSelf, UncertainClaim, UncertaintyCode,
+    UncertaintyReport, VisibilityState, VisualSelfModel, ZoneVisibility,
 };

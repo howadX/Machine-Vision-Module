@@ -40,8 +40,7 @@ impl VisualCortex {
     /// Pure proposal generation; scheduler acceptance and expert execution are
     /// runtime-owned and cannot alter this Cortex state.
     pub fn attention_policy(&self, input: CortexInput<'_>) -> AttentionPolicy {
-        self.events
-            .policy(input.current_scene.stamp.frame_id, input.scene_events)
+        self.events.policy(input.current_scene, input.scene_events)
     }
 
     /// Interpret only canonical Fusion events. Cortex never performs a second

@@ -111,7 +111,7 @@ non-destructive event cursor/`EventGap`) и Visual QA benchmark baseline. 18.1 �
 а `current_state.md` пишется atomic. Canonical activity episodes пишутся в `labels.jsonl` через
 независимый DatasetWriter cursor с event/source provenance; replay/cursor/late-result gates добавлены.
 Корневой `--native-camera` маршрутизируется в canonical AgentMesh; text-only/pixel dataset fixtures
-проходят check gate. **18.2–18.8 ✅:** единый `mvm-cortex` теперь включает serializable
+проходят check gate. **18.2–18.8b ✅:** единый `mvm-cortex` теперь включает serializable
 honesty-first `CortexFrame`/`CognitiveClaim`, canonical Scene Events + evidence-linked interpretation,
 bounded advisory re-observation, runtime-only Event Memory и evidence-linked constant-velocity /
 persistence forecast с typed prediction errors, camera-relative `VisualSelfModel` и детерминированный
@@ -124,8 +124,9 @@ activity, anomaly, identity и affordance; без canonical zone-violation fact 
 зон, emotion entropy и metric calibration явно остаются unknown/withheld, когда canonical evidence
 недостаточно. `CortexAgent` включён в AgentMesh,
 публикует отдельный cognitive frame и не мутирует canonical facts; scheduler исполняет только
-ограниченные one-shot permits, а `labels.jsonl` остаётся единственным durable semantic store.
-Далее — 18.8b Advisory Attention Policy / Active Re-observation. План —
+ограниченные Scene/Depth one-shot permits с TTL, semantic dedupe, cooldown, budget/fairness и
+explicit outcomes; внешний request без executor становится `Unavailable`, а `labels.jsonl` остаётся
+единственным durable semantic store. Далее — 18.8b.1 Adaptive Mesh Scheduling Spike. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents

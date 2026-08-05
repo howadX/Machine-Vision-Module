@@ -26,6 +26,10 @@ withheld attention and blocked claims; it is likewise synthetic replay only.
 Fixture 018 exercises the 18.8 evidence-backed attention ranking signals. Its
 top-3 coverage is a deterministic synthetic-replay contract, not a live-camera
 event-recall measurement.
+Fixture 019 exercises the 18.8b bounded re-observation lifecycle: semantic
+dedupe, expiry, one-shot Depth permits, single resolution, explicit unavailable
+external execution and overload deferral. It does not substitute for the
+same-hardware live throughput gate required before expanding adaptive scheduling.
 
 ## Invariants
 

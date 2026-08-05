@@ -92,6 +92,7 @@ pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;
 /// from canonical facts: Cortex publishes an interpretation, never a mutation.
 pub(crate) type CortexFrameBus = LatestValue<mvm_cortex::CortexFrame>;
 pub(crate) type AttentionPolicyBus = LatestValue<mvm_cortex::AttentionPolicy>;
+pub(crate) type PolicyOutcomeBus = LatestValue<mvm_cortex::PolicyOutcomeFrame>;
 
 #[cfg(test)]
 mod tests {

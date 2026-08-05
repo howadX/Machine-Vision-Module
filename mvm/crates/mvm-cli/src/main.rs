@@ -967,7 +967,11 @@ fn build_live_mesh(
     let fused_frames = agents::FusedFrameBus::new();
     let cortex_frames = agents::CortexFrameBus::new();
     let attention_policies = agents::AttentionPolicyBus::new();
+    let policy_outcomes = agents::PolicyOutcomeBus::new();
     let scene_control = agents::SceneExecutionControl::default();
+    let depth_control = agents::DepthExecutionControl::default();
+    let scene_available = yolo.is_some();
+    let depth_available = depth.is_some();
     let run_id = format!(
         "{}-{}",
         chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"),
@@ -1019,6 +1023,7 @@ fn build_live_mesh(
             depth,
             depth_observations.clone(),
             config.depth_cadence,
+            depth_control.clone(),
         )));
     }
     mesh.add(Box::new(agents::FusionAgent::new(
@@ -1037,9 +1042,16 @@ fn build_live_mesh(
         mvm_cortex::CortexConfig { enabled: true },
     )));
     mesh.add(Box::new(agents::PolicySchedulerAgent::new(
-        attention_policies,
-        scene_observations.clone(),
-        scene_control,
+        agents::PolicySchedulerWiring {
+            policies: attention_policies,
+            scenes: scene_observations.clone(),
+            depths: depth_observations.clone(),
+            outcomes: policy_outcomes,
+            scene_control,
+            depth_control,
+            scene_available,
+            depth_available,
+        },
     )));
     mesh.add(Box::new(
         agents::StateFileWriter::new(

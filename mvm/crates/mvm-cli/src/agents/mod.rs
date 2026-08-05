@@ -37,9 +37,12 @@ pub(crate) use human::HumanAgent;
 pub(crate) use observations::{
     AttentionPolicyBus, CortexFrameBus, DepthObservationBus, DepthObservationFrame,
     FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
-    HumanObservationFrame, ObservationStamp, SceneObservationBus, SceneObservationFrame,
+    HumanObservationFrame, ObservationStamp, PolicyOutcomeBus, SceneObservationBus,
+    SceneObservationFrame,
 };
-pub(crate) use policy::{PolicySchedulerAgent, SceneExecutionControl};
+pub(crate) use policy::{
+    DepthExecutionControl, PolicySchedulerAgent, PolicySchedulerWiring, SceneExecutionControl,
+};
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
 

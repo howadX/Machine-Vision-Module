@@ -65,6 +65,8 @@ pub struct ObservationRequest {
 #[serde(rename_all = "snake_case")]
 pub enum ObservationTarget {
     Scene,
+    Depth,
+    ExternalAgent { question: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,12 +88,24 @@ pub enum RequestOutcome {
         retry_at_frame: u64,
         reason: String,
     },
+    Rejected {
+        reason: String,
+    },
     Dispatched,
     Resolved {
         source_frame_id: u64,
         outcome: Resolution,
     },
     Expired,
+    Unavailable,
+}
+
+/// Latest-wins operational status of bounded re-observation requests. This is
+/// cognitive runtime state, not a canonical scene fact or durable history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PolicyOutcomeFrame {
+    pub source_scene_frame_id: u64,
+    pub outcomes: Vec<(u64, RequestOutcome)>,
 }
 
 /// Reference to canonical evidence supporting a cognitive claim.

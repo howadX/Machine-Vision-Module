@@ -12,6 +12,7 @@
     {"id": "015", "name": "constant_velocity_diagonal", "status": "synthetic_replay"},
     {"id": "016", "name": "uncertainty_inventory", "status": "synthetic_replay"},
     {"id": "017", "name": "affordance_v1_hand_interaction", "status": "synthetic_replay"},
-    {"id": "018", "name": "attention_v1_salience", "status": "synthetic_replay"}
+    {"id": "018", "name": "attention_v1_salience", "status": "synthetic_replay"},
+    {"id": "019", "name": "bounded_active_reobservation", "status": "synthetic_replay"}
   ]
 }

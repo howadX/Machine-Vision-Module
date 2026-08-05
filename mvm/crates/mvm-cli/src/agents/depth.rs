@@ -6,7 +6,10 @@
 //! on the fusion step (8.C.7), which reads this same slot. The slot lives in
 //! `mvm-cli` (not `MeshContext`) so `mvm-mesh` need not depend on `mvm-depth`.
 
-use crate::agents::{DepthObservationBus, DepthObservationFrame, ObservationStamp, cadence_due};
+use crate::agents::{
+    DepthExecutionControl, DepthObservationBus, DepthObservationFrame, ObservationStamp,
+    cadence_due,
+};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
 
@@ -14,6 +17,7 @@ pub(crate) struct DepthAgent {
     estimator: mvm_depth::DepthEstimator,
     observations: DepthObservationBus,
     cadence: u32,
+    control: DepthExecutionControl,
 }
 
 impl DepthAgent {
@@ -21,11 +25,13 @@ impl DepthAgent {
         estimator: mvm_depth::DepthEstimator,
         observations: DepthObservationBus,
         cadence: u32,
+        control: DepthExecutionControl,
     ) -> Self {
         Self {
             estimator,
             observations,
             cadence,
+            control,
         }
     }
 }
@@ -42,20 +48,22 @@ impl Agent for DepthAgent {
         while ctx.running() {
             if let Some(frame) = ctx.frames.latest()
                 && last_id != Some(frame.id)
-                && cadence_due(frame.id, self.cadence)
             {
-                last_id = Some(frame.id);
-                match self.estimator.estimate(frame.image.as_ref()) {
-                    Ok(map) => {
-                        self.observations.publish(DepthObservationFrame {
-                            stamp: ObservationStamp::from_frame(&frame),
-                            map: Arc::new(map),
-                        });
-                        ticks += 1;
-                    }
-                    Err(e) => {
-                        eprintln!("  depth: estimate error: {e}");
-                        errors += 1;
+                let permit = self.control.take_for(frame.id);
+                if cadence_due(frame.id, self.cadence) || permit.is_some() {
+                    last_id = Some(frame.id);
+                    match self.estimator.estimate(frame.image.as_ref()) {
+                        Ok(map) => {
+                            self.observations.publish(DepthObservationFrame {
+                                stamp: ObservationStamp::from_frame(&frame),
+                                map: Arc::new(map),
+                            });
+                            ticks += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("  depth: estimate error: {e}");
+                            errors += 1;
+                        }
                     }
                 }
             }
@@ -97,5 +105,30 @@ mod tests {
         assert!(!cadence_due(1, 30));
         assert!(!cadence_due(29, 30));
         assert!(cadence_due(30, 30));
+    }
+
+    #[test]
+    fn depth_permit_is_one_shot_and_does_not_change_cadence() {
+        use mvm_cortex::{EvidenceRef, ObservationRequest, ObservationTarget, ReasonCode};
+
+        let control = DepthExecutionControl::default();
+        control.grant(ObservationRequest {
+            request_id: 9,
+            source_scene_frame_id: 7,
+            target: ObservationTarget::Depth,
+            reason: ReasonCode::StaleSource,
+            evidence: vec![EvidenceRef {
+                scene_frame_id: 7,
+                entity: None,
+                event_seq: None,
+            }],
+            priority: 200,
+            max_extra_runs: 1,
+            expires_at_frame: 10,
+        });
+
+        assert_eq!(control.take_for(8).unwrap().request_id, 9);
+        assert!(control.take_for(8).is_none());
+        assert!(!cadence_due(8, 30));
     }
 }
