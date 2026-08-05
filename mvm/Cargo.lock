@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -552,7 +552,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -561,7 +561,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-cortex"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "mvm-core",
  "serde",
@@ -570,7 +570,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-dataset"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "mvm-core",
@@ -581,7 +581,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-depth"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -593,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-detect"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -605,7 +605,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-emotion"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-fusion"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "mvm-core",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-hands"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -636,7 +636,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-identity"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-mesh"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-pipeline"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-posture"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "mvm-scene"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "image",
@@ -1502,7 +1502,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "zeroize"
