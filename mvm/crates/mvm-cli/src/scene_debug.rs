@@ -8,7 +8,7 @@
 use image::{DynamicImage, GenericImageView, Rgb, RgbImage};
 use mvm_core::BBox;
 use mvm_hands::Hand;
-use mvm_scene::{TrackedObject, OBJECT_ID_BASE};
+use mvm_scene::{OBJECT_ID_BASE, TrackedObject};
 
 /// Per-agent colours (one detector = one colour). The Agent Mesh will key off this.
 pub mod agent {
@@ -150,7 +150,12 @@ fn draw_number(img: &mut RgbImage, x: u32, y: u32, n: u32, color: [u8; 3], scale
                 if bits & (1 << (2 - col)) != 0 {
                     for dy in 0..scale {
                         for dx in 0..scale {
-                            put(img, (cx + col * scale + dx) as i32, (y + row as u32 * scale + dy) as i32, color);
+                            put(
+                                img,
+                                (cx + col * scale + dx) as i32,
+                                (y + row as u32 * scale + dy) as i32,
+                                color,
+                            );
                         }
                     }
                 }
@@ -179,13 +184,27 @@ pub fn render(
         draw_rect(&mut img, &o.bbox, agent::OBJECT, 2);
         let lx = px_clamp(o.bbox.x1 * fw as f32, fw);
         let ly = px_clamp(o.bbox.y1 * fh as f32, fh);
-        draw_number(&mut img, lx + 2, ly + 2, o.id - OBJECT_ID_BASE, agent::OBJECT, scale);
+        draw_number(
+            &mut img,
+            lx + 2,
+            ly + 2,
+            o.id - OBJECT_ID_BASE,
+            agent::OBJECT,
+            scale,
+        );
     }
     // Pose skeletons (yellow): bones + visible landmark dots.
     for lm in &overlay.poses {
         for &(a, b) in POSE_EDGES {
             if lm[a][3] >= VIS_MIN && lm[b][3] >= VIS_MIN {
-                draw_line(&mut img, lm[a][0], lm[a][1], lm[b][0], lm[b][1], agent::POSE);
+                draw_line(
+                    &mut img,
+                    lm[a][0],
+                    lm[a][1],
+                    lm[b][0],
+                    lm[b][1],
+                    agent::POSE,
+                );
             }
         }
         for p in lm.iter() {
@@ -200,7 +219,12 @@ pub fn render(
     }
     // Hands (green): box + 21 dots.
     for hand in &overlay.hands {
-        draw_rect(&mut img, &hand.bbox_norm(fw as f32, fh as f32), agent::HANDS, 2);
+        draw_rect(
+            &mut img,
+            &hand.bbox_norm(fw as f32, fh as f32),
+            agent::HANDS,
+            2,
+        );
         for p in &hand.landmarks_px {
             draw_dot(&mut img, p[0], p[1], agent::HANDS, dot_r);
         }
@@ -225,7 +249,10 @@ pub fn write_annotated(
     img.save(path)?;
 
     let mut legend: Vec<String> = Vec::new();
-    let key: Vec<String> = agent::LEGEND.iter().map(|(name, _)| name.to_string()).collect();
+    let key: Vec<String> = agent::LEGEND
+        .iter()
+        .map(|(name, _)| name.to_string())
+        .collect();
     legend.push(format!("agents: {}", key.join(" | ")));
     legend.push(format!(
         "counts: persons {} | faces {} | poses {} | hands {} | objects {}",
@@ -256,7 +283,17 @@ mod tests {
     use super::*;
 
     fn obj(id: u32, class: &'static str, b: BBox) -> TrackedObject {
-        TrackedObject { id, class_name: class, bbox: b, score: 0.9, age: 3, missed: 0, pos_3d: None, pos_conf: 0.0, mask: None }
+        TrackedObject {
+            id,
+            class_name: class,
+            bbox: b,
+            score: 0.9,
+            age: 3,
+            missed: 0,
+            pos_3d: None,
+            pos_conf: 0.0,
+            mask: None,
+        }
     }
 
     #[test]
@@ -271,16 +308,38 @@ mod tests {
     #[test]
     fn render_draws_all_layers_without_panicking() {
         let frame = DynamicImage::new_rgb8(320, 240);
-        let tracks = vec![BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.6 }];
-        let objects = vec![obj(OBJECT_ID_BASE + 2, "cup", BBox { x1: 0.4, y1: 0.4, x2: 0.55, y2: 0.6 })];
+        let tracks = vec![BBox {
+            x1: 0.1,
+            y1: 0.1,
+            x2: 0.3,
+            y2: 0.6,
+        }];
+        let objects = vec![obj(
+            OBJECT_ID_BASE + 2,
+            "cup",
+            BBox {
+                x1: 0.4,
+                y1: 0.4,
+                x2: 0.55,
+                y2: 0.6,
+            },
+        )];
         let mut overlay = DetectorOverlay::default();
-        overlay.faces.push(BBox { x1: 0.15, y1: 0.12, x2: 0.28, y2: 0.3 });
+        overlay.faces.push(BBox {
+            x1: 0.15,
+            y1: 0.12,
+            x2: 0.28,
+            y2: 0.3,
+        });
         let mut lm = [[0.0f32, 0.0, 0.0, 0.9]; 33];
         lm[11] = [100.0, 100.0, 0.0, 0.9];
         lm[12] = [140.0, 100.0, 0.0, 0.9];
         overlay.poses.push(lm);
         let img = render(&frame, &tracks, &objects, &overlay);
-        assert!(img.pixels().any(|p| p.0 != [0, 0, 0]), "should have drawn pixels");
+        assert!(
+            img.pixels().any(|p| p.0 != [0, 0, 0]),
+            "should have drawn pixels"
+        );
     }
 
     #[test]
@@ -292,10 +351,20 @@ mod tests {
     #[test]
     fn write_annotated_legend_reports_counts() {
         let frame = DynamicImage::new_rgb8(64, 64);
-        let objects = vec![obj(OBJECT_ID_BASE, "cup", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 })];
+        let objects = vec![obj(
+            OBJECT_ID_BASE,
+            "cup",
+            BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.2,
+                y2: 0.2,
+            },
+        )];
         let overlay = DetectorOverlay::default();
         let dir = std::env::temp_dir().join(format!("mvm_scene_test_{}.jpg", std::process::id()));
-        let legend = write_annotated(dir.to_str().unwrap(), &frame, &[], &objects, &overlay).unwrap();
+        let legend =
+            write_annotated(dir.to_str().unwrap(), &frame, &[], &objects, &overlay).unwrap();
         assert!(legend[0].contains("agents:"));
         assert!(legend.iter().any(|l| l.contains("objects 1")));
         assert!(legend.iter().any(|l| l.contains("cup")));

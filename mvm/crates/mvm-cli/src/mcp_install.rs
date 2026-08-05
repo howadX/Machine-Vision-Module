@@ -16,8 +16,8 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
 
 use crate::config_file::ProductConfig;
 
@@ -34,9 +34,7 @@ impl Host {
             "claude-desktop" => Host::ClaudeDesktop,
             "claude-code" => Host::ClaudeCode,
             "hermes" => Host::Hermes,
-            other => bail!(
-                "unknown host {other:?} — use claude-desktop | claude-code | hermes"
-            ),
+            other => bail!("unknown host {other:?} — use claude-desktop | claude-code | hermes"),
         })
     }
 
@@ -92,7 +90,11 @@ pub fn parse_install_args(raw: &[String]) -> Result<InstallArgs> {
         i += 1;
     }
     let host = host.context("missing --host (claude-desktop | claude-code | hermes)")?;
-    Ok(InstallArgs { host, with_camera, write })
+    Ok(InstallArgs {
+        host,
+        with_camera,
+        write,
+    })
 }
 
 /// The `serve` invocation the host should launch. Explicit `--logs`/`--state`
@@ -120,11 +122,19 @@ pub fn run_install(product: &ProductConfig, args: InstallArgs) -> Result<()> {
 
     if args.host.is_json() {
         let block = render_json_block(&exe, &srv_args);
-        eprintln!("mvm mcp install — host {} → {}", args.host.label(), path.display());
+        eprintln!(
+            "mvm mcp install — host {} → {}",
+            args.host.label(),
+            path.display()
+        );
         eprintln!("{block}");
         if args.write {
             merge_json_file(&path, "mvm", &exe, &srv_args)?;
-            eprintln!("✓ merged into {} (backup at {})", path.display(), backup_path(&path).display());
+            eprintln!(
+                "✓ merged into {} (backup at {})",
+                path.display(),
+                backup_path(&path).display()
+            );
         } else {
             eprintln!("(dry run — pass --write to merge this into the file above)");
         }
@@ -158,7 +168,11 @@ fn render_json_block(exe: &str, args: &[String]) -> String {
 
 /// YAML block for Hermes' `mcp_servers:` (hand-rendered — no yaml dep).
 fn render_hermes_block(exe: &str, args: &[String]) -> String {
-    let args_yaml = args.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(", ");
+    let args_yaml = args
+        .iter()
+        .map(|a| format!("\"{a}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
         "  mvm:\n    command: {exe}\n    args: [{args_yaml}]\n    transport: stdio\n    timeout: 120\n    connect_timeout: 30"
     )
@@ -201,9 +215,7 @@ fn merge_entry(root: &mut Value, name: &str, exe: &str, args: &[String]) -> Resu
         bail!("host config root is not a JSON object");
     }
     let obj = root.as_object_mut().unwrap();
-    let servers = obj
-        .entry("mcpServers")
-        .or_insert_with(|| json!({}));
+    let servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
     if !servers.is_object() {
         bail!("`mcpServers` in host config is not an object");
     }
@@ -226,8 +238,14 @@ mod tests {
             Host::ClaudeDesktop.config_path(home),
             PathBuf::from("/home/u/.config/Claude/claude_desktop_config.json")
         );
-        assert_eq!(Host::ClaudeCode.config_path(home), PathBuf::from("/home/u/.claude.json"));
-        assert_eq!(Host::Hermes.config_path(home), PathBuf::from("/home/u/.hermes/config.yaml"));
+        assert_eq!(
+            Host::ClaudeCode.config_path(home),
+            PathBuf::from("/home/u/.claude.json")
+        );
+        assert_eq!(
+            Host::Hermes.config_path(home),
+            PathBuf::from("/home/u/.hermes/config.yaml")
+        );
         assert!(Host::ClaudeCode.is_json() && !Host::Hermes.is_json());
     }
 
@@ -245,7 +263,17 @@ mod tests {
             dataset: mvm_dataset::DatasetConfig::default(),
         };
         let a = server_args(&product, false);
-        assert_eq!(a, vec!["serve", "--mcp", "--logs", "/d", "--state", "/d/current_state.md"]);
+        assert_eq!(
+            a,
+            vec![
+                "serve",
+                "--mcp",
+                "--logs",
+                "/d",
+                "--state",
+                "/d/current_state.md"
+            ]
+        );
         product.snapshot_ms = 500;
         let a = server_args(&product, true);
         assert!(a.contains(&"--with-camera".to_string()));
@@ -276,9 +304,19 @@ mod tests {
     #[test]
     fn merge_replaces_existing_mvm_idempotently() {
         let mut root = json!({ "mcpServers": { "mvm": { "command": "old", "args": [] } } });
-        merge_entry(&mut root, "mvm", "/new/mvm", &["serve".into(), "--mcp".into()]).unwrap();
+        merge_entry(
+            &mut root,
+            "mvm",
+            "/new/mvm",
+            &["serve".into(), "--mcp".into()],
+        )
+        .unwrap();
         assert_eq!(root["mcpServers"]["mvm"]["command"], "/new/mvm");
-        assert_eq!(root["mcpServers"].as_object().unwrap().len(), 1, "no duplicate");
+        assert_eq!(
+            root["mcpServers"].as_object().unwrap().len(),
+            1,
+            "no duplicate"
+        );
     }
 
     #[test]
@@ -298,7 +336,10 @@ mod tests {
         std::fs::write(&path, r#"{"numStartups":7}"#).unwrap();
         merge_json_file(&path, "mvm", "/bin/mvm", &["serve".into()]).unwrap();
         // Backup is <name>.bak (appended), holds the original.
-        assert_eq!(std::fs::read_to_string(backup_path(&path)).unwrap(), r#"{"numStartups":7}"#);
+        assert_eq!(
+            std::fs::read_to_string(backup_path(&path)).unwrap(),
+            r#"{"numStartups":7}"#
+        );
         let merged: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(merged["numStartups"], 7);
         assert_eq!(merged["mcpServers"]["mvm"]["command"], "/bin/mvm");

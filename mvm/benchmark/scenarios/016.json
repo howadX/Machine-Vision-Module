@@ -1,0 +1,23 @@
+{
+  "fixture_version": "18.6.0",
+  "scenario_id": "016",
+  "name": "uncertainty_inventory",
+  "status": "synthetic_replay",
+  "cases": [
+    {"name": "withheld posture is listed", "signal": "posture_withheld", "expected_code": "posture", "expected_present": true},
+    {"name": "observed posture is not listed", "signal": "posture_observed", "expected_code": "posture", "expected_present": false},
+    {"name": "low identity is listed", "signal": "identity_low", "expected_code": "identity", "expected_present": true},
+    {"name": "high identity is not listed", "signal": "identity_high", "expected_code": "identity", "expected_present": false},
+    {"name": "occlusion is listed", "signal": "existence_occluded", "expected_code": "existence", "expected_present": true},
+    {"name": "present entity is not listed", "signal": "existence_present", "expected_code": "existence", "expected_present": false},
+    {"name": "stale source is listed", "signal": "source_stale", "expected_code": "source_freshness", "expected_present": true},
+    {"name": "fresh source is not listed", "signal": "source_fresh", "expected_code": "source_freshness", "expected_present": false},
+    {"name": "missing expert is listed", "signal": "source_unavailable", "expected_code": "missing_expert", "expected_present": true},
+    {"name": "event gap is listed", "signal": "event_gap", "expected_code": "event_delivery", "expected_present": true},
+    {"name": "complete event tail is not listed", "signal": "event_complete", "expected_code": "event_delivery", "expected_present": false},
+    {"name": "uncalibrated position is listed", "signal": "position_uncalibrated", "expected_code": "entity_metric_position", "expected_present": true},
+    {"name": "observed position is not listed", "signal": "position_observed", "expected_code": "entity_metric_position", "expected_present": false},
+    {"name": "emotion entropy absence is explicit", "signal": "emotion_distribution_absent", "expected_code": "emotion_distribution", "expected_present": true},
+    {"name": "world camera pose absence is explicit", "signal": "camera_world_pose_absent", "expected_code": "camera_world_pose", "expected_present": true}
+  ]
+}

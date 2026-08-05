@@ -13,7 +13,12 @@
 use serde::{Deserialize, Serialize};
 
 /// Версия схемы Canonical Observation. Пишется в каждую запись (ключ связывания).
-pub const SCHEMA_VERSION: &str = "16.0.1";
+///
+/// `16.7.0` (Semantic Session Log) — аддитивная достройка отложенных §16.3:
+/// роутер заполняет `relations` (зоны+рёбра) и `events` (эпизоды) и добавлено
+/// новое поле `activities` (per-frame активности). Все добавления читаются старыми
+/// парсерами (`#[serde(default)]`), так что 16.0.1-строки остаются валидными.
+pub const SCHEMA_VERSION: &str = "16.7.0";
 
 /// Семантическая группа-ветвь роутера (§16.0.3). Кадр маршрутизируется только
 /// в релевантные ветви (selective routing), сущность несёт свою первичную группу.
@@ -78,7 +83,10 @@ impl LabelStatus {
     pub fn is_asserted(self) -> bool {
         matches!(
             self,
-            LabelStatus::Observed | LabelStatus::Derived | LabelStatus::Temporal | LabelStatus::Weak
+            LabelStatus::Observed
+                | LabelStatus::Derived
+                | LabelStatus::Temporal
+                | LabelStatus::Weak
         )
     }
 
@@ -264,10 +272,18 @@ pub struct CanonicalObservation {
     pub session: SessionRef,
     /// Сущности (люди/объекты) с ключами связывания.
     pub entities: Vec<EntityRecord>,
-    /// Реляционные рёбра (уточняются в §16.3).
+    /// Реляционный слой (§16.7): гетерогенные записи `{kind:"zone",…}` (зоны с
+    /// `label`/`members`/`persistent_id`) и `{kind:"edge",a,b,rel}` (рёбра близости/
+    /// пересечения). Заполняется роутером из посчитанных вызывающим зон/рёбер.
     pub relations: Vec<serde_json::Value>,
-    /// События кадра (уточняются в §16.3).
+    /// Завершённые эпизоды кадра (§16.7): `{kind:"episode",label,started_at,ended_at,
+    /// duration_s,participants}` — инлайн на кадре, где эпизод закрылся.
     pub events: Vec<serde_json::Value>,
+    /// Активные активности кадра (§16.7, G₃/G₄): `{label,participants,started_at,
+    /// duration_s,stable}`. Новое поле с 16.7.0 — `#[serde(default)]` держит
+    /// обратную совместимость с 16.0.1-строками.
+    #[serde(default)]
+    pub activities: Vec<serde_json::Value>,
     /// Семантические группы, в которые маршрутизирован кадр (selective routing).
     pub semantic_groups: Vec<SemanticGroup>,
     /// Целевые метки для обучения (prediction targets, уточняются в §16.4).
@@ -303,6 +319,7 @@ impl CanonicalObservation {
             entities: Vec::new(),
             relations: Vec::new(),
             events: Vec::new(),
+            activities: Vec::new(),
             semantic_groups: Vec::new(),
             derived_targets: serde_json::Value::Null,
             quality: QualityBlock {
@@ -363,11 +380,13 @@ mod tests {
     #[test]
     fn mandatory_binding_keys_present() {
         let obs = sample();
-        let v: serde_json::Value =
-            serde_json::from_str(&obs.to_jsonl_line().unwrap()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&obs.to_jsonl_line().unwrap()).unwrap();
         // Уровень наблюдения.
         for key in ["dataset_id", "schema_version", "session_id", "frame_id"] {
-            assert!(v.get(key).is_some(), "missing observation binding key: {key}");
+            assert!(
+                v.get(key).is_some(),
+                "missing observation binding key: {key}"
+            );
         }
         // schema_version фиксируется автоматически.
         assert_eq!(v["schema_version"], serde_json::json!(SCHEMA_VERSION));
@@ -420,8 +439,37 @@ mod tests {
         assert!(!label.status.can_be_negative_class());
         // При сериализации отсутствующее значение не попадает в JSON.
         let v: serde_json::Value = serde_json::to_value(&label).unwrap();
-        assert!(v.get("value").is_none(), "withheld must not emit a value key");
+        assert!(
+            v.get("value").is_none(),
+            "withheld must not emit a value key"
+        );
         assert_eq!(v["status"], serde_json::json!("withheld"));
+    }
+
+    #[test]
+    fn activities_field_defaults_when_absent_in_old_lines() {
+        // §16.7 additive bump: a 16.0.1 line (no `activities` key) must still parse,
+        // with `activities` defaulting to empty — old JSONL stays readable.
+        let mut obs = sample();
+        obs.activities
+            .push(serde_json::json!({ "label": "typing", "participants": ["p1"] }));
+        let line = obs.to_jsonl_line().unwrap();
+        assert!(
+            line.contains("\"activities\""),
+            "new schema emits the activities key"
+        );
+
+        // Simulate an old line by stripping the activities key entirely.
+        let mut v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        v.as_object_mut().unwrap().remove("activities");
+        let old_line = serde_json::to_string(&v).unwrap();
+        assert!(!old_line.contains("\"activities\""));
+        let back = CanonicalObservation::from_jsonl_line(&old_line).expect("old line parses");
+        assert!(
+            back.activities.is_empty(),
+            "missing activities defaults to empty"
+        );
+        assert_eq!(SCHEMA_VERSION, "16.7.0");
     }
 
     #[test]

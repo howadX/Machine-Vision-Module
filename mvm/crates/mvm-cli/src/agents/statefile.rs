@@ -4,6 +4,7 @@
 //! it reads the blackboard the agents fill and computes FPS from the frame_id
 //! advance between writes.
 
+use crate::agents::FusedFrameBus;
 use crate::state::{SceneLog, StateFile};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::path::PathBuf;
@@ -33,6 +34,8 @@ pub(crate) struct StateFileWriter {
     journal: Option<JournalCfg>,
     /// (frame_id, instant) of the previous write — for FPS.
     last: Option<(u64, Instant)>,
+    fused_frames: Option<FusedFrameBus>,
+    event_cursor: Option<u64>,
 }
 
 impl StateFileWriter {
@@ -45,7 +48,23 @@ impl StateFileWriter {
         events_log: Option<SceneLog>,
         journal: Option<JournalCfg>,
     ) -> Self {
-        Self { state_file, dump_json, interval, max_writes, scene_log, events_log, journal, last: None }
+        Self {
+            state_file,
+            dump_json,
+            interval,
+            max_writes,
+            scene_log,
+            events_log,
+            journal,
+            last: None,
+            fused_frames: None,
+            event_cursor: None,
+        }
+    }
+
+    pub(crate) fn with_fused_frames(mut self, fused_frames: FusedFrameBus) -> Self {
+        self.fused_frames = Some(fused_frames);
+        self
     }
 }
 
@@ -58,18 +77,41 @@ impl Agent for StateFileWriter {
         let mut writes = 0u64;
         let mut errors = 0u64;
         while ctx.running() {
-            // Snapshot under the lock, then release before doing IO. A write
-            // lock because completed activity events (phase 11.C3) are consumed
-            // exclusively — each event belongs to exactly one written frame.
-            let snapshot = match ctx.world.write() {
-                Ok(mut w) => {
-                    let s = w.clone();
-                    w.events.clear();
-                    s
-                }
-                Err(_) => {
+            let (snapshot, canonical_events) = if let Some(fused) = &self.fused_frames {
+                let Some(packet) = fused.latest() else {
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                };
+                let delta = packet.scene.events.delta_after(self.event_cursor);
+                if let Some(gap) = delta.gap {
+                    eprintln!(
+                        "  statefile: canonical event gap after {}, available from {}",
+                        gap.requested_after, gap.available_from
+                    );
                     errors += 1;
-                    break;
+                }
+                self.event_cursor = delta.next_cursor;
+                let events: Vec<mvm_core::canonical::SceneEvent> =
+                    delta.events.into_iter().cloned().collect();
+                let projection = packet.scene.compatibility_world_state(Instant::now());
+                let mut snapshot = (*projection).clone();
+                if let Some(human) = &packet.evidence.human {
+                    snapshot.people = human.people.as_ref().clone();
+                }
+                if let Some(scene) = &packet.evidence.scene {
+                    snapshot.objects = scene.objects.as_ref().clone();
+                    snapshot.animals = scene.animals.iter().map(|animal| animal.bbox).collect();
+                }
+                (snapshot, Some(events))
+            } else {
+                // Compatibility-only fallback for unit tests and the transition
+                // window. Production mesh injects the canonical fused bus.
+                match ctx.world.read() {
+                    Ok(world) => (world.clone(), None),
+                    Err(_) => {
+                        errors += 1;
+                        break;
+                    }
                 }
             };
 
@@ -88,17 +130,28 @@ impl Agent for StateFileWriter {
                 if self.dump_json {
                     println!("{line}");
                 }
-                if let Some(log) = self.scene_log.as_mut() {
-                    if let Err(e) = log.append(&line) {
-                        eprintln!("  scene-log: append error: {e}");
-                    }
+                if let Some(log) = self.scene_log.as_mut()
+                    && let Err(e) = log.append(&line)
+                {
+                    eprintln!("  scene-log: append error: {e}");
                 }
             }
             // Drain completed episodes to the events log (phase 12.C1). The
             // snapshot holds this write's events (cleared from the shared world
             // above), so each episode is logged exactly once.
             if let Some(elog) = self.events_log.as_mut() {
-                if !snapshot.events.is_empty() {
+                if let Some(events) = &canonical_events {
+                    for event in events {
+                        match serde_json::to_string(event) {
+                            Ok(line) => {
+                                if let Err(e) = elog.append(&line) {
+                                    eprintln!("  events-log: append error: {e}");
+                                }
+                            }
+                            Err(e) => eprintln!("  events-log: serialize error: {e}"),
+                        }
+                    }
+                } else if !snapshot.events.is_empty() {
                     for line in self.state_file.events_log_lines(&snapshot.events) {
                         if let Err(e) = elog.append(&line) {
                             eprintln!("  events-log: append error: {e}");
@@ -111,27 +164,32 @@ impl Agent for StateFileWriter {
             // Rolling journal.md (phase 12.D1): re-render the day's recap from the
             // logs every `cadence` writes. Quietly skips while the logs are still
             // empty (recap bails with no entries).
-            if let Some(j) = &self.journal {
-                if j.cadence > 0 && writes % j.cadence == 0 {
-                    match crate::recap_cmd::recap_markdown_from_dir(&j.log_dir) {
-                        Ok(md) => {
-                            if let Err(e) = std::fs::write(&j.path, md) {
-                                eprintln!("  journal: write error: {e}");
-                            }
+            if let Some(j) = &self.journal
+                && j.cadence > 0
+                && writes.is_multiple_of(j.cadence)
+            {
+                match crate::recap_cmd::recap_markdown_from_dir(&j.log_dir) {
+                    Ok(md) => {
+                        if let Err(e) = std::fs::write(&j.path, md) {
+                            eprintln!("  journal: write error: {e}");
                         }
-                        Err(_) => { /* no entries yet — nothing to summarise */ }
                     }
+                    Err(_) => { /* no entries yet — nothing to summarise */ }
                 }
             }
 
-            if let Some(max) = self.max_writes {
-                if writes >= max {
-                    break;
-                }
+            if let Some(max) = self.max_writes
+                && writes >= max
+            {
+                break;
             }
             std::thread::sleep(self.interval);
         }
-        AgentHealth { name: self.name(), ticks: writes, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks: writes,
+            errors,
+        }
     }
 }
 
@@ -164,12 +222,84 @@ mod tests {
         let now = Instant::now();
         let prev = Some((0u64, now - Duration::from_secs(1)));
         let fps = fps_between(prev, 30, now);
-        assert!((fps - 30.0).abs() < 1.0, "≈30 fps over 1s / 30 frames, got {fps}");
+        assert!(
+            (fps - 30.0).abs() < 1.0,
+            "≈30 fps over 1s / 30 frames, got {fps}"
+        );
     }
 
     #[test]
     fn first_write_has_zero_fps() {
         assert_eq!(fps_between(None, 5, Instant::now()), 0.0);
+    }
+
+    #[test]
+    fn canonical_writer_reads_packet_without_mutating_shared_world() {
+        use crate::agents::{FrameEvidenceHandles, FusedFrameBus, FusedFramePacket};
+        use mvm_core::canonical::{FactSource, FrameStamp, SourceStamp};
+        use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput};
+
+        let now = Instant::now();
+        let camera =
+            mvm_mesh::Frame::new_stamped(4, image::DynamicImage::new_rgb8(8, 8), now, 1_000);
+        let mut canonical = CanonicalFusion::new("test-run");
+        let scene = canonical
+            .assemble(CanonicalFusionInput {
+                stamp: FrameStamp::new("test-run", 4, 1_000, 1_001).unwrap(),
+                sources: vec![
+                    SourceStamp::at_frame(FactSource::Capture, 4, 1_001)
+                        .relative_to(4, 0, 0)
+                        .unwrap(),
+                ],
+                people: &[],
+                objects: &[],
+                animals: &[],
+                activities: &[],
+                ended_activities: &[],
+                anomaly_score: 0.0,
+            })
+            .unwrap();
+        let fused = FusedFrameBus::new();
+        fused.publish(FusedFramePacket {
+            scene: Arc::new(scene),
+            evidence: FrameEvidenceHandles {
+                rgb: Arc::clone(&camera.image),
+                depth: None,
+                human: None,
+                scene: None,
+            },
+        });
+
+        let mut shared_world = WorldState::new(now);
+        shared_world.events.push(mvm_core::ActivityEvent {
+            label: "legacy-event".into(),
+            participants: Vec::new(),
+            started_at: 0.0,
+            ended_at: 1.0,
+            duration_s: 1.0,
+            peak_confidence: 1.0,
+            stable_participants: true,
+        });
+        let shared = Arc::new(RwLock::new(shared_world));
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::clone(&shared),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        let path =
+            std::env::temp_dir().join(format!("mvm_statefile_canonical_{}.md", std::process::id()));
+        let state = StateFile::open_at(path.clone()).unwrap();
+        let mut writer =
+            StateFileWriter::new(state, false, Duration::ZERO, Some(1), None, None, None)
+                .with_fused_frames(fused);
+        let health = writer.run(&ctx);
+        assert_eq!(health.ticks, 1);
+        assert_eq!(
+            shared.read().unwrap().events.len(),
+            1,
+            "canonical sink never drains shared compatibility events"
+        );
+        assert!(path.is_file());
     }
 
     #[test]
@@ -180,12 +310,22 @@ mod tests {
         world.frame_id = 7;
         world.people.push(PersonState {
             track_id: 10,
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
             face_bbox: None,
             identity: None,
             emotion: Some(("Neutral".into(), 0.4)),
             posture: Some(("sitting".into(), 0.9)),
-            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.5, confidence: 0.6 }),
+            position_3d: Some(Position3D {
+                x: 0.1,
+                y: 0.2,
+                z: 1.5,
+                confidence: 0.6,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -198,7 +338,8 @@ mod tests {
             recon_error: None,
             plausibility: None,
             torso_flexion: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             last_seen: now,
         });
         let ctx = MeshContext {
@@ -207,10 +348,17 @@ mod tests {
             stop: Arc::new(AtomicBool::new(false)),
         };
 
-        let path = std::env::temp_dir()
-            .join(format!("mvm_sfw_{}.md", std::process::id()));
+        let path = std::env::temp_dir().join(format!("mvm_sfw_{}.md", std::process::id()));
         let sf = StateFile::open_at(path.clone()).unwrap();
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, None, None);
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            None,
+            None,
+            None,
+        );
         let health = agent.run(&ctx);
 
         assert_eq!(health.ticks, 1, "exactly one write");
@@ -231,12 +379,22 @@ mod tests {
         world.frame_id = 3;
         world.people.push(PersonState {
             track_id: 0,
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
             face_bbox: None,
             identity: Some(("Вадим".into(), 0.9)),
             emotion: None,
             posture: None,
-            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.0, confidence: 0.6 }),
+            position_3d: Some(Position3D {
+                x: 0.1,
+                y: 0.2,
+                z: 1.0,
+                confidence: 0.6,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -264,13 +422,27 @@ mod tests {
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let log = sf.open_scene_log(log_dir.clone());
         // dump_json = false → proves the log is fed independently of stdout.
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(log), None, None);
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            Some(log),
+            None,
+            None,
+        );
         agent.run(&ctx);
 
-        let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
+        let files: Vec<_> = std::fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
         assert_eq!(files.len(), 1, "one day's scene-*.jsonl written");
         let fname = files[0].file_name().into_string().unwrap();
-        assert!(fname.starts_with("scene-") && fname.ends_with(".jsonl"), "got {fname}");
+        assert!(
+            fname.starts_with("scene-") && fname.ends_with(".jsonl"),
+            "got {fname}"
+        );
         let content = std::fs::read_to_string(files[0].path()).unwrap();
         assert_eq!(content.lines().count(), 1, "one line per write");
         let v: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
@@ -305,13 +477,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&log_dir);
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let elog = sf.open_events_log(log_dir.clone());
-        let mut agent = StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), None, Some(elog), None);
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            None,
+            Some(elog),
+            None,
+        );
         agent.run(&ctx);
 
-        let files: Vec<_> = std::fs::read_dir(&log_dir).unwrap().filter_map(|e| e.ok()).collect();
+        let files: Vec<_> = std::fs::read_dir(&log_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
         assert_eq!(files.len(), 1, "one day's events-*.jsonl");
         let fname = files[0].file_name().into_string().unwrap();
-        assert!(fname.starts_with("events-") && fname.ends_with(".jsonl"), "got {fname}");
+        assert!(
+            fname.starts_with("events-") && fname.ends_with(".jsonl"),
+            "got {fname}"
+        );
         let content = std::fs::read_to_string(files[0].path()).unwrap();
         assert_eq!(content.lines().count(), 1, "one line per episode");
         let v: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
@@ -332,12 +518,22 @@ mod tests {
         world.frame_id = 4;
         let mut p = PersonState {
             track_id: 0,
-            bbox: BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
             face_bbox: None,
             identity: Some(("Вадим".into(), 0.9)),
             emotion: None,
             posture: Some(("sitting".into(), 0.8)),
-            position_3d: Some(Position3D { x: 0.1, y: 0.2, z: 1.0, confidence: 0.6 }),
+            position_3d: Some(Position3D {
+                x: 0.1,
+                y: 0.2,
+                z: 1.0,
+                confidence: 0.6,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -367,9 +563,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&log_dir);
         let sf = StateFile::open_at(sf_path.clone()).unwrap();
         let scene = sf.open_scene_log(log_dir.clone());
-        let journal = JournalCfg { path: jrnl_path.clone(), log_dir: log_dir.clone(), cadence: 1 };
-        let mut agent =
-            StateFileWriter::new(sf, false, Duration::from_millis(1), Some(1), Some(scene), None, Some(journal));
+        let journal = JournalCfg {
+            path: jrnl_path.clone(),
+            log_dir: log_dir.clone(),
+            cadence: 1,
+        };
+        let mut agent = StateFileWriter::new(
+            sf,
+            false,
+            Duration::from_millis(1),
+            Some(1),
+            Some(scene),
+            None,
+            Some(journal),
+        );
         agent.run(&ctx);
 
         let md = std::fs::read_to_string(&jrnl_path).expect("journal.md written");

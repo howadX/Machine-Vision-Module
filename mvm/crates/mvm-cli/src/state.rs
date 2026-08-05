@@ -73,15 +73,24 @@ struct JsonFace {
     id: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     identity: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     identity_conf: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     emotion: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     emotion_conf: Option<f32>,
     /// Full 8-class softmax distribution from Rust ONNX model (phase 6.4).
     /// Absent when only Python bridge prediction is available.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_arr8")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_arr8"
+    )]
     emotion_distribution: Option<[f32; 8]>,
     /// Face bbox height (normalised 0..1) — diagnostic field for 3D calibration.
     #[serde(serialize_with = "ser_f32")]
@@ -104,7 +113,10 @@ struct JsonFace {
     likely_animal: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     posture: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     posture_conf: Option<f32>,
     /// Body-visibility regime ("full"/"upper"/"head") — occlusion-aware posture.
     /// With "upper"/"head" the lower body was NOT seen and `posture` is honestly
@@ -115,16 +127,25 @@ struct JsonFace {
     /// `posture` is withheld under occlusion.
     #[serde(skip_serializing_if = "Option::is_none")]
     torso_attitude: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     dist_m: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_arr3")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_arr3"
+    )]
     pos: Option<[f32; 3]>,
     /// Coarse locomotion state (phase 9.8): "idle" / "moving". Absent until the
     /// motion ring commits a state.
     #[serde(skip_serializing_if = "Option::is_none")]
     motion: Option<&'static str>,
     /// Centroid speed in torso-lengths/sec (phase 9.8).
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     velocity: Option<f32>,
     /// Coarse left-arm gesture off the motion ring ("reaching"/"waving", phase
     /// 10.0). Absent when the arm is resting.
@@ -142,22 +163,34 @@ struct JsonFace {
     hands: Vec<JsonHand>,
     /// Normalised Shannon entropy of the emotion distribution [0,1] — the
     /// pre-baked "how reliable is `emotion`" signal (phase 10.0). 1 ≈ uniform.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     emotion_entropy: Option<f32>,
     /// Deprecated posture VAE reconstruction error — always absent since 15.6
     /// (VAE dropped for Mahalanobis OOD); kept for schema stability.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     recon_error: Option<f32>,
     /// Posture OOD plausibility flag ("ok"/"low") — Mahalanobis-derived (phase 15.6).
     #[serde(skip_serializing_if = "Option::is_none")]
     plausibility: Option<String>,
     /// Continuous torso flexion, degrees to gravity-up (2D z-free) — phase 15.6,
     /// pure arithmetic. Present whenever a torso was measured.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     torso_flexion: Option<f32>,
     /// Coarse head yaw, degrees (phase 10.3): 0 = frontal, − nose toward image
     /// left, + toward image right. Latest face-matched snapshot.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     head_yaw: Option<f32>,
     /// Categorical head direction ("camera"/"left"/"right", phase 10.3).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,7 +212,10 @@ struct JsonHand {
     #[serde(skip_serializing_if = "Option::is_none")]
     gesture: Option<&'static str>,
     /// Normalised 21-point landmarks; present only under `--dump-landmarks`.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_vec2")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_vec2"
+    )]
     landmarks: Option<Vec<[f32; 2]>>,
 }
 
@@ -206,7 +242,10 @@ struct JsonObject {
     /// Frames this object has been tracked (temporal persistence).
     age: u32,
     /// Metric 3D position from depth-anchoring (phase 8.E.2); absent without depth.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_arr3")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_arr3"
+    )]
     pos: Option<[f32; 3]>,
     /// Normalised [x1,y1,x2,y2] in the original frame.
     #[serde(serialize_with = "ser_arr4")]
@@ -215,7 +254,10 @@ struct JsonObject {
     /// present only under `--masks` when a YOLO-seg mask is attached. A tighter
     /// value than the bbox area means the mask carved the background off (the
     /// depth-by-mask / contact signal).
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f32")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f32"
+    )]
     mask_coverage: Option<f32>,
     /// Object-permanence hold (phase 11): `true` when this is a *remembered*
     /// static fixture (keyboard/mouse/…) currently occluded by the operating
@@ -238,10 +280,16 @@ struct JsonActivity {
     #[serde(skip_serializing_if = "Option::is_none")]
     state: Option<&'static str>,
     /// Journal clock (seconds, monotonic per process) of the first sighting.
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f64")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f64"
+    )]
     started_at: Option<f64>,
     /// Observed duration so far (last sighting − first sighting).
-    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "ser_opt_f64")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "ser_opt_f64"
+    )]
     duration_s: Option<f64>,
 }
 
@@ -375,7 +423,9 @@ fn person_to_json_face(
         identity_conf: p.identity.as_ref().map(|(_, c)| *c),
         emotion: p.emotion.as_ref().map(|(e, _)| e.clone()),
         emotion_conf: p.emotion.as_ref().map(|(_, c)| *c),
-        emotion_distribution: dump_distributions.then_some(p.emotion_distribution).flatten(),
+        emotion_distribution: dump_distributions
+            .then_some(p.emotion_distribution)
+            .flatten(),
         bbox_h: p.bbox.y2 - p.bbox.y1,
         face_verified: p.identity.is_some() || p.emotion.is_some(),
         // Mesh parity (12.B3): the SceneAgent now publishes animal detections into
@@ -392,8 +442,14 @@ fn person_to_json_face(
         left_gesture: p.left_gesture,
         right_gesture: p.right_gesture,
         wrists: p.wrists.clone(),
-        hands: p.hands.iter().map(|h| hand_to_json(h, dump_landmarks)).collect(),
-        emotion_entropy: p.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
+        hands: p
+            .hands
+            .iter()
+            .map(|h| hand_to_json(h, dump_landmarks))
+            .collect(),
+        emotion_entropy: p
+            .emotion_distribution
+            .map(|d| mvm_core::emotion_entropy(&d)),
         recon_error: p.recon_error,
         plausibility: p.plausibility.clone(),
         torso_flexion: p.torso_flexion,
@@ -426,7 +482,12 @@ fn is_false(b: &bool) -> bool {
 /// object↔object `near` (both ids ≥ OBJECT_ID_BASE) — repeated desk geometry
 /// ("mouse near book") no consumer reasons over. Person-involving edges and all
 /// overlap/part_of edges always stay. `--dump-full-graph` keeps everything.
-fn relation_kept(a: u32, b: u32, kind: &mvm_core::types::RelationKind, full_graph: bool) -> bool {
+pub(crate) fn relation_kept(
+    a: u32,
+    b: u32,
+    kind: &mvm_core::types::RelationKind,
+    full_graph: bool,
+) -> bool {
     use mvm_core::types::RelationKind;
     if full_graph || !matches!(kind, RelationKind::Near) {
         return true;
@@ -451,13 +512,19 @@ fn r3_64(x: f64) -> f64 {
 fn ser_f32<S: serde::Serializer>(x: &f32, s: S) -> std::result::Result<S::Ok, S::Error> {
     s.serialize_f64(r3(*x))
 }
-fn ser_opt_f32<S: serde::Serializer>(x: &Option<f32>, s: S) -> std::result::Result<S::Ok, S::Error> {
+fn ser_opt_f32<S: serde::Serializer>(
+    x: &Option<f32>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
     match x {
         Some(v) => s.serialize_f64(r3(*v)),
         None => s.serialize_none(),
     }
 }
-fn ser_opt_f64<S: serde::Serializer>(x: &Option<f64>, s: S) -> std::result::Result<S::Ok, S::Error> {
+fn ser_opt_f64<S: serde::Serializer>(
+    x: &Option<f64>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
     match x {
         Some(v) => s.serialize_f64(r3_64(*v)),
         None => s.serialize_none(),
@@ -472,7 +539,10 @@ fn ser_fps<S: serde::Serializer>(x: &f64, s: S) -> std::result::Result<S::Ok, S:
 fn ser_arr3<S: serde::Serializer>(a: &[f32; 3], s: S) -> std::result::Result<S::Ok, S::Error> {
     [r3(a[0]), r3(a[1]), r3(a[2])].serialize(s)
 }
-fn ser_opt_arr3<S: serde::Serializer>(a: &Option<[f32; 3]>, s: S) -> std::result::Result<S::Ok, S::Error> {
+fn ser_opt_arr3<S: serde::Serializer>(
+    a: &Option<[f32; 3]>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
     match a {
         Some(arr) => ser_arr3(arr, s),
         None => s.serialize_none(),
@@ -481,7 +551,10 @@ fn ser_opt_arr3<S: serde::Serializer>(a: &Option<[f32; 3]>, s: S) -> std::result
 fn ser_arr4<S: serde::Serializer>(a: &[f32; 4], s: S) -> std::result::Result<S::Ok, S::Error> {
     [r3(a[0]), r3(a[1]), r3(a[2]), r3(a[3])].serialize(s)
 }
-fn ser_opt_arr8<S: serde::Serializer>(a: &Option<[f32; 8]>, s: S) -> std::result::Result<S::Ok, S::Error> {
+fn ser_opt_arr8<S: serde::Serializer>(
+    a: &Option<[f32; 8]>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
     match a {
         Some(arr) => {
             let out: [f64; 8] = std::array::from_fn(|i| r3(arr[i]));
@@ -494,7 +567,10 @@ fn ser_vec2<S: serde::Serializer>(v: &[[f32; 2]], s: S) -> std::result::Result<S
     let out: Vec<[f64; 2]> = v.iter().map(|p| [r3(p[0]), r3(p[1])]).collect();
     out.serialize(s)
 }
-fn ser_opt_vec2<S: serde::Serializer>(v: &Option<Vec<[f32; 2]>>, s: S) -> std::result::Result<S::Ok, S::Error> {
+fn ser_opt_vec2<S: serde::Serializer>(
+    v: &Option<Vec<[f32; 2]>>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
     match v {
         Some(vv) => ser_vec2(vv, s),
         None => s.serialize_none(),
@@ -524,12 +600,21 @@ pub struct SceneLog {
 
 impl SceneLog {
     pub fn open(dir: PathBuf, tz: FixedOffset, prefix: &'static str) -> Self {
-        Self { dir, tz, prefix, current_date: None, file: None }
+        Self {
+            dir,
+            tz,
+            prefix,
+            current_date: None,
+            file: None,
+        }
     }
 
     /// Append one JSON line, rotating on the current local date.
     pub fn append(&mut self, line: &str) -> Result<()> {
-        let date = Local::now().with_timezone(&self.tz).format("%Y-%m-%d").to_string();
+        let date = Local::now()
+            .with_timezone(&self.tz)
+            .format("%Y-%m-%d")
+            .to_string();
         self.append_at(line, &date)
     }
 
@@ -539,7 +624,12 @@ impl SceneLog {
         if self.current_date.as_deref() != Some(date) {
             fs::create_dir_all(&self.dir)?;
             let path = self.dir.join(format!("{}-{date}.jsonl", self.prefix));
-            self.file = Some(std::fs::OpenOptions::new().create(true).append(true).open(path)?);
+            self.file = Some(
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)?,
+            );
             self.current_date = Some(date.to_string());
         }
         if let Some(f) = self.file.as_mut() {
@@ -662,7 +752,12 @@ impl StateFile {
     }
 
     /// Write current state to file.
-    pub fn write(&self, tracker: &PersonTracker, fps: f64, objects: &[TrackedObject]) -> Result<()> {
+    pub fn write(
+        &self,
+        tracker: &PersonTracker,
+        fps: f64,
+        objects: &[TrackedObject],
+    ) -> Result<()> {
         let now = Local::now().with_timezone(&self.tz);
         let timestamp = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
@@ -670,11 +765,7 @@ impl StateFile {
         active_tracks.sort_by_key(|t| t.display_id);
         let face_count = active_tracks.len();
 
-        let status = if face_count > 0 {
-            "occupied"
-        } else {
-            "empty"
-        };
+        let status = if face_count > 0 { "occupied" } else { "empty" };
 
         let dominant_emotion = active_tracks
             .iter()
@@ -695,7 +786,12 @@ impl StateFile {
         if face_count > 0 {
             let names: Vec<String> = active_tracks
                 .iter()
-                .map(|t| t.shown_identity().map(|s| s.as_str()).unwrap_or("unknown").to_string())
+                .map(|t| {
+                    t.shown_identity()
+                        .map(|s| s.as_str())
+                        .unwrap_or("unknown")
+                        .to_string()
+                })
                 .collect();
             lines.push(format!("- Persons visible: {}", names.join(", ")));
 
@@ -729,11 +825,11 @@ impl StateFile {
                 lines.push(format!("  - posture: {posture}{pos_conf}"));
                 // Occlusion-aware regime: name what the camera actually saw when
                 // the lower body is occluded (posture is then honestly "—").
-                if let Some(cov) = t.body_coverage {
-                    if cov != "full" {
-                        let att = t.torso_attitude.unwrap_or("?");
-                        lines.push(format!("  - body_coverage: {cov} (torso {att})"));
-                    }
+                if let Some(cov) = t.body_coverage
+                    && cov != "full"
+                {
+                    let att = t.torso_attitude.unwrap_or("?");
+                    lines.push(format!("  - body_coverage: {cov} (torso {att})"));
                 }
                 if let Some(fl) = t.torso_flexion {
                     lines.push(format!("  - torso_flexion: {fl:.1}°"));
@@ -741,9 +837,7 @@ impl StateFile {
                 if let Some(d) = t.distance {
                     lines.push(format!("  - distance: {d:.2}"));
                 }
-                if let (Some(x), Some(y), Some(z)) =
-                    (t.position_x, t.position_y, t.position_z)
-                {
+                if let (Some(x), Some(y), Some(z)) = (t.position_x, t.position_y, t.position_z) {
                     lines.push(format!("  - position: ({x:.2}, {y:.2}, {z:.2})m"));
                 }
                 if let Some(ws) = t.ws_confidence {
@@ -785,11 +879,9 @@ impl StateFile {
         lines.push(format!("- Status: {status}"));
         lines.push(String::new());
 
-        fs::write(&self.path, lines.join("\n"))?;
+        atomic_write(&self.path, lines.join("\n").as_bytes())?;
 
-        eprintln!(
-            "  state written: {face_count} faces, {fps:.1} fps"
-        );
+        eprintln!("  state written: {face_count} faces, {fps:.1} fps");
         Ok(())
     }
 
@@ -810,56 +902,75 @@ impl StateFile {
 
         let mut active: Vec<_> = tracker.active().collect();
         active.sort_by_key(|t| t.display_id);
-        let status = if active.is_empty() { "empty" } else { "occupied" };
+        let status = if active.is_empty() {
+            "empty"
+        } else {
+            "occupied"
+        };
 
         // Build entities for the scene-graph. Entities without a 3D position use (0,0,0)
         // with pos_conf=0 so they still participate in 2D overlap relations.
-        let mut entities: Vec<Entity> = active.iter().map(|t| {
-            let pos_3d = match (t.position_x, t.position_y, t.position_z) {
-                (Some(x), Some(y), Some(z)) => [x, y, z],
-                _ => [0.0, 0.0, 0.0],
-            };
-            Entity {
-                id: t.display_id,
-                kind: EntityKind::Person,
-                bbox: t.bbox,
-                pos_3d,
-                radius_m: 0.15, // rough head radius
-                pos_conf: t.ws_confidence.unwrap_or(0.0),
-                identity: t.shown_identity().cloned(),
-                emotion: t.emotion.clone(),
-                emotion_distribution: t.emotion_distribution,
-            }
-        }).collect();
+        let mut entities: Vec<Entity> = active
+            .iter()
+            .map(|t| {
+                let pos_3d = match (t.position_x, t.position_y, t.position_z) {
+                    (Some(x), Some(y), Some(z)) => [x, y, z],
+                    _ => [0.0, 0.0, 0.0],
+                };
+                Entity {
+                    id: t.display_id,
+                    kind: EntityKind::Person,
+                    bbox: t.bbox,
+                    pos_3d,
+                    radius_m: 0.15, // rough head radius
+                    pos_conf: t.ws_confidence.unwrap_or(0.0),
+                    identity: t.shown_identity().cloned(),
+                    emotion: t.emotion.clone(),
+                    emotion_distribution: t.emotion_distribution,
+                }
+            })
+            .collect();
 
         // Object nodes (phase 8.E): fed into the same object-agnostic graph so
         // person↔object overlap relations ("context outward from the human") emerge.
         entities.extend(object_entities(objects));
 
-        let json_objects: Vec<JsonObject> = objects.iter().map(|o| JsonObject {
-            id: o.id,
-            class: o.class_name.to_string(),
-            score: o.score,
-            age: o.age,
-            pos: o.pos_3d,
-            bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
-            mask_coverage: o.mask.as_ref().map(|m| m.frame_coverage()),
-            remembered: o.missed > 0,
-        }).collect();
+        let json_objects: Vec<JsonObject> = objects
+            .iter()
+            .map(|o| JsonObject {
+                id: o.id,
+                class: o.class_name.to_string(),
+                score: o.score,
+                age: o.age,
+                pos: o.pos_3d,
+                bbox: [o.bbox.x1, o.bbox.y1, o.bbox.x2, o.bbox.y2],
+                mask_coverage: o.mask.as_ref().map(|m| m.frame_coverage()),
+                remembered: o.missed > 0,
+            })
+            .collect();
 
         let scene = mvm_fusion::build_scene(entities);
 
-        let relations: Vec<JsonRelation> = scene.relations.iter()
+        let relations: Vec<JsonRelation> = scene
+            .relations
+            .iter()
             .filter(|r| relation_kept(r.a, r.b, &r.kind, self.dump_full_graph))
             .map(|r| {
-            use mvm_core::types::RelationKind;
-            let kind = match r.kind {
-                RelationKind::Near        => "near",
-                RelationKind::Overlapping => "overlapping",
-                RelationKind::PartOf      => "part_of",
-            };
-            JsonRelation { a: r.a, b: r.b, dist_m: r.distance_m, overlap: r.overlap, kind }
-        }).collect();
+                use mvm_core::types::RelationKind;
+                let kind = match r.kind {
+                    RelationKind::Near => "near",
+                    RelationKind::Overlapping => "overlapping",
+                    RelationKind::PartOf => "part_of",
+                };
+                JsonRelation {
+                    a: r.a,
+                    b: r.b,
+                    dist_m: r.distance_m,
+                    overlap: r.overlap,
+                    kind,
+                }
+            })
+            .collect();
 
         // ── Cross-group activities (phase 8.F) on the sync path too ─────────
         // Build the fused inputs from tracks + IoU-matched bodies + tracked
@@ -889,9 +1000,12 @@ impl StateFile {
                 bbox: o.bbox,
                 confidence: o.score,
                 age: o.age,
-                position_3d: o
-                    .pos_3d
-                    .map(|[x, y, z]| mvm_core::Position3D { x, y, z, confidence: o.pos_conf }),
+                position_3d: o.pos_3d.map(|[x, y, z]| mvm_core::Position3D {
+                    x,
+                    y,
+                    z,
+                    confidence: o.pos_conf,
+                }),
                 mask: o.mask.clone(),
                 remembered: o.missed > 0,
                 last_seen: now_i,
@@ -912,63 +1026,80 @@ impl StateFile {
                 })
                 .collect();
 
-        let faces: Vec<JsonFace> = active.iter().map(|t| {
-            let pos = match (t.position_x, t.position_y, t.position_z) {
-                (Some(x), Some(y), Some(z)) => Some([x, y, z]),
-                _ => None,
-            };
-            // Phase 10.0 fix: the sync hot-path computes per-body wrists + hands
-            // (hand agent) but had been dropping them. Match each track to its
-            // body by bbox-IoU (same association the mesh's project_people uses)
-            // so hand landmarks / handedness / hand-gestures reach the JSON.
-            let body = best_body_for_track(&t.bbox, bodies);
-            JsonFace {
-                id: t.display_id,
-                identity: t.shown_identity().cloned(),
-                identity_conf: t.shown_identity().and(t.identity_confidence),
-                emotion: t.emotion.clone(),
-                emotion_conf: t.emotion_confidence,
-                emotion_distribution: self.dump_distributions.then_some(t.emotion_distribution).flatten(),
-                face_verified: t.emotion.is_some() || t.shown_identity().is_some(),
-                likely_animal: animals.iter().any(|a| t.bbox.iou(&a.bbox) > ANIMAL_IOU),
-                posture: t.posture.clone(),
-                posture_conf: t.posture_confidence,
-                body_coverage: t.body_coverage,
-                torso_attitude: t.torso_attitude,
-                dist_m: t.distance,
-                pos,
-                bbox_h: t.bbox.y2 - t.bbox.y1,
-                // Motion straight off the track (phase 9.8) — skip the startup Unknown.
-                motion: match t.motion.state() {
-                    mvm_core::motion::MotionState::Unknown => None,
-                    s => Some(s.as_str()),
-                },
-                velocity: if t.motion.is_empty() { None } else { Some(t.motion.speed()) },
-                // Phase 10.0: emit what the track already computes. A resting arm
-                // maps to an absent field, mirroring PersonState::from_track.
-                left_gesture: match t.motion.left_gesture() {
-                    mvm_core::motion::ArmGesture::None => None,
-                    g => Some(g.as_str()),
-                },
-                right_gesture: match t.motion.right_gesture() {
-                    mvm_core::motion::ArmGesture::None => None,
-                    g => Some(g.as_str()),
-                },
-                // Wrists + hands from the IoU-matched body (phase 10.0). 21-pt
-                // landmarks only under --dump-landmarks; presence/side/handedness/
-                // gesture always. Empty when no body matched this track.
-                wrists: body.map(|b| b.wrists.clone()).unwrap_or_default(),
-                hands: body
-                    .map(|b| b.hands.iter().map(|h| hand_to_json(h, self.dump_landmarks)).collect())
-                    .unwrap_or_default(),
-                emotion_entropy: t.emotion_distribution.map(|d| mvm_core::emotion_entropy(&d)),
-                recon_error: t.recon_error,
-                plausibility: t.plausibility.clone(),
-                torso_flexion: t.torso_flexion,
-                head_yaw: t.head_yaw,
-                head_facing: t.head_facing,
-            }
-        }).collect();
+        let faces: Vec<JsonFace> = active
+            .iter()
+            .map(|t| {
+                let pos = match (t.position_x, t.position_y, t.position_z) {
+                    (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+                    _ => None,
+                };
+                // Phase 10.0 fix: the sync hot-path computes per-body wrists + hands
+                // (hand agent) but had been dropping them. Match each track to its
+                // body by bbox-IoU (same association the mesh's project_people uses)
+                // so hand landmarks / handedness / hand-gestures reach the JSON.
+                let body = best_body_for_track(&t.bbox, bodies);
+                JsonFace {
+                    id: t.display_id,
+                    identity: t.shown_identity().cloned(),
+                    identity_conf: t.shown_identity().and(t.identity_confidence),
+                    emotion: t.emotion.clone(),
+                    emotion_conf: t.emotion_confidence,
+                    emotion_distribution: self
+                        .dump_distributions
+                        .then_some(t.emotion_distribution)
+                        .flatten(),
+                    face_verified: t.emotion.is_some() || t.shown_identity().is_some(),
+                    likely_animal: animals.iter().any(|a| t.bbox.iou(&a.bbox) > ANIMAL_IOU),
+                    posture: t.posture.clone(),
+                    posture_conf: t.posture_confidence,
+                    body_coverage: t.body_coverage,
+                    torso_attitude: t.torso_attitude,
+                    dist_m: t.distance,
+                    pos,
+                    bbox_h: t.bbox.y2 - t.bbox.y1,
+                    // Motion straight off the track (phase 9.8) — skip the startup Unknown.
+                    motion: match t.motion.state() {
+                        mvm_core::motion::MotionState::Unknown => None,
+                        s => Some(s.as_str()),
+                    },
+                    velocity: if t.motion.is_empty() {
+                        None
+                    } else {
+                        Some(t.motion.speed())
+                    },
+                    // Phase 10.0: emit what the track already computes. A resting arm
+                    // maps to an absent field, mirroring PersonState::from_track.
+                    left_gesture: match t.motion.left_gesture() {
+                        mvm_core::motion::ArmGesture::None => None,
+                        g => Some(g.as_str()),
+                    },
+                    right_gesture: match t.motion.right_gesture() {
+                        mvm_core::motion::ArmGesture::None => None,
+                        g => Some(g.as_str()),
+                    },
+                    // Wrists + hands from the IoU-matched body (phase 10.0). 21-pt
+                    // landmarks only under --dump-landmarks; presence/side/handedness/
+                    // gesture always. Empty when no body matched this track.
+                    wrists: body.map(|b| b.wrists.clone()).unwrap_or_default(),
+                    hands: body
+                        .map(|b| {
+                            b.hands
+                                .iter()
+                                .map(|h| hand_to_json(h, self.dump_landmarks))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    emotion_entropy: t
+                        .emotion_distribution
+                        .map(|d| mvm_core::emotion_entropy(&d)),
+                    recon_error: t.recon_error,
+                    plausibility: t.plausibility.clone(),
+                    torso_flexion: t.torso_flexion,
+                    head_yaw: t.head_yaw,
+                    head_facing: t.head_facing,
+                }
+            })
+            .collect();
 
         let stable_zones = self.stable_zones(&scene);
         // Anomaly v2 on the sync path (11.B2) — ticked once per emitted line.
@@ -976,11 +1107,21 @@ impl StateFile {
             .anomaly
             .lock()
             .map(|mut a| {
-                a.update(&fusion_people, &obj_states, self.epoch.elapsed().as_secs_f64())
+                a.update(
+                    &fusion_people,
+                    &obj_states,
+                    self.epoch.elapsed().as_secs_f64(),
+                )
             })
             .unwrap_or(0.0);
         let frame = JsonFrame {
-            ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
+            ts,
+            fps,
+            status,
+            faces,
+            objects: json_objects,
+            zones: scene.zones,
+            relations,
             activities,
             events: Vec::new(),
             stable_zones,
@@ -999,7 +1140,12 @@ impl StateFile {
         tracker
             .update(&scene.zones, &scene.entities)
             .iter()
-            .map(|z| JsonZone { id: z.id, members: z.members.clone(), label: z.label, age: z.age })
+            .map(|z| JsonZone {
+                id: z.id,
+                members: z.members.clone(),
+                label: z.label,
+                age: z.age,
+            })
             .collect()
     }
 
@@ -1009,7 +1155,11 @@ impl StateFile {
     pub fn to_json_line_world(&self, world: &mvm_core::WorldState, fps: f64) -> String {
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
-        let status = if world.people.is_empty() { "empty" } else { "occupied" };
+        let status = if world.people.is_empty() {
+            "empty"
+        } else {
+            "occupied"
+        };
 
         // Entities for the relational graph (people + objects, object-agnostic).
         let mut entities: Vec<mvm_core::types::Entity> =
@@ -1024,23 +1174,38 @@ impl StateFile {
                     .animals
                     .iter()
                     .any(|a| p.bbox.iou(a) > mvm_scene::ANIMAL_IOU);
-                person_to_json_face(p, self.dump_landmarks, self.dump_distributions, likely_animal)
+                person_to_json_face(
+                    p,
+                    self.dump_landmarks,
+                    self.dump_distributions,
+                    likely_animal,
+                )
             })
             .collect();
-        let json_objects: Vec<JsonObject> = world.objects.iter().map(object_state_to_json).collect();
+        let json_objects: Vec<JsonObject> =
+            world.objects.iter().map(object_state_to_json).collect();
 
         let scene = mvm_fusion::build_scene(entities);
-        let relations: Vec<JsonRelation> = scene.relations.iter()
+        let relations: Vec<JsonRelation> = scene
+            .relations
+            .iter()
             .filter(|r| relation_kept(r.a, r.b, &r.kind, self.dump_full_graph))
             .map(|r| {
-            use mvm_core::types::RelationKind;
-            let kind = match r.kind {
-                RelationKind::Near => "near",
-                RelationKind::Overlapping => "overlapping",
-                RelationKind::PartOf => "part_of",
-            };
-            JsonRelation { a: r.a, b: r.b, dist_m: r.distance_m, overlap: r.overlap, kind }
-        }).collect();
+                use mvm_core::types::RelationKind;
+                let kind = match r.kind {
+                    RelationKind::Near => "near",
+                    RelationKind::Overlapping => "overlapping",
+                    RelationKind::PartOf => "part_of",
+                };
+                JsonRelation {
+                    a: r.a,
+                    b: r.b,
+                    dist_m: r.distance_m,
+                    overlap: r.overlap,
+                    kind,
+                }
+            })
+            .collect();
 
         // Activities from the journal instances when the fusion step publishes
         // them (temporal fields); fall back to the flat list otherwise.
@@ -1075,7 +1240,13 @@ impl StateFile {
 
         let stable_zones = self.stable_zones(&scene);
         let frame = JsonFrame {
-            ts, fps, status, faces, objects: json_objects, zones: scene.zones, relations,
+            ts,
+            fps,
+            status,
+            faces,
+            objects: json_objects,
+            zones: scene.zones,
+            relations,
             activities,
             events,
             stable_zones,
@@ -1112,7 +1283,10 @@ impl StateFile {
         events
             .iter()
             .map(|e| {
-                let logged = JsonEventLogged { ts: &ts, event: JsonEvent::from(e) };
+                let logged = JsonEventLogged {
+                    ts: &ts,
+                    event: JsonEvent::from(e),
+                };
                 serde_json::to_string(&logged).unwrap_or_default()
             })
             .collect()
@@ -1131,7 +1305,7 @@ impl StateFile {
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
         let md = crate::render::render_snapshot(world, fps, &ts);
-        fs::write(&self.path, md)?;
+        atomic_write(&self.path, md.as_bytes())?;
         Ok(())
     }
 
@@ -1148,31 +1322,63 @@ impl StateFile {
         eprintln!("  ╔══════════════════════════════════════════════════════════════════════╗");
         eprintln!("  ║  MVM Rust Pipeline — Frame Analysis                               ║");
         eprintln!("  ╠══════════════════════════════════════════════════════════════════════╣");
-        eprintln!("  ║  Time: {ts} | FPS: {fps:.1} | Status: {status:<8} | Faces: {face_count:<3}         ║", 
-            ts = ts, fps = fps, status = status, face_count = face_count);
+        eprintln!(
+            "  ║  Time: {ts} | FPS: {fps:.1} | Status: {status:<8} | Faces: {face_count:<3}         ║",
+            ts = ts,
+            fps = fps,
+            status = status,
+            face_count = face_count
+        );
         eprintln!("  ╠══════════════════════════════════════════════════════════════════════╣");
 
         if face_count > 0 {
-            eprintln!("  ║ {:>3} │ {:<12} │ {:>5} │ {:<12} │ {:>5} │ {:<13} │ {:>5} │ {:>6} │ {:>18} ║",
-                "ID", "Identity", "Conf", "Emotion", "Conf", "Posture", "Conf", "Dist,m", "Position (x,y,z)m");
-            eprintln!("  ╟─────┼──────────────┼───────┼──────────────┼───────┼───────────────┼───────┼────────┼────────────────────╢");
+            eprintln!(
+                "  ║ {:>3} │ {:<12} │ {:>5} │ {:<12} │ {:>5} │ {:<13} │ {:>5} │ {:>6} │ {:>18} ║",
+                "ID",
+                "Identity",
+                "Conf",
+                "Emotion",
+                "Conf",
+                "Posture",
+                "Conf",
+                "Dist,m",
+                "Position (x,y,z)m"
+            );
+            eprintln!(
+                "  ╟─────┼──────────────┼───────┼──────────────┼───────┼───────────────┼───────┼────────┼────────────────────╢"
+            );
 
             for t in &active {
                 let id = t.display_id;
                 let identity = t.shown_identity().map(|s| s.as_str()).unwrap_or("—");
-                let id_conf = t.shown_identity().and(t.identity_confidence).map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
+                let id_conf = t
+                    .shown_identity()
+                    .and(t.identity_confidence)
+                    .map(|c| format!("{c:.2}"))
+                    .unwrap_or_else(|| "—".into());
                 let emotion = t.emotion.as_deref().unwrap_or("—");
-                let emo_conf = t.emotion_confidence.map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
+                let emo_conf = t
+                    .emotion_confidence
+                    .map(|c| format!("{c:.2}"))
+                    .unwrap_or_else(|| "—".into());
                 let posture = t.posture.as_deref().unwrap_or("—");
-                let pos_conf = t.posture_confidence.map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
-                let dist = t.distance.map(|d| format!("{d:.2}")).unwrap_or_else(|| "—".into());
+                let pos_conf = t
+                    .posture_confidence
+                    .map(|c| format!("{c:.2}"))
+                    .unwrap_or_else(|| "—".into());
+                let dist = t
+                    .distance
+                    .map(|d| format!("{d:.2}"))
+                    .unwrap_or_else(|| "—".into());
                 let position = match (t.position_x, t.position_y, t.position_z) {
                     (Some(x), Some(y), Some(z)) => format!("({x:.2}, {y:.2}, {z:.2})"),
                     _ => "—".into(),
                 };
 
-                eprintln!("  ║ {:>3} │ {:<12} │ {:>5} │ {:<12} │ {:>5} │ {:<13} │ {:>5} │ {:>6} │ {:>18} ║",
-                    id, identity, id_conf, emotion, emo_conf, posture, pos_conf, dist, position);
+                eprintln!(
+                    "  ║ {:>3} │ {:<12} │ {:>5} │ {:<12} │ {:>5} │ {:<13} │ {:>5} │ {:>6} │ {:>18} ║",
+                    id, identity, id_conf, emotion, emo_conf, posture, pos_conf, dist, position
+                );
             }
         } else {
             eprintln!("  ║  No faces detected                                                ║");
@@ -1191,56 +1397,100 @@ impl StateFile {
         eprintln!("  ╔══════════════════════════════════════════════════════════════════════╗");
         eprintln!("  ║  Emotion A/B Debug (EmotiEffLib=Rust  HSEmotion=Python)           ║");
         eprintln!("  ╠══════════════════════════════════════════════════════════════════════╣");
-        eprintln!("  ║ {:>3} │ {:<12} │ {:>5} │ {:<12} │ {:>5} │ {:>6} ║",
-            "ID", "Rust Emo", "Conf", "Py Emo", "Conf", "Winner");
+        eprintln!(
+            "  ║ {:>3} │ {:<12} │ {:>5} │ {:<12} │ {:>5} │ {:>6} ║",
+            "ID", "Rust Emo", "Conf", "Py Emo", "Conf", "Winner"
+        );
         eprintln!("  ╟─────┼──────────────┼───────┼──────────────┼───────┼────────╢");
         for e in debug {
-            let py_emo  = e.py_emotion.as_deref().unwrap_or("—");
-            let py_conf = e.py_conf.map(|c| format!("{c:.2}")).unwrap_or_else(|| "—".into());
-            eprintln!("  ║ {:>3} │ {:<12} │ {:>5.2} │ {:<12} │ {:>5} │ {:>6} ║",
-                e.id, e.rust_emotion, e.rust_conf, py_emo, py_conf, e.winner);
+            let py_emo = e.py_emotion.as_deref().unwrap_or("—");
+            let py_conf = e
+                .py_conf
+                .map(|c| format!("{c:.2}"))
+                .unwrap_or_else(|| "—".into());
+            eprintln!(
+                "  ║ {:>3} │ {:<12} │ {:>5.2} │ {:<12} │ {:>5} │ {:>6} ║",
+                e.id, e.rust_emotion, e.rust_conf, py_emo, py_conf, e.winner
+            );
         }
         eprintln!("  ╚══════════════════════════════════════════════════════════════════════╝");
         eprintln!();
     }
 
     /// Like `to_json_line`, but adds `emotion_debug` object to each face with a debug entry.
-    pub fn to_json_line_debug(&self, tracker: &PersonTracker, fps: f64, debug: &[EmotionDebugEntry]) -> String {
+    pub fn to_json_line_debug(
+        &self,
+        tracker: &PersonTracker,
+        fps: f64,
+        debug: &[EmotionDebugEntry],
+    ) -> String {
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
         let mut active: Vec<_> = tracker.active().collect();
         active.sort_by_key(|t| t.display_id);
-        let status = if active.is_empty() { "empty" } else { "occupied" };
+        let status = if active.is_empty() {
+            "empty"
+        } else {
+            "occupied"
+        };
 
-        let faces: Vec<JsonFaceDebug> = active.iter().map(|t| {
-            let pos = match (t.position_x, t.position_y, t.position_z) {
-                (Some(x), Some(y), Some(z)) => Some([x, y, z]),
-                _ => None,
-            };
-            let emotion_debug = debug.iter().find(|e| e.id == t.display_id).map(|e| JsonEmotionDebug {
-                rust: e.rust_emotion.clone(),
-                rust_conf: e.rust_conf,
-                py: e.py_emotion.clone(),
-                py_conf: e.py_conf,
-                winner: e.winner,
-            });
-            JsonFaceDebug {
-                id: t.display_id,
-                identity: t.shown_identity().cloned(),
-                identity_conf: t.shown_identity().and(t.identity_confidence),
-                emotion: t.emotion.clone(),
-                emotion_conf: t.emotion_confidence,
-                posture: t.posture.clone(),
-                posture_conf: t.posture_confidence,
-                dist_m: t.distance,
-                pos,
-                emotion_debug,
-            }
-        }).collect();
+        let faces: Vec<JsonFaceDebug> = active
+            .iter()
+            .map(|t| {
+                let pos = match (t.position_x, t.position_y, t.position_z) {
+                    (Some(x), Some(y), Some(z)) => Some([x, y, z]),
+                    _ => None,
+                };
+                let emotion_debug =
+                    debug
+                        .iter()
+                        .find(|e| e.id == t.display_id)
+                        .map(|e| JsonEmotionDebug {
+                            rust: e.rust_emotion.clone(),
+                            rust_conf: e.rust_conf,
+                            py: e.py_emotion.clone(),
+                            py_conf: e.py_conf,
+                            winner: e.winner,
+                        });
+                JsonFaceDebug {
+                    id: t.display_id,
+                    identity: t.shown_identity().cloned(),
+                    identity_conf: t.shown_identity().and(t.identity_confidence),
+                    emotion: t.emotion.clone(),
+                    emotion_conf: t.emotion_confidence,
+                    posture: t.posture.clone(),
+                    posture_conf: t.posture_confidence,
+                    dist_m: t.distance,
+                    pos,
+                    emotion_debug,
+                }
+            })
+            .collect();
 
-        let frame = JsonFrameDebug { ts, fps, status, faces };
+        let frame = JsonFrameDebug {
+            ts,
+            fps,
+            status,
+            faces,
+        };
         serde_json::to_string(&frame).unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("mvm-state");
+    let temp = path.with_file_name(format!(".{file_name}.tmp-{}", std::process::id()));
+    fs::write(&temp, bytes)?;
+    match fs::rename(&temp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            Err(error)
+        }
     }
 }
 
@@ -1250,8 +1500,7 @@ mod tests {
     use mvm_core::{Detection, PersonTracker};
 
     fn temp_state_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("mvm_test_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mvm_test_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join(name)
     }
@@ -1309,8 +1558,10 @@ mod tests {
             torso_flexion: None,
             body_coverage: None,
             torso_attitude: None,
-            emotion_distribution: None, embedding: None,
- head_yaw: None, head_facing: None,
+            emotion_distribution: None,
+            embedding: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
 
@@ -1375,9 +1626,11 @@ mod tests {
                 torso_flexion: None,
                 body_coverage: None,
                 torso_attitude: None,
-                emotion_distribution: None, embedding: None,
- head_yaw: None, head_facing: None,
-            mask: None,
+                emotion_distribution: None,
+                embedding: None,
+                head_yaw: None,
+                head_facing: None,
+                mask: None,
             },
             Detection {
                 bbox: mvm_core::BBox {
@@ -1402,9 +1655,11 @@ mod tests {
                 torso_flexion: None,
                 body_coverage: None,
                 torso_attitude: None,
-                emotion_distribution: None, embedding: None,
- head_yaw: None, head_facing: None,
-            mask: None,
+                emotion_distribution: None,
+                embedding: None,
+                head_yaw: None,
+                head_facing: None,
+                mask: None,
             },
         ]);
 
@@ -1447,14 +1702,7 @@ mod tests {
         let tracker = PersonTracker::new();
         sf.write(&tracker, 0.0, &[]).unwrap();
         assert!(path.exists());
-        let _ = std::fs::remove_dir_all(
-            path.parent()
-                .unwrap()
-                .parent()
-                .unwrap()
-                .parent()
-                .unwrap(),
-        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap().parent().unwrap());
     }
 
     #[test]
@@ -1488,7 +1736,12 @@ mod tests {
         let mut tracker = PersonTracker::new();
         tracker.register_user("Вадим");
         tracker.tick(&[Detection {
-            bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
+            bbox: mvm_core::BBox {
+                x1: 0.2,
+                y1: 0.3,
+                x2: 0.5,
+                y2: 0.7,
+            },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.69),
             emotion: Some("Happiness".into()),
@@ -1505,8 +1758,10 @@ mod tests {
             torso_flexion: None,
             body_coverage: None,
             torso_attitude: None,
-            emotion_distribution: None, embedding: None,
- head_yaw: None, head_facing: None,
+            emotion_distribution: None,
+            embedding: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
         let line = sf.to_json_line(&tracker, 29.9, &[], &[], &[]);
@@ -1535,7 +1790,15 @@ mod tests {
 
     // ── Object scene-nodes (phase 8.E) ──────────────────────────────────────
 
-    fn obj(id_offset: u32, class_name: &'static str, x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> TrackedObject {
+    fn obj(
+        id_offset: u32,
+        class_name: &'static str,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        score: f32,
+    ) -> TrackedObject {
         TrackedObject {
             id: mvm_scene::OBJECT_ID_BASE + id_offset,
             class_name,
@@ -1559,10 +1822,16 @@ mod tests {
         let objs = v["objects"].as_array().expect("objects array present");
         assert_eq!(objs.len(), 1);
         assert_eq!(objs[0]["class"], "cup");
-        assert_eq!(objs[0]["id"].as_u64().unwrap(), mvm_scene::OBJECT_ID_BASE as u64);
+        assert_eq!(
+            objs[0]["id"].as_u64().unwrap(),
+            mvm_scene::OBJECT_ID_BASE as u64
+        );
         assert!((objs[0]["score"].as_f64().unwrap() - 0.81).abs() < 0.01);
         // No mask attached → field omitted (skip_serializing_if).
-        assert!(objs[0]["mask_coverage"].is_null(), "maskless object omits mask_coverage");
+        assert!(
+            objs[0]["mask_coverage"].is_null(),
+            "maskless object omits mask_coverage"
+        );
     }
 
     #[test]
@@ -1570,16 +1839,35 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_json_mask.md")).unwrap();
         let tracker = PersonTracker::new();
         let r = mvm_scene::MASK_RES as u32;
-        let full = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let full = mvm_core::BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         let mask = mvm_scene::mask::assemble_mask(
-            &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
-            &full, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
+            &vec![10.0f32; (r * r) as usize],
+            1,
+            r as usize,
+            r as usize,
+            &[1.0],
+            &full,
+            mvm_scene::Letterbox {
+                scale: 1.0,
+                pad_x: 0.0,
+                pad_y: 0.0,
+            },
+            r,
+            r,
+            r,
         );
         let mut o = obj(0, "cup", 0.4, 0.4, 0.5, 0.55, 0.8);
         o.mask = Some(mask);
         let line = sf.to_json_line(&tracker, 30.0, &[o], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-        let cov = v["objects"][0]["mask_coverage"].as_f64().expect("mask_coverage present");
+        let cov = v["objects"][0]["mask_coverage"]
+            .as_f64()
+            .expect("mask_coverage present");
         assert!(cov > 0.9, "a full-frame mask → ~full coverage, got {cov}");
     }
 
@@ -1590,23 +1878,50 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_world_obj_parity.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
         let r = mvm_scene::MASK_RES as u32;
-        let full = mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let full = mvm_core::BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         let mask = mvm_scene::mask::assemble_mask(
-            &vec![10.0f32; (r * r) as usize], 1, r as usize, r as usize, &[1.0],
-            &full, mvm_scene::Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }, r, r, r,
+            &vec![10.0f32; (r * r) as usize],
+            1,
+            r as usize,
+            r as usize,
+            &[1.0],
+            &full,
+            mvm_scene::Letterbox {
+                scale: 1.0,
+                pad_x: 0.0,
+                pad_y: 0.0,
+            },
+            r,
+            r,
+            r,
         );
         let mut o = object_state(
             mvm_scene::OBJECT_ID_BASE,
             "keyboard",
-            mvm_core::BBox { x1: 0.35, y1: 0.5, x2: 0.55, y2: 0.7 },
+            mvm_core::BBox {
+                x1: 0.35,
+                y1: 0.5,
+                x2: 0.55,
+                y2: 0.7,
+            },
         );
         o.remembered = true;
         o.mask = Some(mask);
         world.objects.push(o);
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(v["objects"][0]["remembered"], true, "remembered surfaced on mesh");
-        let cov = v["objects"][0]["mask_coverage"].as_f64().expect("mask_coverage on mesh");
+        assert_eq!(
+            v["objects"][0]["remembered"], true,
+            "remembered surfaced on mesh"
+        );
+        let cov = v["objects"][0]["mask_coverage"]
+            .as_f64()
+            .expect("mask_coverage on mesh");
         assert!(cov > 0.9, "full-frame mask → ~full coverage, got {cov}");
     }
 
@@ -1616,11 +1931,22 @@ mod tests {
         // detection is flagged `likely_animal`; a body that doesn't is not.
         let sf = StateFile::open_at(temp_state_path("test_world_animal.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let pet_box = mvm_core::BBox { x1: 0.6, y1: 0.5, x2: 0.9, y2: 0.9 };
+        let pet_box = mvm_core::BBox {
+            x1: 0.6,
+            y1: 0.5,
+            x2: 0.9,
+            y2: 0.9,
+        };
         world.people.push(person_state(10, pet_box)); // body ≈ the pet box
-        world
-            .people
-            .push(person_state(0, mvm_core::BBox { x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.9 }));
+        world.people.push(person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.1,
+                y1: 0.2,
+                x2: 0.3,
+                y2: 0.9,
+            },
+        ));
         world.animals.push(pet_box);
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -1628,7 +1954,10 @@ mod tests {
         let pet = faces.iter().find(|f| f["id"] == 10).unwrap();
         let human = faces.iter().find(|f| f["id"] == 0).unwrap();
         assert_eq!(pet["likely_animal"], true, "body over animal box flagged");
-        assert!(human.get("likely_animal").is_none(), "non-overlapping body not flagged");
+        assert!(
+            human.get("likely_animal").is_none(),
+            "non-overlapping body not flagged"
+        );
     }
 
     #[test]
@@ -1642,7 +1971,12 @@ mod tests {
         d.position_z = Some(1.0);
         tracker.tick(&[d]);
         let body = crate::pipeline::BodyData {
-            bbox: mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.7 },
+            bbox: mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.5,
+                y2: 0.7,
+            },
             face_bbox: None,
             wrists: vec![[0.4, 0.5]],
             hands: vec![mvm_core::HandState {
@@ -1662,7 +1996,10 @@ mod tests {
         assert!((h["presence"].as_f64().unwrap() - 0.8).abs() < 0.01);
         assert_eq!(h["gesture"], "point");
         // dump_landmarks defaults false → the 21-pt payload is omitted.
-        assert!(h["landmarks"].is_null(), "landmarks only under --dump-landmarks");
+        assert!(
+            h["landmarks"].is_null(),
+            "landmarks only under --dump-landmarks"
+        );
     }
 
     /// A person + distance detection near another → `people_together`; a wrist on
@@ -1696,7 +2033,12 @@ mod tests {
         d.distance = Some(1.0);
         t2.tick(&[d]);
         let body = crate::pipeline::BodyData {
-            bbox: mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.5, y2: 0.7 },
+            bbox: mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.5,
+                y2: 0.7,
+            },
             face_bbox: None,
             wrists: vec![[0.6, 0.6]],
             hands: vec![],
@@ -1705,7 +2047,11 @@ mod tests {
         let v2: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[kbd], &[body], &[])).unwrap();
         assert!(
-            v2["activities"].as_array().unwrap().iter().any(|a| a["label"] == "using_object(keyboard)"),
+            v2["activities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["label"] == "using_object(keyboard)"),
             "wrist on keyboard → using_object(keyboard)"
         );
     }
@@ -1730,14 +2076,23 @@ mod tests {
         let dog = mvm_scene::ObjectDetection {
             class_id: 16,
             class_name: "dog",
-            bbox: mvm_core::BBox { x1: 0.6, y1: 0.2, x2: 0.9, y2: 0.6 },
+            bbox: mvm_core::BBox {
+                x1: 0.6,
+                y1: 0.2,
+                x2: 0.9,
+                y2: 0.6,
+            },
             score: 0.8,
         };
         // Control (no dog): two nearby bodies → people_together fires.
         let v0: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&tracker, 30.0, &[], &[], &[])).unwrap();
         assert!(
-            v0["activities"].as_array().unwrap().iter().any(|a| a["label"] == "people_together"),
+            v0["activities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|a| a["label"] == "people_together"),
             "control: both bodies present → people_together"
         );
         // With the dog: B flagged + dropped from fusion → no people_together.
@@ -1754,7 +2109,10 @@ mod tests {
             Some(acts) => acts.iter().all(|a| a["label"] != "people_together"),
             None => true,
         };
-        assert!(no_together, "likely-animal body excluded from person-relational fusion");
+        assert!(
+            no_together,
+            "likely-animal body excluded from person-relational fusion"
+        );
     }
 
     #[test]
@@ -1769,7 +2127,10 @@ mod tests {
         t1.tick(&[mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7)]);
         let v1: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&t1, 30.0, &[], &[], &[])).unwrap();
-        assert_eq!(v1["faces"][0]["face_verified"], false, "faceless body → unverified");
+        assert_eq!(
+            v1["faces"][0]["face_verified"], false,
+            "faceless body → unverified"
+        );
         // face-enriched track: a matched face gave it an emotion.
         let mut t2 = PersonTracker::new();
         t2.pinhole = None;
@@ -1779,7 +2140,10 @@ mod tests {
         t2.tick(&[d]);
         let v2: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[], &[], &[])).unwrap();
-        assert_eq!(v2["faces"][0]["face_verified"], true, "face-seen body → verified");
+        assert_eq!(
+            v2["faces"][0]["face_verified"], true,
+            "face-seen body → verified"
+        );
     }
 
     #[test]
@@ -1792,14 +2156,22 @@ mod tests {
         tracker.tick(&[d]);
         // A body far from the track (no IoU) → its hands must NOT leak onto it.
         let body = crate::pipeline::BodyData {
-            bbox: mvm_core::BBox { x1: 0.8, y1: 0.8, x2: 0.95, y2: 0.95 },
+            bbox: mvm_core::BBox {
+                x1: 0.8,
+                y1: 0.8,
+                x2: 0.95,
+                y2: 0.95,
+            },
             face_bbox: None,
             wrists: vec![[0.9, 0.9]],
             hands: vec![],
         };
         let line = sf.to_json_line(&tracker, 30.0, &[], &[body], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert!(v["faces"][0]["wrists"].is_null(), "no matched body → no wrists");
+        assert!(
+            v["faces"][0]["wrists"].is_null(),
+            "no matched body → no wrists"
+        );
     }
 
     #[test]
@@ -1830,7 +2202,10 @@ mod tests {
             let b = r["b"].as_u64().unwrap() as u32;
             (a == pid && b == oid) || (a == oid && b == pid)
         });
-        assert!(edge.is_some(), "expected person↔object overlap edge, got {rels:?}");
+        assert!(
+            edge.is_some(),
+            "expected person↔object overlap edge, got {rels:?}"
+        );
         assert_eq!(edge.unwrap()["kind"], "overlapping");
     }
 
@@ -1841,7 +2216,10 @@ mod tests {
         let objects = vec![obj(0, "chair", 0.1, 0.1, 0.4, 0.9, 0.77)];
         sf.write(&tracker, 30.0, &objects).unwrap();
         let content = read_state(&sf.path);
-        assert!(content.contains("Objects visible: chair"), "got:\n{content}");
+        assert!(
+            content.contains("Objects visible: chair"),
+            "got:\n{content}"
+        );
         assert!(content.contains("class: chair"));
     }
 
@@ -1851,17 +2229,32 @@ mod tests {
         let mut tracker = PersonTracker::new();
         tracker.register_user("Вадим");
         tracker.tick(&[Detection {
-            bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
+            bbox: mvm_core::BBox {
+                x1: 0.2,
+                y1: 0.3,
+                x2: 0.5,
+                y2: 0.7,
+            },
             identity: Some("Вадим".into()),
             identity_confidence: Some(0.75),
             emotion: Some("Happiness".into()),
             emotion_confidence: Some(0.80),
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
             torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
- head_yaw: None, head_facing: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
+            embedding: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
         let debug = vec![EmotionDebugEntry {
@@ -1889,15 +2282,32 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_json_nodebug.md")).unwrap();
         let mut tracker = PersonTracker::new();
         tracker.tick(&[Detection {
-            bbox: mvm_core::BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 },
-            identity: None, identity_confidence: None,
-            emotion: Some("Sadness".into()), emotion_confidence: Some(0.6),
-            posture: None, posture_confidence: None,
-            distance: None, position_x: None, position_y: None, position_z: None,
-            ws_confidence: None, recon_error: None, plausibility: None,
+            bbox: mvm_core::BBox {
+                x1: 0.2,
+                y1: 0.3,
+                x2: 0.5,
+                y2: 0.7,
+            },
+            identity: None,
+            identity_confidence: None,
+            emotion: Some("Sadness".into()),
+            emotion_confidence: Some(0.6),
+            posture: None,
+            posture_confidence: None,
+            distance: None,
+            position_x: None,
+            position_y: None,
+            position_z: None,
+            ws_confidence: None,
+            recon_error: None,
+            plausibility: None,
             torso_flexion: None,
-            body_coverage: None, torso_attitude: None, emotion_distribution: None, embedding: None,
- head_yaw: None, head_facing: None,
+            body_coverage: None,
+            torso_attitude: None,
+            emotion_distribution: None,
+            embedding: None,
+            head_yaw: None,
+            head_facing: None,
             mask: None,
         }]);
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
@@ -1928,7 +2338,8 @@ mod tests {
             recon_error: None,
             plausibility: None,
             torso_flexion: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             last_seen: std::time::Instant::now(),
         }
     }
@@ -1961,11 +2372,24 @@ mod tests {
     fn world_json_person_object_overlap_relation() {
         let sf = StateFile::open_at(temp_state_path("test_world_rel.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        world.people.push(person_state(10, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.people.push(person_state(
+            10,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        ));
         world.objects.push(object_state(
             mvm_scene::OBJECT_ID_BASE,
             "cup",
-            mvm_core::BBox { x1: 0.4, y1: 0.4, x2: 0.55, y2: 0.6 },
+            mvm_core::BBox {
+                x1: 0.4,
+                y1: 0.4,
+                x2: 0.55,
+                y2: 0.6,
+            },
         ));
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -1988,21 +2412,40 @@ mod tests {
         // not the legacy key:value block. Mesh is the production path.
         let sf = StateFile::open_at(temp_state_path("test_world_md.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        world.people.push(person_state(10, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.people.push(person_state(
+            10,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        ));
         world.objects.push(object_state(
             mvm_scene::OBJECT_ID_BASE,
             "chair",
-            mvm_core::BBox { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.9 },
+            mvm_core::BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.4,
+                y2: 0.9,
+            },
         ));
         sf.write_world(&world, 25.0).unwrap();
         let content = read_state(&sf.path);
         assert!(content.starts_with("# Scene "), "v2 header:\n{content}");
         assert!(content.contains("· occupied ·"), "got:\n{content}");
         // Seating zone (chair) + the anon body in the entity table.
-        assert!(content.contains("Zone «seating»:") && content.contains("chair"), "got:\n{content}");
+        assert!(
+            content.contains("Zone «seating»:") && content.contains("chair"),
+            "got:\n{content}"
+        );
         assert!(content.contains("| 10 |"), "entity row:\n{content}");
         // Legacy key:value markers are gone.
-        assert!(!content.contains("Camera State"), "legacy header leaked:\n{content}");
+        assert!(
+            !content.contains("Camera State"),
+            "legacy header leaked:\n{content}"
+        );
     }
 
     #[test]
@@ -2010,7 +2453,15 @@ mod tests {
         // Phase 9.8 contract: a person's motion_state/velocity reach the Scene JSON.
         let sf = StateFile::open_at(temp_state_path("test_world_motion.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         p.motion_state = Some("moving");
         p.velocity = Some(0.8);
         world.people.push(p);
@@ -2026,7 +2477,11 @@ mod tests {
         // fresh scene-YYYY-MM-DD.jsonl without touching the previous day's.
         let dir = std::env::temp_dir().join(format!("mvm_scenelog_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let mut log = SceneLog::open(dir.clone(), FixedOffset::east_opt(3 * 3600).unwrap(), "scene");
+        let mut log = SceneLog::open(
+            dir.clone(),
+            FixedOffset::east_opt(3 * 3600).unwrap(),
+            "scene",
+        );
         log.append_at("{\"a\":1}", "2026-07-05").unwrap();
         log.append_at("{\"a\":2}", "2026-07-05").unwrap();
         log.append_at("{\"a\":3}", "2026-07-06").unwrap();
@@ -2043,37 +2498,74 @@ mod tests {
         // default; a person↔object edge stays. --dump-full-graph keeps everything.
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
         // Person + two objects, all with 3D so build_scene forms metric near edges.
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.30, y1: 0.30, x2: 0.45, y2: 0.80 });
-        p.position_3d = Some(mvm_core::Position3D { x: 0.0, y: 0.0, z: 1.0, confidence: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.30,
+                y1: 0.30,
+                x2: 0.45,
+                y2: 0.80,
+            },
+        );
+        p.position_3d = Some(mvm_core::Position3D {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+            confidence: 0.8,
+        });
         world.people.push(p);
         let mut mk = |id: u32, class: &str, x: f32, bx: f32| {
-            let mut o = object_state(id, class, mvm_core::BBox { x1: bx, y1: 0.5, x2: bx + 0.08, y2: 0.6 });
-            o.position_3d = Some(mvm_core::Position3D { x, y: 0.0, z: 1.1, confidence: 0.8 });
+            let mut o = object_state(
+                id,
+                class,
+                mvm_core::BBox {
+                    x1: bx,
+                    y1: 0.5,
+                    x2: bx + 0.08,
+                    y2: 0.6,
+                },
+            );
+            o.position_3d = Some(mvm_core::Position3D {
+                x,
+                y: 0.0,
+                z: 1.1,
+                confidence: 0.8,
+            });
             world.objects.push(o);
         };
         mk(mvm_scene::OBJECT_ID_BASE, "mouse", 0.2, 0.50);
         mk(mvm_scene::OBJECT_ID_BASE + 1, "book", 0.3, 0.62);
 
         let sf = StateFile::open_at(temp_state_path("test_reldiet_off.md")).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
         let rels = v["relations"].as_array().unwrap();
         let oid = mvm_scene::OBJECT_ID_BASE as u64;
         let obj_obj_near = rels.iter().any(|r| {
-            r["a"].as_u64().unwrap() >= oid && r["b"].as_u64().unwrap() >= oid && r["kind"] == "near"
+            r["a"].as_u64().unwrap() >= oid
+                && r["b"].as_u64().unwrap() >= oid
+                && r["kind"] == "near"
         });
-        assert!(!obj_obj_near, "object↔object near dropped by default:\n{rels:#?}");
         assert!(
-            rels.iter().any(|r| r["a"].as_u64().unwrap() < oid || r["b"].as_u64().unwrap() < oid),
+            !obj_obj_near,
+            "object↔object near dropped by default:\n{rels:#?}"
+        );
+        assert!(
+            rels.iter()
+                .any(|r| r["a"].as_u64().unwrap() < oid || r["b"].as_u64().unwrap() < oid),
             "person-involving edge stays:\n{rels:#?}"
         );
 
         let mut sf2 = StateFile::open_at(temp_state_path("test_reldiet_on.md")).unwrap();
         sf2.dump_full_graph = true;
-        let v2: serde_json::Value = serde_json::from_str(&sf2.to_json_line_world(&world, 30.0)).unwrap();
+        let v2: serde_json::Value =
+            serde_json::from_str(&sf2.to_json_line_world(&world, 30.0)).unwrap();
         let rels2 = v2["relations"].as_array().unwrap();
         assert!(
             rels2.iter().any(|r| {
-                r["a"].as_u64().unwrap() >= oid && r["b"].as_u64().unwrap() >= oid && r["kind"] == "near"
+                r["a"].as_u64().unwrap() >= oid
+                    && r["b"].as_u64().unwrap() >= oid
+                    && r["kind"] == "near"
             }),
             "--dump-full-graph restores object↔object near:\n{rels2:#?}"
         );
@@ -2084,15 +2576,27 @@ mod tests {
         // Phase 12.A2: the 8-class distribution is off by default (summary stays);
         // --dump-distributions brings it back byte-for-byte.
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         p.emotion = Some(("Neutral".into(), 0.8));
         p.emotion_distribution = Some([0.02, 0.01, 0.0, 0.0, 0.05, 0.88, 0.02, 0.02]);
         world.people.push(p);
 
         let sf = StateFile::open_at(temp_state_path("test_dist_off.md")).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line_world(&world, 30.0)).unwrap();
         let f = &v["faces"][0];
-        assert!(f.get("emotion_distribution").is_none(), "distribution off by default");
+        assert!(
+            f.get("emotion_distribution").is_none(),
+            "distribution off by default"
+        );
         assert_eq!(f["emotion"], "Neutral", "summary label stays");
         assert!(f.get("emotion_entropy").is_some(), "entropy summary stays");
 
@@ -2100,7 +2604,9 @@ mod tests {
         sf2.dump_distributions = true;
         let v2: serde_json::Value =
             serde_json::from_str(&sf2.to_json_line_world(&world, 30.0)).unwrap();
-        let arr = v2["faces"][0]["emotion_distribution"].as_array().expect("present with flag");
+        let arr = v2["faces"][0]["emotion_distribution"]
+            .as_array()
+            .expect("present with flag");
         assert_eq!(arr.len(), 8);
     }
 
@@ -2110,16 +2616,30 @@ mod tests {
         // serializer only — compact stream, schema unchanged, values still parse.
         let sf = StateFile::open_at(temp_state_path("test_round.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         p.identity = Some(("Вадим".into(), 0.6279085));
         p.velocity = Some(0.54991883);
         p.recon_error = Some(0.058228653);
         world.people.push(p);
         let line = sf.to_json_line_world(&world, 17.99596292964407);
         // The trailing-noise long forms are gone from the wire…
-        assert!(!line.contains("0.6279085"), "identity_conf not rounded:\n{line}");
+        assert!(
+            !line.contains("0.6279085"),
+            "identity_conf not rounded:\n{line}"
+        );
         assert!(!line.contains("17.99596"), "fps not rounded:\n{line}");
-        assert!(!line.contains("0.54991883"), "velocity not rounded:\n{line}");
+        assert!(
+            !line.contains("0.54991883"),
+            "velocity not rounded:\n{line}"
+        );
         // …but the values are still there, just rounded, and parse cleanly.
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!((v["faces"][0]["identity_conf"].as_f64().unwrap() - 0.628).abs() < 1e-9);
@@ -2133,10 +2653,21 @@ mod tests {
         // No motion committed → the fields are skipped (contract unchanged).
         let sf = StateFile::open_at(temp_state_path("test_world_nomotion.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        world.people.push(person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.people.push(person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        ));
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert!(v["faces"][0].get("motion").is_none(), "motion omitted when absent");
+        assert!(
+            v["faces"][0].get("motion").is_none(),
+            "motion omitted when absent"
+        );
     }
 
     // ── Phase 10.0: emit what we already compute ─────────────────────────────
@@ -2145,7 +2676,15 @@ mod tests {
     fn world_json_surfaces_gestures_hands_and_posture_quality() {
         let sf = StateFile::open_at(temp_state_path("test_world_p10.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         p.left_gesture = Some("waving");
         p.wrists = vec![[0.4, 0.6]];
         p.hands = vec![mvm_core::HandState {
@@ -2168,7 +2707,10 @@ mod tests {
         assert!((f["hands"][0]["presence"].as_f64().unwrap() - 0.87).abs() < 0.01);
         assert!((f["hands"][0]["handedness"].as_f64().unwrap() - 0.12).abs() < 0.01);
         assert_eq!(f["hands"][0]["gesture"], "open");
-        assert!(f["hands"][0].get("landmarks").is_none(), "landmarks opt-in only");
+        assert!(
+            f["hands"][0].get("landmarks").is_none(),
+            "landmarks opt-in only"
+        );
         assert!((f["recon_error"].as_f64().unwrap() - 0.031).abs() < 1e-6);
         assert_eq!(f["plausibility"], "ok");
     }
@@ -2178,7 +2720,15 @@ mod tests {
         let mut sf = StateFile::open_at(temp_state_path("test_world_lm.md")).unwrap();
         sf.dump_landmarks = true;
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         p.hands = vec![mvm_core::HandState {
             landmarks: vec![[0.5, 0.5]; 21],
             presence: 0.9,
@@ -2189,7 +2739,9 @@ mod tests {
         world.people.push(p);
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-        let lm = v["faces"][0]["hands"][0]["landmarks"].as_array().expect("landmarks dumped");
+        let lm = v["faces"][0]["hands"][0]["landmarks"]
+            .as_array()
+            .expect("landmarks dumped");
         assert_eq!(lm.len(), 21);
     }
 
@@ -2198,7 +2750,11 @@ mod tests {
     /// A journal-produced instance for contract tests.
     fn instance(label: &str, participants: Vec<u32>) -> mvm_core::ActivityInstance {
         let mut j = mvm_core::ActivityJournal::new();
-        let raw = [mvm_core::Activity { label: label.into(), confidence: 0.8, participants }];
+        let raw = [mvm_core::Activity {
+            label: label.into(),
+            confidence: 0.8,
+            participants,
+        }];
         for f in 0..4u64 {
             j.update(&raw, f as f64 * 0.1, f);
         }
@@ -2246,7 +2802,10 @@ mod tests {
         assert!(!a.contains_key("state"));
         assert!(!a.contains_key("started_at"));
         assert!(!a.contains_key("duration_s"));
-        assert!(!v.as_object().unwrap().contains_key("events"), "no events key when empty");
+        assert!(
+            !v.as_object().unwrap().contains_key("events"),
+            "no events key when empty"
+        );
     }
 
     #[test]
@@ -2283,11 +2842,24 @@ mod tests {
         // lines → the same stable zone id with age 2 and a workstation label.
         let sf = StateFile::open_at(temp_state_path("test_world_zones.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        world.people.push(person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.people.push(person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        ));
         world.objects.push(mvm_core::ObjectState {
             id: 10001,
             class: "keyboard".into(),
-            bbox: mvm_core::BBox { x1: 0.35, y1: 0.5, x2: 0.55, y2: 0.7 },
+            bbox: mvm_core::BBox {
+                x1: 0.35,
+                y1: 0.5,
+                x2: 0.55,
+                y2: 0.7,
+            },
             confidence: 0.8,
             age: 3,
             position_3d: None,
@@ -2312,7 +2884,15 @@ mod tests {
         // The distribution is on the person → its entropy is pre-baked into JSON.
         let sf = StateFile::open_at(temp_state_path("test_world_ent.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         p.emotion_distribution = Some([0.125; 8]); // uniform → entropy 1.0
         world.people.push(p);
         let line = sf.to_json_line_world(&world, 30.0);
@@ -2325,7 +2905,15 @@ mod tests {
         // Phase 10.3: head_yaw/head_facing flow from the person to the JSON.
         let sf = StateFile::open_at(temp_state_path("test_world_head.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        let mut p = person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 });
+        let mut p = person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        );
         p.head_yaw = Some(-32.5);
         p.head_facing = Some("left");
         world.people.push(p);
@@ -2364,10 +2952,16 @@ mod tests {
         let line = sf.to_json_line(&tracker, 30.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let f = &v["faces"][0];
-        assert!(f["emotion_entropy"].as_f64().unwrap() < 1e-4, "one-hot → entropy 0");
+        assert!(
+            f["emotion_entropy"].as_f64().unwrap() < 1e-4,
+            "one-hot → entropy 0"
+        );
         assert!((f["recon_error"].as_f64().unwrap() - 0.12).abs() < 1e-6);
         assert_eq!(f["plausibility"], "low");
-        assert!(f.get("left_gesture").is_none(), "no motion ring → no gesture");
+        assert!(
+            f.get("left_gesture").is_none(),
+            "no motion ring → no gesture"
+        );
         assert!(f.get("hands").is_none(), "sync path carries no hands");
     }
 
@@ -2375,7 +2969,15 @@ mod tests {
     fn world_json_surfaces_activities_and_anomaly() {
         let sf = StateFile::open_at(temp_state_path("test_world_act.md")).unwrap();
         let mut world = mvm_core::WorldState::new(std::time::Instant::now());
-        world.people.push(person_state(0, mvm_core::BBox { x1: 0.3, y1: 0.3, x2: 0.6, y2: 0.8 }));
+        world.people.push(person_state(
+            0,
+            mvm_core::BBox {
+                x1: 0.3,
+                y1: 0.3,
+                x2: 0.6,
+                y2: 0.8,
+            },
+        ));
         world.activities.push(mvm_core::Activity {
             label: "typing".into(),
             confidence: 0.8,
@@ -2385,7 +2987,10 @@ mod tests {
         let line = sf.to_json_line_world(&world, 30.0);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["activities"][0]["label"], "typing");
-        assert_eq!(v["activities"][0]["participants"][1].as_u64().unwrap(), 10000);
+        assert_eq!(
+            v["activities"][0]["participants"][1].as_u64().unwrap(),
+            10000
+        );
         assert!((v["anomaly_score"].as_f64().unwrap() - 0.25).abs() < 1e-6);
     }
 }

@@ -66,7 +66,12 @@ fn pad(b: &BBox, frac: f32) -> BBox {
 /// Верхняя полоса bbox тела как приближение области лица (fallback).
 fn face_band(b: &BBox) -> BBox {
     let h = (b.y2 - b.y1).max(0.0);
-    BBox { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y1 + h * FACE_BAND_FRAC }
+    BBox {
+        x1: b.x1,
+        y1: b.y1,
+        x2: b.x2,
+        y2: b.y1 + h * FACE_BAND_FRAC,
+    }
 }
 
 #[cfg(test)]
@@ -74,19 +79,41 @@ mod tests {
     use super::*;
 
     fn body() -> BBox {
-        BBox { x1: 0.3, y1: 0.1, x2: 0.6, y2: 0.9 }
+        BBox {
+            x1: 0.3,
+            y1: 0.1,
+            x2: 0.6,
+            y2: 0.9,
+        }
     }
     fn face() -> BBox {
-        BBox { x1: 0.40, y1: 0.15, x2: 0.52, y2: 0.30 }
+        BBox {
+            x1: 0.40,
+            y1: 0.15,
+            x2: 0.52,
+            y2: 0.30,
+        }
     }
     fn anon_with_face() -> PrivacyPerson {
-        PrivacyPerson { body: body(), face: Some(face()), is_anon: true }
+        PrivacyPerson {
+            body: body(),
+            face: Some(face()),
+            is_anon: true,
+        }
     }
     fn gallery_with_face() -> PrivacyPerson {
-        PrivacyPerson { body: body(), face: Some(face()), is_anon: false }
+        PrivacyPerson {
+            body: body(),
+            face: Some(face()),
+            is_anon: false,
+        }
     }
     fn anon_no_face() -> PrivacyPerson {
-        PrivacyPerson { body: body(), face: None, is_anon: true }
+        PrivacyPerson {
+            body: body(),
+            face: None,
+            is_anon: true,
+        }
     }
 
     #[test]
@@ -102,7 +129,10 @@ mod tests {
 
     #[test]
     fn anonymous_mode_blurs_everyone() {
-        assert_eq!(blur_regions(&[anon_with_face(), gallery_with_face()], Privacy::Anonymous).len(), 2);
+        assert_eq!(
+            blur_regions(&[anon_with_face(), gallery_with_face()], Privacy::Anonymous).len(),
+            2
+        );
     }
 
     #[test]
@@ -111,8 +141,14 @@ mod tests {
         let region = r[0];
         // Padded around the real face, not the body-top band → tighter than the body
         // width, and it starts below the body top (face is inside the body).
-        assert!(region.x1 > body().x1 && region.x2 < body().x2, "narrower than body");
-        assert!(region.y1 < face().y1 + 1e-6 && region.y2 > face().y2 - 1e-6, "covers the face");
+        assert!(
+            region.x1 > body().x1 && region.x2 < body().x2,
+            "narrower than body"
+        );
+        assert!(
+            region.y1 < face().y1 + 1e-6 && region.y2 > face().y2 - 1e-6,
+            "covers the face"
+        );
         // Padding stays within the frame.
         assert!(region.x1 >= 0.0 && region.y1 >= 0.0 && region.x2 <= 1.0 && region.y2 <= 1.0);
     }
@@ -132,8 +168,18 @@ mod tests {
     fn pad_clamps_to_frame() {
         // A face at the very edge — padding must not exceed [0,1].
         let edge = PrivacyPerson {
-            body: BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 },
-            face: Some(BBox { x1: 0.0, y1: 0.0, x2: 0.2, y2: 0.2 }),
+            body: BBox {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 1.0,
+                y2: 1.0,
+            },
+            face: Some(BBox {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 0.2,
+                y2: 0.2,
+            }),
             is_anon: true,
         };
         let r = blur_regions(&[edge], Privacy::Anonymous)[0];

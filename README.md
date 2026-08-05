@@ -8,8 +8,8 @@
 **Dataset Factory** (структурированная память для обучения). CPU-first, $0, приватно, интерпретируемо.
 
 ![release](https://img.shields.io/github/v/release/howadX/Machine-Vision-Module?label=release&color=8A2BE2)
-![phase](https://img.shields.io/badge/phase-16.6--A%20(Dataset%20Factory)-brightgreen)
-![tests](https://img.shields.io/badge/tests-670%20green-brightgreen)
+![phase](https://img.shields.io/badge/phase-16.7%20(Semantic%20Session%20Log)-brightgreen)
+![tests](https://img.shields.io/badge/tests-689%20green-brightgreen)
 ![crates](https://img.shields.io/badge/crates-13-informational)
 ![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
 ![rust](https://img.shields.io/badge/rust-edition%202024-orange)
@@ -26,17 +26,18 @@
 curl -fsSL https://raw.githubusercontent.com/howadX/Machine-Vision-Module/master/install.sh | sh
 
 mvm setup           # дотянет модели (sha256-verified, HTTP range-resume)
-mvm run             # живой mesh: камера + все агенты → снимок сцены каждый кадр
+mvm run             # живой mesh: камера + все агенты → снимок сцены + text-only сессия (16.7)
 mvm snapshot        # что происходит прямо сейчас — одной командой
 
-# Dataset Factory (фаза 16) — накопить свой датасет и проверить его
-mvm run --record    # копить сессии (RGB+depth+masks+labels, privacy-safe)
-mvm dataset list    # что накоплено (info / stats / prune / export)
+# Dataset Factory (фаза 16/16.7) — сессии на диске
+mvm run --record    # доростить сессию до пикселей (RGB+depth+masks+labels, privacy-safe)
+mvm dataset list    # что накоплено (info / stats / check / prune / export)
 mvm dataset check   # data-quality гейт (целостность/privacy/баланс, CI exit-code)
 ```
 
 Полная инструкция, CLI-дерево, выходной JSON-контракт и honesty-семантика — **[`mvm/README.md`](mvm/README.md)**.
-Как LLM-агенту пользоваться MVM (pull-модель, MCP) — **[`mvm/AGENT.md`](mvm/AGENT.md)**.
+Agent skills: **[`mvm-vision`](mvm/skills/mvm-vision/SKILL.md)** для pull-модели/MCP и
+**[`mvm-dataset`](mvm/skills/mvm-dataset/SKILL.md)** для записи и обслуживания сессий.
 
 ## Что это
 
@@ -49,10 +50,11 @@ pinhole-геометрия от known-size априоров — не depth-се�
 замалчивается — модуль скорее скажет «поза withheld, видна только верхняя часть», чем угадает.
 
 Этот же граф питает **двух потребителей**. Первый — **LLM-агент**: pull-модель `snapshot`/`recap`/
-`inspect` через MCP, read-only. Второй (фаза 16) — **Dataset Factory**: `mvm run --record` компилирует
-каждый кадр в интерпретируемую обучающую запись (Canonical Observation + provenance + статусы честности,
-`withheld` ≠ negative), копит самодостаточные сессии на диск и отдаёт их Python-экспортёрам
-(PyTorch/TFRecord/WebDataset). Это **память системы** — не архив кадров, а компилятор наблюдений.
+`inspect` через MCP, read-only, поверх durable **text-only семантической сессии**, которую `mvm run` пишет
+по умолчанию (фаза 16.7). Второй (фаза 16) — **Dataset Factory**: `mvm run --record` доращивает ту же
+сессию до полного пиксельного датасета (Canonical Observation + provenance + статусы честности,
+`withheld` ≠ negative) и отдаёт её Python-экспортёрам (PyTorch/TFRecord/WebDataset). Это **память системы** —
+не архив кадров, а компилятор наблюдений.
 
 ## Архитектура: агенты и потоки данных
 
@@ -106,7 +108,7 @@ flowchart TD
 
 | Путь | Что | Статус |
 |------|-----|--------|
-| **`mvm/`** | **Rust-продакшн** — 13 крейтов (+`mvm-dataset`), ансамбль агентов, бинарь `mvm` | ★ основной; фаза 16 (Dataset Factory) в работе, 16.0–16.6-A закрыты |
+| **`mvm/`** | **Rust-продакшн** — 13 крейтов (+`mvm-dataset`), ансамбль агентов, бинарь `mvm` | ★ основной; фаза 16 (Dataset Factory) 16.0–16.6-A + фаза 16.7 (Semantic Session Log) закрыты, 689 тестов |
 | `install.sh` | `curl \| sh`-установщик (детект ОС/арх, sha256-verify) | рабочий |
 | `core/`, `tools/` | Python гибрид-**bridge** (`mvm_bridge.py`) для пути `--native` (тесты/дебаг) | вспом. |
 | `models/` | Веса ONNX/MediaPipe; крупные — gitignored, тянутся `mvm setup` | вспом. |

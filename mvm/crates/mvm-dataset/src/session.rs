@@ -163,10 +163,12 @@ pub fn partition_prune(sorted_ids: &[String], policy: &PrunePolicy) -> (Vec<Stri
             let cut = sorted_ids.len().saturating_sub(*n);
             (sorted_ids[cut..].to_vec(), sorted_ids[..cut].to_vec())
         }
-        PrunePolicy::KeepSince(cutoff) => sorted_ids
-            .iter()
-            .cloned()
-            .partition(|id| id.as_str().get(..10).map(|d| d >= cutoff.as_str()).unwrap_or(true)),
+        PrunePolicy::KeepSince(cutoff) => sorted_ids.iter().cloned().partition(|id| {
+            id.as_str()
+                .get(..10)
+                .map(|d| d >= cutoff.as_str())
+                .unwrap_or(true)
+        }),
     }
 }
 
@@ -187,8 +189,13 @@ mod tests {
                 anonymous: anon,
             },
             activities: BTreeMap::from([("typing".to_string(), 3)]),
-            anomalies: AnomaliesBlock { max: 0.5, mean: 0.1 },
-            objects: ObjectsBlock { top: vec!["cup".into()] },
+            anomalies: AnomaliesBlock {
+                max: 0.5,
+                mean: 0.1,
+            },
+            objects: ObjectsBlock {
+                top: vec!["cup".into()],
+            },
         }
     }
 
@@ -220,7 +227,12 @@ mod tests {
     #[test]
     fn list_sessions_sorted_with_in_progress() {
         let root = temp_root("list");
-        write_session(&root, "2026-07-17_120000", Some(&meta("2026-07-17_120000", 5, &["Вадим"], 1)), 5);
+        write_session(
+            &root,
+            "2026-07-17_120000",
+            Some(&meta("2026-07-17_120000", 5, &["Вадим"], 1)),
+            5,
+        );
         // In-progress: no session.toml, but labels present.
         write_session(&root, "2026-07-17_090000", None, 3);
         let list = list_sessions(&root).unwrap();
@@ -240,19 +252,35 @@ mod tests {
     #[test]
     fn aggregate_sums_frames_and_unions_participants() {
         let root = temp_root("agg");
-        write_session(&root, "2026-07-17_100000", Some(&meta("a", 10, &["Вадим"], 2)), 10);
-        write_session(&root, "2026-07-17_110000", Some(&meta("b", 7, &["Маша"], 0)), 7);
+        write_session(
+            &root,
+            "2026-07-17_100000",
+            Some(&meta("a", 10, &["Вадим"], 2)),
+            10,
+        );
+        write_session(
+            &root,
+            "2026-07-17_110000",
+            Some(&meta("b", 7, &["Маша"], 0)),
+            7,
+        );
         let st = aggregate(&list_sessions(&root).unwrap());
         assert_eq!(st.session_count, 2);
         assert_eq!(st.total_saved_frames, 17);
-        assert_eq!(st.participants, BTreeSet::from(["Вадим".to_string(), "Маша".to_string()]));
+        assert_eq!(
+            st.participants,
+            BTreeSet::from(["Вадим".to_string(), "Маша".to_string()])
+        );
         assert_eq!(st.anon_sessions, 1);
         assert_eq!(st.activities["typing"], 6);
     }
 
     #[test]
     fn prune_keep_last_n() {
-        let ids: Vec<String> = ["s1", "s2", "s3", "s4"].iter().map(|s| s.to_string()).collect();
+        let ids: Vec<String> = ["s1", "s2", "s3", "s4"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let (keep, remove) = partition_prune(&ids, &PrunePolicy::KeepLast(2));
         assert_eq!(keep, vec!["s3", "s4"]);
         assert_eq!(remove, vec!["s1", "s2"]);
@@ -264,10 +292,14 @@ mod tests {
 
     #[test]
     fn prune_keep_since_date() {
-        let ids: Vec<String> = ["2026-07-15_100000", "2026-07-17_090000", "2026-07-18_120000"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let ids: Vec<String> = [
+            "2026-07-15_100000",
+            "2026-07-17_090000",
+            "2026-07-18_120000",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let (keep, remove) = partition_prune(&ids, &PrunePolicy::KeepSince("2026-07-17".into()));
         assert_eq!(keep, vec!["2026-07-17_090000", "2026-07-18_120000"]);
         assert_eq!(remove, vec!["2026-07-15_100000"]);

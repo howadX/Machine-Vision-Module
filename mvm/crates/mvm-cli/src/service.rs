@@ -12,7 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 const UNIT_NAME: &str = "mvm.service";
 
@@ -94,7 +94,9 @@ fn uninstall(home: &Path) -> Result<()> {
     let path = unit_path(home);
     if systemctl_available() {
         // Best-effort: the unit may not be enabled/running.
-        let _ = Command::new("systemctl").args(["--user", "disable", "--now", UNIT_NAME]).status();
+        let _ = Command::new("systemctl")
+            .args(["--user", "disable", "--now", UNIT_NAME])
+            .status();
     }
     if path.exists() {
         std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
@@ -110,13 +112,19 @@ fn uninstall(home: &Path) -> Result<()> {
 
 fn status(home: &Path) -> Result<()> {
     let path = unit_path(home);
-    eprintln!("unit: {} ({})", path.display(), if path.exists() { "present" } else { "absent" });
+    eprintln!(
+        "unit: {} ({})",
+        path.display(),
+        if path.exists() { "present" } else { "absent" }
+    );
     if !systemctl_available() {
         eprintln!("systemctl --user not available");
         return Ok(());
     }
     for prop in ["is-enabled", "is-active"] {
-        let out = Command::new("systemctl").args(["--user", prop, UNIT_NAME]).output();
+        let out = Command::new("systemctl")
+            .args(["--user", prop, UNIT_NAME])
+            .output();
         let val = out
             .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())

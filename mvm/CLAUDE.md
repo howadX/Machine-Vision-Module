@@ -2,17 +2,66 @@
 
 *Structured Decomposed Picture-to-Text. Модульный ансамбль микро-агентов зрения.*
 *Это source-of-truth по Rust-части. Детальные планы закрытых фаз — в `mvm/docs/phase-*.md` и `~/wiki/mvm/`.*
-*Как LLM-агенту пользоваться MVM (pull-модель, чтение выходов, честность) — `mvm/AGENT.md`.*
+*Agent know-how: `skills/mvm-vision/SKILL.md` (pull-модель/MCP) и
+`skills/mvm-dataset/SKILL.md` (запись/проверка/экспорт сессий).*
 
 ---
 
 ## Статус
 
-- **Фаза 15 (ML Refactor) ЗАКРЫТА; Фаза 16 (Dataset Factory) — 16.0–16.6-A закрыты и live-провалидированы
-  (ветка `kaggle`). 13 крейтов, 670 Rust-тестов** (1 ignored — live-камера) + Python-группы (экспортёры +
-  validate-гейт). **Осталось: 16.6-B** (hard-example mining, зависит от накопленных данных).
-- **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
-  пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
+- **Фаза 15 (ML Refactor) ЗАКРЫТА; Фаза 16 (Dataset Factory) 16.0–16.6-A + Фаза 16.7 (Semantic Session Log)
+  закрыты и live-провалидированы (ветка `kaggle`). 14 крейтов, 717 Rust-тестов** (1 ignored — live-камера)
+  + Python-группы (экспортёры + validate-гейт). **Осталось: 16.6-B** (hard-example mining, зависит от данных).
+- **Фаза 16.7 — Semantic Session Log ✅:** свела два стора истории сцены в один. `mvm run` по умолчанию
+  пишет **text-only семантическую сессию** (`datasets/sessions/<id>/labels.jsonl`, без пикселей — durable
+  vision-лог, SCHEMA 16.7.0 с relations/activities/events); плоские `scene-*.jsonl`/`events-*.jsonl`
+  ретайрнуты (legacy `--scene-log`); `--record` доращивает до пиксельного датасета; `--no-vision-log`
+  выключает. `recap`/`inspect`/journal читают сессии (shim → те же ридеры). Live: 4-мин прогон, сессия
+  199 записей + 45 эпизодов, `dataset check` зелёный. План — `docs/phase-16.7-plan.md`.
+- **Фаза 17 — Canonical MVM Agent Skills ✅:** agent know-how разделён на canonical
+  `mvm-vision` и `mvm-dataset`; stdlib-only validator и GitHub Actions защищают minimal frontmatter,
+  honesty markers, stale-stack запреты и public-surface drift. Официальный `skills-ref` и fresh-agent
+  forward-tests прошли; профиль Hermes `sight` читает repo skills напрямую, legacy flow архивирован.
+- **Фаза 18 — Visual Cortex Layer ✅:** 18.0 ✅ — в `mvm-core::canonical` зафиксированы
+  `FusedSceneFrame`, `SceneFact<T>`, `EntityKey`+incarnation, stamped sources, event-tail cursor с
+  `EventGap` и read-only compatibility projection. `benchmark/` содержит replay-контракт, шесть
+  обязательных сценариев и честный pre-Cortex baseline. **18.1 ✅:** добавлен generic
+  `LatestValue<T>` и stamped Human/Scene/Depth observation bus; `CanonicalFusion` публикует immutable
+  `FusedFramePacket` с incarnation-safe entities, едиными relations/zones/kinematics и event tail.
+  StateFile/DatasetWriter читают packet без scene mutation; session lifecycle локален DatasetWriter,
+  `current_state.md` atomic. Typed activity episodes попадают в `labels.jsonl` через независимый
+  event cursor с source provenance; replay/cursor/late-result gates добавлены. Корневой
+  `--native-camera` маршрутизируется в canonical AgentMesh, text-only/pixel fixtures проходят
+  dataset check. **18.2–18.8b ✅:** единый `mvm-cortex` публикует serializable honesty-first
+  `CortexFrame`: canonical Scene Events + interpretations, bounded re-observation policy,
+  runtime-only Event Memory, constant-velocity/persistence forecast + typed prediction errors,
+  camera-relative `VisualSelfModel`, evidence-linked `UncertaintyReport` и Affordance V1. Canonical
+  `PersonFacts` теперь несёт body-coverage, visual-only head orientation и bounded hand summary; Fusion
+  публикует только hand-to-object `touching_candidate`, не physical hold. Evidence-backed
+  `AttentionMap` детерминированно ранжирует top-3 focus из novelty, prediction error, uncertainty,
+  event recency, activity, anomaly, identity и affordance; без canonical zone-violation fact этот
+  компонент остаётся нулевым. `CortexAgent` включён в
+  production AgentMesh, но не мутирует `FusedSceneFrame`; CLI scheduler выдаёт bounded Scene/Depth
+  one-shot permits с TTL, semantic dedupe, cooldown, global inter-run budget и explicit outcomes;
+  external request без executor получает `Unavailable`. Durable semantic store остаётся один
+  (`labels.jsonl`). Live 300-frame run (`0159c8a5`) дал Scene 130 / Depth 11 ticks против cadence
+  ожидания ~100/10, Human/Fusion/Cortex без agent errors и ~23.5 delivered FPS. 18.8b.1 завершила
+  fixed/Scene/Scene+Depth A/B spike на all, 4-core и 2-core affinity; прямые runtime metrics и bounded
+  ≤5% throughput gate записаны в `benchmark/baselines/18.8b.1-adaptive-mesh-2026-08-05.md`.
+  18.6 не выдумывает world camera
+  pose, полную геометрию зон или отсутствующую emotion entropy: они явно unknown/withheld.
+  18.9 добавляет atomic `current_cortex.json`, read-only `mvm cortex` views и MCP tool `mvm_cortex`;
+  current_state.md и labels.jsonl остаются facts/history surfaces. **18.10 ✅:** frozen synthetic replay
+  evaluator fail-closed валидирует frame/source/event envelopes, измеряет 1 s/2 s forecast IoU,
+  uncertainty, attention, affordance, memory и advisory loops. Три closure-loop сценария требуют
+  `Accepted → Dispatched → Resolved` только после нового stamped observation; ни request, ни resolution
+  не мутируют facts. Gate: 6/6 pinned cognitive claims improve over the documented no-Cortex synthetic
+  comparator (требуется ≥4/6), honesty regressions = 0; controlled adaptive runtime remains +0.31% ≤5%.
+  Фаза 18 завершена replay+live runtime evidence; Phase 19 остаётся отдельной approved фазой и требует
+  собственного slice approval.
+  План — `docs/phase-18-plan.md`.
+- **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`
+  пушнут → CI `release.yml` собирает x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory) · **v0.4.0** (Visual Cortex);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,
   версия из `Cargo.toml`. Активная разработка продолжается на `kaggle`.
 - **Фаза 14 «Продукт» — ЗАКРЫТА целиком** (2026-07-06, live с нуля: `git clone` → `cargo build` →
@@ -20,9 +69,10 @@
   `mvm setup` (fetch+sha256), watched-галерея, `serve --with-camera`, `mvm mcp install`, `mvm service`,
   дистрибуция через GitHub Releases.
 - **Что живо:** `mvm run` (Agent-Mesh, чистый Rust, ~16 fps с человеком) пишет метрич. 3D scene-graph +
-  `snapshot`/`recap`/`journal` в `~/.local/share/mvm`; `mvm serve --mcp` отдаёт это LLM read-only.
-  **Фаза 16:** `mvm run --record` копит сессии-датасеты (RGB+depth+masks+labels, privacy-safe),
-  `mvm dataset list/info/stats/prune`, Python-экспортёры в `prototype/pipeline/dataset/`.
+  `snapshot`/`recap`/`journal` в `~/.local/share/mvm` + **default-on text-only семантическую сессию**
+  (16.7); `mvm serve --mcp` отдаёт это LLM read-only. **Фаза 16:** `mvm run --record` доращивает сессию до
+  пиксельного датасета (RGB+depth+masks+labels, privacy-safe), `mvm dataset list/info/stats/check/prune`,
+  Python-экспортёры в `prototype/pipeline/dataset/`.
 - **История фаз — таблица Roadmap ниже. Детальные runbook'и закрытых фаз — `mvm/docs/phase-*.md`.**
 - **Владельцу (вне репо):** репойнт Sight-профиля Hermes на XDG-путь.
 
@@ -46,7 +96,7 @@ per-signal confidence / интерпретируемо / per-agent заменя�
 
 ---
 
-## Живая цепочка (`--native-camera`, тело-первичная)
+## Живая цепочка (`mvm run`, тело-первичная)
 
 ```
 frame → person_detection (ТЕЛО, первичный) → сущность/трек = ТЕЛО (NativePose::bodies)
@@ -70,36 +120,39 @@ frame → person_detection (ТЕЛО, первичный) → сущность/�
 # Сборка / тесты / бандл
 cargo build --release          # → target/release/mvm (~29 МБ; embed только мелкие YuNet/BlazePose/RF,
                                #   крупные ONNX грузятся из models-dir — ./models в dev, [models].dir/mvm setup)
-cargo test --workspace         # 670 тестов
+cargo test --workspace         # полный workspace gate (1 live-camera test ignored)
 cargo xtask bundle             # → dist/mvm
 
 # Agent Mesh (фаза 8, основной путь) — Capture→{Human,Scene,Depth}→Fusion→StateFileWriter на std::thread
 # Фаза 14.0: камера авто-детект, state+логи+journal → ~/.local/share/mvm (XDG), конфиг ~/.config/mvm/config.toml
 cargo run --release -- run --dump-json                       # живой (камера + все модели); `mesh` = алиас
+                                                             #   ↑ по умолчанию пишет text-only сессию (16.7)
 cargo run --release -- run --stub --max-frames 100           # model-free CI-smoke
 
-# Dataset Factory (фаза 16): запись сессий + инспекция
-cargo run --release -- run --record                          # копить датасет (RGB+depth+labels; privacy-safe)
-cargo run --release -- dataset list                          # сессии на диске (info/stats/prune/export)
+# Dataset Factory (фаза 16/16.7): text-only сессия по умолчанию; --record = пиксели
+cargo run --release -- run --record                          # доростить до пиксельного датасета (RGB+depth+labels)
+cargo run --release -- run --no-vision-log                   # выключить запись целиком
+cargo run --release -- dataset list                          # сессии на диске (info/stats/check/prune/export)
 # Python-экспортёры (PyTorch/TFRecord/WebDataset) — prototype/pipeline/dataset/
 
 # Синхронные пути (живы)
-cargo run --release -- --native-camera --once --dump-interval 1   # pure-Rust hot-path (без mesh)
-cargo run --release -- --native-camera --dump-interval 3 --scene-debug  # дебаг: детекторы цветом → /tmp/mvm_scene.jpg
+cargo run --release -- run --max-frames 1 --dump-json          # bounded canonical AgentMesh run
+cargo run --release -- run --interval-ms 3000 --dump-json      # pure-Rust hot-path, ноль Python
 cargo run --release -- --native --once --dump-interval 1          # Python bridge (поза от MediaPipe)
 ```
 
-**Камера:** `--native-camera`/`run` = прямой v4l2 MJPG mmap через шов `CameraSource` (фаза 14.0.3:
+**Камера:** `run` = прямой v4l2 MJPG mmap через шов `CameraSource` (фаза 14.0.3;
+корневой `--native-camera` теперь deprecated alias того же AgentMesh):
 `device="auto"` — перебор `/dev/video*`); bridge = `cv2.CAP_FFMPEG` (обход PipeWire на Ubuntu 24+).
 `fps` в StateFile = темп **доставки кадров** (прирост `frame_id`), **не** темп обработки человеко-цепочки.
 
 ---
 
-## Крейты (13)
+## Крейты (14)
 
 | Крейт | Содержимое |
 |-------|------------|
-| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator` 11.D1), EMOTION fuse (PoE), **WorldState** (блэкборд, 8.A/8.B; +session-grouper 16.1.3), `assignment` (Hungarian/Kuhn–Munkres, 9.10), `activity` (FSM+journal 11.C), `anomaly` (v2 scorer 11.B2), `mask` (`InstanceMask` 11.A1) |
+| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator` 11.D1), EMOTION fuse (PoE), **WorldState** (legacy blackboard), `canonical` (`FusedSceneFrame`/`SceneFact`/`EntityKey`, 18.0), `assignment` (Hungarian/Kuhn–Munkres, 9.10), `activity` (FSM+journal 11.C), `anomaly` (v2 scorer 11.B2), `mask` (`InstanceMask` 11.A1) |
 | **mvm-detect** | YuNet ONNX (228KB, embed, multi-stride NMS) — лицо |
 | **mvm-identity** | SFace ONNX (37MB, 128d L2-эмбеддинг, gallery, `embed()`) |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |
@@ -110,7 +163,8 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-hands** | MediaPipe handpose ONNX (4МБ), 21 lm/рука, ROI из запястий BlazePose [8.E.4] |
 | **mvm-mesh** | Agent trait + `LatestFrame` (single-slot latest-wins) + `AgentMesh` оркестратор на std::thread [8.C] |
 | **mvm-pipeline** | Camera (Python bridge subprocess) + NativeCamera (v4l2 MJPG) |
-| **mvm-dataset** | ★ **Dataset Factory (фаза 16)** — чистый потребитель WorldState. `observation` (Canonical Observation, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания), `router` (Semantic Router G₁–G₅), `config` (`DatasetConfig`), `writer` (`DatasetWriter`: сессии+JSONL+session.toml), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`), **`validate` (16.6-A data-quality gate: integrity/binding-keys/mask-RLE/depth-range/privacy-leak + stats → `mvm dataset check`)**. Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
+| **mvm-dataset** | ★ **Dataset Factory (фаза 16/16.7)** — чистый потребитель WorldState. `observation` (Canonical Observation SCHEMA 16.7.0, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания, +`activities`), `router` (Semantic Router G₁–G₅ + `route_with_relations`: relations/activities/events из WorldState+`SceneRelations`), `config` (`DatasetConfig`, `vision_log`/`effective_recorder` — 16.7 default-on text-only), `writer` (`DatasetWriter`: сессии+JSONL+session.toml, text-only-гейт), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`), **`validate` (16.6-A data-quality gate → `mvm dataset check`)**. Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
+| **mvm-cortex** | ★ **Visual Cortex (18.2–18.8b)** — cognitive interpretation поверх immutable `FusedSceneFrame`: canonical event interpretation, bounded runtime memory, forecast/prediction errors, attention и advisory re-observation, camera-relative self-model, explicit uncertainty inventory и evidence-linked affordances. Нет durable store, новых ML-зависимостей или scene mutation. |
 | **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`/**`dataset`**; `pipeline.rs` (BodyPrimaryPipeline), `agents/` (+`dataset_writer` 16.1.2b), `dataset_cmd.rs` (16.3), `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
 
 > Модели ONNX (YuNet/SFace/EmotiEffLib/BlazePose/YOLO26n/Depth-Anything/handpose) — единый **манифест**
@@ -232,10 +286,13 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **10** | ✅ | Full Data Collection (SUPREME-validated, 3 чел.+собака) + сегментация YOLO-seg (`--masks`, +1 ONNX) |
 | **11** | ✅ | Fusion-полировка (+0 ONNX): mask-контакт, activity-FSM+journal, зоны-persistence, anomaly v2, self-calib, object-permanence, person-маски |
 | **12** | ✅ | LLM-render (+0 ONNX/+0 deps): pull-модель snapshot/recap/inspect, токен-диета, MCP stdio-сервер |
-| **13** | ✅ | Agent Tools/Skills Polishing: когерентное CLI-дерево + `--help`, `mvm/AGENT.md`, само-докум. MCP |
+| **13** | ✅ | Agent Tools/Skills Polishing: когерентное CLI-дерево + `--help`, agent how-to, само-докум. MCP |
 | **14 → v0.1.0** | ✅ | Продукт: XDG/config, `setup`/`doctor`, watched-галерея, `serve --with-camera`, `mcp install`, `service`, дистрибуция v0.1.0 |
 | **15** | ✅ | ML Refactor (`kaggle`, lab-first, журналы LJ0–LJ6): 15.0 лаб+бенч · 15.1 поза (2D-GRIP z-free, flexion, Mahalanobis↔VAE, footprint −79%) · 15.2 переходы (E2 fall «пол+скорость таза», AUROC 1.000) · 15.3 трекер (stale-relink фикс) · 15.4 golden-симулятор + словарь v2 `using_object(class)` · 15.5 паспорт+диета (⭐ SFace align +19.5 п.п.) · 15.6 Rust-порт P0–P8. Свёрнута в код v0.3.0 (v0.2.0 отдельным тегом не выпускалась). Детали — `docs/phase-15-plan.md`, `docs/phase-15.6-port-plan.md` |
 | **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`--privacy` флаг) · **16.6-A ✅** data-quality gates (`mvm dataset check` + Python `validate.py`, CI exit-code). Всё live-провалидировано, релиз v0.3.0. **Осталось:** 16.6-B (hard-example mining). План — `docs/phase-16-plan.md` |
+| **16.7** | ✅ live | **Semantic Session Log** (`kaggle`): два стора истории сцены → один. **1 ✅** text-only запись (`save_frames`) · **1.5 ✅** обогащение роутера (relations/activities/events, SCHEMA 16.7.0, `route_with_relations`+`SceneRelations`) · **2 ✅** миграция ридеров (recap/inspect читают сессии через flat-shape shim + `Source`-resolver, golden-паритет) · **3 ✅** default-on text-only (`effective_recorder`, `vision_log`, ретайр плоских логов, `--no-vision-log`). Live-провалидировано (4-мин камера). План — `docs/phase-16.7-plan.md` |
+| **17** | ✅ | **Canonical MVM Agent Skills** — repo-canonical `mvm-vision` + `mvm-dataset`, CI contract gate, portability и Hermes integration завершены. Только know-how-слой: ядро/версия не затронуты. План — `docs/phase-17-plan.md` |
+| **18 → v0.4.0** | ✅ | **Visual Cortex Layer:** canonical state/fusion, events + interpretations, runtime memory, 1 s/2 s prediction, self-model/uncertainty, affordance, attention, bounded active re-observation, CLI/MCP и benchmark closure завершены. Порог 4/6 cognitive claims пройден (6/6 synthetic replay), honesty regressions = 0, adaptive runtime +0.31% ≤5%. План — `docs/phase-18-plan.md` |
 
 ## Терминология
 

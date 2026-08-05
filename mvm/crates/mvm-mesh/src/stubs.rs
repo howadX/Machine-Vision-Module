@@ -33,13 +33,21 @@ impl Agent for StubCaptureAgent {
             if !ctx.running() {
                 break;
             }
-            ctx.frames.publish(Frame::new(id, DynamicImage::new_rgb8(16, 16), Instant::now()));
+            ctx.frames.publish(Frame::new(
+                id,
+                DynamicImage::new_rgb8(16, 16),
+                Instant::now(),
+            ));
             ticks += 1;
             std::thread::sleep(period);
         }
         // Frame budget exhausted → tell the consumers to wind down.
         ctx.request_stop();
-        AgentHealth { name: self.name(), ticks, errors: 0 }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors: 0,
+        }
     }
 }
 
@@ -70,18 +78,22 @@ impl Agent for FrameCounterAgent {
         let mut ticks = 0u64;
         let mut last_id: Option<u64> = None;
         while ctx.running() {
-            if let Some(f) = ctx.frames.latest() {
-                if last_id != Some(f.id) {
-                    last_id = Some(f.id);
-                    ticks += 1;
-                    if let Ok(mut w) = ctx.world.write() {
-                        w.frame_id = f.id;
-                        w.timestamp = f.captured;
-                    }
+            if let Some(f) = ctx.frames.latest()
+                && last_id != Some(f.id)
+            {
+                last_id = Some(f.id);
+                ticks += 1;
+                if let Ok(mut w) = ctx.world.write() {
+                    w.frame_id = f.id;
+                    w.timestamp = f.captured;
                 }
             }
             std::thread::sleep(poll);
         }
-        AgentHealth { name: self.name(), ticks, errors: 0 }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors: 0,
+        }
     }
 }

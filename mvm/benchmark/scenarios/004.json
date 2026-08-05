@@ -1,0 +1,19 @@
+{
+  "fixture_version": "18.10.0",
+  "scenario_id": "004",
+  "name": "object_occluded_by_body",
+  "status": "synthetic_replay",
+  "required_signals": ["object_bbox", "person_bbox", "object_permanence"],
+  "expected_scene_events": [],
+  "claims": ["occluded object is remembered, not freshly observed"],
+  "baseline_v0_3_0": {
+    "temporal_continuity": {"correct": 1, "total": 1},
+    "scene_event_recall": null,
+    "uncertainty_honesty": {"correct": 1, "total": 1},
+    "last_observation_forecast": null
+  },
+  "frames": [
+    {"frame_id": 1, "entities": [{"entity_key": "run/object/10000/0", "kind": "object", "display_id": "10000", "bbox": [0.45, 0.45, 0.58, 0.70], "existence": "present", "observation_status": "observed"}, {"entity_key": "run/person/10/0", "kind": "person", "display_id": "10", "bbox": [0.20, 0.15, 0.65, 0.90], "existence": "present", "observation_status": "observed"}]},
+    {"frame_id": 2, "entities": [{"entity_key": "run/object/10000/0", "kind": "object", "display_id": "10000", "bbox": [0.45, 0.45, 0.58, 0.70], "existence": "occluded", "observation_status": "remembered"}, {"entity_key": "run/person/10/0", "kind": "person", "display_id": "10", "bbox": [0.35, 0.15, 0.80, 0.90], "existence": "present", "observation_status": "observed"}]}
+  ]
+}

@@ -7,8 +7,8 @@
 //! the server owns no camera, it reads the artifacts a running mesh writes
 //! (StateFile + scene/events logs), so producer and serving stay decoupled.
 
-use anyhow::{bail, Context, Result};
-use serde_json::{json, Value};
+use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 
 pub struct ServeArgs {
@@ -16,6 +16,8 @@ pub struct ServeArgs {
     state: PathBuf,
     /// Recap/inspect source — the `--scene-log` dir (scene-/events-*.jsonl).
     logs: PathBuf,
+    /// Latest atomic Cortex report (`current_cortex.json`).
+    cortex: PathBuf,
     /// `--with-camera` (phase 14.3): run the producer mesh in-process, serving
     /// MCP over its own fresh artifacts. Parsed here; acted on by `main`.
     pub with_camera: bool,
@@ -44,8 +46,14 @@ pub fn parse_serve_args(raw: &[String]) -> anyhow::Result<ServeArgs> {
         }
         i += 1;
     }
-    let logs = logs.unwrap_or(product.data_dir);
-    Ok(ServeArgs { state, logs, with_camera })
+    let logs = logs.unwrap_or_else(|| product.data_dir.clone());
+    let cortex = product.data_dir.join("current_cortex.json");
+    Ok(ServeArgs {
+        state,
+        logs,
+        cortex,
+        with_camera,
+    })
 }
 
 pub fn run_serve(args: ServeArgs) -> Result<()> {
@@ -101,9 +109,14 @@ pub(crate) fn handle(req: &Value, args: &ServeArgs) -> Option<Value> {
         "tools/list" => Some(result(id, json!({ "tools": tool_defs() }))),
         "tools/call" => {
             let params = req.get("params");
-            let name = params.and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or("");
-            let arguments =
-                params.and_then(|p| p.get("arguments")).cloned().unwrap_or_else(|| json!({}));
+            let name = params
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+                .unwrap_or("");
+            let arguments = params
+                .and_then(|p| p.get("arguments"))
+                .cloned()
+                .unwrap_or_else(|| json!({}));
             let call = dispatch_tool(name, &arguments, args);
             Some(result(
                 id,
@@ -123,11 +136,25 @@ pub(crate) fn handle(req: &Value, args: &ServeArgs) -> Option<Value> {
 }
 
 fn tool_defs() -> Value {
-    // These three tools are the pull model, cheap → expensive: snapshot (now) →
+    // These tools are the pull model, cheap → expensive: snapshot (now) →
     // recap (a window) → inspect (raw frames). The descriptions teach an agent
     // when to reach for each and how to read the output; keep them in sync with
-    // mvm/AGENT.md (single source of truth, phase 13.C/D).
+    // mvm/skills/mvm-vision/SKILL.md (canonical agent workflow, phase 17).
     json!([
+        {
+            "name": "mvm_cortex",
+            "title": "Cortex — cognitive view",
+            "description": "Read the latest evidence-linked Visual Cortex view: attention, bounded forecast, visual self-model, uncertainty, affordances and advisory policy. Read-only; cognitive interpretations never replace canonical scene facts. Use view=attention/forecast/self/uncertainty for compact sections; raw JSON requires an explicit raw=true.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "view": {"type":"string", "enum":["full","attention","forecast","self","uncertainty"], "default":"full"},
+                    "top_k": {"type":"integer", "minimum":1, "maximum":20, "default":5},
+                    "horizon_seconds": {"type":"number", "minimum":0, "default":2},
+                    "raw": {"type":"boolean", "default":false}
+                }
+            }
+        },
         {
             "name": "mvm_snapshot",
             "title": "Snapshot — current scene",
@@ -166,6 +193,25 @@ fn tool_defs() -> Value {
 
 fn dispatch_tool(name: &str, a: &Value, args: &ServeArgs) -> Result<String> {
     match name {
+        "mvm_cortex" => {
+            let view = a.get("view").and_then(Value::as_str).unwrap_or("full");
+            let view = crate::cortex_report::CortexView::parse(view)
+                .ok_or_else(|| anyhow::anyhow!("unknown Cortex view: {view}"))?;
+            let top_k = a
+                .get("top_k")
+                .and_then(Value::as_u64)
+                .unwrap_or(5)
+                .clamp(1, 20) as usize;
+            let horizon = a
+                .get("horizon_seconds")
+                .and_then(Value::as_f64)
+                .unwrap_or(2.0);
+            if !horizon.is_finite() || horizon < 0.0 {
+                bail!("horizon_seconds must be finite and non-negative");
+            }
+            let raw = a.get("raw").and_then(Value::as_bool).unwrap_or(false);
+            crate::cortex_report::render_file(&args.cortex, view, top_k, horizon, raw)
+        }
         "mvm_snapshot" => std::fs::read_to_string(&args.state)
             .with_context(|| format!("read snapshot {}", args.state.display())),
         "mvm_recap" => {
@@ -191,7 +237,12 @@ mod tests {
 
     fn args_with_state(path: PathBuf) -> ServeArgs {
         let logs = path.parent().unwrap().to_path_buf();
-        ServeArgs { state: path, logs, with_camera: false }
+        ServeArgs {
+            state: path,
+            logs,
+            cortex: PathBuf::from("/tmp/nope-cortex.json"),
+            with_camera: false,
+        }
     }
 
     #[test]
@@ -204,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_advertises_three_tools() {
+    fn tools_list_advertises_cortex_and_vision_tools() {
         let a = args_with_state(PathBuf::from("/tmp/nope.md"));
         let req = json!({"jsonrpc":"2.0","id":2,"method":"tools/list"});
         let resp = handle(&req, &a).unwrap();
@@ -213,6 +264,7 @@ mod tests {
         assert!(names.contains(&"mvm_snapshot"));
         assert!(names.contains(&"mvm_recap"));
         assert!(names.contains(&"mvm_inspect"));
+        assert!(names.contains(&"mvm_cortex"));
     }
 
     /// Phase 13.D: tool descriptions must stay self-teaching — each carries its
@@ -226,17 +278,26 @@ mod tests {
         let tools = resp["result"]["tools"].as_array().unwrap();
         let tool = |name: &str| tools.iter().find(|t| t["name"] == name).cloned().unwrap();
 
-        for name in ["mvm_snapshot", "mvm_recap", "mvm_inspect"] {
+        for name in ["mvm_snapshot", "mvm_recap", "mvm_inspect", "mvm_cortex"] {
             assert!(tool(name)["title"].is_string(), "{name} needs a title");
         }
         let snap = tool("mvm_snapshot");
         let snap = snap["description"].as_str().unwrap();
-        assert!(snap.contains("NOW") && snap.contains("cheapest"), "snapshot frames itself as the cheap now-call");
-        assert!(snap.contains("0–9") && snap.contains("⚠️"), "snapshot explains id ranges + honesty notes");
+        assert!(
+            snap.contains("NOW") && snap.contains("cheapest"),
+            "snapshot frames itself as the cheap now-call"
+        );
+        assert!(
+            snap.contains("0–9") && snap.contains("⚠️"),
+            "snapshot explains id ranges + honesty notes"
+        );
         let recap = tool("mvm_recap");
         assert!(
             recap["description"].as_str().unwrap().contains("HAPPENED")
-                && recap["description"].as_str().unwrap().contains("after a snapshot"),
+                && recap["description"]
+                    .as_str()
+                    .unwrap()
+                    .contains("after a snapshot"),
             "recap frames itself as the middle tier"
         );
         let insp = tool("mvm_inspect");
@@ -258,7 +319,11 @@ mod tests {
     #[test]
     fn tools_call_snapshot_returns_file_content() {
         let path = std::env::temp_dir().join(format!("mvm_mcp_snap_{}.md", std::process::id()));
-        std::fs::write(&path, "# Scene 17:51:19 · occupied · anomaly 0.00 · 18 fps\n").unwrap();
+        std::fs::write(
+            &path,
+            "# Scene 17:51:19 · occupied · anomaly 0.00 · 18 fps\n",
+        )
+        .unwrap();
         let a = args_with_state(path.clone());
         let req = json!({
             "jsonrpc":"2.0","id":3,"method":"tools/call",
@@ -269,6 +334,35 @@ mod tests {
         assert!(text.contains("# Scene 17:51:19"), "got: {text}");
         assert!(resp["result"].get("isError").is_none());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tools_call_cortex_returns_honesty_preserving_view() {
+        let path = std::env::temp_dir().join(format!("mvm_mcp_cortex_{}.json", std::process::id()));
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "schema":"18.9.0",
+                "cortex": {
+                    "timestamp_unix_ms": 1,
+                    "scene_frame_id": 7,
+                    "attention": {"top_k": []},
+                    "uncertainty": {"claims": [{"status":"withheld","reasons":["stale_source"]}]}
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut args = args_with_state(PathBuf::from("/tmp/nope.md"));
+        args.cortex = path.clone();
+        let req = json!({
+            "jsonrpc":"2.0","id":11,"method":"tools/call",
+            "params":{"name":"mvm_cortex","arguments":{"view":"uncertainty"}}
+        });
+        let resp = handle(&req, &args).unwrap();
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("withheld") && text.contains("stale_source"));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

@@ -1,29 +1,41 @@
 //! DepthAgent (phase 8.C.5) — group G₄ (environment). Owns the heavy
 //! Depth-Anything estimator (~230ms), runs on a sparse cadence (default every
-//! 30th frame), and publishes the raw relative `DepthMap` to a **shared slot**.
+//! 30th frame), and publishes a stamped immutable depth observation.
 //!
 //! It does NOT anchor objects — anchoring needs both people and objects and runs
 //! on the fusion step (8.C.7), which reads this same slot. The slot lives in
 //! `mvm-cli` (not `MeshContext`) so `mvm-mesh` need not depend on `mvm-depth`.
 
-use crate::agents::cadence_due;
+use crate::agents::{
+    DepthExecutionControl, DepthObservationBus, DepthObservationFrame, ObservationStamp,
+    cadence_due,
+};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
-use std::sync::{Arc, Mutex};
-
-/// Shared latest-depth slot: the `DepthAgent` writes it, the fusion step reads it.
-/// The map is behind an inner `Arc` so the reader (fusion) clones the handle
-/// cheaply and releases the slot lock before doing work — no ~1 MB map copy.
-pub(crate) type DepthSlot = Arc<Mutex<Option<Arc<mvm_depth::DepthMap>>>>;
+use std::sync::Arc;
 
 pub(crate) struct DepthAgent {
     estimator: mvm_depth::DepthEstimator,
-    slot: DepthSlot,
+    observations: DepthObservationBus,
     cadence: u32,
+    control: DepthExecutionControl,
+    metrics: super::SchedulingMetrics,
 }
 
 impl DepthAgent {
-    pub(crate) fn new(estimator: mvm_depth::DepthEstimator, slot: DepthSlot, cadence: u32) -> Self {
-        Self { estimator, slot, cadence }
+    pub(crate) fn new(
+        estimator: mvm_depth::DepthEstimator,
+        observations: DepthObservationBus,
+        cadence: u32,
+        control: DepthExecutionControl,
+        metrics: super::SchedulingMetrics,
+    ) -> Self {
+        Self {
+            estimator,
+            observations,
+            cadence,
+            control,
+            metrics,
+        }
     }
 }
 
@@ -37,14 +49,22 @@ impl Agent for DepthAgent {
         let mut errors = 0u64;
         let mut last_id: Option<u64> = None;
         while ctx.running() {
-            if let Some(frame) = ctx.frames.latest() {
-                if last_id != Some(frame.id) && cadence_due(frame.id, self.cadence) {
+            if let Some(frame) = ctx.frames.latest()
+                && last_id != Some(frame.id)
+            {
+                let permit = self.control.take_for(frame.id);
+                if cadence_due(frame.id, self.cadence) || permit.is_some() {
+                    if permit.is_some() && !cadence_due(frame.id, self.cadence) {
+                        self.metrics
+                            .record_extra_run(mvm_cortex::ObservationTarget::Depth);
+                    }
                     last_id = Some(frame.id);
                     match self.estimator.estimate(frame.image.as_ref()) {
                         Ok(map) => {
-                            if let Ok(mut slot) = self.slot.lock() {
-                                *slot = Some(Arc::new(map));
-                            }
+                            self.observations.publish(DepthObservationFrame {
+                                stamp: ObservationStamp::from_frame(&frame),
+                                map: Arc::new(map),
+                            });
                             ticks += 1;
                         }
                         Err(e) => {
@@ -56,7 +76,11 @@ impl Agent for DepthAgent {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        AgentHealth { name: self.name(), ticks, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors,
+        }
     }
 }
 
@@ -65,15 +89,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn slot_starts_empty_and_accepts_a_map() {
-        let slot: DepthSlot = Arc::new(Mutex::new(None));
-        assert!(slot.lock().unwrap().is_none());
-        // A reader (fusion) and writer (agent) share the same Arc.
-        let writer = slot.clone();
-        *writer.lock().unwrap() = Some(Arc::new(mvm_depth::DepthMap { data: vec![0.5; 4], w: 2, h: 2 }));
-        let got = slot.lock().unwrap();
-        assert!(got.is_some(), "fusion sees the published map");
-        assert_eq!(got.as_ref().unwrap().w, 2);
+    fn bus_starts_empty_and_accepts_a_stamped_map() {
+        let bus = DepthObservationBus::new();
+        assert!(bus.latest().is_none());
+        bus.publish(DepthObservationFrame {
+            stamp: ObservationStamp::new(3, std::time::Instant::now(), 1_000),
+            map: Arc::new(mvm_depth::DepthMap {
+                data: vec![0.5; 4],
+                w: 2,
+                h: 2,
+            }),
+        });
+        let got = bus.latest().expect("fusion sees the published map");
+        assert_eq!(got.stamp.source_frame_id, 3);
+        assert_eq!(got.map.w, 2);
     }
 
     #[test]
@@ -83,5 +112,30 @@ mod tests {
         assert!(!cadence_due(1, 30));
         assert!(!cadence_due(29, 30));
         assert!(cadence_due(30, 30));
+    }
+
+    #[test]
+    fn depth_permit_is_one_shot_and_does_not_change_cadence() {
+        use mvm_cortex::{EvidenceRef, ObservationRequest, ObservationTarget, ReasonCode};
+
+        let control = DepthExecutionControl::default();
+        control.grant(ObservationRequest {
+            request_id: 9,
+            source_scene_frame_id: 7,
+            target: ObservationTarget::Depth,
+            reason: ReasonCode::StaleSource,
+            evidence: vec![EvidenceRef {
+                scene_frame_id: 7,
+                entity: None,
+                event_seq: None,
+            }],
+            priority: 200,
+            max_extra_runs: 1,
+            expires_at_frame: 10,
+        });
+
+        assert_eq!(control.take_for(8).unwrap().request_id, 9);
+        assert!(control.take_for(8).is_none());
+        assert!(!cadence_due(8, 30));
     }
 }

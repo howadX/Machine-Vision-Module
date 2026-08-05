@@ -9,8 +9,8 @@
 use anyhow::Context;
 use image::DynamicImage;
 use image::GenericImageView;
-use mvm_core::{Config, Detection, Module, ModuleMetadata};
 use mvm_core::EMOTION_LABELS; // canonical English VGAF taxonomy (mvm-core)
+use mvm_core::{Config, Detection, Module, ModuleMetadata};
 use ort::{session::Session, value::Tensor};
 
 const K: usize = 8; // number of emotion classes
@@ -41,7 +41,8 @@ pub struct EmotionResult {
 /// Compute normalised Shannon entropy over a probability distribution.
 /// Returns value in [0, 1]: 0 = one-hot, 1 = uniform.
 pub fn entropy_from_probs(probs: &[f32]) -> f32 {
-    let h: f32 = probs.iter()
+    let h: f32 = probs
+        .iter()
         .map(|&p| if p > 0.0 { -p * p.log2() } else { 0.0 })
         .sum();
     h / LOG2_K
@@ -68,8 +69,10 @@ pub fn similarity_from_points(src: &[[f32; 2]; 5], dst: &[[f32; 2]; 5]) -> Optio
     let n = 5.0f32;
     let (mut sx, mut sy, mut dx, mut dy) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
     for k in 0..5 {
-        sx += src[k][0]; sy += src[k][1];
-        dx += dst[k][0]; dy += dst[k][1];
+        sx += src[k][0];
+        sy += src[k][1];
+        dx += dst[k][0];
+        dy += dst[k][1];
     }
     let (sx, sy, dx, dy) = (sx / n, sy / n, dx / n, dy / n);
     // Centred cross terms: treat points as complex numbers, regress d = (a+ib)·s.
@@ -97,7 +100,11 @@ pub fn similarity_from_points(src: &[[f32; 2]; 5], dst: &[[f32; 2]; 5]) -> Optio
 /// `out_size`², sampled bilinearly. Rotation/offset/scale of the head are
 /// normalised away before EmotiEffLib sees the crop. `None` when the landmark
 /// geometry is degenerate (fall back to the raw bbox crop).
-pub fn align_face(frame: &DynamicImage, lm5_px: &[[f32; 2]; 5], out_size: u32) -> Option<DynamicImage> {
+pub fn align_face(
+    frame: &DynamicImage,
+    lm5_px: &[[f32; 2]; 5],
+    out_size: u32,
+) -> Option<DynamicImage> {
     let scale = out_size as f32 / 112.0;
     let mut dst = ALIGN_TEMPLATE_112;
     for p in &mut dst {
@@ -111,8 +118,12 @@ pub fn align_face(frame: &DynamicImage, lm5_px: &[[f32; 2]; 5], out_size: u32) -
         return None;
     }
     let inv = [
-        m[4] / det, -m[1] / det, (m[1] * m[5] - m[4] * m[2]) / det,
-        -m[3] / det, m[0] / det, (m[3] * m[2] - m[0] * m[5]) / det,
+        m[4] / det,
+        -m[1] / det,
+        (m[1] * m[5] - m[4] * m[2]) / det,
+        -m[3] / det,
+        m[0] / det,
+        (m[3] * m[2] - m[0] * m[5]) / det,
     ];
     let rgb = frame.to_rgb8();
     let (fw, fh) = (rgb.width() as i32, rgb.height() as i32);
@@ -181,7 +192,9 @@ impl EmotionModule {
         let sum: f32 = exps.iter().sum();
         let probs: Vec<f32> = exps.iter().map(|e| e / sum).collect();
 
-        let (idx, &prob) = probs.iter().enumerate()
+        let (idx, &prob) = probs
+            .iter()
+            .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .unwrap_or((0, &0.0));
 
@@ -192,7 +205,11 @@ impl EmotionModule {
 
         let entropy = entropy_from_probs(&distribution);
         let calibrated_conf = prob * (1.0 - entropy);
-        let label = EMOTION_LABELS.get(idx).copied().unwrap_or("unknown").to_string();
+        let label = EMOTION_LABELS
+            .get(idx)
+            .copied()
+            .unwrap_or("unknown")
+            .to_string();
 
         Ok(EmotionResult {
             label,
@@ -230,8 +247,8 @@ pub fn preprocess_chw(image: &DynamicImage, size: u32) -> Vec<f32> {
         for x in 0..sz {
             let px = resized.get_pixel(x as u32, y as u32);
             let idx = y * sz + x;
-            flat[idx]             = (px[0] as f32 / 255.0 - 0.485) / 0.229; // R
-            flat[plane + idx]     = (px[1] as f32 / 255.0 - 0.456) / 0.224; // G
+            flat[idx] = (px[0] as f32 / 255.0 - 0.485) / 0.229; // R
+            flat[plane + idx] = (px[1] as f32 / 255.0 - 0.456) / 0.224; // G
             flat[2 * plane + idx] = (px[2] as f32 / 255.0 - 0.406) / 0.225; // B
         }
     }
@@ -266,9 +283,10 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            models_path: std::path::PathBuf::from(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/../../models"),
-            ),
+            models_path: std::path::PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../models"
+            )),
             ..Default::default()
         }
     }
@@ -289,7 +307,10 @@ mod tests {
     fn entropy_one_for_uniform() {
         let p = [1.0 / K as f32; K];
         let h = entropy_from_probs(&p);
-        assert!((h - 1.0).abs() < 1e-5, "uniform entropy should be 1.0, got {h}");
+        assert!(
+            (h - 1.0).abs() < 1e-5,
+            "uniform entropy should be 1.0, got {h}"
+        );
     }
 
     /// High raw prob + high entropy → calibrated_conf < raw prob.
@@ -299,8 +320,14 @@ mod tests {
         let p = [0.3_f32, 0.25, 0.2, 0.1, 0.05, 0.04, 0.03, 0.03];
         let h = entropy_from_probs(&p);
         let cal = p[0] * (1.0 - h);
-        assert!(cal < p[0], "calibrated_conf should be lower than raw prob when uncertain");
-        assert!(h > 0.8, "nearly-uniform distribution should have high entropy: {h}");
+        assert!(
+            cal < p[0],
+            "calibrated_conf should be lower than raw prob when uncertain"
+        );
+        assert!(
+            h > 0.8,
+            "nearly-uniform distribution should have high entropy: {h}"
+        );
     }
 
     /// Fully certain prediction: calibrated_conf ≈ prob.
@@ -309,11 +336,19 @@ mod tests {
         let mut p = [0.0f32; K];
         p[0] = 0.95;
         let tiny = 0.05 / (K - 1) as f32;
-        for i in 1..K { p[i] = tiny; }
+        for value in p.iter_mut().skip(1) {
+            *value = tiny;
+        }
         let h = entropy_from_probs(&p);
         let cal = p[0] * (1.0 - h);
-        assert!(cal > 0.8, "calibrated_conf should be high when certain: {cal}");
-        assert!(h < 0.2, "concentrated distribution should have low entropy: {h}");
+        assert!(
+            cal > 0.8,
+            "calibrated_conf should be high when certain: {cal}"
+        );
+        assert!(
+            h < 0.2,
+            "concentrated distribution should have low entropy: {h}"
+        );
     }
 
     /// Root-#1 regression guard: a solid-red image must produce a constant R
@@ -329,9 +364,18 @@ mod tests {
         let r = (1.0 - 0.485) / 0.229;
         let g = (0.0 - 0.456) / 0.224;
         let b = (0.0 - 0.406) / 0.225;
-        assert!(flat[..plane].iter().all(|&v| (v - r).abs() < 1e-5), "R plane first");
-        assert!(flat[plane..2 * plane].iter().all(|&v| (v - g).abs() < 1e-5), "G plane second");
-        assert!(flat[2 * plane..].iter().all(|&v| (v - b).abs() < 1e-5), "B plane third");
+        assert!(
+            flat[..plane].iter().all(|&v| (v - r).abs() < 1e-5),
+            "R plane first"
+        );
+        assert!(
+            flat[plane..2 * plane].iter().all(|&v| (v - g).abs() < 1e-5),
+            "G plane second"
+        );
+        assert!(
+            flat[2 * plane..].iter().all(|&v| (v - b).abs() < 1e-5),
+            "B plane third"
+        );
     }
 
     // ── Face alignment (phase 10.1, pure math) ────────────────────────────────
@@ -360,8 +404,10 @@ mod tests {
         for (p, q) in src.iter().zip(ALIGN_TEMPLATE_112.iter()) {
             let x = m[0] * p[0] + m[1] * p[1] + m[2];
             let y = m[3] * p[0] + m[4] * p[1] + m[5];
-            assert!((x - q[0]).abs() < 1e-2 && (y - q[1]).abs() < 1e-2,
-                "mapped ({x},{y}) vs template {q:?}");
+            assert!(
+                (x - q[0]).abs() < 1e-2 && (y - q[1]).abs() < 1e-2,
+                "mapped ({x},{y}) vs template {q:?}"
+            );
         }
     }
 
@@ -375,7 +421,7 @@ mod tests {
     fn align_face_maps_landmarks_to_canonical_positions() {
         // A synthetic frame with bright dots at the source landmarks: after
         // alignment each dot must sit at its canonical template position.
-        let mut img = image::RgbImage::new(320, 240, );
+        let mut img = image::RgbImage::new(320, 240);
         // Landmarks: template shifted +60/+40 and scaled 1.5 (still inside frame).
         let mut src = ALIGN_TEMPLATE_112;
         for p in &mut src {
@@ -397,7 +443,10 @@ mod tests {
         for t in &ALIGN_TEMPLATE_112 {
             let (x, y) = ((t[0] * scale) as u32, (t[1] * scale) as u32);
             let px = rgb.get_pixel(x, y);
-            assert!(px[0] > 128, "expected bright dot at canonical ({x},{y}), got {px:?}");
+            assert!(
+                px[0] > 128,
+                "expected bright dot at canonical ({x},{y}), got {px:?}"
+            );
         }
     }
 
@@ -409,8 +458,10 @@ mod tests {
         assert!(emo.metadata().name.contains("EmotiEffLib"));
         let img = DynamicImage::new_rgb8(224, 224);
         let result = emo.classify(&img).unwrap();
-        eprintln!("Black image → {} (prob={:.3}, entropy={:.3}, cal={:.3})",
-            result.label, result.prob, result.entropy, result.calibrated_conf);
+        eprintln!(
+            "Black image → {} (prob={:.3}, entropy={:.3}, cal={:.3})",
+            result.label, result.prob, result.entropy, result.calibrated_conf
+        );
     }
 
     #[test]
@@ -419,7 +470,10 @@ mod tests {
         let img = DynamicImage::new_rgb8(224, 224);
         let result = emo.classify(&img).unwrap();
         let sum: f32 = result.distribution.iter().sum();
-        assert!((sum - 1.0).abs() < 1e-5, "distribution should sum to 1.0, got {sum}");
+        assert!(
+            (sum - 1.0).abs() < 1e-5,
+            "distribution should sum to 1.0, got {sum}"
+        );
     }
 
     #[test]
@@ -433,8 +487,10 @@ mod tests {
         }
         let img = image::open(&ref_path).unwrap();
         let result = emo.classify(&img).unwrap();
-        eprintln!("Reference photo → {} (prob={:.3}, entropy={:.3}, cal={:.3})",
-            result.label, result.prob, result.entropy, result.calibrated_conf);
+        eprintln!(
+            "Reference photo → {} (prob={:.3}, entropy={:.3}, cal={:.3})",
+            result.label, result.prob, result.entropy, result.calibrated_conf
+        );
         assert!(!result.label.is_empty());
         assert!(result.prob > 0.0);
         assert!(result.entropy >= 0.0 && result.entropy <= 1.0);

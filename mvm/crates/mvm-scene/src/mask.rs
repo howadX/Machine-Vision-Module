@@ -86,7 +86,11 @@ mod tests {
     /// No letterbox: square frame → identity canvas mapping (scale 1, no pad) with
     /// canvas == proto resolution, so proto cell = original grid cell directly.
     fn identity_lb() -> Letterbox {
-        Letterbox { scale: 1.0, pad_x: 0.0, pad_y: 0.0 }
+        Letterbox {
+            scale: 1.0,
+            pad_x: 0.0,
+            pad_y: 0.0,
+        }
     }
 
     /// One prototype, `res×res`, filled so the left half is strongly positive
@@ -105,15 +109,32 @@ mod tests {
     fn assemble_left_half_sets_left_cells_only() {
         let res = MASK_RES;
         let proto = left_half_proto(res);
-        let full = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let full = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         let m = assemble_mask(
-            &proto, 1, res, res, &[1.0], &full,
-            identity_lb(), res as u32, res as u32, res as u32,
+            &proto,
+            1,
+            res,
+            res,
+            &[1.0],
+            &full,
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
         );
         assert!(m.contains_norm([0.25, 0.5]), "left half is inside");
         assert!(!m.contains_norm([0.75, 0.5]), "right half is outside");
         // ~half the frame.
-        assert!((m.frame_coverage() - 0.5).abs() < 0.02, "cov {}", m.frame_coverage());
+        assert!(
+            (m.frame_coverage() - 0.5).abs() < 0.02,
+            "cov {}",
+            m.frame_coverage()
+        );
     }
 
     #[test]
@@ -122,10 +143,23 @@ mod tests {
         let proto = left_half_proto(res);
         // bbox covers only the top-left quadrant → even the "inside" left half is
         // clipped to y<0.5.
-        let bbox = BBox { x1: 0.0, y1: 0.0, x2: 0.5, y2: 0.5 };
+        let bbox = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.5,
+            y2: 0.5,
+        };
         let m = assemble_mask(
-            &proto, 1, res, res, &[1.0], &bbox,
-            identity_lb(), res as u32, res as u32, res as u32,
+            &proto,
+            1,
+            res,
+            res,
+            &[1.0],
+            &bbox,
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
         );
         assert!(m.contains_norm([0.25, 0.25]), "inside bbox + inside proto");
         assert!(!m.contains_norm([0.25, 0.75]), "below bbox → cropped out");
@@ -135,12 +169,28 @@ mod tests {
     fn negative_coeff_flips_the_mask() {
         let res = MASK_RES;
         let proto = left_half_proto(res);
-        let full = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
+        let full = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
         let m = assemble_mask(
-            &proto, 1, res, res, &[-1.0], &full,
-            identity_lb(), res as u32, res as u32, res as u32,
+            &proto,
+            1,
+            res,
+            res,
+            &[-1.0],
+            &full,
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
         );
-        assert!(!m.contains_norm([0.25, 0.5]), "coeff sign flip → left now outside");
+        assert!(
+            !m.contains_norm([0.25, 0.5]),
+            "coeff sign flip → left now outside"
+        );
         assert!(m.contains_norm([0.75, 0.5]), "right now inside");
     }
 
@@ -148,10 +198,37 @@ mod tests {
     fn iou_identical_is_one_disjoint_is_zero() {
         let res = MASK_RES;
         let proto = left_half_proto(res);
-        let full = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
-        let left = assemble_mask(&proto, 1, res, res, &[1.0], &full, identity_lb(), res as u32, res as u32, res as u32);
+        let full = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let left = assemble_mask(
+            &proto,
+            1,
+            res,
+            res,
+            &[1.0],
+            &full,
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
+        );
         let left2 = left.clone();
-        let right = assemble_mask(&proto, 1, res, res, &[-1.0], &full, identity_lb(), res as u32, res as u32, res as u32);
+        let right = assemble_mask(
+            &proto,
+            1,
+            res,
+            res,
+            &[-1.0],
+            &full,
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
+        );
         assert!((left.iou(&left2) - 1.0).abs() < 1e-6, "identical → 1");
         assert!(left.iou(&right) < 1e-6, "disjoint halves → 0");
     }
@@ -162,8 +239,40 @@ mod tests {
         // union 1.0 wide → IoU = 0.2/1.0 = 0.2 (within grid quantization).
         let res = MASK_RES;
         let uniform = vec![10.0f32; res * res]; // everything "inside"
-        let a = assemble_mask(&uniform, 1, res, res, &[1.0], &BBox{x1:0.0,y1:0.0,x2:0.6,y2:1.0}, identity_lb(), res as u32, res as u32, res as u32);
-        let b = assemble_mask(&uniform, 1, res, res, &[1.0], &BBox{x1:0.4,y1:0.0,x2:1.0,y2:1.0}, identity_lb(), res as u32, res as u32, res as u32);
+        let a = assemble_mask(
+            &uniform,
+            1,
+            res,
+            res,
+            &[1.0],
+            &BBox {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 0.6,
+                y2: 1.0,
+            },
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
+        );
+        let b = assemble_mask(
+            &uniform,
+            1,
+            res,
+            res,
+            &[1.0],
+            &BBox {
+                x1: 0.4,
+                y1: 0.0,
+                x2: 1.0,
+                y2: 1.0,
+            },
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
+        );
         let iou = a.iou(&b);
         assert!((iou - 0.2).abs() < 0.05, "expected ~0.2, got {iou}");
     }
@@ -172,12 +281,34 @@ mod tests {
     fn set_points_lie_in_mask() {
         let res = MASK_RES;
         let proto = left_half_proto(res);
-        let full = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
-        let m = assemble_mask(&proto, 1, res, res, &[1.0], &full, identity_lb(), res as u32, res as u32, res as u32);
+        let full = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let m = assemble_mask(
+            &proto,
+            1,
+            res,
+            res,
+            &[1.0],
+            &full,
+            identity_lb(),
+            res as u32,
+            res as u32,
+            res as u32,
+        );
         let pts: Vec<_> = m.set_points().collect();
         assert_eq!(pts.len(), m.count());
-        assert!(pts.iter().all(|p| m.contains_norm(*p)), "every set point is inside");
-        assert!(pts.iter().all(|p| p[0] < 0.5), "left-half mask → all points x<0.5");
+        assert!(
+            pts.iter().all(|p| m.contains_norm(*p)),
+            "every set point is inside"
+        );
+        assert!(
+            pts.iter().all(|p| p[0] < 0.5),
+            "left-half mask → all points x<0.5"
+        );
     }
 
     #[test]
@@ -188,8 +319,28 @@ mod tests {
         let res = MASK_RES;
         let uniform = vec![10.0f32; res * res];
         let lb = crate::compute_letterbox(200, 100, res as u32);
-        let full = BBox { x1: 0.0, y1: 0.0, x2: 1.0, y2: 1.0 };
-        let m = assemble_mask(&uniform, 1, res, res, &[1.0], &full, lb, 200, 100, res as u32);
-        assert!(m.frame_coverage() > 0.9, "uniform-inside proto fills the box, cov {}", m.frame_coverage());
+        let full = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let m = assemble_mask(
+            &uniform,
+            1,
+            res,
+            res,
+            &[1.0],
+            &full,
+            lb,
+            200,
+            100,
+            res as u32,
+        );
+        assert!(
+            m.frame_coverage() > 0.9,
+            "uniform-inside proto fills the box, cov {}",
+            m.frame_coverage()
+        );
     }
 }

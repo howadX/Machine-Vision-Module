@@ -4,12 +4,12 @@
 
 **Structured Decomposed Agentic Vision** — локальный модуль зрения, который отдаёт **факты, а не пиксели.**
 
-Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо. Два потребителя: LLM/MCP + **Dataset Factory** (фаза 16).
+Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо. Факты питают LLM/MCP и **Dataset Factory**; поверх них Phase 18 добавляет evidence-linked Visual Cortex без mutation facts.
 
-![version](https://img.shields.io/badge/version-0.3.0-8A2BE2)
-![phase](https://img.shields.io/badge/phase-16.6--A%20Dataset--Factory-8A2BE2)
-![tests](https://img.shields.io/badge/tests-670%20green-brightgreen)
-![crates](https://img.shields.io/badge/crates-13-informational)
+![version](https://img.shields.io/badge/version-0.4.0-8A2BE2)
+![phase](https://img.shields.io/badge/phase-18%20Visual%20Cortex-8A2BE2)
+![tests](https://img.shields.io/badge/tests-workspace%20green-brightgreen)
+![crates](https://img.shields.io/badge/crates-14-informational)
 ![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
 ![fusion](https://img.shields.io/badge/fusion-%2B0%20deps-success)
 ![rust](https://img.shields.io/badge/rust-edition%202024-orange)
@@ -32,6 +32,9 @@ cd mvm && cargo build --release
 
 # что происходит прямо сейчас — одной командой
 ./target/release/mvm snapshot
+
+# отдельный evidence-linked cognitive view, не замена facts
+./target/release/mvm cortex --view attention
 ```
 
 ```text
@@ -73,6 +76,7 @@ MVM превращает видеопоток в граф: **узлы-сущно
 | **`snapshot`** | что происходит **сейчас** | ~300 токенов | всегда начинай отсюда |
 | **`recap`** | что **было** за период | логи → ~**190× сжатие** | сводка окна без чтения сырья |
 | **`inspect`** | **сырые кадры** за утверждением | растёт с окном | адъюдикация того, что flagged snapshot/recap |
+| **`cortex`** | evidence-linked forecast / attention / uncertainty | компактно | после snapshot для cognitive view, не для facts |
 
 Два способа доступа:
 
@@ -81,32 +85,37 @@ MVM превращает видеопоток в граф: **узлы-сущно
 mvm snapshot                                   # current_state.md
 mvm recap   --input ~/vision/logs --last 10m
 mvm inspect --input ~/vision/logs --around 2026-07-05T17:51:23 --window 5
+mvm cortex --view forecast --horizon-seconds 2
 
 # как MCP-инструменты (stdio JSON-RPC, read-only, +0 deps)
-mvm serve --mcp                # → mvm_snapshot / mvm_recap / mvm_inspect (над логами `mvm run`)
+mvm serve --mcp                # → mvm_snapshot / mvm_recap / mvm_inspect / mvm_cortex
 mvm serve --mcp --with-camera  # единый процесс: продюсер + MCP над своими свежими артефактами
 ```
 
-Всё, что нужно агенту, чтобы пользоваться MVM без чтения исходников, лежит в **[`AGENT.md`](AGENT.md)**: pull-модель, как читать таблицу snapshot, семантика id, `⚠️`-ноты честности, каденс-нюансы и чего MVM **не** делает.
+Canonical agent know-how разделён по триггерам: **[`mvm-vision`](skills/mvm-vision/SKILL.md)** учит
+pull-модели, чтению snapshot, honesty и cadence; **[`mvm-dataset`](skills/mvm-dataset/SKILL.md)** —
+записи, privacy, проверке и экспорту сессий.
 
 ---
 
-## 📦 Dataset Factory — второй потребитель (фаза 16, v0.3.0)
+## 📦 Dataset Factory — второй потребитель (фаза 16)
 
 Тот же scene-graph питает второго потребителя: **накопительную структурированную память** для обучения. Не архив кадров — **компилятор наблюдений** в интерпретируемые обучающие записи. Крейт `mvm-dataset` — чистый потребитель WorldState (как StateFileWriter), **ноль ML-фреймворков** в ядре.
 
 ```bash
-mvm run --record                 # копить сессии (privacy=safe по умолчанию)
+mvm run                          # по умолчанию: text-only семантическая сессия (без пикселей, 16.7)
+mvm run --record                 # доростить до пиксельного датасета (privacy=safe по умолчанию)
 mvm dataset list                 # что накоплено (info / stats / prune / export)
 mvm dataset check [--strict]     # data-quality гейт: целостность/privacy/баланс → exit-code (CI)
 mvm dataset export               # → готовые команды к Python-экспортёрам
 ```
 
-- **Self-describing на диске:** `sessions/<id>/` = `frames/` + `depth/` (16-бит, обратимо) + маски (RLE) + `labels.jsonl` (Canonical Observation на кадр) + `session.toml`. Папку можно скопировать на другую машину.
+- **Self-describing на диске:** `sessions/<id>/` = `labels.jsonl` (Canonical Observation на кадр) + `session.toml`, а под `--record` ещё `frames/` + `depth/` (16-бит, обратимо) + маски (RLE). Папку можно скопировать на другую машину.
+- **Единый durable vision-лог (фаза 16.7):** `mvm run` по умолчанию пишет **text-only** семантическую сессию (SCHEMA 16.7.0: entities + relations зон/рёбер + per-frame activities + завершённые events); плоские `scene-*.jsonl`/`events-*.jsonl` ретайрнуты (legacy `--scene-log`); `recap`/`inspect`/journal читают сессии. `--no-vision-log` выключает запись.
 - **Semantic Router G₁–G₅** маршрутизирует сигналы по ветвям (Human/Scene/Interaction/Temporal/Quality); provenance и статусы честности (`observed/derived/temporal/weak/withheld/unknown`) сохраняются. `withheld`/`unknown` **никогда** не становятся отрицательным классом.
-- **Privacy-first:** `safe` (default) размывает лица анонимов, оставляет галерейных чёткими; `anonymous` — всех; `full` — всё. Флаг `--privacy`.
+- **Privacy-first:** text-only по умолчанию (без пикселей вообще); под `--record` — `safe` (default) размывает лица анонимов, оставляет галерейных чёткими; `anonymous` — всех; `full` — всё. Флаг `--privacy`.
 - **Экспорт — Python** (`prototype/pipeline/dataset/`): PyTorch `IterableDataset` / TFRecord / WebDataset + quality-aware фильтры + `validate.py` (пиксельный гейт). ML-deps живут здесь, не в Rust-ядре (инвариант #2).
-- **16.6-A ✅** data-quality гейты; **16.6-B** (hard-example mining) — впереди. План — [`docs/phase-16-plan.md`](docs/phase-16-plan.md).
+- **16.6-A ✅** data-quality гейты; **16.7 ✅** Semantic Session Log (live-провалидирована); **16.6-B** (hard-example mining) — впереди. Планы — [`docs/phase-16-plan.md`](docs/phase-16-plan.md), [`docs/phase-16.7-plan.md`](docs/phase-16.7-plan.md).
 
 ---
 
@@ -164,7 +173,7 @@ flowchart TD
     FUSION["FusionAgent (реляционная, object-agnostic)<br/>build_scene: 3D-граф + зоны (union-find, persistence)<br/>activity-FSM (start/stop/duration) · anomaly v2 (noisy-OR)"]
 
     OUT1["current_state.md<br/>snapshot v2 — таблица + ноты честности"]
-    OUT2["scene-/events-*.jsonl<br/>durable-логи → recap/inspect"]
+    OUT2["semantic sessions<br/>labels.jsonl → recap/inspect"]
     OUT3["journal.md<br/>rolling-рекап дня"]
     OUT4["Scene JSON<br/>--dump-json — машинный контракт"]
     MCP["MCP stdio<br/>serve --mcp — snapshot/recap/inspect как инструменты"]
@@ -202,13 +211,13 @@ flowchart TD
       │
       ▼  Выходы:
          ├─ current_state.md      (snapshot v2 — таблица + ноты честности)
-         ├─ scene-/events-*.jsonl (durable-логи → recap/inspect)
+         ├─ semantic sessions     (labels.jsonl → recap/inspect)
          ├─ journal.md            (rolling-рекап дня)
          ├─ Scene JSON            (--dump-json — машинный контракт)
          └─ MCP stdio             (serve --mcp — snapshot/recap/inspect как инструменты)
 ```
 
-**Body-primary** (FRONTIER): человек без фронтального лица трекается по телу; identity/emotion дотягиваются при появлении лица. `mesh` = продакшн-путь; синхронный `--native-camera` и Python-bridge `--native` живы для тестов/истории.
+**Body-primary** (FRONTIER): человек без фронтального лица трекается по телу; identity/emotion дотягиваются при появлении лица. `run` = продакшн-путь; корневой `--native-camera` маршрутизируется в тот же AgentMesh как deprecated alias, Python-bridge `--native` оставлен для совместимости.
 
 ---
 
@@ -230,7 +239,7 @@ mvm <cmd> --help    # флаги с типами, единицами и прим
 mvm --version
 ```
 
-> `mvm mesh` — скрытый алиас `mvm run`. `--native-camera` / `--native` — скрытый legacy-путь (живой).
+> `mvm mesh` — скрытый алиас `mvm run`. Корневой `--native-camera` — deprecated alias `mvm run`; только Python `--native` остаётся отдельным legacy compatibility path.
 
 ---
 
@@ -275,7 +284,7 @@ mvm --version
 
 ---
 
-## Крейты (13)
+## Крейты (14)
 
 | Крейт | Содержимое |
 |-------|------------|
@@ -290,10 +299,11 @@ mvm --version
 | **mvm-fusion** | `build_scene` (union-find граф + зоны) + PoE; `ZoneTracker` (persistence) |
 | **mvm-mesh** | Agent trait + `LatestFrame` + `AgentMesh` оркестратор на std::thread |
 | **mvm-pipeline** | NativeCamera (v4l2 MJPG) + Camera (Python bridge subprocess) |
-| **mvm-dataset** | ★ Dataset Factory (фаза 16, чистый потребитель WorldState): Canonical Observation + Semantic Router G₁–G₅ + `DatasetWriter` (сессии/JSONL/session.toml) + privacy-blur + `validate` (data-quality гейт). Deps: serde/toml — **ноль ML-фреймворков** |
-| **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/**`dataset`**, рендер snapshot/recap, MCP-сервер, StateFile, `--record` рекордер |
+| **mvm-dataset** | ★ Dataset Factory (фаза 16/16.7, чистый потребитель WorldState): Canonical Observation (SCHEMA 16.7.0) + Semantic Router G₁–G₅ (`route_with_relations`: зоны/рёбра/активности/эпизоды) + `DatasetWriter` (сессии/JSONL/session.toml) + `effective_recorder` (default-on text-only) + privacy-blur + `validate` (data-quality гейт). Deps: serde/toml — **ноль ML-фреймворков** |
+| **mvm-cortex** | ★ Visual Cortex (фаза 18): evidence-linked event interpretation, bounded memory, 1s/2s forecast, uncertainty, affordance, attention и advisory re-observation поверх immutable `FusedSceneFrame`; без durable store или facts mutation. |
+| **mvm-cli** | подкоманды `run`/`snapshot`/`recap`/`inspect`/**`cortex`**/`serve`/**`dataset`**, MCP-сервер, StateFile, text-only/`--record` рекордер |
 
-**670 тестов, все зелёные.** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
+**Workspace gate зелёный (1 live-camera test ignored).** Бинарник `target/release/mvm` (~29 МБ; embed — только мелкие
 модели YuNet/BlazePose/RF, крупные ONNX грузятся из models-dir — см. «Сборка и запуск»).
 
 ### Микро-агенты и модели
@@ -316,7 +326,7 @@ mvm --version
 
 ```bash
 cargo build --release          # → target/release/mvm
-cargo test --workspace         # 670 тестов
+cargo test --workspace         # полный workspace gate
 cargo xtask bundle             # → dist/mvm (embed мелких моделей: YuNet + BlazePose + RF/VAE)
 
 # Модели: sha256-проверенный fetch в models-dir (9/9: 7 upstream-источников
@@ -369,10 +379,13 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **10** | ✅ | Full Data Collection (эмоция-корень, кисти, head-orientation) + **Segmentation** (+1 ONNX YOLO-seg) |
 | **11** | ✅ | Fusion-полировка — activity-FSM + journal, зоны-persistence, anomaly v2, mask-контакт, object-permanence, self-calib |
 | **12** | ✅ | **LLM-render** — pull-модель (snapshot / recap ~190× / inspect), токен-диета, MCP stdio-сервер |
-| **13** | ✅ | **Agent Tools/Skills Polishing** — когерентный CLI-дерево, `--help`, [`AGENT.md`](AGENT.md), самодокументирующие MCP-описания |
+| **13** | ✅ | **Agent Tools/Skills Polishing** — когерентный CLI-дерево, `--help`, agent how-to, самодокументирующие MCP-описания |
 | **14** | ✅ | **Продукт** — ✅ 14.0 XDG-пути/config.toml/авто-детект камеры/бинарь `mvm`/doctor · ✅ 14.1 `mvm setup` (fetch+sha256+resume) · ✅ 14.2 watched-галерея (`gallery/<Имя>/`, drag-and-drop) · ✅ 14.3 `serve --with-camera` (единый демон) · ✅ 14.4 `mcp install` · ✅ 14.5 `service install` (systemd user) · ✅ 14.6 дистрибуция (GitHub Releases + `curl\|sh`; анонимный `curl` — после public-flip репо) |
 | **15** | ✅ | **ML Refactor** (лаб-фёрст на CMU mocap + OpenImages, журналы LJ0–6) — поза 2D-GRIP z-free + Mahalanobis↔VAE (footprint −79%) · SL-вето падений · tracker stale-relink · E2 scene-level fall · SFace align-fix (+19.5 п.п.) · словарь v2. Порт-акты P0–P8. Свёрнута в код **v0.3.0** (v0.2.0 отдельным тегом не выпускалась) |
 | **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (+крейт `mvm-dataset`, чистый потребитель WorldState) — двухпотребительская архитектура: `mvm run --record` → self-describing сессии (RGB+depth+masks+labels), Semantic Router G₁–G₅, privacy-слой, Python-экспортёры (PyTorch/TFRecord/WebDataset), **16.6-A data-quality гейты** (`mvm dataset check` + `validate.py`). Осталось 16.6-B (hard-example mining). Детали — [`docs/phase-16-plan.md`](docs/phase-16-plan.md) |
+| **16.7** | ✅ live | **Semantic Session Log** — свела два стора истории сцены в один: `mvm run` по умолчанию пишет **text-only семантическую сессию** (SCHEMA 16.7.0 с relations/activities/events), плоские `scene-*.jsonl`/`events-*.jsonl` ретайрнуты; `recap`/`inspect`/journal читают сессии; `--record` = пиксели. Live-провалидировано (4-мин камера). Детали — [`docs/phase-16.7-plan.md`](docs/phase-16.7-plan.md) |
+| **17** | ✅ | **Canonical MVM Agent Skills** — repo-canonical [`mvm-vision`](skills/mvm-vision/SKILL.md) + [`mvm-dataset`](skills/mvm-dataset/SKILL.md), CI gate, portability и Hermes integration завершены. Детали — [`docs/phase-17-plan.md`](docs/phase-17-plan.md) |
+| **18 → v0.4.0** | ✅ | **Visual Cortex Layer** — immutable canonical facts + `mvm-cortex`: events, memory, 1s/2s forecast, self-model/uncertainty, affordance, attention, bounded advisory re-observation, `mvm cortex`/MCP и benchmark closure. 6/6 replay claims improve, honesty regressions = 0, adaptive runtime +0.31% ≤5%. Детали — [`docs/phase-18-plan.md`](docs/phase-18-plan.md) |
 
 ---
 
@@ -393,7 +406,8 @@ ML-рефакторинге (фаза 15) и без изменений вошл�
 | **Эмоция** | RAF-DB held-out balanced-acc | **0.665** [0.643, 0.688] (neg-control healthy) — LJ5 |
 | **Скорость** | человеко-цепочка (YuNet+SFace+emotion+BlazePose) | **16.7 мс** all-cores (<50 PASS), ONNX 121.7 MiB — LJ5 |
 
-**Изменения контракта (ML Refactor, в проде с v0.3.0)** (детали — [`AGENT.md`](AGENT.md)):
+**Изменения контракта (ML Refactor, в проде с v0.3.0)** (agent semantics —
+[`mvm-vision`](skills/mvm-vision/SKILL.md)):
 1. **`torso_flexion`** — новое опциональное поле позы (непрерывный наклон торса, °) в StateFile/JSON/MCP/snapshot.
 2. **Словарь активностей v2** — `typing/using_mouse/using_phone/reading → using_object(<class>)`; `watching_tv` убран (VRD-аудит: 0 supervisable-инстансов; «смотрит ТВ» — это head-facing, не wrist-контакт). `holding_drink` сохранён.
 3. **Семантика pose-OOD** — `plausibility` теперь от Mahalanobis-дистанции (не VAE-logpz); `recon_error` deprecated → всегда `None` (поле оставлено для схемы). Новый `Config.camera_height_m` (1.75) — floor-reference для E2.

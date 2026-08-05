@@ -30,7 +30,10 @@ impl IdentityModule {
         let session = Session::builder()?
             .commit_from_memory(model_bytes)
             .context("Failed to load SFace from embedded bytes")?;
-        Ok(Self { session, gallery: HashMap::new() })
+        Ok(Self {
+            session,
+            gallery: HashMap::new(),
+        })
     }
 
     /// Load from file path.
@@ -38,16 +41,15 @@ impl IdentityModule {
         let session = Session::builder()?
             .commit_from_file(path)
             .with_context(|| format!("Failed to load SFace from {}", path.display()))?;
-        Ok(Self { session, gallery: HashMap::new() })
+        Ok(Self {
+            session,
+            gallery: HashMap::new(),
+        })
     }
 
     /// Add a reference person to the gallery from a face image.
     /// Returns the number of reference images for this person.
-    pub fn add_reference(
-        &mut self,
-        name: &str,
-        face: &DynamicImage,
-    ) -> anyhow::Result<usize> {
+    pub fn add_reference(&mut self, name: &str, face: &DynamicImage) -> anyhow::Result<usize> {
         let emb = self.embed(face)?;
         // Apply EMA to existing embedding if person already in gallery
         if let Some(existing) = self.gallery.get_mut(name) {
@@ -58,7 +60,9 @@ impl IdentityModule {
             // Re-normalise
             let n = l2_norm(existing);
             if n > 1e-8 {
-                for v in existing.iter_mut() { *v /= n; }
+                for v in existing.iter_mut() {
+                    *v /= n;
+                }
             }
         } else {
             self.gallery.insert(name.to_string(), emb);
@@ -68,7 +72,11 @@ impl IdentityModule {
 
     /// Identify a face. Returns (name, cosine_similarity).
     /// Returns ("unknown", 0.0) if gallery is empty or no match above threshold.
-    pub fn identify(&mut self, face: &DynamicImage, threshold: f32) -> anyhow::Result<(String, f32)> {
+    pub fn identify(
+        &mut self,
+        face: &DynamicImage,
+        threshold: f32,
+    ) -> anyhow::Result<(String, f32)> {
         let emb = self.embed(face)?;
 
         let mut best_name: Option<String> = None;
@@ -117,10 +125,20 @@ impl IdentityModule {
             }
         }
         let best_sim = if best_sim == f32::MIN { 0.0 } else { best_sim };
-        let second_sim = if second_sim == f32::MIN { 0.0 } else { second_sim };
+        let second_sim = if second_sim == f32::MIN {
+            0.0
+        } else {
+            second_sim
+        };
 
         let accepted = best_name.is_some()
-            && accept_identity(best_sim, second_sim, self.gallery.len(), abs_thresh, margin_thresh);
+            && accept_identity(
+                best_sim,
+                second_sim,
+                self.gallery.len(),
+                abs_thresh,
+                margin_thresh,
+            );
         let name = if accepted {
             best_name.unwrap()
         } else {
@@ -150,7 +168,9 @@ impl IdentityModule {
         let mut vec: Vec<f32> = emb[0..Self::EMBEDDING_DIM].to_vec();
         let n = l2_norm(&vec);
         if n > 1e-8 {
-            for v in vec.iter_mut() { *v /= n; }
+            for v in vec.iter_mut() {
+                *v /= n;
+            }
         }
 
         Ok(vec)
@@ -188,8 +208,8 @@ impl IdentityModule {
             for x in 0..sz {
                 let px = resized.get_pixel(x as u32, y as u32);
                 let idx = y * sz + x;
-                flat[idx]             = px[2] as f32; // B plane
-                flat[plane + idx]     = px[1] as f32; // G plane
+                flat[idx] = px[2] as f32; // B plane
+                flat[plane + idx] = px[1] as f32; // G plane
                 flat[2 * plane + idx] = px[0] as f32; // R plane
             }
         }
@@ -206,7 +226,9 @@ impl Module for IdentityModule {
     type Output = Vec<Detection>;
 
     fn init(config: &Config) -> anyhow::Result<Self> {
-        let model_path = config.models_path.join("face_recognition_sface_2021dec.onnx");
+        let model_path = config
+            .models_path
+            .join("face_recognition_sface_2021dec.onnx");
         Self::from_path(&model_path)
     }
 
@@ -264,9 +286,10 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            models_path: std::path::PathBuf::from(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/../../models"),
-            ),
+            models_path: std::path::PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../models"
+            )),
             ..Default::default()
         }
     }
@@ -320,10 +343,8 @@ mod tests {
     fn gallery_add_and_identify() {
         let mut id = IdentityModule::init(&test_config()).unwrap();
 
-        let ref_path = std::path::PathBuf::from(
-            std::env::var("HOME").unwrap_or_default(),
-        )
-        .join("repos/Machine Vision Module/models/references/p_V.jpg");
+        let ref_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("repos/Machine Vision Module/models/references/p_V.jpg");
 
         if !ref_path.exists() {
             eprintln!("Skipping: {} not found", ref_path.display());
@@ -389,7 +410,10 @@ mod tests {
         let cos: f32 = ea.iter().zip(&eb).map(|(x, y)| x * y).sum();
         eprintln!("same-person (different angle) cosine = {cos:.4}");
         // Above OpenCV's canonical SFace threshold (0.363), below self-match.
-        assert!(cos > 0.363, "same-person cosine {cos:.4} below SFace threshold");
+        assert!(
+            cos > 0.363,
+            "same-person cosine {cos:.4} below SFace threshold"
+        );
         assert!(cos < 0.99, "different photos should not be near-identical");
     }
 
@@ -419,8 +443,15 @@ mod tests {
         let b = vec![0.0_f32, 1.0, 0.0];
         assert!((dot_product(&a, &b) - 0.0).abs() < 1e-6);
 
-        let c = vec![0.7071_f32, 0.7071, 0.0];
+        let c = vec![
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+            0.0,
+        ];
         let sim = dot_product(&a, &c);
-        assert!((sim - 0.7071).abs() < 0.01, "dot = {sim}");
+        assert!(
+            (sim - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01,
+            "dot = {sim}"
+        );
     }
 }

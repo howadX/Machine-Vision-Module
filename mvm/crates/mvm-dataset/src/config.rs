@@ -68,7 +68,9 @@ pub struct ExportConfig {
 
 impl Default for ExportConfig {
     fn default() -> Self {
-        ExportConfig { default_format: ExportFormat::Pytorch }
+        ExportConfig {
+            default_format: ExportFormat::Pytorch,
+        }
     }
 }
 
@@ -76,8 +78,16 @@ impl Default for ExportConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DatasetConfig {
-    /// Включить запись (CLI: `--record`). По умолчанию выключено.
+    /// Включить **пиксельную** запись датасета (CLI: `--record`). По умолчанию
+    /// выключено → тогда работает text-only vision-лог (`vision_log`).
     pub enabled: bool,
+    /// Always-on **text-only семантический** session-лог (§16.7-3). По умолчанию
+    /// включён: `mvm run` без флагов пишет `datasets/sessions/<id>/labels.jsonl`
+    /// (только семантика, без пикселей) — durable vision-история, заменившая
+    /// плоские `scene-*.jsonl`/`events-*.jsonl`. `--record` поднимает до полного
+    /// пиксельного датасета; `--no-vision-log` (или `vision_log = false`) выключает
+    /// запись целиком. См. [`DatasetConfig::effective_recorder`].
+    pub vision_log: bool,
     /// Корень хранилища датасетов.
     pub dir: String,
     /// Сохранять каждый N-й кадр (1 fps при 30 fps камере).
@@ -86,6 +96,11 @@ pub struct DatasetConfig {
     pub frame_format: FrameFormat,
     /// Качество JPEG (0–100), игнорируется для PNG.
     pub frame_quality: u8,
+    /// Сохранять RGB-кадры. `false` → **text-only режим**: сессия несёт только
+    /// `labels.jsonl` (Canonical Observation) + `session.toml`, без пикселей —
+    /// подробный семантический лог сцены с той же session-дисциплиной (grouper,
+    /// `check`, `prune`), что и полный датасет.
+    pub save_frames: bool,
     /// Сохранять карты глубины (16-bit PNG).
     pub save_depth: bool,
     /// Сохранять instance-маски (если активен `--masks`).
@@ -107,10 +122,12 @@ impl Default for DatasetConfig {
     fn default() -> Self {
         DatasetConfig {
             enabled: false,
+            vision_log: true,
             dir: "~/.local/share/mvm/datasets".to_string(),
             frame_cadence: 30,
             frame_format: FrameFormat::Jpg,
             frame_quality: 85,
+            save_frames: true,
             save_depth: true,
             save_masks: true,
             save_raw_embeddings: true,
@@ -146,6 +163,30 @@ impl DatasetConfig {
     pub fn frame_quality_clamped(&self) -> u8 {
         self.frame_quality.clamp(1, 100)
     }
+
+    /// Эффективный конфиг recorder'а для live-прогона, либо `None` если запись
+    /// полностью выключена (§16.7-3, default-on модель). Вызывается **после**
+    /// `apply_cli_overrides` (там `--record` → `enabled`):
+    /// - `enabled` → полный **пиксельный** датасет (флаги `save_*` как настроены);
+    /// - иначе `vision_log` → **text-only** сессия (без пикселей/depth/масок);
+    /// - иначе → `None` (recorder не добавляется).
+    ///
+    /// Возвращаемый конфиг всегда `enabled = true` (recorder пишет), так что
+    /// вызывающему достаточно `if let Some(cfg) = …`.
+    pub fn effective_recorder(&self) -> Option<DatasetConfig> {
+        if self.enabled {
+            return Some(self.clone());
+        }
+        if self.vision_log {
+            let mut c = self.clone();
+            c.enabled = true;
+            c.save_frames = false;
+            c.save_depth = false;
+            c.save_masks = false;
+            return Some(c);
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -159,7 +200,12 @@ mod tests {
         assert_eq!(c.frame_cadence, 30);
         assert_eq!(c.frame_format, FrameFormat::Jpg);
         assert_eq!(c.frame_quality, 85);
+        assert!(
+            c.save_frames,
+            "frames saved by default (backward-compatible)"
+        );
         assert!(c.save_depth && c.save_masks && c.save_raw_embeddings && c.save_landmarks);
+        assert!(c.vision_log, "text-only vision log on by default (§16.7-3)");
         assert_eq!(c.privacy, Privacy::Safe);
         assert_eq!(c.session_timeout_secs, 30);
         assert_eq!(c.export.default_format, ExportFormat::Pytorch);
@@ -211,8 +257,13 @@ default_format = "webdataset"
 
     #[test]
     fn cli_overrides_win_over_file() {
-        let mut c: DatasetConfig = toml::from_str("enabled = false\ndir = \"/from/file\"\n").unwrap();
-        c.apply_cli_overrides(Some(true), Some("/from/cli".to_string()), Some(Privacy::Anonymous));
+        let mut c: DatasetConfig =
+            toml::from_str("enabled = false\ndir = \"/from/file\"\n").unwrap();
+        c.apply_cli_overrides(
+            Some(true),
+            Some("/from/cli".to_string()),
+            Some(Privacy::Anonymous),
+        );
         assert!(c.enabled);
         assert_eq!(c.dir, "/from/cli");
         assert_eq!(c.privacy, Privacy::Anonymous);
@@ -224,8 +275,10 @@ default_format = "webdataset"
 
     #[test]
     fn frame_quality_is_clamped() {
-        let mut c = DatasetConfig::default();
-        c.frame_quality = 200;
+        let mut c = DatasetConfig {
+            frame_quality: 200,
+            ..Default::default()
+        };
         assert_eq!(c.frame_quality_clamped(), 100);
         c.frame_quality = 0;
         assert_eq!(c.frame_quality_clamped(), 1);
@@ -235,5 +288,46 @@ default_format = "webdataset"
     fn frame_format_extensions() {
         assert_eq!(FrameFormat::Jpg.ext(), "jpg");
         assert_eq!(FrameFormat::Png.ext(), "png");
+    }
+
+    #[test]
+    fn effective_recorder_default_is_text_only_vision_log() {
+        // §16.7-3: `mvm run` with no flags records a text-only semantic session.
+        let cfg = DatasetConfig::default(); // enabled=false, vision_log=true
+        let eff = cfg.effective_recorder().expect("vision log on by default");
+        assert!(eff.enabled, "recorder must be enabled to write");
+        assert!(!eff.save_frames, "text-only: no pixels");
+        assert!(
+            !eff.save_depth && !eff.save_masks,
+            "text-only: no depth/masks"
+        );
+    }
+
+    #[test]
+    fn effective_recorder_record_flag_keeps_pixels() {
+        // `--record` / [dataset].enabled → full pixel dataset (save_* untouched).
+        let cfg = DatasetConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let eff = cfg.effective_recorder().expect("recording enabled");
+        assert!(eff.enabled);
+        assert!(
+            eff.save_frames && eff.save_depth && eff.save_masks,
+            "pixels preserved"
+        );
+    }
+
+    #[test]
+    fn effective_recorder_none_when_vision_log_off() {
+        // `--no-vision-log` / vision_log=false with no --record → no recorder at all.
+        let cfg = DatasetConfig {
+            vision_log: false,
+            ..Default::default()
+        };
+        assert!(
+            cfg.effective_recorder().is_none(),
+            "recording fully disabled"
+        );
     }
 }

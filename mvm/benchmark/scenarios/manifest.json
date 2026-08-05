@@ -1,0 +1,24 @@
+{
+  "fixture_version": "18.0.0",
+  "scenarios": [
+    {"id": "001", "name": "person_enters", "status": "synthetic_replay"},
+    {"id": "004", "name": "object_occluded_by_body", "status": "synthetic_replay"},
+    {"id": "007", "name": "two_people_cross", "status": "synthetic_replay"},
+    {"id": "009", "name": "dog_enters", "status": "synthetic_replay"},
+    {"id": "011", "name": "person_stays_still", "status": "synthetic_replay"},
+    {"id": "012", "name": "sudden_motion", "status": "synthetic_replay"},
+    {"id": "013", "name": "constant_velocity_right", "status": "synthetic_replay"},
+    {"id": "014", "name": "constant_velocity_left", "status": "synthetic_replay"},
+    {"id": "015", "name": "constant_velocity_diagonal", "status": "synthetic_replay"},
+    {"id": "016", "name": "uncertainty_inventory", "status": "synthetic_replay"},
+    {"id": "017", "name": "affordance_v1_hand_interaction", "status": "synthetic_replay"},
+    {"id": "018", "name": "attention_v1_salience", "status": "synthetic_replay"},
+    {"id": "019", "name": "bounded_active_reobservation", "status": "synthetic_replay"},
+    {"id": "020", "name": "uncertainty_scene_refresh", "status": "synthetic_replay"},
+    {"id": "021", "name": "prediction_error_depth_refresh", "status": "synthetic_replay"},
+    {"id": "022", "name": "prediction_error_scene_refresh", "status": "synthetic_replay"},
+    {"id": "023", "name": "constant_velocity_right_2s", "status": "synthetic_replay"},
+    {"id": "024", "name": "constant_velocity_left_2s", "status": "synthetic_replay"},
+    {"id": "025", "name": "constant_velocity_diagonal_2s", "status": "synthetic_replay"}
+  ]
+}

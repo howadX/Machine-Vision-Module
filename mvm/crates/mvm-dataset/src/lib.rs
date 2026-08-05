@@ -29,14 +29,14 @@ pub mod writer;
 pub use config::{DatasetConfig, ExportConfig, ExportFormat, FrameFormat, Privacy};
 pub use observation::{
     CanonicalObservation, EntityRecord, FrameMeta, Label, LabelStatus, Provenance, QualityBlock,
-    SemanticGroup, SessionRef, SCHEMA_VERSION,
+    SCHEMA_VERSION, SemanticGroup, SessionRef,
 };
-pub use privacy::{blur_regions, PrivacyPerson};
-pub use router::{route, RouteContext};
+pub use privacy::{PrivacyPerson, blur_regions};
+pub use router::{EdgeRel, RouteContext, SceneRelations, ZoneRel, route, route_with_relations};
 pub use session::{
-    aggregate, list_sessions, partition_prune, DatasetStats, PrunePolicy, SessionInfo, SessionMeta,
+    DatasetStats, PrunePolicy, SessionInfo, SessionMeta, aggregate, list_sessions, partition_prune,
 };
 pub use validate::{
-    check_dataset, check_session, CheckStats, DatasetReport, Finding, Severity, SessionReport,
+    CheckStats, DatasetReport, Finding, SessionReport, Severity, check_dataset, check_session,
 };
-pub use writer::{DatasetWriter, FrameRecord, RecordResult};
+pub use writer::{DatasetWriter, FrameRecord, RecordAnnotations, RecordResult};

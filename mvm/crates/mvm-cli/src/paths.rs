@@ -69,7 +69,10 @@ pub fn ensure_dir_private(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
-        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)
     }
     #[cfg(not(unix))]
     {
@@ -82,7 +85,12 @@ mod tests {
     use super::*;
 
     fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        move |k: &str| pairs.iter().find(|(key, _)| *key == k).map(|(_, v)| v.to_string())
+        move |k: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == k)
+                .map(|(_, v)| v.to_string())
+        }
     }
 
     #[test]
@@ -94,19 +102,28 @@ mod tests {
     #[test]
     fn data_dir_falls_back_to_home_local_share() {
         let env = env_of(&[("HOME", "/home/u")]);
-        assert_eq!(data_dir_from(&env), PathBuf::from("/home/u/.local/share/mvm"));
+        assert_eq!(
+            data_dir_from(&env),
+            PathBuf::from("/home/u/.local/share/mvm")
+        );
     }
 
     #[test]
     fn empty_xdg_value_is_ignored() {
         let env = env_of(&[("XDG_DATA_HOME", ""), ("HOME", "/home/u")]);
-        assert_eq!(data_dir_from(&env), PathBuf::from("/home/u/.local/share/mvm"));
+        assert_eq!(
+            data_dir_from(&env),
+            PathBuf::from("/home/u/.local/share/mvm")
+        );
     }
 
     #[test]
     fn relative_xdg_value_is_ignored_per_spec() {
         let env = env_of(&[("XDG_DATA_HOME", "rel/path"), ("HOME", "/home/u")]);
-        assert_eq!(data_dir_from(&env), PathBuf::from("/home/u/.local/share/mvm"));
+        assert_eq!(
+            data_dir_from(&env),
+            PathBuf::from("/home/u/.local/share/mvm")
+        );
     }
 
     #[test]
@@ -122,7 +139,10 @@ mod tests {
         // models_dir() delegates to data_dir(); verify composition via the
         // internal resolver to stay env-independent.
         let env = env_of(&[("XDG_DATA_HOME", "/d")]);
-        assert_eq!(data_dir_from(&env).join("models"), PathBuf::from("/d/mvm/models"));
+        assert_eq!(
+            data_dir_from(&env).join("models"),
+            PathBuf::from("/d/mvm/models")
+        );
     }
 
     #[test]

@@ -1,24 +1,18 @@
 //! SceneAgent (phase 8.C.5) — group G₂. Owns the YOLO detector + its
 //! `ObjectTracker`, runs on its own cadence (default every 3rd frame), and
-//! writes `WorldState.objects`. Object 3D is left `None` here — depth-anchoring
+//! publishes a stamped immutable observation. Object 3D is left `None` here — depth-anchoring
 //! happens on the fusion step (8.C.7) where both people and objects are visible.
 
-use crate::agents::{cadence_due, project_objects};
-use mvm_core::{mask::InstanceMask, BBox};
+use crate::agents::{
+    ObservationStamp, SceneExecutionControl, SceneObservationBus, SceneObservationFrame,
+    cadence_due, collect_objects,
+};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 /// Mask-IoU floor for greedily attaching a YOLO-seg mask onto a tracked object
 /// (mirrors `pipeline::SEG_ATTACH_IOU` on the sync path).
 const SEG_ATTACH_IOU: f32 = 0.5;
-
-/// Shared latest-person-silhouettes slot (phase 11.A3): the `SceneAgent` (which
-/// already runs the one YOLO-seg forward) writes the frame's `person` masks with
-/// their bboxes; the `HumanAgent` reads them, matches to its body detections, and
-/// feeds them into the tracker cost. Mirrors [`super::DepthSlot`] — a shared
-/// `mvm-cli` slot, not `MeshContext`, so `mvm-mesh` stays detector-agnostic. The
-/// inner `Arc<Vec>` lets the reader clone the handle and release the lock fast.
-pub(crate) type PersonMaskSlot = Arc<Mutex<Option<Arc<Vec<(BBox, InstanceMask)>>>>>;
 
 pub(crate) struct SceneAgent {
     detector: mvm_scene::YoloDetector,
@@ -26,26 +20,44 @@ pub(crate) struct SceneAgent {
     /// object masks (attached to tracked objects → mask-contact / mask-depth) and,
     /// in phase 11.A3, person masks published to the tracker.
     seg_detector: Option<mvm_scene::YoloSegDetector>,
-    /// Shared slot the person masks are published into (11.A3). Untouched when no
-    /// seg detector is present.
-    person_masks: PersonMaskSlot,
+    observations: SceneObservationBus,
     tracker: mvm_scene::ObjectTracker,
+    animal_tracker: mvm_scene::ObjectTracker,
     score_thresh: f32,
     min_area: f32,
     cadence: u32,
+    control: SceneExecutionControl,
+    metrics: super::SchedulingMetrics,
 }
 
 impl SceneAgent {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the existing SceneAgent constructor keeps each detector/runtime seam explicit; 18.3b adds one bounded control seam"
+    )]
     pub(crate) fn new(
         detector: mvm_scene::YoloDetector,
         seg_detector: Option<mvm_scene::YoloSegDetector>,
-        person_masks: PersonMaskSlot,
+        observations: SceneObservationBus,
         tracker: mvm_scene::ObjectTracker,
         score_thresh: f32,
         min_area: f32,
         cadence: u32,
+        control: SceneExecutionControl,
+        metrics: super::SchedulingMetrics,
     ) -> Self {
-        Self { detector, seg_detector, person_masks, tracker, score_thresh, min_area, cadence }
+        Self {
+            detector,
+            seg_detector,
+            observations,
+            tracker,
+            animal_tracker: mvm_scene::ObjectTracker::with_params(0.3, 8, 0.5),
+            score_thresh,
+            min_area,
+            cadence,
+            control,
+            metrics,
+        }
     }
 }
 
@@ -59,8 +71,15 @@ impl Agent for SceneAgent {
         let mut errors = 0u64;
         let mut last_id: Option<u64> = None;
         while ctx.running() {
-            if let Some(frame) = ctx.frames.latest() {
-                if last_id != Some(frame.id) && cadence_due(frame.id, self.cadence) {
+            if let Some(frame) = ctx.frames.latest()
+                && last_id != Some(frame.id)
+            {
+                let permit = self.control.take_for(frame.id);
+                if cadence_due(frame.id, self.cadence) || permit.is_some() {
+                    if permit.is_some() && !cadence_due(frame.id, self.cadence) {
+                        self.metrics
+                            .record_extra_run(mvm_cortex::ObservationTarget::Scene);
+                    }
                     last_id = Some(frame.id);
                     match self.detector.detect(frame.image.as_ref()) {
                         Ok(objs) => {
@@ -68,10 +87,22 @@ impl Agent for SceneAgent {
                             // nodes (dropped by `is_relevant`), but fusion needs
                             // them to drop a pet-overlapping body from relational
                             // activities (anti-pet gate) — capture before filtering.
-                            let animals: Vec<mvm_core::BBox> = objs
+                            let animal_detections: Vec<_> = objs
                                 .iter()
                                 .filter(|o| mvm_scene::is_animal(o.class_name))
-                                .map(|o| o.bbox)
+                                .cloned()
+                                .collect();
+                            let animals: Vec<_> = self
+                                .animal_tracker
+                                .update(&animal_detections)
+                                .into_iter()
+                                .map(|animal| mvm_fusion::canonical::AnimalObservation {
+                                    track_id: animal.id,
+                                    class_name: animal.class_name.to_owned(),
+                                    bbox: animal.bbox,
+                                    confidence: animal.score,
+                                    remembered: animal.missed > 0,
+                                })
                                 .collect();
                             // Filters A/C/D (mirror the synchronous loop): relevant
                             // classes, per-class score floor, minimum bbox area.
@@ -91,6 +122,7 @@ impl Agent for SceneAgent {
                                 })
                                 .collect();
                             let mut tracked = self.tracker.update(&filtered);
+                            let mut person_masks = Vec::new();
 
                             // Phase 10.4/11: the YOLO-seg expert (opt-in `--masks`)
                             // runs over the same frame; its object masks are attached
@@ -105,7 +137,6 @@ impl Agent for SceneAgent {
                                         // attach to tracked objects; person masks are
                                         // published for the body tracker (11.A3).
                                         let mut obj_segs = Vec::new();
-                                        let mut person_masks = Vec::new();
                                         for s in segs {
                                             if s.det.class_name == "person" {
                                                 person_masks.push((s.det.bbox, s.mask));
@@ -113,16 +144,20 @@ impl Agent for SceneAgent {
                                                 obj_segs.push(s);
                                             }
                                         }
-                                        mvm_scene::attach_masks(&mut tracked, &obj_segs, SEG_ATTACH_IOU);
-                                        if let Ok(mut slot) = self.person_masks.lock() {
-                                            *slot = Some(Arc::new(person_masks));
-                                        }
+                                        mvm_scene::attach_masks(
+                                            &mut tracked,
+                                            &obj_segs,
+                                            SEG_ATTACH_IOU,
+                                        );
                                         if std::env::var("MVM_SEG_DEBUG").is_ok() {
-                                            let attached = tracked.iter().filter(|o| o.mask.is_some()).count();
+                                            let attached =
+                                                tracked.iter().filter(|o| o.mask.is_some()).count();
                                             eprintln!(
                                                 "  seg-dbg: {} obj-seg → {}/{} objects masked; {} person masks published",
-                                                obj_segs.len(), attached, tracked.len(),
-                                                self.person_masks.lock().ok().and_then(|s| s.as_ref().map(|v| v.len())).unwrap_or(0)
+                                                obj_segs.len(),
+                                                attached,
+                                                tracked.len(),
+                                                person_masks.len()
                                             );
                                         }
                                     }
@@ -130,7 +165,13 @@ impl Agent for SceneAgent {
                                 }
                             }
 
-                            project_objects(&ctx.world, &tracked, &animals, frame.captured);
+                            let stamp = ObservationStamp::from_frame(&frame);
+                            self.observations.publish(SceneObservationFrame {
+                                stamp,
+                                objects: Arc::new(collect_objects(&tracked, stamp.produced_at)),
+                                animals: Arc::new(animals),
+                                person_masks: Arc::new(person_masks),
+                            });
                             ticks += 1;
                         }
                         Err(e) => {
@@ -142,7 +183,11 @@ impl Agent for SceneAgent {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        AgentHealth { name: self.name(), ticks, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors,
+        }
     }
 }
 
@@ -166,15 +211,29 @@ mod tests {
     }
 
     #[test]
-    fn person_mask_slot_round_trips() {
-        // 11.A3 cross-agent hand-off (mirrors DepthSlot): SceneAgent writes the
-        // frame's person silhouettes, HumanAgent reads the shared handle.
-        let slot: PersonMaskSlot = Arc::new(Mutex::new(None));
-        assert!(slot.lock().unwrap().is_none());
-        let writer = slot.clone();
-        let mask = InstanceMask::from_bits(vec![0u8; mvm_core::mask::MASK_RES * mvm_core::mask::MASK_RES]);
-        *writer.lock().unwrap() = Some(Arc::new(vec![(BBox { x1: 0.1, y1: 0.1, x2: 0.3, y2: 0.6 }, mask)]));
-        let got = slot.lock().unwrap();
-        assert_eq!(got.as_ref().unwrap().len(), 1, "reader sees the published person mask");
+    fn person_masks_keep_the_scene_source_stamp() {
+        let bus = SceneObservationBus::new();
+        let mask = mvm_core::InstanceMask::from_bits(vec![
+            0u8;
+            mvm_core::mask::MASK_RES
+                * mvm_core::mask::MASK_RES
+        ]);
+        bus.publish(SceneObservationFrame {
+            stamp: ObservationStamp::new(9, std::time::Instant::now(), 1_000),
+            objects: Arc::new(Vec::new()),
+            animals: Arc::new(Vec::new()),
+            person_masks: Arc::new(vec![(
+                mvm_core::BBox {
+                    x1: 0.1,
+                    y1: 0.1,
+                    x2: 0.3,
+                    y2: 0.6,
+                },
+                mask,
+            )]),
+        });
+        let got = bus.latest().expect("published scene observation");
+        assert_eq!(got.stamp.source_frame_id, 9);
+        assert_eq!(got.person_masks.len(), 1);
     }
 }

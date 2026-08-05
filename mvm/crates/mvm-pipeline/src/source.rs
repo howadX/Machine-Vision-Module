@@ -5,7 +5,7 @@
 //! macOS (`AvFoundationSource`) and Windows (`MediaFoundationSource`) later
 //! land here without touching any call site.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use image::DynamicImage;
 
 use crate::native::NativeCamera;
@@ -31,7 +31,10 @@ pub struct V4l2Source {
 impl V4l2Source {
     pub fn open(device: &str, width: u32, height: u32, rotate_180: bool) -> Result<Self> {
         let cam = NativeCamera::open(device, width, height, rotate_180)?;
-        Ok(Self { cam, device: device.to_string() })
+        Ok(Self {
+            cam,
+            device: device.to_string(),
+        })
     }
 }
 
@@ -67,7 +70,10 @@ pub fn v4l2_candidates() -> Vec<String> {
         .map(|rd| {
             rd.flatten()
                 .filter_map(|e| e.file_name().into_string().ok())
-                .filter(|n| n.strip_prefix("video").is_some_and(|s| s.parse::<u32>().is_ok()))
+                .filter(|n| {
+                    n.strip_prefix("video")
+                        .is_some_and(|s| s.parse::<u32>().is_ok())
+                })
                 .map(|n| format!("/dev/{n}"))
                 .collect()
         })
@@ -89,10 +95,7 @@ fn order_candidates(mut names: Vec<String>) -> Vec<String> {
 
 /// Try `opener` over `candidates`, returning the first success along with the
 /// device that worked. Pure with respect to hardware — tested with a mock.
-fn pick_first<T>(
-    candidates: &[String],
-    opener: impl Fn(&str) -> Result<T>,
-) -> Result<(String, T)> {
+fn pick_first<T>(candidates: &[String], opener: impl Fn(&str) -> Result<T>) -> Result<(String, T)> {
     let mut errors: Vec<String> = Vec::new();
     for dev in candidates {
         match opener(dev) {
@@ -129,11 +132,17 @@ mod tests {
 
     #[test]
     fn pick_first_takes_first_live_device() {
-        let candidates: Vec<String> =
-            ["/dev/video0", "/dev/video2", "/dev/video4"].iter().map(|s| s.to_string()).collect();
+        let candidates: Vec<String> = ["/dev/video0", "/dev/video2", "/dev/video4"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         // video0 is dead (e.g. a metadata node), video2 opens.
         let (dev, val) = pick_first(&candidates, |d| {
-            if d == "/dev/video2" { Ok(42) } else { bail!("not MJPG") }
+            if d == "/dev/video2" {
+                Ok(42)
+            } else {
+                bail!("not MJPG")
+            }
         })
         .unwrap();
         assert_eq!(dev, "/dev/video2");
@@ -145,8 +154,14 @@ mod tests {
         let candidates: Vec<String> = vec!["/dev/video0".into(), "/dev/video1".into()];
         let err = pick_first(&candidates, |_| -> Result<()> { bail!("busy") }).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("/dev/video0") && msg.contains("/dev/video1"), "{msg}");
-        assert!(msg.contains("[camera].device"), "points at the config override: {msg}");
+        assert!(
+            msg.contains("/dev/video0") && msg.contains("/dev/video1"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("[camera].device"),
+            "points at the config override: {msg}"
+        );
     }
 
     #[test]

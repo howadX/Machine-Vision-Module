@@ -1,0 +1,41 @@
+name: agent-skills
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test validator
+        working-directory: mvm
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      - name: Validate canonical skills and public-surface audit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 mvm/scripts/validate_skills.py --base "$BASE_SHA"
+
+      - name: Test CLI help contract
+        working-directory: mvm
+        run: cargo test -p mvm-cli help::tests
+
+      - name: Test MCP contract
+        working-directory: mvm
+        run: cargo test -p mvm-cli mcp::tests
+
+      - name: Test recap and inspect contract
+        working-directory: mvm
+        run: cargo test -p mvm-cli recap_cmd::tests
+
+      - name: Test dataset contract
+        working-directory: mvm
+        run: cargo test -p mvm-dataset

@@ -11,7 +11,12 @@ fn main() -> anyhow::Result<()> {
     let dir = config.models_path.join("references");
     let mut files: Vec<_> = std::fs::read_dir(&dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with("p_V") && n.ends_with(".jpg")).unwrap_or(false))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("p_V") && n.ends_with(".jpg"))
+                .unwrap_or(false)
+        })
         .collect();
     files.sort();
     for p in &files {

@@ -133,7 +133,10 @@ impl YunetDetector {
         proposals.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
         let mut kept: Vec<FaceDet> = Vec::new();
         for p in proposals {
-            if !kept.iter().any(|k| p.bbox.iou(&k.bbox) > self.nms_threshold) {
+            if !kept
+                .iter()
+                .any(|k| p.bbox.iou(&k.bbox) > self.nms_threshold)
+            {
                 kept.push(p);
             }
         }
@@ -154,14 +157,14 @@ impl YunetDetector {
             for x in 0..sz {
                 let px = resized.get_pixel(x as u32, y as u32);
                 let idx = y * sz + x;
-                flat[idx]              = px[2] as f32; // B
-                flat[sz * sz + idx]    = px[1] as f32; // G
+                flat[idx] = px[2] as f32; // B
+                flat[sz * sz + idx] = px[1] as f32; // G
                 flat[2 * sz * sz + idx] = px[0] as f32; // R
             }
         }
         let shape = ndarray::IxDyn(&[1, 3, sz, sz]);
-        let array = ndarray::Array::from_shape_vec(shape, flat)
-            .context("Failed to create input array")?;
+        let array =
+            ndarray::Array::from_shape_vec(shape, flat).context("Failed to create input array")?;
         Tensor::from_array(array).context("Failed to create tensor")
     }
 }
@@ -218,7 +221,11 @@ pub fn head_orientation(lm: &[[f32; 2]; 5]) -> Option<HeadOrientation> {
     } else {
         "right"
     };
-    Some(HeadOrientation { yaw_deg, roll_deg, facing })
+    Some(HeadOrientation {
+        yaw_deg,
+        roll_deg,
+        facing,
+    })
 }
 
 /// A/B detector-coverage comparison (phase 7.1, gap G4).
@@ -247,7 +254,9 @@ pub fn compare_coverage(a: &[Detection], b: &[Detection], iou_thresh: f32) -> Co
         let mut best = iou_thresh;
         let mut best_j = None;
         for (j, db) in b.iter().enumerate() {
-            if b_used[j] { continue; }
+            if b_used[j] {
+                continue;
+            }
             let iou = da.bbox.iou(&db.bbox);
             if iou >= best {
                 best = iou;
@@ -294,9 +303,10 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            models_path: std::path::PathBuf::from(
-                concat!(env!("CARGO_MANIFEST_DIR"), "/../../models"),
-            ),
+            models_path: std::path::PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../models"
+            )),
             ..Default::default()
         }
     }
@@ -311,7 +321,14 @@ mod tests {
     fn coverage_identical_sets_all_matched() {
         let a = vec![d(0.1, 0.1, 0.3, 0.3), d(0.6, 0.6, 0.8, 0.8)];
         let cov = compare_coverage(&a, &a, 0.5);
-        assert_eq!(cov, Coverage { matched: 2, a_only: 0, b_only: 0 });
+        assert_eq!(
+            cov,
+            Coverage {
+                matched: 2,
+                a_only: 0,
+                b_only: 0
+            }
+        );
     }
 
     #[test]
@@ -320,7 +337,14 @@ mod tests {
         let a = vec![d(0.1, 0.1, 0.3, 0.3), d(0.6, 0.6, 0.8, 0.8)];
         let b = vec![d(0.1, 0.1, 0.3, 0.3)];
         let cov = compare_coverage(&a, &b, 0.5);
-        assert_eq!(cov, Coverage { matched: 1, a_only: 1, b_only: 0 });
+        assert_eq!(
+            cov,
+            Coverage {
+                matched: 1,
+                a_only: 1,
+                b_only: 0
+            }
+        );
     }
 
     #[test]
@@ -329,7 +353,14 @@ mod tests {
         let a = vec![d(0.1, 0.1, 0.3, 0.3)];
         let b = vec![d(0.1, 0.1, 0.3, 0.3), d(0.6, 0.6, 0.8, 0.8)];
         let cov = compare_coverage(&a, &b, 0.5);
-        assert_eq!(cov, Coverage { matched: 1, a_only: 0, b_only: 1 });
+        assert_eq!(
+            cov,
+            Coverage {
+                matched: 1,
+                a_only: 0,
+                b_only: 1
+            }
+        );
     }
 
     #[test]
@@ -337,7 +368,14 @@ mod tests {
         let a = vec![d(0.0, 0.0, 0.2, 0.2)];
         let b = vec![d(0.7, 0.7, 0.9, 0.9)];
         let cov = compare_coverage(&a, &b, 0.5);
-        assert_eq!(cov, Coverage { matched: 0, a_only: 1, b_only: 1 });
+        assert_eq!(
+            cov,
+            Coverage {
+                matched: 0,
+                a_only: 1,
+                b_only: 1
+            }
+        );
     }
 
     #[test]
@@ -354,10 +392,8 @@ mod tests {
     fn model_runs_on_reference_photo() {
         let mut det = YunetDetector::init(&test_config()).unwrap();
 
-        let ref_path = std::path::PathBuf::from(
-            std::env::var("HOME").unwrap_or_default(),
-        )
-        .join("repos/Machine Vision Module/models/references/p_V.jpg");
+        let ref_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("repos/Machine Vision Module/models/references/p_V.jpg");
 
         if !ref_path.exists() {
             eprintln!("Skipping: {} not found", ref_path.display());
@@ -384,14 +420,28 @@ mod tests {
 
     /// Frontal template: eyes level, nose centred, mouth below.
     fn frontal_lm5() -> [[f32; 2]; 5] {
-        [[40.0, 50.0], [80.0, 50.0], [60.0, 70.0], [45.0, 90.0], [75.0, 90.0]]
+        [
+            [40.0, 50.0],
+            [80.0, 50.0],
+            [60.0, 70.0],
+            [45.0, 90.0],
+            [75.0, 90.0],
+        ]
     }
 
     #[test]
     fn head_frontal_faces_camera() {
         let h = head_orientation(&frontal_lm5()).unwrap();
-        assert!(h.yaw_deg.abs() < 1.0, "centred nose → yaw≈0, got {}", h.yaw_deg);
-        assert!(h.roll_deg.abs() < 1.0, "level eyes → roll≈0, got {}", h.roll_deg);
+        assert!(
+            h.yaw_deg.abs() < 1.0,
+            "centred nose → yaw≈0, got {}",
+            h.yaw_deg
+        );
+        assert!(
+            h.roll_deg.abs() < 1.0,
+            "level eyes → roll≈0, got {}",
+            h.roll_deg
+        );
         assert_eq!(h.facing, "camera");
     }
 
@@ -400,7 +450,11 @@ mod tests {
         let mut lm = frontal_lm5();
         lm[2][0] = 45.0; // nose shifted well toward the image-left eye
         let h = head_orientation(&lm).unwrap();
-        assert!(h.yaw_deg < -20.0, "yaw strongly negative, got {}", h.yaw_deg);
+        assert!(
+            h.yaw_deg < -20.0,
+            "yaw strongly negative, got {}",
+            h.yaw_deg
+        );
         assert_eq!(h.facing, "left");
     }
 
@@ -424,8 +478,16 @@ mod tests {
             p[1] = s * x + c * y + 70.0;
         }
         let h = head_orientation(&lm).unwrap();
-        assert!((h.roll_deg - 30.0).abs() < 1.0, "roll≈30, got {}", h.roll_deg);
-        assert!(h.yaw_deg.abs() < 1.0, "yaw roll-invariant, got {}", h.yaw_deg);
+        assert!(
+            (h.roll_deg - 30.0).abs() < 1.0,
+            "roll≈30, got {}",
+            h.roll_deg
+        );
+        assert!(
+            h.yaw_deg.abs() < 1.0,
+            "yaw roll-invariant, got {}",
+            h.yaw_deg
+        );
         assert_eq!(h.facing, "camera");
     }
 
@@ -455,32 +517,45 @@ mod tests {
         let (bw, bh) = (f.bbox.x2 - f.bbox.x1, f.bbox.y2 - f.bbox.y1);
         for lm in &f.landmarks {
             assert!(
-                lm[0] >= f.bbox.x1 - 0.2 * bw && lm[0] <= f.bbox.x2 + 0.2 * bw
-                    && lm[1] >= f.bbox.y1 - 0.2 * bh && lm[1] <= f.bbox.y2 + 0.2 * bh,
-                "landmark {lm:?} far outside bbox {:?}", f.bbox
+                lm[0] >= f.bbox.x1 - 0.2 * bw
+                    && lm[0] <= f.bbox.x2 + 0.2 * bw
+                    && lm[1] >= f.bbox.y1 - 0.2 * bh
+                    && lm[1] <= f.bbox.y2 + 0.2 * bh,
+                "landmark {lm:?} far outside bbox {:?}",
+                f.bbox
             );
         }
         let eye_y = (f.landmarks[0][1] + f.landmarks[1][1]) * 0.5;
         let mouth_y = (f.landmarks[3][1] + f.landmarks[4][1]) * 0.5;
-        assert!(eye_y < mouth_y, "eyes above mouth: eye_y={eye_y}, mouth_y={mouth_y}");
-        assert!(f.landmarks[0][0] < f.landmarks[1][0], "left eye left of right eye");
+        assert!(
+            eye_y < mouth_y,
+            "eyes above mouth: eye_y={eye_y}, mouth_y={mouth_y}"
+        );
+        assert!(
+            f.landmarks[0][0] < f.landmarks[1][0],
+            "left eye left of right eye"
+        );
     }
 
     #[test]
     fn score_threshold_getter_reflects_setter() {
         let mut det = YunetDetector::init(&test_config()).unwrap();
-        assert!((det.score_threshold() - 0.5).abs() < 1e-6, "default should be 0.5");
+        assert!(
+            (det.score_threshold() - 0.5).abs() < 1e-6,
+            "default should be 0.5"
+        );
         det.set_score_threshold(0.3);
-        assert!((det.score_threshold() - 0.3).abs() < 1e-6, "should be 0.3 after set");
+        assert!(
+            (det.score_threshold() - 0.3).abs() < 1e-6,
+            "should be 0.3 after set"
+        );
     }
 
     #[test]
     fn lower_threshold_finds_face_on_reference_photo() {
         let mut det = YunetDetector::init(&test_config()).unwrap();
-        let ref_path = std::path::PathBuf::from(
-            std::env::var("HOME").unwrap_or_default(),
-        )
-        .join("repos/Machine Vision Module/mvm/models/references/p_V_01.jpg");
+        let ref_path = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+            .join("repos/Machine Vision Module/mvm/models/references/p_V_01.jpg");
 
         if !ref_path.exists() {
             eprintln!("Skipping: {} not found", ref_path.display());
@@ -493,7 +568,14 @@ mod tests {
         det.set_score_threshold(0.3);
         let low = det.process(&img).unwrap();
 
-        eprintln!("threshold=0.5: {} faces, threshold=0.3: {} faces", high.len(), low.len());
-        assert!(!low.is_empty(), "should detect at least one face at threshold=0.3");
+        eprintln!(
+            "threshold=0.5: {} faces, threshold=0.3: {} faces",
+            high.len(),
+            low.len()
+        );
+        assert!(
+            !low.is_empty(),
+            "should detect at least one face at threshold=0.3"
+        );
     }
 }

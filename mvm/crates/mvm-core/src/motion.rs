@@ -61,11 +61,7 @@ pub fn torso_scale(lm: &Landmarks33) -> Option<f32> {
     let s = shoulder_center(lm)?;
     let h = hip_center(lm)?;
     let d = ((s[0] - h[0]).powi(2) + (s[1] - h[1]).powi(2)).sqrt();
-    if d > 1e-3 {
-        Some(d)
-    } else {
-        None
-    }
+    if d > 1e-3 { Some(d) } else { None }
 }
 
 /// Bounded ring of recent landmark frames for one track (B1.1).
@@ -141,11 +137,7 @@ impl LandmarkHistory {
             return None;
         }
         // Torso scale from the latest valid frame (fall back to any valid one).
-        let scale = self
-            .buf
-            .iter()
-            .rev()
-            .find_map(|(_, lm)| torso_scale(lm))?;
+        let scale = self.buf.iter().rev().find_map(|(_, lm)| torso_scale(lm))?;
         let disp = ((c1[0] - c0[0]).powi(2) + (c1[1] - c0[1]).powi(2)).sqrt();
         Some((disp / scale) / dt)
     }
@@ -394,17 +386,16 @@ impl LandmarkHistory {
     /// *reaching*; otherwise `None`. Reach is read from the latest frame, speed
     /// from the window. Returns `None` (the variant) when geometry is unavailable.
     pub fn arm_gesture(&self, side: Side, th: &GestureThresholds) -> ArmGesture {
-        if let Some(v) = self.wrist_speed(side) {
-            if v >= th.wave_above {
-                return ArmGesture::Waving;
-            }
+        if let Some(v) = self.wrist_speed(side)
+            && v >= th.wave_above
+        {
+            return ArmGesture::Waving;
         }
-        if let Some((_, lm)) = self.latest() {
-            if let Some(r) = arm_reach(lm, side) {
-                if r >= th.reach_above {
-                    return ArmGesture::Reaching;
-                }
-            }
+        if let Some((_, lm)) = self.latest()
+            && let Some(r) = arm_reach(lm, side)
+            && r >= th.reach_above
+        {
+            return ArmGesture::Reaching;
         }
         ArmGesture::None
     }
@@ -620,7 +611,10 @@ mod tests {
         h.push(0.5, blind);
         h.push(1.0, frame(200.0, 100.0, 200.0)); // 100px over 1s, torso 100px
         let v = h.centroid_speed().unwrap();
-        assert!((v - 1.0).abs() < 1e-3, "endpoints only → 1.0 torso/s, got {v}");
+        assert!(
+            (v - 1.0).abs() < 1e-3,
+            "endpoints only → 1.0 torso/s, got {v}"
+        );
     }
 
     // ── motion-state machine (B1.3) ────────────────────────────────────────
@@ -804,8 +798,14 @@ mod tests {
     fn wrist_speed_is_torso_lengths_per_second() {
         // Wrist moves 50px in x over 0.5s, torso = 100px → 1.0 torso/s.
         let mut h = LandmarkHistory::new(8);
-        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Right, 200.0, 100.0));
-        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Right, 250.0, 100.0));
+        h.push(
+            0.0,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Right, 200.0, 100.0),
+        );
+        h.push(
+            0.5,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Right, 250.0, 100.0),
+        );
         let v = h.wrist_speed(Side::Right).unwrap();
         assert!((v - 1.0).abs() < 1e-3, "expected 1.0 torso/s, got {v}");
     }
@@ -813,7 +813,10 @@ mod tests {
     #[test]
     fn wrist_speed_none_with_single_frame() {
         let mut h = LandmarkHistory::new(8);
-        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 180.0));
+        h.push(
+            0.0,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 180.0),
+        );
         assert!(h.wrist_speed(Side::Left).is_none());
     }
 
@@ -821,8 +824,14 @@ mod tests {
     fn gesture_waving_on_fast_wrist() {
         // Wrist whips 200px in 0.5s, torso 100px → 4.0 torso/s ≥ wave_above.
         let mut h = LandmarkHistory::new(8);
-        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 110.0));
-        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 300.0, 110.0));
+        h.push(
+            0.0,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 110.0),
+        );
+        h.push(
+            0.5,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 300.0, 110.0),
+        );
         let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
         assert_eq!(g, ArmGesture::Waving, "fast wrist → waving");
     }
@@ -831,8 +840,14 @@ mod tests {
     fn gesture_reaching_on_extended_steady_arm() {
         // Arm extended (0.9 torso lateral) but barely moving → reaching, not wave.
         let mut h = LandmarkHistory::new(8);
-        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 12.0, 110.0));
-        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 110.0));
+        h.push(
+            0.0,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 12.0, 110.0),
+        );
+        h.push(
+            0.5,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 110.0),
+        );
         let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
         assert_eq!(g, ArmGesture::Reaching, "extended + steady → reaching");
     }
@@ -841,8 +856,14 @@ mod tests {
     fn gesture_none_for_resting_arm() {
         // Wrist hanging, not moving → no gesture.
         let mut h = LandmarkHistory::new(8);
-        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 180.0));
-        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 181.0));
+        h.push(
+            0.0,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 180.0),
+        );
+        h.push(
+            0.5,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 100.0, 181.0),
+        );
         let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
         assert_eq!(g, ArmGesture::None, "resting arm → no gesture");
     }
@@ -851,8 +872,14 @@ mod tests {
     fn gesture_waving_beats_reaching_when_both_fire() {
         // Extended AND fast → waving wins (priority on speed).
         let mut h = LandmarkHistory::new(8);
-        h.push(0.0, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 110.0));
-        h.push(0.5, with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 210.0, 110.0));
+        h.push(
+            0.0,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 10.0, 110.0),
+        );
+        h.push(
+            0.5,
+            with_wrist(frame(100.0, 100.0, 200.0), Side::Left, 210.0, 110.0),
+        );
         let g = h.arm_gesture(Side::Left, &GestureThresholds::default());
         assert_eq!(g, ArmGesture::Waving);
     }
@@ -885,7 +912,11 @@ mod tests {
             m.observe(frame(100.0 + i as f32 * 50.0, 100.0, 200.0), i as f64 * 0.5);
         }
         assert_eq!(m.state(), MotionState::Moving);
-        assert!(m.speed() > 0.3, "speed {} should clear the walk threshold", m.speed());
+        assert!(
+            m.speed() > 0.3,
+            "speed {} should clear the walk threshold",
+            m.speed()
+        );
     }
 
     #[test]

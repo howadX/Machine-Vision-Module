@@ -13,10 +13,10 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::config_file::ProductConfig;
-use crate::manifest::{ModelSpec, MODELS};
+use crate::manifest::{MODELS, ModelSpec};
 
 pub struct SetupArgs {
     /// Re-download even models already present with a matching checksum.
@@ -140,7 +140,9 @@ fn fetch_once(spec: &ModelSpec, url: &str, part: &Path) -> Result<()> {
     }
 
     let mut resp = if offset > 0 {
-        ureq::get(url).header("Range", &format!("bytes={offset}-")).call()
+        ureq::get(url)
+            .header("Range", &format!("bytes={offset}-"))
+            .call()
     } else {
         ureq::get(url).call()
     }
@@ -149,7 +151,10 @@ fn fetch_once(spec: &ModelSpec, url: &str, part: &Path) -> Result<()> {
     let status = resp.status().as_u16();
     let (mut file, mut written) = if status == 206 && offset > 0 {
         (
-            std::fs::OpenOptions::new().append(true).open(part).context("reopen .part")?,
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(part)
+                .context("reopen .part")?,
             offset,
         )
     } else if (200..300).contains(&status) {
@@ -170,7 +175,7 @@ fn fetch_once(spec: &ModelSpec, url: &str, part: &Path) -> Result<()> {
         file.write_all(&buf[..n]).context("write .part")?;
         written += n as u64;
         let pct = (written * 100 / spec.size.max(1)).min(100);
-        if pct != last_pct && pct % 10 == 0 && pct < 100 {
+        if pct != last_pct && pct.is_multiple_of(10) && pct < 100 {
             eprint!("\r    {pct}%   ");
             let _ = std::io::stderr().flush();
             last_pct = pct;
@@ -281,7 +286,10 @@ mod tests {
             required: false,
             note: "project-hosted",
         };
-        assert!(matches!(ensure_model(&spec, &dir, false), Outcome::SkippedNoUrl));
+        assert!(matches!(
+            ensure_model(&spec, &dir, false),
+            Outcome::SkippedNoUrl
+        ));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

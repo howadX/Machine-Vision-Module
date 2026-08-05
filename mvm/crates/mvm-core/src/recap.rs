@@ -12,8 +12,9 @@
 //! no `ort`/`image`. Mirrors the shape of [`crate::activity`].
 
 /// One frame's worth of observations the recap reads (the `recap` subcommand
-/// fills these from a `scene-*.jsonl` line).
-#[derive(Debug, Clone, Default)]
+/// fills these from a `scene-*.jsonl` line — or, since phase 16.7, from a
+/// semantic session `labels.jsonl` line projected to the same shape).
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct FrameObs {
     pub people: Vec<PersonObs>,
     /// Distinct object classes present this frame (background + foreground).
@@ -24,7 +25,7 @@ pub struct FrameObs {
 }
 
 /// A person as seen in one frame.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PersonObs {
     pub id: u32,
     pub dist_m: Option<f32>,
@@ -33,8 +34,9 @@ pub struct PersonObs {
     pub identity: Option<String>,
 }
 
-/// One completed activity episode (a `events-*.jsonl` line).
-#[derive(Debug, Clone)]
+/// One completed activity episode (a `events-*.jsonl` line, or an inline
+/// `{kind:"episode"}` record in a semantic session `labels.jsonl`, phase 16.7).
+#[derive(Debug, Clone, PartialEq)]
 pub struct EpisodeObs {
     pub label: String,
     /// Participants including object ids (≥ 10000) — dropped from the group key.
@@ -156,10 +158,10 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
             if let Some(post) = &p.posture {
                 *a.posture_counts.entry(post.clone()).or_insert(0) += 1;
             }
-            if a.identity.is_none() {
-                if let Some(name) = &p.identity {
-                    a.identity = Some(name.clone());
-                }
+            if a.identity.is_none()
+                && let Some(name) = &p.identity
+            {
+                a.identity = Some(name.clone());
             }
         }
     }
@@ -168,8 +170,7 @@ fn summarize_people(frames: &[FrameObs]) -> Vec<PersonSummary> {
         .into_iter()
         .map(|(id, a)| {
             let presence_frac = a.frames as f32 / total;
-            let is_phantom = id >= EPHEMERAL_ID_BASE
-                && id < OBJECT_ID_BASE
+            let is_phantom = (EPHEMERAL_ID_BASE..OBJECT_ID_BASE).contains(&id)
                 && frames.len() >= PHANTOM_MIN_SESSION_FRAMES
                 && presence_frac < PHANTOM_MAX_PRESENCE_FRAC
                 && a.first > 0;
@@ -302,7 +303,12 @@ mod tests {
     use super::*;
 
     fn person(id: u32, dist: f32, posture: &str) -> PersonObs {
-        PersonObs { id, dist_m: Some(dist), posture: Some(posture.into()), identity: None }
+        PersonObs {
+            id,
+            dist_m: Some(dist),
+            posture: Some(posture.into()),
+            identity: None,
+        }
     }
     fn ep(label: &str, participants: Vec<u32>, dur: f64, peak: f32, stable: bool) -> EpisodeObs {
         EpisodeObs {
@@ -325,7 +331,11 @@ mod tests {
             ep("typing", vec![0, 10005], 10.0, 0.5, true),
         ];
         let recap = Recap::build(&[], &eps);
-        let reading = recap.activities.iter().find(|a| a.label == "reading").unwrap();
+        let reading = recap
+            .activities
+            .iter()
+            .find(|a| a.label == "reading")
+            .unwrap();
         assert_eq!(reading.humans, vec![0]);
         assert_eq!(reading.episode_count, 3, "3 churn fragments → one activity");
         assert!((reading.total_s - 6.0).abs() < 1e-9);
@@ -342,7 +352,11 @@ mod tests {
             ep("reading", vec![0, 10002], 2.0, 0.4, true),
         ];
         let recap = Recap::build(&[], &eps);
-        let pt = recap.activities.iter().find(|a| a.label == "people_together").unwrap();
+        let pt = recap
+            .activities
+            .iter()
+            .find(|a| a.label == "people_together")
+            .unwrap();
         assert_eq!(pt.humans, vec![0, 11]);
         assert!(!pt.all_stable, "ephemeral participant → not stable");
     }
@@ -367,7 +381,10 @@ mod tests {
         assert_eq!(p0.dominant_posture.as_deref(), Some("sitting"));
         assert_eq!(p12.frames_present, 4);
         assert_eq!(p12.first_frame, 20);
-        assert!(p12.is_phantom, "ephemeral + brief + mid-session → phantom marker");
+        assert!(
+            p12.is_phantom,
+            "ephemeral + brief + mid-session → phantom marker"
+        );
     }
 
     #[test]
@@ -378,7 +395,10 @@ mod tests {
             f.people.push(person(11, 1.0, "standing"));
         }
         let recap = Recap::build(&frames, &[]);
-        assert!(!recap.people[0].is_phantom, "short session → no phantom claim");
+        assert!(
+            !recap.people[0].is_phantom,
+            "short session → no phantom claim"
+        );
     }
 
     #[test]

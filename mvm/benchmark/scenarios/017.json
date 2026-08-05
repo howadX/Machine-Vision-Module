@@ -1,0 +1,13 @@
+{
+  "fixture_version": "18.7.0",
+  "scenario_id": "017",
+  "name": "affordance_v1_hand_interaction",
+  "status": "synthetic_replay",
+  "cases": [
+    {"kind": "reachable", "expected_status": "asserted"},
+    {"kind": "held", "expected_status": "asserted"},
+    {"kind": "attended", "expected_status": "withheld"},
+    {"kind": "blocked", "expected_status": "withheld"},
+    {"kind": "interactable", "expected_status": "asserted"}
+  ]
+}

@@ -15,13 +15,13 @@
 //! This module is **additive**: it does NOT replace the Python bridge. Wiring it
 //! as the live frame source is a separate, approval-gated step (Python-light).
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use image::DynamicImage;
+use v4l::FourCC;
 use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
 use v4l::prelude::*;
 use v4l::video::Capture;
-use v4l::FourCC;
 
 /// A pure-Rust v4l2 MJPG camera. Owns the device for the process lifetime.
 pub struct NativeCamera {
@@ -40,8 +40,7 @@ impl NativeCamera {
     /// `rotate_180` mirrors the bridge's `cv2.ROTATE_180` for the upside-down
     /// ceiling mount.
     pub fn open(path: &str, width: u32, height: u32, rotate_180: bool) -> Result<Self> {
-        let dev = Device::with_path(path)
-            .with_context(|| format!("open v4l2 device {path}"))?;
+        let dev = Device::with_path(path).with_context(|| format!("open v4l2 device {path}"))?;
 
         let want = v4l::Format::new(width, height, FourCC::new(b"MJPG"));
         let applied = Capture::set_format(&dev, &want).context("set MJPG format")?;
@@ -98,7 +97,10 @@ mod tests {
         }
         let mut bytes: Vec<u8> = Vec::new();
         DynamicImage::ImageRgb8(img)
-            .write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Jpeg)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Jpeg,
+            )
             .unwrap();
         bytes
     }
@@ -124,7 +126,8 @@ mod tests {
         assert!(
             close(orig_br[0], rot_tl[0]) && close(orig_br[1], rot_tl[1]),
             "rotated top-left should match original bottom-right (got {:?} vs {:?})",
-            rot_tl, orig_br
+            rot_tl,
+            orig_br
         );
     }
 

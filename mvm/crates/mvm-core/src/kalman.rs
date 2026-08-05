@@ -53,7 +53,16 @@ struct ScalarKF {
 
 impl ScalarKF {
     fn new(pos: f32, q_pos: f32, q_vel: f32, r: f32) -> Self {
-        Self { pos, vel: 0.0, p_pp: P_POS_INIT, p_pv: 0.0, p_vv: P_VEL_INIT, q_pos, q_vel, r }
+        Self {
+            pos,
+            vel: 0.0,
+            p_pp: P_POS_INIT,
+            p_pv: 0.0,
+            p_vv: P_VEL_INIT,
+            q_pos,
+            q_vel,
+            r,
+        }
     }
 
     /// Predict: advance state by one step. Returns predicted position.
@@ -71,10 +80,10 @@ impl ScalarKF {
 
     /// Update with observed position. Mutates state in place.
     fn update(&mut self, observed: f32) {
-        let s = self.p_pp + self.r;              // innovation covariance (scalar)
-        let k_pos = self.p_pp / s;               // Kalman gain for pos
-        let k_vel = self.p_pv / s;               // Kalman gain for vel
-        let y = observed - self.pos;             // innovation
+        let s = self.p_pp + self.r; // innovation covariance (scalar)
+        let k_pos = self.p_pp / s; // Kalman gain for pos
+        let k_vel = self.p_pv / s; // Kalman gain for vel
+        let y = observed - self.pos; // innovation
         self.pos += k_pos * y;
         self.vel += k_vel * y;
         // P = (I - K H) P
@@ -87,7 +96,9 @@ impl ScalarKF {
     }
 
     /// Position variance — proxy for uncertainty (grows on missed frames).
-    fn p_pos(&self) -> f32 { self.p_pp }
+    fn p_pos(&self) -> f32 {
+        self.p_pp
+    }
 }
 
 // ── KalmanBBox ────────────────────────────────────────────────────────────────
@@ -113,8 +124,8 @@ impl KalmanBBox {
         Self {
             cx: ScalarKF::new(cx, Q_POS, Q_VEL, R_POS),
             cy: ScalarKF::new(cy, Q_POS, Q_VEL, R_POS),
-            w:  ScalarKF::new(w,  Q_POS, Q_VEL, R_SIZE),
-            h:  ScalarKF::new(h,  Q_POS, Q_VEL, R_SIZE),
+            w: ScalarKF::new(w, Q_POS, Q_VEL, R_SIZE),
+            h: ScalarKF::new(h, Q_POS, Q_VEL, R_SIZE),
         }
     }
 
@@ -123,8 +134,8 @@ impl KalmanBBox {
     pub fn predict(&mut self) -> BBox {
         let cx = self.cx.predict();
         let cy = self.cy.predict();
-        let w  = self.w.predict().max(0.0);
-        let h  = self.h.predict().max(0.0);
+        let w = self.w.predict().max(0.0);
+        let h = self.h.predict().max(0.0);
         from_cwh(cx, cy, w, h)
     }
 
@@ -139,7 +150,12 @@ impl KalmanBBox {
 
     /// Current smoothed bbox (reads state without mutating).
     pub fn smoothed_bbox(&self) -> BBox {
-        from_cwh(self.cx.pos, self.cy.pos, self.w.pos.max(0.0), self.h.pos.max(0.0))
+        from_cwh(
+            self.cx.pos,
+            self.cy.pos,
+            self.w.pos.max(0.0),
+            self.h.pos.max(0.0),
+        )
     }
 
     /// Sum of cx/cy position variances — proxy for track uncertainty.
@@ -151,11 +167,21 @@ impl KalmanBBox {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn to_cwh(b: BBox) -> (f32, f32, f32, f32) {
-    ((b.x1 + b.x2) * 0.5, (b.y1 + b.y2) * 0.5, b.x2 - b.x1, b.y2 - b.y1)
+    (
+        (b.x1 + b.x2) * 0.5,
+        (b.y1 + b.y2) * 0.5,
+        b.x2 - b.x1,
+        b.y2 - b.y1,
+    )
 }
 
 fn from_cwh(cx: f32, cy: f32, w: f32, h: f32) -> BBox {
-    BBox { x1: cx - w * 0.5, y1: cy - h * 0.5, x2: cx + w * 0.5, y2: cy + h * 0.5 }
+    BBox {
+        x1: cx - w * 0.5,
+        y1: cy - h * 0.5,
+        x2: cx + w * 0.5,
+        y2: cy + h * 0.5,
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -193,7 +219,12 @@ mod tests {
         }
         let last_x1 = 0.1 + 14.0 * 0.02; // 0.38
         let pred = kf.predict();
-        assert!(pred.x1 > last_x1, "pred.x1={:.4} not extrapolated past {:.4}", pred.x1, last_x1);
+        assert!(
+            pred.x1 > last_x1,
+            "pred.x1={:.4} not extrapolated past {:.4}",
+            pred.x1,
+            last_x1
+        );
     }
 
     /// Update pulls state toward the observation.
@@ -205,7 +236,11 @@ mod tests {
         kf.update(bbox(0.5, 0.5, 0.7, 0.7));
         let smoothed = kf.smoothed_bbox();
         // cx should be between 0.1 (init) and 0.6 (obs), pulled toward obs
-        assert!(smoothed.x1 > 0.1, "not pulled toward observation: x1={:.4}", smoothed.x1);
+        assert!(
+            smoothed.x1 > 0.1,
+            "not pulled toward observation: x1={:.4}",
+            smoothed.x1
+        );
     }
 
     /// Uncertainty grows when no observation arrives (missed frames).
@@ -224,7 +259,12 @@ mod tests {
             kf.predict();
         }
         let u_missed = kf.position_uncertainty();
-        assert!(u_missed > u_stable, "uncertainty should grow on missed frames: {:.4} vs {:.4}", u_missed, u_stable);
+        assert!(
+            u_missed > u_stable,
+            "uncertainty should grow on missed frames: {:.4} vs {:.4}",
+            u_missed,
+            u_stable
+        );
     }
 
     /// Tracker uses predicted bbox for IoU — a consistently moving object
@@ -240,6 +280,10 @@ mod tests {
             let x1 = 0.10 + i as f32 * 0.03;
             tracker.tick(&[Detection::bare(x1, 0.3, x1 + 0.20, 0.7)]);
         }
-        assert_eq!(tracker.track_count(), 1, "moving object should stay one track");
+        assert_eq!(
+            tracker.track_count(),
+            1,
+            "moving object should stay one track"
+        );
     }
 }

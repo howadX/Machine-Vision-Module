@@ -50,10 +50,12 @@ pub fn solve(cost: &[Vec<f32>]) -> Vec<Option<usize>> {
     // the matrix so the smaller dimension indexes the rows we iterate over;
     // `transposed` remembers to invert the row↔column mapping at the end.
     let transposed = rows > cols;
-    let (n, m) = if transposed { (cols, rows) } else { (rows, cols) };
-    let at = |i: usize, j: usize| -> f32 {
-        if transposed { cost[j][i] } else { cost[i][j] }
+    let (n, m) = if transposed {
+        (cols, rows)
+    } else {
+        (rows, cols)
     };
+    let at = |i: usize, j: usize| -> f32 { if transposed { cost[j][i] } else { cost[i][j] } };
 
     // Forbidden cells (`INFINITY`) are replaced by a finite `big` sentinel large
     // enough that no feasible assignment would ever prefer one — `big` exceeds
@@ -133,8 +135,7 @@ pub fn solve(cost: &[Vec<f32>]) -> Vec<Option<usize>> {
     // the ORIGINAL orientation, dropping any pair that fell on a forbidden
     // sentinel (its original cost was non-finite).
     let mut result = vec![None; rows];
-    for j in 1..=m {
-        let i = p[j];
+    for (j, &i) in p.iter().enumerate().take(m + 1).skip(1) {
         if i == 0 {
             continue; // column unused (n < m)
         }
@@ -142,7 +143,11 @@ pub fn solve(cost: &[Vec<f32>]) -> Vec<Option<usize>> {
         if !at(i - 1, j - 1).is_finite() {
             continue; // forbidden pair — leave both endpoints unmatched
         }
-        let (orig_row, orig_col) = if transposed { (j - 1, i - 1) } else { (i - 1, j - 1) };
+        let (orig_row, orig_col) = if transposed {
+            (j - 1, i - 1)
+        } else {
+            (i - 1, j - 1)
+        };
         result[orig_row] = Some(orig_col);
     }
     result
@@ -194,7 +199,15 @@ mod tests {
                 }
                 any = true;
                 used[j] = true;
-                rec(cost, row + 1, cols, used, count + 1, acc + cost[row][j], best);
+                rec(
+                    cost,
+                    row + 1,
+                    cols,
+                    used,
+                    count + 1,
+                    acc + cost[row][j],
+                    best,
+                );
                 used[j] = false;
             }
             // Leave this row unassigned only when it has no feasible column, or to
@@ -290,10 +303,7 @@ mod tests {
     #[test]
     fn fully_forbidden_row_is_unmatched() {
         // row1 has no feasible column → None; row0 still matched.
-        let cost = vec![
-            vec![3.0, 7.0],
-            vec![f32::INFINITY, f32::INFINITY],
-        ];
+        let cost = vec![vec![3.0, 7.0], vec![f32::INFINITY, f32::INFINITY]];
         let a = solve(&cost);
         assert_eq!(a[1], None, "all-forbidden row unmatched");
         assert!(a[0].is_some(), "feasible row still matched");

@@ -1,0 +1,15 @@
+{
+  "fixture_version": "18.8b.0",
+  "scenario_id": "019",
+  "name": "bounded_active_reobservation",
+  "status": "synthetic_replay",
+  "loop": {"trigger": "uncertainty", "expected_transition": "request_to_outcome"},
+  "cases": [
+    {"name": "semantic duplicate is deferred", "action": "duplicate", "expected": "deferred"},
+    {"name": "stale request expires without assertion", "action": "expired", "expected": "expired"},
+    {"name": "depth gets one temporary permit", "action": "depth", "expected": "dispatched"},
+    {"name": "new stamped result resolves once", "action": "resolve", "expected": "resolved"},
+    {"name": "missing external executor is explicit", "action": "external", "expected": "unavailable"},
+    {"name": "forced expert overload is bounded", "action": "overload", "expected": "deferred"}
+  ]
+}

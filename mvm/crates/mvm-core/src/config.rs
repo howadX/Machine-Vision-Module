@@ -149,10 +149,10 @@ impl Default for Config {
             identity_margin_thresh: 0.1,
             object_cadence: 3, // phase 8.E: YOLO every 3rd frame (sync-loop cadence)
             object_score_thresh: 0.30, // phase 8.E filter A: low floor for small desk items; furniture gated per-class
-            object_min_area: 0.0015, // phase 8.E filter D: ceiling-cam → small subtended angle
-            object_track_timeout: 15, // phase 8.E filter B: persist ~2s across brief occlusion
-            depth_cadence: 30, // phase 8.E.2: heavy depth, run sparsely (~every 1.5s)
-            session_timeout_secs: 30, // phase 16.1.3: >30s without people → new session
+            object_min_area: 0.0015,   // phase 8.E filter D: ceiling-cam → small subtended angle
+            object_track_timeout: 15,  // phase 8.E filter B: persist ~2s across brief occlusion
+            depth_cadence: 30,         // phase 8.E.2: heavy depth, run sparsely (~every 1.5s)
+            session_timeout_secs: 30,  // phase 16.1.3: >30s without people → new session
         }
     }
 }

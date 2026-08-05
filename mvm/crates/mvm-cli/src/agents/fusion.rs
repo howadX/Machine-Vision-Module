@@ -4,18 +4,31 @@
 //! metric torso-Z, giving objects a metric position in the same frame → real
 //! person↔object `Near` edges (built later by the StateFileWriter / 8.F).
 //!
-//! It reads the depth handle from the shared `DepthSlot`, the frame dimensions
-//! from the latest frame (the same pixel space the body-primary 3D uses), and
-//! read-modify-writes `WorldState.objects` under a single write lock so a
-//! concurrent `SceneAgent` swap can't clobber the anchored positions.
+//! It is camera-driven and is the sole writer of the compatibility `WorldState`.
+//! Human/scene/depth agents publish immutable stamped observations; this agent
+//! assembles one revision for each captured frame and rejects future evidence.
 
-use crate::agents::DepthSlot;
-use mvm_core::{Activity, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState, Position3D, WorldState};
+use crate::agents::{
+    DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
+    FusedFramePacket, HumanObservationBus, HumanObservationFrame, SceneObservationBus,
+    SceneObservationFrame,
+};
+use mvm_core::{
+    Activity, ActivityEvent, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState,
+    Position3D, WorldState,
+};
+use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
+use std::sync::Arc;
 
 pub(crate) struct FusionAgent {
     config: mvm_core::Config,
-    depth_slot: DepthSlot,
+    human_observations: HumanObservationBus,
+    scene_observations: SceneObservationBus,
+    depth_observations: DepthObservationBus,
+    fused_frames: FusedFrameBus,
+    canonical: CanonicalFusion,
+    run_id: String,
     /// Temporal debounce + event journal over the raw activities (phase 11.C3).
     journal: ActivityJournal,
     /// Anomaly v2 scorer (phase 11.B2) — same frame-gated cadence as the journal.
@@ -25,14 +38,30 @@ pub(crate) struct FusionAgent {
     last_frame: Option<u64>,
     /// Zero point for the journal's monotonic clock.
     epoch: std::time::Instant,
+    last_fused_frame: Option<u64>,
+    metrics: super::SchedulingMetrics,
 }
 
 impl FusionAgent {
-    pub(crate) fn new(config: mvm_core::Config, depth_slot: DepthSlot) -> Self {
+    pub(crate) fn new(
+        config: mvm_core::Config,
+        human_observations: HumanObservationBus,
+        scene_observations: SceneObservationBus,
+        depth_observations: DepthObservationBus,
+        fused_frames: FusedFrameBus,
+        run_id: impl Into<String>,
+        metrics: super::SchedulingMetrics,
+    ) -> Self {
         let camera_height_m = config.camera_height_m;
+        let run_id = run_id.into();
         Self {
             config,
-            depth_slot,
+            human_observations,
+            scene_observations,
+            depth_observations,
+            fused_frames,
+            canonical: CanonicalFusion::new(run_id.clone()),
+            run_id,
             // Churn stitching on (11.C6): the mesh live test (2026-07-03)
             // showed object-track id churn spamming the journal with dozens of
             // ½-second typing/holding_drink fragments for one physical desk —
@@ -42,6 +71,8 @@ impl FusionAgent {
             anomaly: AnomalyScorer::new().with_camera_height(camera_height_m),
             last_frame: None,
             epoch: std::time::Instant::now(),
+            last_fused_frame: None,
+            metrics,
         }
     }
 
@@ -49,7 +80,7 @@ impl FusionAgent {
     /// the raw activities, step the FSM once per *new* frame_id, publish the
     /// stabilized set (Active+Cooling, EMA confidence) as `world.activities` and
     /// append completed episodes to `world.events`.
-    fn advance_journal(&mut self, w: &mut WorldState) {
+    fn advance_journal(&mut self, w: &mut WorldState) -> Vec<ActivityEvent> {
         // Drop a body overlapping a YOLO animal detection from relational
         // activities — a pet with a spurious BlazePose skeleton must never be a
         // `people_together` participant (model-corroborated anti-pet gate;
@@ -60,21 +91,30 @@ impl FusionAgent {
             let people: Vec<PersonState> = w
                 .people
                 .iter()
-                .filter(|p| !w.animals.iter().any(|a| p.bbox.iou(a) > mvm_scene::ANIMAL_IOU))
+                .filter(|p| {
+                    !w.animals
+                        .iter()
+                        .any(|a| p.bbox.iou(a) > mvm_scene::ANIMAL_IOU)
+                })
                 .cloned()
                 .collect();
             infer_activities(people.as_slice(), w.objects.as_slice())
         };
-        if self.last_frame != Some(w.frame_id) {
+        let ended = if self.last_frame != Some(w.frame_id) {
             self.last_frame = Some(w.frame_id);
-            let t = w.timestamp.saturating_duration_since(self.epoch).as_secs_f64();
+            let t = w
+                .timestamp
+                .saturating_duration_since(self.epoch)
+                .as_secs_f64();
             self.journal.update(&raw, t, w.frame_id);
             let ended = self.journal.drain_events();
-            w.events.extend(ended);
             // Anomaly v2 (11.B2): decaying peak over noisy-OR'd signals —
             // ticked once per frame so the decay rate means something.
             w.anomaly_score = self.anomaly.update(&w.people, &w.objects, t);
-        }
+            ended
+        } else {
+            Vec::new()
+        };
         w.activity_instances = self.journal.active().cloned().collect();
         w.activities = w
             .activity_instances
@@ -85,6 +125,7 @@ impl FusionAgent {
                 participants: i.key.participants.clone(),
             })
             .collect();
+        ended
     }
 }
 
@@ -97,33 +138,192 @@ impl Agent for FusionAgent {
         let pinhole = mvm_core::space::Pinhole::from_config(&self.config);
         let mut ticks = 0u64;
         while ctx.running() {
-            // Cheaply grab the latest depth handle (clone the inner Arc, release
-            // the slot lock immediately) + the frame's pixel dimensions.
-            let depth = self.depth_slot.lock().ok().and_then(|g| g.clone());
-            let dims = ctx
-                .frames
-                .latest()
-                .map(|f| (f.image.width() as f32, f.image.height() as f32));
-            if let Ok(mut w) = ctx.world.write() {
+            if let Some(frame) = ctx.frames.latest()
+                && self.last_fused_frame != Some(frame.id)
+            {
+                let started = std::time::Instant::now();
+                self.last_fused_frame = Some(frame.id);
+                let human = self
+                    .human_observations
+                    .latest()
+                    .filter(|obs| obs.stamp.age_at(frame.id).is_some());
+                let scene = self
+                    .scene_observations
+                    .latest()
+                    .filter(|obs| obs.stamp.age_at(frame.id).is_some());
+                let depth = self.depth_observations.latest().filter(|obs| {
+                    obs.stamp
+                        .age_at(frame.id)
+                        .is_some_and(|age| age <= u64::from(self.config.depth_cadence.max(1)) * 2)
+                });
+
+                let mut world = WorldState::new(frame.captured);
+                world.frame_id = frame.id;
+                world.people = human
+                    .as_ref()
+                    .map_or_else(Vec::new, |obs| obs.people.as_ref().clone());
+                world.objects = scene
+                    .as_ref()
+                    .map_or_else(Vec::new, |obs| obs.objects.as_ref().clone());
+                world.animals = scene.as_ref().map_or_else(Vec::new, |obs| {
+                    obs.animals.iter().map(|animal| animal.bbox).collect()
+                });
                 {
-                    let WorldState { people, objects, .. } = &mut *w;
+                    let WorldState {
+                        people, objects, ..
+                    } = &mut world;
                     // Anchor objects to metric 3D when a depth map is available
                     // (the person↔person activities don't need it — people carry
                     // torso-3D directly).
-                    if let (Some(d), Some((fw, fh))) = (depth.as_ref(), dims) {
-                        anchor_objects(people.as_slice(), objects.as_mut_slice(), d, &pinhole, fw, fh);
+                    if let Some(d) = depth.as_ref() {
+                        anchor_objects(
+                            people.as_slice(),
+                            objects.as_mut_slice(),
+                            &d.map,
+                            &pinhole,
+                            frame.image.width() as f32,
+                            frame.image.height() as f32,
+                        );
                     }
                 }
-                // Cross-group inference (phase 8.F) through the temporal
-                // journal (phase 11.C3): raw per-tick activities are debounced
-                // into stable instances + start/stop events.
-                self.advance_journal(&mut w);
+                // Cross-group inference (phase 8.F) through the temporal journal.
+                let ended = self.advance_journal(&mut world);
+                let published_at_unix_ms = unix_ms_now().max(frame.captured_at_unix_ms);
+                let stamp = mvm_core::canonical::FrameStamp::new(
+                    self.run_id.clone(),
+                    frame.id,
+                    frame.captured_at_unix_ms,
+                    published_at_unix_ms,
+                )
+                .expect("camera frame timestamps form a valid canonical stamp");
+                let sources = source_stamps(
+                    frame.id,
+                    published_at_unix_ms,
+                    human.as_ref(),
+                    scene.as_ref(),
+                    depth.as_ref(),
+                    self.config.object_cadence,
+                    self.config.depth_cadence,
+                );
+                match self.canonical.assemble(CanonicalFusionInput {
+                    stamp,
+                    sources,
+                    people: &world.people,
+                    objects: &world.objects,
+                    animals: scene
+                        .as_ref()
+                        .map_or(&[][..], |observation| observation.animals.as_slice()),
+                    activities: &world.activities,
+                    ended_activities: &ended,
+                    anomaly_score: world.anomaly_score,
+                }) {
+                    Ok(scene_frame) => {
+                        let mut compatibility =
+                            (*scene_frame.compatibility_world_state(frame.captured)).clone();
+                        // Preserve rich legacy-only evidence during the v0.4
+                        // compatibility window; canonical facts remain authority.
+                        compatibility.people = world.people;
+                        compatibility.objects = world.objects;
+                        compatibility.animals = world.animals;
+                        compatibility.activity_instances = world.activity_instances;
+                        if let Ok(mut shared) = ctx.world.write() {
+                            *shared = compatibility;
+                        }
+                        self.fused_frames.publish(FusedFramePacket {
+                            scene: Arc::new(scene_frame),
+                            evidence: FrameEvidenceHandles {
+                                rgb: Arc::clone(&frame.image),
+                                depth: depth.clone(),
+                                human: human.clone(),
+                                scene: scene.clone(),
+                            },
+                        });
+                    }
+                    Err(error) => {
+                        eprintln!("  fusion: canonical assembly error: {error}");
+                    }
+                }
+                self.metrics
+                    .record_duration(super::MetricAgent::Fusion, started.elapsed());
                 ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(15));
         }
-        AgentHealth { name: self.name(), ticks, errors: 0 }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors: 0,
+        }
     }
+}
+
+fn unix_ms_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+fn source_stamps(
+    fused_frame_id: u64,
+    published_at_unix_ms: i64,
+    human: Option<&HumanObservationFrame>,
+    scene: Option<&SceneObservationFrame>,
+    depth: Option<&DepthObservationFrame>,
+    object_cadence: u32,
+    depth_cadence: u32,
+) -> Vec<mvm_core::canonical::SourceStamp> {
+    use mvm_core::canonical::{FactSource, SourceStamp};
+
+    let mut sources = vec![
+        SourceStamp::at_frame(FactSource::Capture, fused_frame_id, published_at_unix_ms)
+            .relative_to(fused_frame_id, 0, 0)
+            .expect("capture source is the canonical clock"),
+        observation_source(
+            FactSource::Human,
+            human.map(|observation| &observation.stamp),
+            fused_frame_id,
+            2,
+            4,
+        ),
+        observation_source(
+            FactSource::Scene,
+            scene.map(|observation| &observation.stamp),
+            fused_frame_id,
+            u64::from(object_cadence.max(1)),
+            u64::from(object_cadence.max(1)) * 2,
+        ),
+        observation_source(
+            FactSource::Depth,
+            depth.map(|observation| &observation.stamp),
+            fused_frame_id,
+            u64::from(depth_cadence.max(1)),
+            u64::from(depth_cadence.max(1)) * 2,
+        ),
+    ];
+    sources.sort_by_key(|source| source.source);
+    sources
+}
+
+fn observation_source(
+    source: mvm_core::canonical::FactSource,
+    stamp: Option<&crate::agents::ObservationStamp>,
+    fused_frame_id: u64,
+    fresh_through: u64,
+    coasted_through: u64,
+) -> mvm_core::canonical::SourceStamp {
+    stamp.map_or_else(
+        || mvm_core::canonical::SourceStamp::unavailable(source),
+        |stamp| {
+            mvm_core::canonical::SourceStamp::at_frame(
+                source,
+                stamp.source_frame_id,
+                stamp.produced_at_unix_ms,
+            )
+            .relative_to(fused_frame_id, fresh_through, coasted_through)
+            .expect("future expert observations are filtered before canonical fusion")
+        },
+    )
 }
 
 /// Anchor objects to metric 3D using people as the scale reference (phase 8.E.2,
@@ -146,14 +346,12 @@ pub(crate) fn anchor_objects(
 
     let mut ks: Vec<f32> = Vec::new();
     for p in people {
-        if let Some(q) = p.position_3d {
-            if q.z > 0.0 {
-                if let Some(d) = depth.median_in_bbox(&p.bbox) {
-                    if d > 1e-3 {
-                        ks.push(q.z * d);
-                    }
-                }
-            }
+        if let Some(q) = p.position_3d
+            && q.z > 0.0
+            && let Some(d) = depth.median_in_bbox(&p.bbox)
+            && d > 1e-3
+        {
+            ks.push(q.z * d);
         }
     }
     if ks.is_empty() {
@@ -180,7 +378,12 @@ pub(crate) fn anchor_objects(
                 let cx = (o.bbox.x1 + o.bbox.x2) * 0.5 * fw;
                 let cy = (o.bbox.y1 + o.bbox.y2) * 0.5 * fh;
                 let p3 = pinhole.pixel_to_3d(cx, cy, z);
-                o.position_3d = Some(Position3D { x: p3[0], y: p3[1], z: p3[2], confidence: OBJ_DEPTH_CONF });
+                o.position_3d = Some(Position3D {
+                    x: p3[0],
+                    y: p3[1],
+                    z: p3[2],
+                    confidence: OBJ_DEPTH_CONF,
+                });
             }
             _ => o.position_3d = None,
         }
@@ -206,8 +409,7 @@ const WORKSTATION_MARGIN: f32 = 0.10;
 /// these, is *seated at it* — the relational inference that replaces the
 /// withheld sitting-vs-standing classifier claim (legs occluded behind a desk
 /// are geometrically mute on the difference).
-const WORKSTATION_CLASSES: &[&str] =
-    &["dining table", "laptop", "keyboard", "mouse", "tv", "book"];
+const WORKSTATION_CLASSES: &[&str] = &["dining table", "laptop", "keyboard", "mouse", "tv", "book"];
 
 /// The activity label a person↔object interaction yields, or `None` for objects
 /// that are context only (furniture you don't "use" as an activity).
@@ -373,6 +575,7 @@ fn upper_upright_stationary(p: &PersonState) -> bool {
 ///     `holding_drink`). Body-landmark contact, not body-bbox overlap — on a
 ///     ceiling cam the wrists reach the desk while the body bbox (head/shoulders)
 ///     does not.
+///
 /// Furniture is context only (no activity).
 pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) -> Vec<Activity> {
     let mut acts = Vec::new();
@@ -398,14 +601,16 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
     // arm crossing a neighbour's phone), the object is attributed to exactly
     // one person — the strongest ContactClaim — instead of everyone touching.
     for o in objects {
-        let Some(label) = interaction_label(&o.class) else { continue };
+        let Some(label) = interaction_label(&o.class) else {
+            continue;
+        };
         let centre = contact_centre(o);
         let mut best: Option<ContactClaim> = None;
         for p in people {
-            if let Some(claim) = contact_claim(p, o, centre) {
-                if best.as_ref().is_none_or(|b| claim.beats(b)) {
-                    best = Some(claim);
-                }
+            if let Some(claim) = contact_claim(p, o, centre)
+                && best.as_ref().is_none_or(|b| claim.beats(b))
+            {
+                best = Some(claim);
             }
         }
         if let Some(winner) = best {
@@ -427,17 +632,17 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
         // locomoting, adjacent to a workstation object. This is the desk case:
         // sitting-vs-standing is geometrically mute without legs, but "at the
         // workstation, stationary, upright" is exactly the occupancy signal.
-        if upper_upright_stationary(p) {
-            if let Some(o) = objects.iter().find(|o| {
+        if upper_upright_stationary(p)
+            && let Some(o) = objects.iter().find(|o| {
                 WORKSTATION_CLASSES.contains(&o.class.as_str())
                     && bbox_adjacent(&p.bbox, &o.bbox, WORKSTATION_MARGIN)
-            }) {
-                acts.push(Activity {
-                    label: "seated_at_workstation".into(),
-                    confidence: o.confidence.clamp(0.0, 1.0),
-                    participants: vec![p.track_id, o.id],
-                });
-            }
+            })
+        {
+            acts.push(Activity {
+                label: "seated_at_workstation".into(),
+                confidence: o.confidence.clamp(0.0, 1.0),
+                participants: vec![p.track_id, o.id],
+            });
         }
         // Clipped by the frame border with partial coverage: the body is
         // half-outside the camera's view — flag it so consumers don't read the
@@ -467,12 +672,22 @@ mod tests {
     fn person(z: f32) -> PersonState {
         PersonState {
             track_id: 10,
-            bbox: BBox { x1: 0.3, y1: 0.2, x2: 0.5, y2: 0.7 },
+            bbox: BBox {
+                x1: 0.3,
+                y1: 0.2,
+                x2: 0.5,
+                y2: 0.7,
+            },
             face_bbox: None,
             identity: None,
             emotion: None,
             posture: None,
-            position_3d: Some(Position3D { x: 0.0, y: 0.0, z, confidence: 0.5 }),
+            position_3d: Some(Position3D {
+                x: 0.0,
+                y: 0.0,
+                z,
+                confidence: 0.5,
+            }),
             emotion_distribution: None,
             wrists: Vec::new(),
             hands: Vec::new(),
@@ -485,7 +700,8 @@ mod tests {
             recon_error: None,
             plausibility: None,
             torso_flexion: None,
-            head_yaw: None, head_facing: None,
+            head_yaw: None,
+            head_facing: None,
             last_seen: Instant::now(),
         }
     }
@@ -494,10 +710,20 @@ mod tests {
         ObjectState {
             id: 10000,
             class: "cup".into(),
-            bbox: BBox { x1: 0.45, y1: 0.45, x2: 0.6, y2: 0.6 },
+            bbox: BBox {
+                x1: 0.45,
+                y1: 0.45,
+                x2: 0.6,
+                y2: 0.6,
+            },
             confidence: 0.8,
             age: 2,
-            position_3d: Some(Position3D { x: 9.0, y: 9.0, z: 9.0, confidence: 0.4 }), // stale
+            position_3d: Some(Position3D {
+                x: 9.0,
+                y: 9.0,
+                z: 9.0,
+                confidence: 0.4,
+            }), // stale
             mask: None,
             remembered: false,
             last_seen: Instant::now(),
@@ -506,14 +732,25 @@ mod tests {
 
     /// Uniform depth map → every `median_in_bbox` returns the same value.
     fn uniform_depth(v: f32) -> mvm_depth::DepthMap {
-        mvm_depth::DepthMap { data: vec![v; 64], w: 8, h: 8 }
+        mvm_depth::DepthMap {
+            data: vec![v; 64],
+            w: 8,
+            h: 8,
+        }
     }
 
     // ── mesh journal wiring (phase 11.C3) ──
 
     fn fusion_agent() -> FusionAgent {
-        let slot: DepthSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
-        FusionAgent::new(Config::default(), slot)
+        FusionAgent::new(
+            Config::default(),
+            HumanObservationBus::new(),
+            SceneObservationBus::new(),
+            DepthObservationBus::new(),
+            FusedFrameBus::new(),
+            "test-run",
+            super::super::SchedulingMetrics::new(super::super::SchedulingMode::SceneAndDepth),
+        )
     }
 
     /// A world whose raw inference yields "using_object(keyboard)" (wrist on keyboard).
@@ -524,7 +761,16 @@ mod tests {
         p.position_3d = None;
         p.wrists = vec![[0.40, 0.58]];
         w.people.push(p);
-        w.objects.push(obj_class(10001, "keyboard", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.62 }));
+        w.objects.push(obj_class(
+            10001,
+            "keyboard",
+            BBox {
+                x1: 0.35,
+                y1: 0.55,
+                x2: 0.45,
+                y2: 0.62,
+            },
+        ));
         w
     }
 
@@ -553,14 +799,18 @@ mod tests {
         }
         let mut last_events = Vec::new();
         for g in 0..mvm_core::activity::ACTIVITY_EXIT_DWELL as u64 {
-            let mut w = mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100 * (f + g)));
+            let mut w =
+                mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100 * (f + g)));
             w.frame_id = f + g;
-            agent.advance_journal(&mut w);
-            last_events = w.events.clone();
+            last_events = agent.advance_journal(&mut w);
         }
         assert_eq!(last_events.len(), 1, "end of contact journals one event");
         assert_eq!(last_events[0].label, "using_object(keyboard)");
-        assert!(last_events[0].duration_s > 2.0, "duration {}", last_events[0].duration_s);
+        assert!(
+            last_events[0].duration_s > 2.0,
+            "duration {}",
+            last_events[0].duration_s
+        );
     }
 
     #[test]
@@ -571,14 +821,24 @@ mod tests {
         for _ in 0..10 {
             let mut w = typing_world(t0, 5);
             agent.advance_journal(&mut w);
-            assert!(w.activities.is_empty(), "same frame repeated must not confirm");
+            assert!(
+                w.activities.is_empty(),
+                "same frame repeated must not confirm"
+            );
         }
     }
 
     #[test]
     fn no_people_leaves_objects_depthless() {
         let mut objs = vec![object()];
-        anchor_objects(&[], &mut objs, &uniform_depth(0.5), &pinhole(), 640.0, 480.0);
+        anchor_objects(
+            &[],
+            &mut objs,
+            &uniform_depth(0.5),
+            &pinhole(),
+            640.0,
+            480.0,
+        );
         assert!(objs[0].position_3d.is_none(), "no anchor → depthless");
     }
 
@@ -586,9 +846,20 @@ mod tests {
     fn person_anchor_sets_object_metric_z() {
         // person Z=2.0, d_person=0.5 → k=1.0; object d=0.5 → Z = 1.0/0.5 = 2.0.
         let mut objs = vec![object()];
-        anchor_objects(&[person(2.0)], &mut objs, &uniform_depth(0.5), &pinhole(), 640.0, 480.0);
+        anchor_objects(
+            &[person(2.0)],
+            &mut objs,
+            &uniform_depth(0.5),
+            &pinhole(),
+            640.0,
+            480.0,
+        );
         let q = objs[0].position_3d.expect("object anchored");
-        assert!((q.z - 2.0).abs() < 1e-3, "metric Z from people anchor, got {}", q.z);
+        assert!(
+            (q.z - 2.0).abs() < 1e-3,
+            "metric Z from people anchor, got {}",
+            q.z
+        );
         assert!((q.confidence - 0.4).abs() < 1e-6);
     }
 
@@ -596,9 +867,21 @@ mod tests {
     fn degenerate_object_bbox_yields_no_position() {
         // A zero-area object bbox → median_in_bbox None → depthless even with anchor.
         let mut o = object();
-        o.bbox = BBox { x1: 0.5, y1: 0.5, x2: 0.5, y2: 0.5 };
+        o.bbox = BBox {
+            x1: 0.5,
+            y1: 0.5,
+            x2: 0.5,
+            y2: 0.5,
+        };
         let mut objs = vec![o];
-        anchor_objects(&[person(2.0)], &mut objs, &uniform_depth(0.5), &pinhole(), 640.0, 480.0);
+        anchor_objects(
+            &[person(2.0)],
+            &mut objs,
+            &uniform_depth(0.5),
+            &pinhole(),
+            640.0,
+            480.0,
+        );
         assert!(objs[0].position_3d.is_none(), "degenerate bbox → None");
     }
 
@@ -627,7 +910,12 @@ mod tests {
         let mask = mvm_core::mask::InstanceMask::from_bits(bits);
 
         let mut o = object();
-        o.bbox = BBox { x1: 0.1, y1: 0.1, x2: 0.4, y2: 0.4 }; // left region
+        o.bbox = BBox {
+            x1: 0.1,
+            y1: 0.1,
+            x2: 0.4,
+            y2: 0.4,
+        }; // left region
         let people = [person(1.0)]; // k = 1.0·1.0 = 1.0
 
         // Bbox path: central-half samples 1.0 → Z = k/1.0 = 1.0.
@@ -665,11 +953,21 @@ mod tests {
         // Wrist landmark lands inside the keyboard bbox — body-landmark contact,
         // not body-bbox overlap.
         let mut p = person(1.0);
-        let kb = obj_class(10001, "keyboard", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.62 });
+        let kb = obj_class(
+            10001,
+            "keyboard",
+            BBox {
+                x1: 0.35,
+                y1: 0.55,
+                x2: 0.45,
+                y2: 0.62,
+            },
+        );
         p.wrists = vec![[0.40, 0.58]];
         let acts = infer_activities(&[p], &[kb]);
         assert!(
-            acts.iter().any(|a| a.label == "using_object(keyboard)" && a.participants == vec![10, 10001]),
+            acts.iter()
+                .any(|a| a.label == "using_object(keyboard)" && a.participants == vec![10, 10001]),
             "got {acts:?}"
         );
     }
@@ -698,12 +996,24 @@ mod tests {
         // the background contact the bbox test wrongly accepted. With a mask
         // attached, the claim must not fire.
         let mut p = person(1.0);
-        let bbox = BBox { x1: 0.2, y1: 0.5, x2: 0.8, y2: 0.7 };
+        let bbox = BBox {
+            x1: 0.2,
+            y1: 0.5,
+            x2: 0.8,
+            y2: 0.7,
+        };
         let mut kb = obj_class(10001, "keyboard", bbox);
-        kb.mask = Some(region_mask(&BBox { x1: 0.2, y1: 0.5, x2: 0.45, y2: 0.7 }));
+        kb.mask = Some(region_mask(&BBox {
+            x1: 0.2,
+            y1: 0.5,
+            x2: 0.45,
+            y2: 0.7,
+        }));
         p.wrists = vec![[0.7, 0.6]]; // in bbox, ~0.25 right of the silhouette
         assert!(
-            infer_activities(&[p], &[kb]).iter().all(|a| a.label != "using_object(keyboard)"),
+            infer_activities(&[p], &[kb])
+                .iter()
+                .all(|a| a.label != "using_object(keyboard)"),
             "bbox-only background contact must be cut by the mask"
         );
     }
@@ -711,13 +1021,24 @@ mod tests {
     #[test]
     fn mask_contact_fires_on_silhouette() {
         let mut p = person(1.0);
-        let bbox = BBox { x1: 0.2, y1: 0.5, x2: 0.8, y2: 0.7 };
+        let bbox = BBox {
+            x1: 0.2,
+            y1: 0.5,
+            x2: 0.8,
+            y2: 0.7,
+        };
         let mut kb = obj_class(10001, "keyboard", bbox);
-        kb.mask = Some(region_mask(&BBox { x1: 0.2, y1: 0.5, x2: 0.45, y2: 0.7 }));
+        kb.mask = Some(region_mask(&BBox {
+            x1: 0.2,
+            y1: 0.5,
+            x2: 0.45,
+            y2: 0.7,
+        }));
         p.wrists = vec![[0.3, 0.6]]; // on the silhouette
         let acts = infer_activities(&[p], &[kb]);
         assert!(
-            acts.iter().any(|a| a.label == "using_object(keyboard)" && a.participants == vec![10, 10001]),
+            acts.iter()
+                .any(|a| a.label == "using_object(keyboard)" && a.participants == vec![10, 10001]),
             "got {acts:?}"
         );
     }
@@ -745,23 +1066,52 @@ mod tests {
     fn contested_object_goes_to_hand_not_reaching_wrist() {
         // A's outstretched wrist crosses B's phone while B actually holds it
         // (hand landmarks on the object) — the activity belongs to B, and only B.
-        let phone = obj_class(10001, "cell phone", BBox { x1: 0.5, y1: 0.5, x2: 0.6, y2: 0.6 });
+        let phone = obj_class(
+            10001,
+            "cell phone",
+            BBox {
+                x1: 0.5,
+                y1: 0.5,
+                x2: 0.6,
+                y2: 0.6,
+            },
+        );
         let mut a = person_id(10);
         a.wrists = vec![[0.51, 0.55]]; // even closer to the centre than B's hand
         a.right_gesture = Some("reaching");
         let mut b = person_id(11);
         b.hands = vec![hand_at([0.58, 0.55])];
         let acts = infer_activities(&[a, b], &[phone]);
-        let phone_acts: Vec<_> = acts.iter().filter(|x| x.label == "using_object(cell phone)").collect();
-        assert_eq!(phone_acts.len(), 1, "one attribution per contested object, got {acts:?}");
-        assert_eq!(phone_acts[0].participants, vec![11, 10001], "holder wins over reacher");
+        let phone_acts: Vec<_> = acts
+            .iter()
+            .filter(|x| x.label == "using_object(cell phone)")
+            .collect();
+        assert_eq!(
+            phone_acts.len(),
+            1,
+            "one attribution per contested object, got {acts:?}"
+        );
+        assert_eq!(
+            phone_acts[0].participants,
+            vec![11, 10001],
+            "holder wins over reacher"
+        );
     }
 
     #[test]
     fn contested_object_goes_to_closest_wrist() {
         // Both touch wrist-only, nobody reaching → the wrist nearest the object
         // centre wins.
-        let cup = obj_class(10002, "cup", BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 });
+        let cup = obj_class(
+            10002,
+            "cup",
+            BBox {
+                x1: 0.4,
+                y1: 0.4,
+                x2: 0.6,
+                y2: 0.6,
+            },
+        );
         let mut a = person_id(10);
         a.wrists = vec![[0.41, 0.5]]; // at the edge
         let mut b = person_id(11);
@@ -775,26 +1125,62 @@ mod tests {
     #[test]
     fn uncontested_contact_still_fires() {
         // A single person touching stays attributed exactly as before 11.A2.
-        let cup = obj_class(10002, "cup", BBox { x1: 0.4, y1: 0.4, x2: 0.6, y2: 0.6 });
+        let cup = obj_class(
+            10002,
+            "cup",
+            BBox {
+                x1: 0.4,
+                y1: 0.4,
+                x2: 0.6,
+                y2: 0.6,
+            },
+        );
         let mut a = person_id(10);
         a.wrists = vec![[0.41, 0.5]];
         a.right_gesture = Some("reaching"); // reaching alone must not silence it
         let acts = infer_activities(&[a], &[cup]);
-        assert!(acts.iter().any(|x| x.label == "holding_drink" && x.participants == vec![10, 10002]),
-            "got {acts:?}");
+        assert!(
+            acts.iter()
+                .any(|x| x.label == "holding_drink" && x.participants == vec![10, 10002]),
+            "got {acts:?}"
+        );
     }
 
     #[test]
     fn two_objects_two_people_attribute_independently() {
-        let kb1 = obj_class(10001, "keyboard", BBox { x1: 0.1, y1: 0.5, x2: 0.3, y2: 0.6 });
-        let kb2 = obj_class(10002, "keyboard", BBox { x1: 0.6, y1: 0.5, x2: 0.8, y2: 0.6 });
+        let kb1 = obj_class(
+            10001,
+            "keyboard",
+            BBox {
+                x1: 0.1,
+                y1: 0.5,
+                x2: 0.3,
+                y2: 0.6,
+            },
+        );
+        let kb2 = obj_class(
+            10002,
+            "keyboard",
+            BBox {
+                x1: 0.6,
+                y1: 0.5,
+                x2: 0.8,
+                y2: 0.6,
+            },
+        );
         let mut a = person_id(10);
         a.wrists = vec![[0.2, 0.55]];
         let mut b = person_id(11);
         b.wrists = vec![[0.7, 0.55]];
         let acts = infer_activities(&[a, b], &[kb1, kb2]);
-        assert!(acts.iter().any(|x| x.label == "using_object(keyboard)" && x.participants == vec![10, 10001]));
-        assert!(acts.iter().any(|x| x.label == "using_object(keyboard)" && x.participants == vec![11, 10002]));
+        assert!(
+            acts.iter()
+                .any(|x| x.label == "using_object(keyboard)" && x.participants == vec![10, 10001])
+        );
+        assert!(
+            acts.iter()
+                .any(|x| x.label == "using_object(keyboard)" && x.participants == vec![11, 10002])
+        );
     }
 
     #[test]
@@ -802,12 +1188,23 @@ mod tests {
         // A degenerate (all-empty) mask must not silence the interaction — fall
         // back to the bbox test rather than claim "no silhouette anywhere".
         let mut p = person(1.0);
-        let kb = obj_class(10001, "keyboard", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.62 });
+        let kb = obj_class(
+            10001,
+            "keyboard",
+            BBox {
+                x1: 0.35,
+                y1: 0.55,
+                x2: 0.45,
+                y2: 0.62,
+            },
+        );
         let mut kb = kb;
         kb.mask = Some(mvm_core::InstanceMask::empty());
         p.wrists = vec![[0.40, 0.58]];
         assert!(
-            infer_activities(&[p], &[kb]).iter().any(|a| a.label == "using_object(keyboard)"),
+            infer_activities(&[p], &[kb])
+                .iter()
+                .any(|a| a.label == "using_object(keyboard)"),
             "empty mask → honest bbox fallback"
         );
     }
@@ -823,15 +1220,36 @@ mod tests {
             handedness: 0.9,
             gesture: None,
         }];
-        let mouse = obj_class(10001, "mouse", BBox { x1: 0.31, y1: 0.54, x2: 0.36, y2: 0.60 });
+        let mouse = obj_class(
+            10001,
+            "mouse",
+            BBox {
+                x1: 0.31,
+                y1: 0.54,
+                x2: 0.36,
+                y2: 0.60,
+            },
+        );
         let acts = infer_activities(&[p], &[mouse]);
-        assert!(acts.iter().any(|a| a.label == "using_object(mouse)"), "got {acts:?}");
+        assert!(
+            acts.iter().any(|a| a.label == "using_object(mouse)"),
+            "got {acts:?}"
+        );
     }
 
     #[test]
     fn no_activity_when_landmarks_far_from_object() {
         let mut p = person(1.0);
-        let kb = obj_class(10001, "keyboard", BBox { x1: 0.8, y1: 0.8, x2: 0.9, y2: 0.85 });
+        let kb = obj_class(
+            10001,
+            "keyboard",
+            BBox {
+                x1: 0.8,
+                y1: 0.8,
+                x2: 0.9,
+                y2: 0.85,
+            },
+        );
         p.wrists = vec![[0.2, 0.2]];
         assert!(infer_activities(&[p], &[kb]).is_empty());
     }
@@ -841,7 +1259,16 @@ mod tests {
         // Object sits inside the body bbox, but the person has no wrists/hands →
         // we don't fabricate a contact claim from bbox overlap alone.
         let p = person(1.0); // wrists/hands empty
-        let mouse = obj_class(10001, "mouse", BBox { x1: 0.35, y1: 0.3, x2: 0.45, y2: 0.4 });
+        let mouse = obj_class(
+            10001,
+            "mouse",
+            BBox {
+                x1: 0.35,
+                y1: 0.3,
+                x2: 0.45,
+                y2: 0.4,
+            },
+        );
         assert!(infer_activities(&[p], &[mouse]).is_empty());
     }
 
@@ -849,8 +1276,20 @@ mod tests {
     fn furniture_is_context_not_activity() {
         let mut p = person(1.0);
         p.wrists = vec![[0.40, 0.60]];
-        let chair = obj_class(10001, "chair", BBox { x1: 0.35, y1: 0.55, x2: 0.45, y2: 0.65 });
-        assert!(infer_activities(&[p], &[chair]).is_empty(), "chair is context, not an activity");
+        let chair = obj_class(
+            10001,
+            "chair",
+            BBox {
+                x1: 0.35,
+                y1: 0.55,
+                x2: 0.45,
+                y2: 0.65,
+            },
+        );
+        assert!(
+            infer_activities(&[p], &[chair]).is_empty(),
+            "chair is context, not an activity"
+        );
     }
 
     #[test]
@@ -861,7 +1300,8 @@ mod tests {
         b.track_id = 11;
         let acts = infer_activities(&[a, b], &[]);
         assert!(
-            acts.iter().any(|x| x.label == "people_together" && x.participants == vec![10, 11]),
+            acts.iter()
+                .any(|x| x.label == "people_together" && x.participants == vec![10, 11]),
             "got {acts:?}"
         );
     }
@@ -874,18 +1314,39 @@ mod tests {
         let t0 = std::time::Instant::now();
         let mut a = person(1.0);
         a.track_id = 10;
-        a.bbox = BBox { x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.7 };
-        a.position_3d = Some(Position3D { x: 0.0, y: 0.0, z: 1.0, confidence: 0.5 });
+        a.bbox = BBox {
+            x1: 0.1,
+            y1: 0.2,
+            x2: 0.3,
+            y2: 0.7,
+        };
+        a.position_3d = Some(Position3D {
+            x: 0.0,
+            y: 0.0,
+            z: 1.0,
+            confidence: 0.5,
+        });
         let mut b = person(1.0);
         b.track_id = 11;
-        b.bbox = BBox { x1: 0.6, y1: 0.5, x2: 0.95, y2: 0.9 }; // low-wide pet-shaped box
-        b.position_3d = Some(Position3D { x: 0.3, y: 0.0, z: 1.0, confidence: 0.5 });
+        b.bbox = BBox {
+            x1: 0.6,
+            y1: 0.5,
+            x2: 0.95,
+            y2: 0.9,
+        }; // low-wide pet-shaped box
+        b.position_3d = Some(Position3D {
+            x: 0.3,
+            y: 0.0,
+            z: 1.0,
+            confidence: 0.5,
+        });
 
         let together_seen = |animals: Vec<BBox>| {
             let mut agent = fusion_agent();
             let mut seen = false;
             for f in 0..5u64 {
-                let mut w = mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100 * f));
+                let mut w =
+                    mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100 * f));
                 w.frame_id = f;
                 w.people = vec![a.clone(), b.clone()];
                 w.animals = animals.clone();
@@ -897,7 +1358,10 @@ mod tests {
             seen
         };
 
-        assert!(together_seen(vec![]), "control: the pair should fire without animals");
+        assert!(
+            together_seen(vec![]),
+            "control: the pair should fire without animals"
+        );
         assert!(
             !together_seen(vec![b.bbox]),
             "gate: pet-overlapping body must not join people_together"
@@ -918,11 +1382,20 @@ mod tests {
 
     #[test]
     fn seated_at_workstation_inferred_at_desk() {
-        let laptop = obj_class(10001, "laptop", BBox { x1: 0.45, y1: 0.55, x2: 0.65, y2: 0.75 });
+        let laptop = obj_class(
+            10001,
+            "laptop",
+            BBox {
+                x1: 0.45,
+                y1: 0.55,
+                x2: 0.65,
+                y2: 0.75,
+            },
+        );
         let acts = infer_activities(&[desk_person()], &[laptop]);
         assert!(
-            acts.iter().any(|a| a.label == "seated_at_workstation"
-                && a.participants == vec![10, 10001]),
+            acts.iter()
+                .any(|a| a.label == "seated_at_workstation" && a.participants == vec![10, 10001]),
             "got {acts:?}"
         );
     }
@@ -932,10 +1405,21 @@ mod tests {
         // Walking past the desk with clipped legs is not "seated at it".
         let mut p = desk_person();
         p.motion_state = Some("moving");
-        let laptop = obj_class(10001, "laptop", BBox { x1: 0.45, y1: 0.55, x2: 0.65, y2: 0.75 });
-        assert!(infer_activities(&[p], &[laptop])
-            .iter()
-            .all(|a| a.label != "seated_at_workstation"));
+        let laptop = obj_class(
+            10001,
+            "laptop",
+            BBox {
+                x1: 0.45,
+                y1: 0.55,
+                x2: 0.65,
+                y2: 0.75,
+            },
+        );
+        assert!(
+            infer_activities(&[p], &[laptop])
+                .iter()
+                .all(|a| a.label != "seated_at_workstation")
+        );
     }
 
     #[test]
@@ -944,37 +1428,76 @@ mod tests {
         // relational fallback stays quiet.
         let mut p = desk_person();
         p.body_coverage = Some("full");
-        let laptop = obj_class(10001, "laptop", BBox { x1: 0.45, y1: 0.55, x2: 0.65, y2: 0.75 });
-        assert!(infer_activities(&[p], &[laptop])
-            .iter()
-            .all(|a| a.label != "seated_at_workstation"));
+        let laptop = obj_class(
+            10001,
+            "laptop",
+            BBox {
+                x1: 0.45,
+                y1: 0.55,
+                x2: 0.65,
+                y2: 0.75,
+            },
+        );
+        assert!(
+            infer_activities(&[p], &[laptop])
+                .iter()
+                .all(|a| a.label != "seated_at_workstation")
+        );
     }
 
     #[test]
     fn no_workstation_claim_without_adjacent_object() {
         // Upper coverage but nothing desk-like nearby (occluded by other
         // furniture) → no fabricated workstation claim.
-        let far = obj_class(10001, "laptop", BBox { x1: 0.85, y1: 0.85, x2: 0.95, y2: 0.95 });
-        let chair = obj_class(10002, "chair", BBox { x1: 0.45, y1: 0.55, x2: 0.65, y2: 0.75 });
-        assert!(infer_activities(&[desk_person()], &[far, chair])
-            .iter()
-            .all(|a| a.label != "seated_at_workstation"));
+        let far = obj_class(
+            10001,
+            "laptop",
+            BBox {
+                x1: 0.85,
+                y1: 0.85,
+                x2: 0.95,
+                y2: 0.95,
+            },
+        );
+        let chair = obj_class(
+            10002,
+            "chair",
+            BBox {
+                x1: 0.45,
+                y1: 0.55,
+                x2: 0.65,
+                y2: 0.75,
+            },
+        );
+        assert!(
+            infer_activities(&[desk_person()], &[far, chair])
+                .iter()
+                .all(|a| a.label != "seated_at_workstation")
+        );
     }
 
     #[test]
     fn partially_in_frame_flagged_at_edge() {
         let mut p = desk_person();
-        p.bbox = BBox { x1: 0.0, y1: 0.2, x2: 0.2, y2: 0.7 }; // clipped left
+        p.bbox = BBox {
+            x1: 0.0,
+            y1: 0.2,
+            x2: 0.2,
+            y2: 0.7,
+        }; // clipped left
         let acts = infer_activities(&[p], &[]);
         assert!(
-            acts.iter().any(|a| a.label == "partially_in_frame" && a.participants == vec![10]),
+            acts.iter()
+                .any(|a| a.label == "partially_in_frame" && a.participants == vec![10]),
             "got {acts:?}"
         );
         // Full coverage in the middle of the frame → no flag.
         let clean = person(1.0);
-        assert!(infer_activities(&[clean], &[])
-            .iter()
-            .all(|a| a.label != "partially_in_frame"));
+        assert!(
+            infer_activities(&[clean], &[])
+                .iter()
+                .all(|a| a.label != "partially_in_frame")
+        );
     }
 
     #[test]
@@ -983,13 +1506,31 @@ mod tests {
         let mut agent = fusion_agent();
         let t0 = Instant::now();
         let mut calm = mvm_core::WorldState::new(t0);
-        calm.objects.push(obj_class(10001, "cup", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }));
+        calm.objects.push(obj_class(
+            10001,
+            "cup",
+            BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.2,
+                y2: 0.2,
+            },
+        ));
         agent.advance_journal(&mut calm);
         assert_eq!(calm.anomaly_score, 0.0, "cup is expected → no anomaly");
 
         let mut odd = mvm_core::WorldState::new(t0 + std::time::Duration::from_millis(100));
         odd.frame_id = 1;
-        odd.objects.push(obj_class(10002, "knife", BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 }));
+        odd.objects.push(obj_class(
+            10002,
+            "knife",
+            BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.2,
+                y2: 0.2,
+            },
+        ));
         agent.advance_journal(&mut odd);
         assert!(odd.anomaly_score > 0.0, "knife is unexpected → anomaly");
     }

@@ -24,12 +24,15 @@ pub const FACE_ROI_SCALE: f32 = 4.5;
 pub const FACE_ROI_DOWN: f32 = 1.6;
 
 #[cfg(feature = "embed-model")]
-static PERSON_DET_BYTES: &[u8] = include_bytes!("../../../models/person_detection_mediapipe_2023mar.onnx");
+static PERSON_DET_BYTES: &[u8] =
+    include_bytes!("../../../models/person_detection_mediapipe_2023mar.onnx");
 #[cfg(feature = "embed-model")]
-static POSE_EST_BYTES: &[u8] = include_bytes!("../../../models/pose_estimation_mediapipe_2023mar.onnx");
+static POSE_EST_BYTES: &[u8] =
+    include_bytes!("../../../models/pose_estimation_mediapipe_2023mar.onnx");
 
 /// One detected **body** (phase 8 body-primary, FRONTIER): normalized body bbox
 /// + pixel landmarks (for torso-3D) + posture, all together. Produced by
+///
 /// [`NativePose::bodies`] — the carrying-entity source for `--native-camera`.
 #[derive(Debug, Clone)]
 pub struct BodyPose {
@@ -95,7 +98,12 @@ fn bbox_from_landmarks(lm: &Landmarks33, w: f32, h: f32) -> mvm_core::BBox {
         y2 = y2.max(p[1]);
     }
     if x1 > x2 {
-        return mvm_core::BBox { x1: 0.0, y1: 0.0, x2: 0.0, y2: 0.0 };
+        return mvm_core::BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.0,
+            y2: 0.0,
+        };
     }
     mvm_core::BBox {
         x1: (x1 / w).clamp(0.0, 1.0),
@@ -115,7 +123,10 @@ pub struct NativePose {
 }
 
 impl NativePose {
-    pub fn from_paths(person_det: &std::path::Path, pose_est: &std::path::Path) -> anyhow::Result<Self> {
+    pub fn from_paths(
+        person_det: &std::path::Path,
+        pose_est: &std::path::Path,
+    ) -> anyhow::Result<Self> {
         Ok(Self {
             detector: PersonDetector::from_path(person_det)?,
             pose: PoseEstimator::from_path(pose_est)?,
@@ -143,7 +154,10 @@ impl NativePose {
 
     /// One landmark set per detected person (multi-persona). Persons whose pose
     /// inference falls below confidence are skipped.
-    pub fn landmarks_per_person(&mut self, image: &DynamicImage) -> anyhow::Result<Vec<Landmarks33>> {
+    pub fn landmarks_per_person(
+        &mut self,
+        image: &DynamicImage,
+    ) -> anyhow::Result<Vec<Landmarks33>> {
         let rgb = image.to_rgb8();
         let persons = self.detector.detect(image)?;
         let mut out = Vec::with_capacity(persons.len());
@@ -181,7 +195,10 @@ impl NativePose {
             };
             if p.score < BYTE_HIGH_SCORE {
                 // Weak box: keep for recovery only, no pose inference.
-                out.low_conf.push(LowConfBody { bbox, score: p.score });
+                out.low_conf.push(LowConfBody {
+                    bbox,
+                    score: p.score,
+                });
                 continue;
             }
             if let Some(lm) = self.pose.infer(&rgb, p)? {
@@ -223,8 +240,14 @@ impl NativePose {
         let (w, h) = (image.width() as f32, image.height() as f32);
         for roi in predicted {
             // Skip if a detector body/box already covers this track's ROI.
-            let covered = out.bodies.iter().any(|b| b.bbox.iou(roi) > RECOVER_COVERED_IOU)
-                || out.low_conf.iter().any(|l| l.bbox.iou(roi) > RECOVER_COVERED_IOU);
+            let covered = out
+                .bodies
+                .iter()
+                .any(|b| b.bbox.iou(roi) > RECOVER_COVERED_IOU)
+                || out
+                    .low_conf
+                    .iter()
+                    .any(|l| l.bbox.iou(roi) > RECOVER_COVERED_IOU);
             if covered {
                 continue;
             }
@@ -232,7 +255,9 @@ impl NativePose {
             let cx = (roi.x1 + roi.x2) * 0.5 * w;
             let cy = (roi.y1 + roi.y2) * 0.5 * h;
             let side = ((roi.x2 - roi.x1) * w).max((roi.y2 - roi.y1) * h) * POSE_RECOVER_ROI_SCALE;
-            let Some(lm) = self.pose.infer_roi(&rgb, cx, cy, side, 0.0)? else { continue; };
+            let Some(lm) = self.pose.infer_roi(&rgb, cx, cy, side, 0.0)? else {
+                continue;
+            };
             // Torso visible → a real body is in the ROI (not an empty patch).
             let torso_vis = lm[11][3].min(lm[12][3]).min(lm[23][3]).min(lm[24][3]);
             if torso_vis < RECOVER_TORSO_VIS {
@@ -310,7 +335,9 @@ impl NativePose {
         let fh = (y2 - y1).max(1.0);
         let side = FACE_ROI_SCALE * fh;
         let cy = fcy + FACE_ROI_DOWN * fh;
-        let Some(lm) = self.pose.infer_roi(rgb, fcx, cy, side, 0.0)? else { return Ok(None) };
+        let Some(lm) = self.pose.infer_roi(rgb, fcx, cy, side, 0.0)? else {
+            return Ok(None);
+        };
         let torso_vis = lm[11][3].min(lm[12][3]).min(lm[23][3]).min(lm[24][3]);
         if torso_vis < RECOVER_TORSO_VIS {
             return Ok(None);
@@ -386,7 +413,11 @@ impl Module for PostureModule {
     }
 
     fn metadata(&self) -> ModuleMetadata {
-        ModuleMetadata { name: "mvm-posture (stub)", version: env!("CARGO_PKG_VERSION"), accuracy: None }
+        ModuleMetadata {
+            name: "mvm-posture (stub)",
+            version: env!("CARGO_PKG_VERSION"),
+            accuracy: None,
+        }
     }
 }
 
@@ -396,7 +427,10 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            models_path: std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models")),
+            models_path: std::path::PathBuf::from(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../models"
+            )),
             ..Default::default()
         }
     }
@@ -431,7 +465,10 @@ mod tests {
         let lm = &people[0];
         let sh_y = (lm[11][1] + lm[12][1]) / 2.0;
         let hip_y = (lm[23][1] + lm[24][1]) / 2.0;
-        assert!(hip_y > sh_y, "hips should be below shoulders in image coords");
+        assert!(
+            hip_y > sh_y,
+            "hips should be below shoulders in image coords"
+        );
     }
 
     #[test]
@@ -491,20 +528,33 @@ mod tests {
             let claimed = claim(r);
             // The bug this architecture closes: no desk frame may claim `lying`
             // (the subject is upright at the desk in all seven).
-            assert_ne!(claimed, Some("lying"), "{file}: false lying claim (was the live desk bug)");
+            assert_ne!(
+                claimed,
+                Some("lying"),
+                "{file}: false lying claim (was the live desk bug)"
+            );
             // A claim, if made, is a plausible upright posture; withholding (None —
             // legs occluded, sit-vs-stand unknowable) is never a lie. Count sit↔stand
             // confusions — bounded at ≤1 (the documented z-free `p_V_06`).
             if let Some(c) = claimed {
-                assert!(c == "sitting" || c == "standing", "{file}: implausible claim {c}");
+                assert!(
+                    c == "sitting" || c == "standing",
+                    "{file}: implausible claim {c}"
+                );
                 if c != human {
                     sit_stand_confusions += 1;
                 }
             }
             // The desk subject is upright in every frame; the attitude corroborates.
-            assert_eq!(r.attitude, "upright", "{file}: desk subject torso is upright");
+            assert_eq!(
+                r.attitude, "upright",
+                "{file}: desk subject torso is upright"
+            );
         }
-        assert_eq!(detected, 7, "native pose should detect+classify all 7 references, got {detected}");
+        assert_eq!(
+            detected, 7,
+            "native pose should detect+classify all 7 references, got {detected}"
+        );
         assert!(
             sit_stand_confusions <= 1,
             "sit↔stand confusion on {sit_stand_confusions} desk frames (>1 = a real 2D-GRIP regression, \
@@ -527,19 +577,30 @@ mod tests {
         let lm0 = &people[0];
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for p in lm0.iter().take(11) {
-            x0 = x0.min(p[0]); y0 = y0.min(p[1]); x1 = x1.max(p[0]); y1 = y1.max(p[1]);
+            x0 = x0.min(p[0]);
+            y0 = y0.min(p[1]);
+            x1 = x1.max(p[0]);
+            y1 = y1.max(p[1]);
         }
         let face = [x0 / w, y0 / h, x1 / w, y1 / h];
         let (pose, lm) = np
             .pose_from_face(&rgb, w, h, face)
             .unwrap()
             .expect("torso visible below the face → posture recovered");
-        assert!(classifier::POSE_LABELS.contains(&pose.label), "label {} not in taxonomy", pose.label);
+        assert!(
+            classifier::POSE_LABELS.contains(&pose.label),
+            "label {} not in taxonomy",
+            pose.label
+        );
         assert!(lm[11][3] >= 0.0 && lm[11][3] <= 1.0);
 
         // Empty/black frame → torso invisible → gated to None (fabricates nothing).
         let black = image::RgbImage::new(640, 480);
-        assert!(np.pose_from_face(&black, 640.0, 480.0, [0.4, 0.1, 0.6, 0.3]).unwrap().is_none());
+        assert!(
+            np.pose_from_face(&black, 640.0, 480.0, [0.4, 0.1, 0.6, 0.3])
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -550,12 +611,28 @@ mod tests {
         let poses = np.poses(&img).unwrap();
         assert!(!poses.is_empty(), "expected ≥1 classified pose");
         let p = &poses[0];
-        assert!(classifier::POSE_LABELS.contains(&p.label), "label {} not in taxonomy", p.label);
+        assert!(
+            classifier::POSE_LABELS.contains(&p.label),
+            "label {} not in taxonomy",
+            p.label
+        );
         assert!(p.confidence > 0.0 && p.confidence <= 1.0);
-        assert!(p.maha_score >= 0.0 && p.maha_score.is_finite(), "maha {} implausible", p.maha_score);
-        assert!(!p.ood, "upright reference frame should read in-distribution (maha {})", p.maha_score);
+        assert!(
+            p.maha_score >= 0.0 && p.maha_score.is_finite(),
+            "maha {} implausible",
+            p.maha_score
+        );
+        assert!(
+            !p.ood,
+            "upright reference frame should read in-distribution (maha {})",
+            p.maha_score
+        );
         // native landmarks differ sub-pixel from Python; an upright subject should land
         // on an upright class, not lying.
-        assert!(!p.label.starts_with("lying"), "upright subject misclassified as {}", p.label);
+        assert!(
+            !p.label.starts_with("lying"),
+            "upright subject misclassified as {}",
+            p.label
+        );
     }
 }

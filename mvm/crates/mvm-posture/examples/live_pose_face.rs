@@ -11,7 +11,10 @@ use mvm_posture::NativePose;
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
-    let secs: f64 = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(15.0);
+    let secs: f64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15.0);
     let config = Config {
         models_path: std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models")),
         ..Default::default()
@@ -47,8 +50,13 @@ fn main() -> anyhow::Result<()> {
             match p {
                 Some(p) => {
                     any = true;
-                    line += &format!(" | F{i}: {}@{:.2} maha={:.2}{}",
-                        p.label, p.confidence, p.maha_score, if p.ood { " OOD" } else { "" });
+                    line += &format!(
+                        " | F{i}: {}@{:.2} maha={:.2}{}",
+                        p.label,
+                        p.confidence,
+                        p.maha_score,
+                        if p.ood { " OOD" } else { "" }
+                    );
                 }
                 None => line += &format!(" | F{i}: pose<thr"),
             }

@@ -5,37 +5,38 @@
 //!   mvm snapshot   print the current scene (current_state.md) once
 //!   mvm recap      summarise a period from the durable logs
 //!   mvm inspect    raw per-frame slices at full precision
-//!   mvm serve --mcp   MCP stdio server (snapshot/recap/inspect as tools)
+//!   mvm cortex     read the latest cognitive Cortex report
+//!   mvm serve --mcp   MCP stdio server (snapshot/cortex/recap/inspect as tools)
 //!   mvm --help / --version
 //!
-//! Legacy sync/bridge path (hidden, reached by flags, not a subcommand):
-//!   mvm --native-camera        pure-Rust v4l2 hot-path
-//!   mvm --native               Python-bridge full pipeline (FFmpeg capture)
+//! Compatibility flags (hidden, not subcommands):
+//!   mvm --native-camera        deprecated alias of canonical `mvm run`
+//!   mvm --native               deprecated Python-bridge sync pipeline
 //!   mvm --once / --cpu / --bridge-path <DIR> / --no-camera
 
-mod paths;
-mod config_file;
-mod manifest;
-mod setup;
-mod gallery;
-mod mcp_install;
-mod service;
-mod doctor;
-mod state;
-mod render;
-mod recap_cmd;
-mod mcp;
-mod help;
-mod scene_debug;
-mod pipeline;
 mod agents;
+mod config_file;
+mod cortex_report;
 mod dataset_cmd;
+mod doctor;
+mod gallery;
+mod help;
+mod manifest;
+mod mcp;
+mod mcp_install;
+mod paths;
+mod pipeline;
+mod recap_cmd;
+mod render;
+mod scene_debug;
+mod service;
+mod setup;
+mod state;
 
 use anyhow::{Context, Result};
-use mvm_core::Module;
 use mvm_core::Detection;
+use mvm_core::Module;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Returns true when the Rust emotion result should replace the current (Python bridge) prediction.
@@ -94,15 +95,20 @@ mod tests {
             calibrated_conf: 0.08,
         };
         // Python only has 0.1 confidence, but uncertain Rust should still lose
-        assert!(!emotion_wins(&uncertain, Some(0.1)), "uncertain prediction should lose");
+        assert!(
+            !emotion_wins(&uncertain, Some(0.1)),
+            "uncertain prediction should lose"
+        );
     }
 
     // ── mesh subcommand (phase 8.D) ─────────────────────────────────────────
 
     #[test]
     fn mesh_parse_stub_and_max_frames() {
-        let raw: Vec<String> =
-            ["mvm", "mesh", "--stub", "--max-frames", "100"].iter().map(|s| s.to_string()).collect();
+        let raw: Vec<String> = ["mvm", "mesh", "--stub", "--max-frames", "100"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let a = parse_mesh_args(&raw);
         assert!(a.stub);
         assert_eq!(a.max_frames, Some(100));
@@ -117,12 +123,18 @@ mod tests {
         // No flag → resolved from the product config ([cadence] snapshot_ms).
         assert_eq!(a.interval_ms, None);
         assert!(!a.common.dump_json);
-        assert!(!a.common.masks, "masks opt-in — off by default on the production mesh path");
+        assert!(
+            !a.common.masks,
+            "masks opt-in — off by default on the production mesh path"
+        );
     }
 
     #[test]
     fn mesh_parse_masks_flag() {
-        let raw: Vec<String> = ["mvm", "mesh", "--masks"].iter().map(|s| s.to_string()).collect();
+        let raw: Vec<String> = ["mvm", "mesh", "--masks"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(parse_mesh_args(&raw).common.masks);
     }
 
@@ -130,16 +142,36 @@ mod tests {
     /// path and the mesh/`run` path — one `parse_common`, no drift.
     #[test]
     fn common_flags_parse_identically_on_both_paths() {
-        let sync: Vec<String> =
-            ["mvm", "--dump-json", "--masks", "--dump-full-graph", "--scene-log", "/x"]
-                .iter().map(|s| s.to_string()).collect();
-        let mesh: Vec<String> =
-            ["mvm", "run", "--dump-json", "--masks", "--dump-full-graph", "--scene-log", "/x"]
-                .iter().map(|s| s.to_string()).collect();
+        let sync: Vec<String> = [
+            "mvm",
+            "--dump-json",
+            "--masks",
+            "--dump-full-graph",
+            "--scene-log",
+            "/x",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let mesh: Vec<String> = [
+            "mvm",
+            "run",
+            "--dump-json",
+            "--masks",
+            "--dump-full-graph",
+            "--scene-log",
+            "/x",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let a = parse_args(&sync);
         let m = parse_mesh_args(&mesh);
         assert!(a.common.dump_json && a.common.masks && a.common.dump_full_graph);
-        assert_eq!(a.common.scene_log.as_deref(), Some(std::path::Path::new("/x")));
+        assert_eq!(
+            a.common.scene_log.as_deref(),
+            Some(std::path::Path::new("/x"))
+        );
         assert_eq!(a.common.dump_json, m.common.dump_json);
         assert_eq!(a.common.masks, m.common.masks);
         assert_eq!(a.common.dump_full_graph, m.common.dump_full_graph);
@@ -148,11 +180,55 @@ mod tests {
 
     #[test]
     fn mesh_parse_dump_json_and_interval() {
-        let raw: Vec<String> =
-            ["mvm", "mesh", "--dump-json", "--interval-ms", "50"].iter().map(|s| s.to_string()).collect();
+        let raw: Vec<String> = ["mvm", "mesh", "--dump-json", "--interval-ms", "50"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let a = parse_mesh_args(&raw);
         assert!(a.common.dump_json);
         assert_eq!(a.interval_ms, Some(50));
+    }
+
+    #[test]
+    fn mesh_parse_scheduling_mode_for_spike_runs() {
+        let raw: Vec<String> = ["mvm", "run", "--scheduling-mode", "scene"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_mesh_args(&raw).scheduling_mode,
+            agents::SchedulingMode::Scene
+        );
+    }
+
+    #[test]
+    fn native_camera_alias_maps_legacy_cadence_to_canonical_mesh() {
+        let raw: Vec<String> = [
+            "mvm",
+            "--once",
+            "--native-camera",
+            "--dump-interval",
+            "3",
+            "--dump-json",
+            "--record",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let args = parse_native_camera_alias(&raw).unwrap();
+        assert_eq!(args.max_frames, Some(1));
+        assert_eq!(args.interval_ms, Some(3_000));
+        assert!(args.common.dump_json);
+        assert!(args.common.record);
+    }
+
+    #[test]
+    fn native_camera_alias_rejects_retired_sync_only_debug_flags() {
+        for flag in ["--scene-debug", "--detect-ab"] {
+            let raw = vec!["mvm".into(), "--native-camera".into(), flag.into()];
+            let error = parse_native_camera_alias(&raw).err().unwrap().to_string();
+            assert!(error.contains("retired synchronous native-camera loop"));
+        }
     }
 
     /// The model-free stub mesh actually runs on threads and writes a valid
@@ -164,13 +240,18 @@ mod tests {
         let mesh = build_stub_mesh(sf, false, Duration::from_millis(1), 20, None, None, None);
         let health = mesh.run();
 
-        let cap = health.iter().find(|h| h.name == "stub-capture").expect("capture present");
+        let cap = health
+            .iter()
+            .find(|h| h.name == "stub-capture")
+            .expect("capture present");
         assert_eq!(cap.ticks, 20, "stub capture produced its frame budget");
         assert!(path.exists(), "StateFile written");
         let content = std::fs::read_to_string(&path).unwrap();
         // Snapshot v2 (phase 12.B3): empty stub world → the empty-scene header.
-        assert!(content.starts_with("# Scene ") && content.contains("· empty ·"),
-            "valid v2 StateFile, got:\n{content}");
+        assert!(
+            content.starts_with("# Scene ") && content.contains("· empty ·"),
+            "valid v2 StateFile, got:\n{content}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 }
@@ -189,8 +270,10 @@ struct CommonFlags {
     /// (→ mask-median depth, mask contact). Opt-in / default off — zero perf hit
     /// unless requested (spike §3.3: owner A/Bs the ~+47ms cadence cost live).
     masks: bool,
-    /// --scene-log <dir>: append each dumped frame to a per-day rotating
-    /// `scene-YYYY-MM-DD.jsonl` in <dir> (phase 12.C0). Independent of --dump-json.
+    /// --scene-log <dir>: write the **legacy** per-day flat logs
+    /// (`scene-YYYY-MM-DD.jsonl` + `events-*.jsonl`) to <dir> (phase 12.C0).
+    /// Retired from the default path in 16.7-3 (the semantic session replaced them);
+    /// pass this to keep emitting them for back-compat. Independent of --dump-json.
     scene_log: Option<PathBuf>,
     /// --dump-distributions: include the 8-class `emotion_distribution` in the
     /// Scene JSON (phase 12.A2 opt-in; off by default — summary is enough).
@@ -198,9 +281,14 @@ struct CommonFlags {
     /// --dump-full-graph: include object↔object `near` edges (phase 12.A3 opt-in;
     /// off by default — static desk geometry).
     dump_full_graph: bool,
-    /// --record: enable the Dataset Factory recorder (phase 16.1.2b). Overrides
-    /// `[dataset].enabled = false`; every N-th frame is saved with full labels.
+    /// --record: enable the **pixel** Dataset Factory recorder (phase 16.1.2b).
+    /// Overrides `[dataset].enabled = false`; every N-th frame is saved with full
+    /// labels + RGB/depth/masks. Without it, `mvm run` still writes a text-only
+    /// semantic session (§16.7-3); this flag upgrades it to a pixel dataset.
     record: bool,
+    /// --no-vision-log: disable the always-on text-only semantic session
+    /// (§16.7-3). Turns off durable vision history entirely (unless `--record`).
+    no_vision_log: bool,
     /// --privacy <safe|full|anonymous>: override `[dataset].privacy` for this run
     /// (phase 16.5). Raw string; parsed at mesh build.
     privacy: Option<String>,
@@ -218,6 +306,7 @@ fn parse_common(raw: &[String], i: &mut usize, c: &mut CommonFlags) -> bool {
         "--dump-distributions" => c.dump_distributions = true,
         "--dump-full-graph" => c.dump_full_graph = true,
         "--record" => c.record = true,
+        "--no-vision-log" => c.no_vision_log = true,
         "--privacy" => {
             if *i + 1 < raw.len() {
                 c.privacy = Some(raw[*i + 1].clone());
@@ -281,13 +370,16 @@ fn parse_args(raw: &[String]) -> Args {
             continue;
         }
         match raw[i].as_str() {
-            "--cpu"       => args.use_cpu = true,
-            "--once"      => args.once = true,
+            "--cpu" => args.use_cpu = true,
+            "--once" => args.once = true,
             "--no-camera" => args.no_camera = true,
-            "--native"    => args.native = true,
-            "--detect-ab"     => args.detect_ab = true,
-            "--native-camera" => { args.native_camera = true; args.native = true; }
-            "--scene-debug"   => args.scene_debug = true,
+            "--native" => args.native = true,
+            "--detect-ab" => args.detect_ab = true,
+            "--native-camera" => {
+                args.native_camera = true;
+                args.native = true;
+            }
+            "--scene-debug" => args.scene_debug = true,
             "--bridge-path" => {
                 if i + 1 < raw.len() {
                     args.bridge_path = Some(PathBuf::from(&raw[i + 1]));
@@ -324,7 +416,11 @@ fn run_native_loop(
     let mut frame_count: u64 = 0;
     let start = Instant::now();
     // Durable JSONL history (phase 12.C0); reuses the StateFile timezone.
-    let mut scene_log = args.common.scene_log.as_ref().map(|d| state_file.open_scene_log(d.clone()));
+    let mut scene_log = args
+        .common
+        .scene_log
+        .as_ref()
+        .map(|d| state_file.open_scene_log(d.clone()));
 
     loop {
         let frame = match native_camera.read() {
@@ -338,17 +434,39 @@ fn run_native_loop(
         // Last frame's active track bboxes feed A1 anti-flip suppression.
         let prev_tracks: Vec<mvm_core::BBox> = tracker.active().map(|t| t.bbox).collect();
         // Id-locked tracks (phase 9.6) → their bodies skip SFace this frame.
-        let locked_tracks: Vec<mvm_core::BBox> =
-            tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
+        let locked_tracks: Vec<mvm_core::BBox> = tracker
+            .active()
+            .filter(|t| t.is_id_locked())
+            .map(|t| t.bbox)
+            .collect();
         // Emotion-fresh tracks (phase 9.7) → their bodies skip EmotiEffLib.
-        let emotion_fresh: Vec<mvm_core::BBox> =
-            tracker.active().filter(|t| !t.needs_emotion()).map(|t| t.bbox).collect();
+        let emotion_fresh: Vec<mvm_core::BBox> = tracker
+            .active()
+            .filter(|t| !t.needs_emotion())
+            .map(|t| t.bbox)
+            .collect();
         // Id-locked tracks (phase 9.9) → pose-ROI recovery if the detector drops
         // them. Locked-only so an anon fragment isn't propped into a phantom.
-        let predicted_rois: Vec<mvm_core::BBox> =
-            tracker.active().filter(|t| t.is_id_locked()).map(|t| t.bbox).collect();
-        let pipeline::FrameResult { detections, low_conf, landmarks, bodies, overlay, emotion_debug_entries } =
-            pipeline.process(&frame, frame_count, &prev_tracks, &locked_tracks, &emotion_fresh, &predicted_rois);
+        let predicted_rois: Vec<mvm_core::BBox> = tracker
+            .active()
+            .filter(|t| t.is_id_locked())
+            .map(|t| t.bbox)
+            .collect();
+        let pipeline::FrameResult {
+            detections,
+            low_conf,
+            landmarks,
+            bodies,
+            overlay,
+            emotion_debug_entries,
+        } = pipeline.process(
+            &frame,
+            frame_count,
+            &prev_tracks,
+            &locked_tracks,
+            &emotion_fresh,
+            &predicted_rois,
+        );
 
         frame_count += 1;
         // Monotonic seconds since loop start → motion velocities (phase 9.8).
@@ -359,7 +477,11 @@ fn run_native_loop(
 
         if last_dump.elapsed() >= dump_interval {
             let elapsed = start.elapsed().as_secs_f64();
-            let fps = if elapsed > 0.0 { frame_count as f64 / elapsed } else { 0.0 };
+            let fps = if elapsed > 0.0 {
+                frame_count as f64 / elapsed
+            } else {
+                0.0
+            };
             eprintln!(
                 "  tick {frame_count}: {} tracks, {fps:.1} fps",
                 tracker.track_count()
@@ -375,22 +497,27 @@ fn run_native_loop(
                 let line = if args.common.emotion_debug {
                     state_file.to_json_line_debug(&tracker, fps, &emotion_debug_entries)
                 } else {
-                    state_file.to_json_line(&tracker, fps, pipeline.objects(), &bodies, pipeline.animals())
+                    state_file.to_json_line(
+                        &tracker,
+                        fps,
+                        pipeline.objects(),
+                        &bodies,
+                        pipeline.animals(),
+                    )
                 };
                 if args.common.dump_json {
                     println!("{line}");
                 }
-                if let Some(log) = scene_log.as_mut() {
-                    if let Err(e) = log.append(&line) {
-                        eprintln!("  scene-log: append error: {e}");
-                    }
+                if let Some(log) = scene_log.as_mut()
+                    && let Err(e) = log.append(&line)
+                {
+                    eprintln!("  scene-log: append error: {e}");
                 }
             }
 
             // Scene visual debug (phase 8.E): annotated JPG + printed legend.
             if args.scene_debug {
-                let person_bboxes: Vec<mvm_core::BBox> =
-                    tracker.active().map(|t| t.bbox).collect();
+                let person_bboxes: Vec<mvm_core::BBox> = tracker.active().map(|t| t.bbox).collect();
                 match scene_debug::write_annotated(
                     "/tmp/mvm_scene.jpg",
                     &frame,
@@ -437,6 +564,9 @@ struct MeshArgs {
     /// StateFileWriter snapshot interval (ms). `None` = take it from the
     /// product config (`[cadence] snapshot_ms`, default 1000) — CLI > config.
     interval_ms: Option<u64>,
+    /// Experimental 18.8b.1 diagnostic selector. It only gates one-shot
+    /// permits; fixed expert cadence remains unchanged.
+    scheduling_mode: agents::SchedulingMode,
     /// Flags shared with the legacy sync root path (phase 13.A1).
     common: CommonFlags,
 }
@@ -447,6 +577,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         max_frames: None,
         dump_landmarks: false,
         interval_ms: None,
+        scheduling_mode: agents::SchedulingMode::SceneAndDepth,
         common: CommonFlags::default(),
     };
     let mut i = 2; // skip program name + subcommand (`mesh` / `run`)
@@ -470,6 +601,15 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
                     i += 1;
                 }
             }
+            "--scheduling-mode" => {
+                if let Some(mode) = raw
+                    .get(i + 1)
+                    .and_then(|value| agents::SchedulingMode::parse(value))
+                {
+                    a.scheduling_mode = mode;
+                    i += 1;
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -477,10 +617,82 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
     a
 }
 
+/// Translate the hidden root-level `--native-camera` compatibility surface to
+/// the canonical AgentMesh arguments. The Rust v4l2 source already backs
+/// `mvm run`; this adapter prevents the legacy flag from selecting the old
+/// synchronous state pipeline.
+fn parse_native_camera_alias(raw: &[String]) -> Result<MeshArgs> {
+    let mut args = MeshArgs {
+        stub: false,
+        max_frames: None,
+        dump_landmarks: false,
+        interval_ms: None,
+        scheduling_mode: agents::SchedulingMode::SceneAndDepth,
+        common: CommonFlags::default(),
+    };
+    let mut i = 1;
+    while i < raw.len() {
+        if parse_common(raw, &mut i, &mut args.common) {
+            i += 1;
+            continue;
+        }
+        match raw[i].as_str() {
+            "--native-camera" | "--native" | "--cpu" => {}
+            "--once" => args.max_frames = Some(1),
+            "--dump-landmarks" => args.dump_landmarks = true,
+            "--max-frames" => {
+                let value = raw
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--max-frames requires a value"))?;
+                args.max_frames = Some(value.parse().context("invalid --max-frames value")?);
+                i += 1;
+            }
+            "--interval-ms" => {
+                let value = raw
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--interval-ms requires a value"))?;
+                args.interval_ms = Some(value.parse().context("invalid --interval-ms value")?);
+                i += 1;
+            }
+            "--dump-interval" => {
+                let value = raw
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!("--dump-interval requires seconds"))?;
+                let seconds: u64 = value.parse().context("invalid --dump-interval value")?;
+                args.interval_ms = Some(
+                    seconds
+                        .checked_mul(1_000)
+                        .ok_or_else(|| anyhow::anyhow!("--dump-interval is too large"))?,
+                );
+                i += 1;
+            }
+            "--scene-debug" | "--detect-ab" => {
+                anyhow::bail!(
+                    "{} belonged to the retired synchronous native-camera loop; \
+                     use `mvm run --dump-json` on the canonical AgentMesh path",
+                    raw[i]
+                );
+            }
+            "--no-camera" => {
+                anyhow::bail!("--no-camera conflicts with the --native-camera compatibility alias");
+            }
+            "--bridge-path" => {
+                anyhow::bail!("--bridge-path applies only to the deprecated Python --native path");
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Ok(args)
+}
+
 fn report_health(health: &[mvm_mesh::AgentHealth]) {
     eprintln!("  mesh stopped — agent health:");
     for h in health {
-        eprintln!("    {:<10} ticks={:<6} errors={}", h.name, h.ticks, h.errors);
+        eprintln!(
+            "    {:<10} ticks={:<6} errors={}",
+            h.name, h.ticks, h.errors
+        );
     }
 }
 
@@ -497,7 +709,9 @@ fn build_stub_mesh(
     journal: Option<agents::JournalCfg>,
 ) -> mvm_mesh::AgentMesh {
     let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
-    mesh.add(Box::new(mvm_mesh::StubCaptureAgent::new(1000.0, max_frames)));
+    mesh.add(Box::new(mvm_mesh::StubCaptureAgent::new(
+        1000.0, max_frames,
+    )));
     mesh.add(Box::new(mvm_mesh::FrameCounterAgent::new()));
     mesh.add(Box::new(agents::StateFileWriter::new(
         state_file, dump_json, interval, None, scene_log, events_log, journal,
@@ -517,7 +731,10 @@ fn missing_required_models(dir: &std::path::Path) -> Vec<&'static str> {
 fn load_yolo(config: &mvm_core::Config) -> Option<mvm_scene::YoloDetector> {
     let p = config.models_path.join("yolo_object_detect.onnx");
     if !p.exists() {
-        eprintln!("  scene: no YOLO model at {} — object agent disabled", p.display());
+        eprintln!(
+            "  scene: no YOLO model at {} — object agent disabled",
+            p.display()
+        );
         return None;
     }
     match mvm_scene::YoloDetector::from_path(&p) {
@@ -536,7 +753,10 @@ fn load_yolo(config: &mvm_core::Config) -> Option<mvm_scene::YoloDetector> {
 fn load_depth(config: &mvm_core::Config) -> Option<mvm_depth::DepthEstimator> {
     let p = config.models_path.join("depth_anything_v2_small.onnx");
     if !p.exists() {
-        eprintln!("  depth: no model at {} — depth agent disabled", p.display());
+        eprintln!(
+            "  depth: no model at {} — depth agent disabled",
+            p.display()
+        );
         return None;
     }
     match mvm_depth::DepthEstimator::from_path(&p) {
@@ -559,13 +779,20 @@ fn load_depth(config: &mvm_core::Config) -> Option<mvm_depth::DepthEstimator> {
 fn load_seg(config: &mvm_core::Config) -> Option<mvm_scene::YoloSegDetector> {
     let p = config.models_path.join("yolo_seg.onnx");
     if !p.exists() {
-        eprintln!("  seg: --masks set but no model at {} — masks disabled", p.display());
+        eprintln!(
+            "  seg: --masks set but no model at {} — masks disabled",
+            p.display()
+        );
         return None;
     }
     match mvm_scene::YoloSegDetector::from_path(&p) {
         Ok(mut s) => {
             s.set_score_threshold(config.object_score_thresh);
-            eprintln!("  seg: YOLO-seg loaded ({}), cadence every {} frames", p.display(), config.object_cadence);
+            eprintln!(
+                "  seg: YOLO-seg loaded ({}), cadence every {} frames",
+                p.display(),
+                config.object_cadence
+            );
             Some(s)
         }
         Err(e) => {
@@ -576,7 +803,9 @@ fn load_seg(config: &mvm_core::Config) -> Option<mvm_scene::YoloSegDetector> {
 }
 
 fn load_hands(config: &mvm_core::Config) -> Option<mvm_hands::HandLandmarker> {
-    let p = config.models_path.join("handpose_estimation_mediapipe_2023feb.onnx");
+    let p = config
+        .models_path
+        .join("handpose_estimation_mediapipe_2023feb.onnx");
     if !p.exists() {
         return None;
     }
@@ -609,7 +838,15 @@ fn run_mesh(args: MeshArgs) -> Result<()> {
         state_file.dump_full_graph = args.common.dump_full_graph;
         let interval = Duration::from_millis(args.interval_ms.unwrap_or(product.snapshot_ms));
         eprintln!("mvm mesh — starting (stub, model-free)");
-        let mesh = build_stub_mesh(state_file, args.common.dump_json, interval, args.max_frames.unwrap_or(100), None, None, None);
+        let mesh = build_stub_mesh(
+            state_file,
+            args.common.dump_json,
+            interval,
+            args.max_frames.unwrap_or(100),
+            None,
+            None,
+            None,
+        );
         let health = mesh.run();
         report_health(&health);
         return Ok(());
@@ -649,15 +886,28 @@ fn build_live_mesh(
     state_file.dump_distributions = args.common.dump_distributions;
     state_file.dump_full_graph = args.common.dump_full_graph;
     let interval = Duration::from_millis(args.interval_ms.unwrap_or(product.snapshot_ms));
-    // Durable JSONL history (phase 12.C0/C1); reuses the StateFile timezone. Both
-    // logs share one dir (scene-*.jsonl frames, events-*.jsonl episodes):
-    // `--scene-log <dir>` overrides, default = data_dir (14.0.4 — the `--logs`
-    // trap is gone: recap/serve find these without extra flags).
-    let log_dir = args.common.scene_log.clone().unwrap_or_else(|| product.data_dir.clone());
-    let scene_log = Some(state_file.open_scene_log(log_dir.clone()));
-    let events_log = Some(state_file.open_events_log(log_dir.clone()));
-    // Rolling journal.md beside current_state.md (phase 12.D1) — summarises the
-    // logs above at a ~60-write cadence.
+    // Flat JSONL logs are RETIRED by default (phase 16.7-3): the durable vision
+    // history is now the text-only semantic session (labels.jsonl), and the journal
+    // reads it via the recap resolver. `--scene-log <dir>` still writes the legacy
+    // `scene-*.jsonl`/`events-*.jsonl` when explicitly requested (back-compat).
+    let scene_log = args
+        .common
+        .scene_log
+        .as_ref()
+        .map(|d| state_file.open_scene_log(d.clone()));
+    let events_log = args
+        .common
+        .scene_log
+        .as_ref()
+        .map(|d| state_file.open_events_log(d.clone()));
+    // Rolling journal.md beside current_state.md (phase 12.D1). Its source dir is
+    // data_dir by default (holds `datasets/sessions/` → the recap resolver finds
+    // the semantic sessions), or the explicit `--scene-log` dir for the legacy logs.
+    let log_dir = args
+        .common
+        .scene_log
+        .clone()
+        .unwrap_or_else(|| product.data_dir.clone());
     let journal = Some(agents::JournalCfg {
         path: state_file.journal_path(),
         log_dir: log_dir.clone(),
@@ -682,10 +932,9 @@ fn build_live_mesh(
             config.models_path.display()
         );
         setup::fetch_specific(&config.models_path, &missing).with_context(|| {
-            format!(
-                "auto-setup failed — run `mvm setup` manually, or point [models].dir \
+            "auto-setup failed — run `mvm setup` manually, or point [models].dir \
                  in ~/.config/mvm/config.toml (or MVM_MODELS_DIR) at a populated dir"
-            )
+                .to_string()
         })?;
     }
 
@@ -706,7 +955,11 @@ fn build_live_mesh(
     let yolo = load_yolo(&config);
     let depth = load_depth(&config);
     // YOLO-seg masks (opt-in --masks) ride the SceneAgent on the production path.
-    let seg = if args.common.masks { load_seg(&config) } else { None };
+    let seg = if args.common.masks {
+        load_seg(&config)
+    } else {
+        None
+    };
 
     // Person tracker (body-primary: torso-3D from detections, no face pinhole).
     let mut person_tracker = mvm_core::PersonTracker::with_config(&config);
@@ -734,10 +987,25 @@ fn build_live_mesh(
         None,
     );
 
-    // Shared depth slot: DepthAgent writes, FusionAgent reads.
-    let depth_slot: agents::DepthSlot = Arc::new(Mutex::new(None));
-    // Shared person-mask slot (11.A3): SceneAgent writes, HumanAgent reads.
-    let person_mask_slot: agents::PersonMaskSlot = Arc::new(Mutex::new(None));
+    // Typed latest-wins observation channels (phase 18.1). Expert packets keep
+    // their source frame; Fusion is their only facts assembler.
+    let human_observations = agents::HumanObservationBus::new();
+    let scene_observations = agents::SceneObservationBus::new();
+    let depth_observations = agents::DepthObservationBus::new();
+    let fused_frames = agents::FusedFrameBus::new();
+    let cortex_frames = agents::CortexFrameBus::new();
+    let attention_policies = agents::AttentionPolicyBus::new();
+    let policy_outcomes = agents::PolicyOutcomeBus::new();
+    let scene_control = agents::SceneExecutionControl::default();
+    let depth_control = agents::DepthExecutionControl::default();
+    let scheduling_metrics = agents::SchedulingMetrics::new(args.scheduling_mode);
+    let scene_available = yolo.is_some();
+    let depth_available = depth.is_some();
+    let run_id = format!(
+        "{}-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ"),
+        std::process::id()
+    );
 
     // Camera through the platform seam (14.0.3): "auto" scans /dev/video*,
     // an explicit [camera].device is opened literally.
@@ -756,47 +1024,122 @@ fn build_live_mesh(
 
     // Assemble the mesh: capture → {human, scene, depth} → fusion → statefile.
     let mut mesh = mvm_mesh::AgentMesh::new(Instant::now());
-    mesh.add(Box::new(agents::CaptureAgent::new(Box::new(camera), args.max_frames)));
-    mesh.add(Box::new(agents::HumanAgent::new(pipeline, person_tracker, person_mask_slot.clone())));
+    mesh.add(Box::new(agents::CaptureAgent::new(
+        Box::new(camera),
+        args.max_frames,
+    )));
+    mesh.add(Box::new(agents::HumanAgent::new(
+        pipeline,
+        person_tracker,
+        scene_observations.clone(),
+        human_observations.clone(),
+        config.object_cadence,
+        scheduling_metrics.clone(),
+    )));
     if let Some(yolo) = yolo {
         mesh.add(Box::new(agents::SceneAgent::new(
             yolo,
             seg,
-            person_mask_slot.clone(),
+            scene_observations.clone(),
             mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
             config.object_score_thresh,
             config.object_min_area,
             config.object_cadence,
+            scene_control.clone(),
+            scheduling_metrics.clone(),
         )));
     }
     if let Some(depth) = depth {
-        mesh.add(Box::new(agents::DepthAgent::new(depth, depth_slot.clone(), config.depth_cadence)));
+        mesh.add(Box::new(agents::DepthAgent::new(
+            depth,
+            depth_observations.clone(),
+            config.depth_cadence,
+            depth_control.clone(),
+            scheduling_metrics.clone(),
+        )));
     }
-    mesh.add(Box::new(agents::FusionAgent::new(config.clone(), depth_slot.clone())));
-    mesh.add(Box::new(agents::StateFileWriter::new(state_file, args.common.dump_json, interval, None, scene_log, events_log, journal)));
+    mesh.add(Box::new(agents::FusionAgent::new(
+        config.clone(),
+        human_observations,
+        scene_observations.clone(),
+        depth_observations.clone(),
+        fused_frames.clone(),
+        run_id,
+        scheduling_metrics.clone(),
+    )));
+    mesh.add(Box::new(agents::CortexAgent::new(
+        fused_frames.clone(),
+        cortex_frames.clone(),
+        attention_policies.clone(),
+        config.clone(),
+        mvm_cortex::CortexConfig { enabled: true },
+    )));
+    mesh.add(Box::new(agents::PolicySchedulerAgent::new(
+        agents::PolicySchedulerWiring {
+            policies: attention_policies.clone(),
+            scenes: scene_observations.clone(),
+            depths: depth_observations.clone(),
+            outcomes: policy_outcomes.clone(),
+            scene_control,
+            depth_control,
+            scene_available,
+            depth_available,
+            mode: args.scheduling_mode,
+            metrics: scheduling_metrics,
+        },
+    )));
+    mesh.add(Box::new(agents::CortexReportWriter::new(
+        cortex_frames.clone(),
+        attention_policies.clone(),
+        policy_outcomes,
+        product.data_dir.join("current_cortex.json"),
+    )));
+    mesh.add(Box::new(
+        agents::StateFileWriter::new(
+            state_file,
+            args.common.dump_json,
+            interval,
+            None,
+            scene_log,
+            events_log,
+            journal,
+        )
+        .with_fused_frames(fused_frames.clone()),
+    ));
 
-    // Dataset Factory recorder (phase 16.1.2b) — opt-in via [dataset].enabled or
-    // the --record flag. Reads WorldState like any other sink; the vision core is
-    // untouched. Off by default → zero cost. CLI overrides win over the file.
+    // Dataset Factory recorder (phase 16.1.2b / 16.7-3). Default-on model: a
+    // text-only semantic session unless `--record` upgrades it to a pixel dataset,
+    // or `--no-vision-log` disables it. Reads WorldState like any other sink; the
+    // vision core is untouched. CLI overrides win over the file.
     let mut ds_cfg = product.dataset.clone();
     ds_cfg.apply_cli_overrides(
         args.common.record.then_some(true),
         None,
         args.common.privacy.as_deref().and_then(parse_privacy),
     );
-    if ds_cfg.enabled {
-        let root = PathBuf::from(&ds_cfg.dir);
+    if args.common.no_vision_log {
+        ds_cfg.vision_log = false;
+    }
+    if let Some(cfg) = ds_cfg.effective_recorder() {
+        let root = PathBuf::from(&cfg.dir);
         paths::ensure_dir_private(&root)?;
+        let mode = if cfg.save_frames {
+            "pixel dataset"
+        } else {
+            "text-only vision log"
+        };
         eprintln!(
-            "  dataset: recording ENABLED → {} (cadence {}, privacy {:?}, depth {})",
+            "  dataset: {mode} → {} (cadence {}, privacy {:?})",
             root.display(),
-            ds_cfg.frame_cadence.max(1),
-            ds_cfg.privacy,
-            ds_cfg.save_depth,
+            cfg.frame_cadence.max(1),
+            cfg.privacy,
         );
-        // Wire the shared depth slot so the recorder can save 16-bit depth PNGs
+        // Wire the stamped depth bus so a pixel dataset can save 16-bit depth PNGs
         // (empty until DepthAgent warms up → no depth path recorded meanwhile).
-        mesh.add(Box::new(agents::DatasetWriterAgent::new(ds_cfg, root, Some(depth_slot.clone()))));
+        mesh.add(Box::new(
+            agents::DatasetWriterAgent::new(cfg, root, Some(depth_observations.clone()))
+                .with_fused_frames(fused_frames.clone()),
+        ));
     }
 
     Ok(mesh)
@@ -818,6 +1161,24 @@ fn run_snapshot(raw: &[String]) -> Result<()> {
     let text = std::fs::read_to_string(&state)
         .with_context(|| format!("read snapshot {} (is `mvm run` running?)", state.display()))?;
     print!("{text}");
+    Ok(())
+}
+
+/// `mvm cortex` (phase 18.9) — render the latest atomic cognitive artifact.
+fn run_cortex(raw: &[String]) -> Result<()> {
+    let product = config_file::load()?;
+    let args = cortex_report::parse_args(raw)?;
+    let path = args
+        .input
+        .unwrap_or_else(|| product.data_dir.join("current_cortex.json"));
+    let output = cortex_report::render_file(
+        &path,
+        args.view,
+        args.top_k,
+        args.horizon_seconds,
+        args.raw_json,
+    )?;
+    println!("{output}");
     Ok(())
 }
 
@@ -862,19 +1223,21 @@ fn main() -> Result<()> {
 
     // Subcommand tree. `run` is the canonical live path; `mesh` is a hidden alias
     // (phase 13.A2). Per-command `--help` prints that command's screen.
-    if let Some(name) = sub {
-        if let Some(screen) = help::subcommand(name) {
-            if help::wants_help(&raw) {
-                print!("{screen}");
-                return Ok(());
-            }
-        }
+    if let Some(name) = sub
+        && let Some(screen) = help::subcommand(name)
+        && help::wants_help(&raw)
+    {
+        print!("{screen}");
+        return Ok(());
     }
     if matches!(sub, Some("run") | Some("mesh")) {
         return run_mesh(parse_mesh_args(&raw));
     }
     if sub == Some("snapshot") {
         return run_snapshot(&raw);
+    }
+    if sub == Some("cortex") {
+        return run_cortex(&raw);
     }
     if sub == Some("recap") {
         return recap_cmd::run_recap(recap_cmd::parse_recap_args(&raw));
@@ -921,12 +1284,27 @@ fn main() -> Result<()> {
         return dataset_cmd::run_dataset(&product, &raw);
     }
 
+    // Phase 18.1 legacy transition: root-level `--native-camera` is now only a
+    // compatibility spelling for the same Rust capture backend and canonical
+    // AgentMesh used by `mvm run`, regardless of flag order.
+    if raw.iter().skip(1).any(|arg| arg == "--native-camera") {
+        eprintln!(
+            "warning: root-level `--native-camera` is deprecated; routing to canonical `mvm run`"
+        );
+        return run_mesh(parse_native_camera_alias(&raw)?);
+    }
+
     let args = parse_args(&raw);
     // Product config (phase 14.0.2) — models dir for the legacy sync path too.
     let product = config_file::load()?;
     let dump_secs = args.dump_interval;
     let once = args.once;
     let native = args.native;
+    if native && !args.native_camera {
+        eprintln!(
+            "warning: `--native` Python bridge is deprecated for v0.4; use `mvm run` for the canonical Rust AgentMesh path"
+        );
+    }
 
     let mode_label = if native { "native, " } else { "" };
     let json_label = if args.common.dump_json { "json, " } else { "" };
@@ -939,8 +1317,7 @@ fn main() -> Result<()> {
     // Init detector (YuNet)
     #[cfg(feature = "embed-models")]
     let mut _detector = {
-        let model_bytes =
-            include_bytes!("../../../models/face_detection_yunet_2023mar.onnx");
+        let model_bytes = include_bytes!("../../../models/face_detection_yunet_2023mar.onnx");
         eprintln!(
             "  detect: YuNet from embedded bytes ({} bytes)",
             model_bytes.len()
@@ -950,8 +1327,10 @@ fn main() -> Result<()> {
 
     #[cfg(not(feature = "embed-models"))]
     let mut _detector = {
-        let mut config = mvm_core::Config::default();
-        config.models_path = product.models_dir.clone();
+        let config = mvm_core::Config {
+            models_path: product.models_dir.clone(),
+            ..Default::default()
+        };
         eprintln!(
             "  detect: loading YuNet from {}",
             config.models_path.display()
@@ -976,7 +1355,10 @@ fn main() -> Result<()> {
         ) {
             Ok(cam) => {
                 let (w, h) = cam.dimensions();
-                eprintln!("  camera: native v4l2 MJPG {} {w}x{h} (Python-light, no pose)", cam.device());
+                eprintln!(
+                    "  camera: native v4l2 MJPG {} {w}x{h} (Python-light, no pose)",
+                    cam.device()
+                );
                 native_camera = Some(cam);
             }
             Err(e) => {
@@ -1010,8 +1392,10 @@ fn main() -> Result<()> {
     }
 
     // Native inference modules
-    let mut config = mvm_core::Config::default();
-    config.models_path = product.models_dir.clone();
+    let mut config = mvm_core::Config {
+        models_path: product.models_dir.clone(),
+        ..Default::default()
+    };
     // Native (YuNet) capture uses YuNet-calibrated face height for 3D — the
     // SCRFD-tuned 0.44 would bias depth (phase 7.1 recalibration target).
     if args.native_camera {
@@ -1050,7 +1434,8 @@ fn main() -> Result<()> {
     // bootstrap weights aren't downloaded yet, object nodes are simply disabled
     // (chain still runs, like a missing optional detector).
     let mut scene_detector: Option<mvm_scene::YoloDetector> = None;
-    let object_tracker = mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5);
+    let object_tracker =
+        mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5);
     let latest_objects: Vec<mvm_scene::TrackedObject> = Vec::new();
     if args.native_camera {
         let model_path = config.models_path.join("yolo_object_detect.onnx");
@@ -1124,7 +1509,10 @@ fn main() -> Result<()> {
                 Err(e) => eprintln!("  depth: load failed: {e} (depth disabled)"),
             }
         } else {
-            eprintln!("  depth: no model at {} — objects stay overlap-only", model_path.display());
+            eprintln!(
+                "  depth: no model at {} — objects stay overlap-only",
+                model_path.display()
+            );
         }
     }
 
@@ -1132,17 +1520,25 @@ fn main() -> Result<()> {
     // Gated on the model file like the other detectors.
     let mut hand_landmarker: Option<mvm_hands::HandLandmarker> = None;
     if args.native_camera {
-        let model_path = config.models_path.join("handpose_estimation_mediapipe_2023feb.onnx");
+        let model_path = config
+            .models_path
+            .join("handpose_estimation_mediapipe_2023feb.onnx");
         if model_path.exists() {
             match mvm_hands::HandLandmarker::from_path(&model_path) {
                 Ok(h) => {
-                    eprintln!("  hands: loading MediaPipe handpose ({})", model_path.display());
+                    eprintln!(
+                        "  hands: loading MediaPipe handpose ({})",
+                        model_path.display()
+                    );
                     hand_landmarker = Some(h);
                 }
                 Err(e) => eprintln!("  hands: load failed: {e} (hands disabled)"),
             }
         } else {
-            eprintln!("  hands: no model at {} — hands disabled", model_path.display());
+            eprintln!(
+                "  hands: no model at {} — hands disabled",
+                model_path.display()
+            );
         }
     }
 
@@ -1195,25 +1591,25 @@ fn main() -> Result<()> {
     // early return means its references to the moved values are never reached
     // (flow-sensitive), and `.take()` leaves `native_camera = None` on the
     // open-failed fallthrough so the old "idle stub" behaviour is preserved.
-    if args.native_camera {
-        if let Some(nc) = native_camera.take() {
-            let pipeline = pipeline::BodyPrimaryPipeline::new(
-                config,
-                args.common.emotion_debug,
-                _detector,
-                native_pose,
-                emotion_mod,
-                identity_mod,
-                hand_landmarker,
-                scene_detector,
-                seg_detector,
-                object_tracker,
-                depth_estimator,
-            );
-            return run_native_loop(nc, pipeline, tracker, state_file, &args, dump_interval);
-        }
-        // Native camera failed to open → fall through to the idle bridge loop.
+    if args.native_camera
+        && let Some(nc) = native_camera.take()
+    {
+        let pipeline = pipeline::BodyPrimaryPipeline::new(
+            config,
+            args.common.emotion_debug,
+            _detector,
+            native_pose,
+            emotion_mod,
+            identity_mod,
+            hand_landmarker,
+            scene_detector,
+            seg_detector,
+            object_tracker,
+            depth_estimator,
+        );
+        return run_native_loop(nc, pipeline, tracker, state_file, &args, dump_interval);
     }
+    // Native camera failed to open → fall through to the idle bridge loop.
 
     loop {
         // ── Frame + detections acquisition ──────────────────────────────────
@@ -1262,75 +1658,78 @@ fn main() -> Result<()> {
 
         // A/B detector coverage (phase 7.1, G4) — bridge path only (the native
         // path already IS YuNet, so there's nothing to compare against).
-        if native && args.detect_ab && native_camera.is_none() {
-            if let Some(frame) = &tick_frame {
-                if let Ok(yunet) = _detector.detect(frame) {
-                    let cov = mvm_detect::compare_coverage(&yunet, &detections, 0.5);
-                    ab_cov.matched += cov.matched;
-                    ab_cov.a_only += cov.a_only;
-                    ab_cov.b_only += cov.b_only;
-                    ab_frames += 1;
-                }
-            }
+        if native
+            && args.detect_ab
+            && native_camera.is_none()
+            && let Some(frame) = &tick_frame
+            && let Ok(yunet) = _detector.detect(frame)
+        {
+            let cov = mvm_detect::compare_coverage(&yunet, &detections, 0.5);
+            ab_cov.matched += cov.matched;
+            ab_cov.a_only += cov.a_only;
+            ab_cov.b_only += cov.b_only;
+            ab_frames += 1;
         }
 
         // Bridge-path enrichment: emotion + identity per face (the native-camera
         // path is handled above by build_body_primary).
-        if native && native_camera.is_none() && !detections.is_empty() {
-            if let Some(frame) = &tick_frame {
-                let (fw, fh) = (frame.width(), frame.height());
-                for (det_idx, det) in detections.iter_mut().enumerate() {
-                    // Crop face
-                    let x1 = (det.bbox.x1 * fw as f32) as u32;
-                    let y1 = (det.bbox.y1 * fh as f32) as u32;
-                    let x2 = (det.bbox.x2 * fw as f32) as u32;
-                    let y2 = (det.bbox.y2 * fh as f32) as u32;
-                    let face = frame.crop_imm(x1, y1, x2 - x1, y2 - y1);
+        if native
+            && native_camera.is_none()
+            && !detections.is_empty()
+            && let Some(frame) = &tick_frame
+        {
+            let (fw, fh) = (frame.width(), frame.height());
+            for (det_idx, det) in detections.iter_mut().enumerate() {
+                // Crop face
+                let x1 = (det.bbox.x1 * fw as f32) as u32;
+                let y1 = (det.bbox.y1 * fh as f32) as u32;
+                let x2 = (det.bbox.x2 * fw as f32) as u32;
+                let y2 = (det.bbox.y2 * fh as f32) as u32;
+                let face = frame.crop_imm(x1, y1, x2 - x1, y2 - y1);
 
-                    // Emotion: keep higher calibrated-confidence prediction (Rust or Python bridge)
-                    if let Some(ref mut emo) = emotion_mod {
-                        if let Ok(result) = emo.classify(&face) {
-                            let py_emotion = det.emotion.clone();
-                            let py_conf = det.emotion_confidence;
-                            // Always store the full distribution for PoE fusion (6.4).
-                            det.emotion_distribution = Some(result.distribution);
-                            let winner = if emotion_wins(&result, det.emotion_confidence) {
-                                det.emotion = Some(result.label.clone());
-                                det.emotion_confidence = Some(result.calibrated_conf);
-                                "rust"
-                            } else {
-                                "python"
-                            };
-                            if args.common.emotion_debug {
-                                emotion_debug_entries.push(state::EmotionDebugEntry {
-                                    id: det_idx as u32,
-                                    rust_emotion: result.label,
-                                    rust_conf: result.calibrated_conf,
-                                    py_emotion,
-                                    py_conf,
-                                    winner,
-                                });
-                            }
-                        }
+                // Emotion: keep higher calibrated-confidence prediction (Rust or Python bridge)
+                if let Some(ref mut emo) = emotion_mod
+                    && let Ok(result) = emo.classify(&face)
+                {
+                    let py_emotion = det.emotion.clone();
+                    let py_conf = det.emotion_confidence;
+                    // Always store the full distribution for PoE fusion (6.4).
+                    det.emotion_distribution = Some(result.distribution);
+                    let winner = if emotion_wins(&result, det.emotion_confidence) {
+                        det.emotion = Some(result.label.clone());
+                        det.emotion_confidence = Some(result.calibrated_conf);
+                        "rust"
+                    } else {
+                        "python"
+                    };
+                    if args.common.emotion_debug {
+                        emotion_debug_entries.push(state::EmotionDebugEntry {
+                            id: det_idx as u32,
+                            rust_emotion: result.label,
+                            rust_conf: result.calibrated_conf,
+                            py_emotion,
+                            py_conf,
+                            winner,
+                        });
                     }
+                }
 
-                    // Identity + embedding (phase 7.5).
-                    // Always embed the face (for cosine re-link #6, even unknown
-                    // faces). Apply the SFace label only when the Python bridge
-                    // didn't already set one (ArcFace > SFace), and only through
-                    // the margin gate (fixes #5: stranger no longer → "Вадим").
-                    if let Some(ref mut id) = identity_mod {
-                        if let Ok((name, sim, emb)) = id.identify_margin(
-                            &face,
-                            config.identity_abs_thresh,
-                            config.identity_margin_thresh,
-                        ) {
-                            det.embedding = Some(emb);
-                            if det.identity.is_none() && name != "unknown" {
-                                det.identity = Some(name);
-                                det.identity_confidence = Some(sim);
-                            }
-                        }
+                // Identity + embedding (phase 7.5).
+                // Always embed the face (for cosine re-link #6, even unknown
+                // faces). Apply the SFace label only when the Python bridge
+                // didn't already set one (ArcFace > SFace), and only through
+                // the margin gate (fixes #5: stranger no longer → "Вадим").
+                if let Some(ref mut id) = identity_mod
+                    && let Ok((name, sim, emb)) = id.identify_margin(
+                        &face,
+                        config.identity_abs_thresh,
+                        config.identity_margin_thresh,
+                    )
+                {
+                    det.embedding = Some(emb);
+                    if det.identity.is_none() && name != "unknown" {
+                        det.identity = Some(name);
+                        det.identity_confidence = Some(sim);
                     }
                 }
             }
@@ -1360,8 +1759,14 @@ fn main() -> Result<()> {
                 eprintln!(
                     "  detect-ab[{ab_frames}f]: matched={} yunet_only={} scrfd_only={} \
                      → YuNet {} SCRFD",
-                    ab_cov.matched, ab_cov.a_only, ab_cov.b_only,
-                    if ab_cov.b_only == 0 { "covers" } else { "MISSES some" },
+                    ab_cov.matched,
+                    ab_cov.a_only,
+                    ab_cov.b_only,
+                    if ab_cov.b_only == 0 {
+                        "covers"
+                    } else {
+                        "MISSES some"
+                    },
                 );
             }
             state_file.write(&tracker, fps, &latest_objects)?;

@@ -50,14 +50,15 @@ impl Agent for CaptureAgent {
         let mut ticks = 0u64;
         let mut errors = 0u64;
         while ctx.running() {
-            if let Some(max) = self.max_frames {
-                if frame_id >= max {
-                    break;
-                }
+            if let Some(max) = self.max_frames
+                && frame_id >= max
+            {
+                break;
             }
             match self.source.read() {
                 Ok(img) => {
-                    ctx.frames.publish(Frame::new(frame_id, img, Instant::now()));
+                    ctx.frames
+                        .publish(Frame::new(frame_id, img, Instant::now()));
                     frame_id += 1;
                     ticks += 1;
                 }
@@ -70,7 +71,11 @@ impl Agent for CaptureAgent {
         }
         // Capture drives the mesh: when it stops producing, wind everyone down.
         ctx.request_stop();
-        AgentHealth { name: self.name(), ticks, errors }
+        AgentHealth {
+            name: self.name(),
+            ticks,
+            errors,
+        }
     }
 }
 
@@ -118,7 +123,11 @@ mod tests {
         let health = a.run(&c);
         assert_eq!(health.ticks, 5, "should publish exactly the frame budget");
         assert_eq!(health.errors, 0);
-        assert_eq!(c.frames.latest().unwrap().id, 4, "latest frame id = budget-1");
+        assert_eq!(
+            c.frames.latest().unwrap().id,
+            4,
+            "latest frame id = budget-1"
+        );
         assert!(!c.running(), "capture requests stop when done");
     }
 

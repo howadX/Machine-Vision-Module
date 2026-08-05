@@ -18,7 +18,7 @@ use crate::{BBox, PersonTrack};
 use std::time::Instant;
 
 /// Metric 3D position in metres, origin = camera.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Position3D {
     pub x: f32,
     pub y: f32,
@@ -139,8 +139,14 @@ impl PersonState {
             identity: t
                 .shown_identity()
                 .map(|n| (n.clone(), t.identity_confidence.unwrap_or(0.0))),
-            emotion: t.emotion.clone().map(|l| (l, t.emotion_confidence.unwrap_or(0.0))),
-            posture: t.posture.clone().map(|l| (l, t.posture_confidence.unwrap_or(0.0))),
+            emotion: t
+                .emotion
+                .clone()
+                .map(|l| (l, t.emotion_confidence.unwrap_or(0.0))),
+            posture: t
+                .posture
+                .clone()
+                .map(|l| (l, t.posture_confidence.unwrap_or(0.0))),
             position_3d,
             emotion_distribution: t.emotion_distribution,
             // Landmarks aren't on the track — the agent attaches them post-tracking
@@ -155,7 +161,11 @@ impl PersonState {
                 crate::motion::MotionState::Unknown => None,
                 s => Some(s.as_str()),
             },
-            velocity: if t.motion.is_empty() { None } else { Some(t.motion.speed()) },
+            velocity: if t.motion.is_empty() {
+                None
+            } else {
+                Some(t.motion.speed())
+            },
             left_gesture: gesture_label(t.motion.left_gesture()),
             right_gesture: gesture_label(t.motion.right_gesture()),
             recon_error: t.recon_error,
@@ -320,15 +330,27 @@ impl WorldState {
 
     /// People whose `last_seen` is within `max_age` of `now` — fusion should only
     /// relate fresh nodes (per-entity freshness, decision 8.0.1).
-    pub fn fresh_people(&self, now: Instant, max_age: std::time::Duration) -> impl Iterator<Item = &PersonState> {
-        self.people.iter().filter(move |p| now.duration_since(p.last_seen) <= max_age)
+    pub fn fresh_people(
+        &self,
+        now: Instant,
+        max_age: std::time::Duration,
+    ) -> impl Iterator<Item = &PersonState> {
+        self.people
+            .iter()
+            .filter(move |p| now.duration_since(p.last_seen) <= max_age)
     }
 
     /// Objects whose `last_seen` is within `max_age` of `now` — the object-side
     /// twin of [`fresh_people`](Self::fresh_people). Fusion relates only fresh
     /// nodes, so a stale object (its agent fell behind) drops out of the graph.
-    pub fn fresh_objects(&self, now: Instant, max_age: std::time::Duration) -> impl Iterator<Item = &ObjectState> {
-        self.objects.iter().filter(move |o| now.duration_since(o.last_seen) <= max_age)
+    pub fn fresh_objects(
+        &self,
+        now: Instant,
+        max_age: std::time::Duration,
+    ) -> impl Iterator<Item = &ObjectState> {
+        self.objects
+            .iter()
+            .filter(move |o| now.duration_since(o.last_seen) <= max_age)
     }
 }
 
@@ -337,14 +359,27 @@ mod tests {
     use super::*;
 
     fn track(display_id: u32) -> PersonTrack {
-        let mut t = PersonTrack::new(99, BBox { x1: 0.2, y1: 0.3, x2: 0.5, y2: 0.7 });
+        let mut t = PersonTrack::new(
+            99,
+            BBox {
+                x1: 0.2,
+                y1: 0.3,
+                x2: 0.5,
+                y2: 0.7,
+            },
+        );
         t.display_id = display_id;
         t
     }
 
     #[test]
     fn position_3d_fields_roundtrip() {
-        let p = Position3D { x: 1.0, y: -0.5, z: 2.0, confidence: 0.8 };
+        let p = Position3D {
+            x: 1.0,
+            y: -0.5,
+            z: 2.0,
+            confidence: 0.8,
+        };
         assert_eq!(p.x, 1.0);
         assert_eq!(p.z, 2.0);
         assert!((p.confidence - 0.8).abs() < 1e-6);
@@ -356,7 +391,10 @@ mod tests {
         let ps = PersonState::from_track(&track(10), now);
         assert_eq!(ps.track_id, 10);
         assert!((ps.bbox.x1 - 0.2).abs() < 1e-6);
-        assert!(ps.identity.is_none(), "ephemeral track has no shown identity");
+        assert!(
+            ps.identity.is_none(),
+            "ephemeral track has no shown identity"
+        );
         assert!(ps.position_3d.is_none(), "no 3D set yet");
     }
 
@@ -406,10 +444,20 @@ mod tests {
         let o = ObjectState {
             id: 10000,
             class: "cup".into(),
-            bbox: BBox { x1: 0.4, y1: 0.4, x2: 0.5, y2: 0.55 },
+            bbox: BBox {
+                x1: 0.4,
+                y1: 0.4,
+                x2: 0.5,
+                y2: 0.55,
+            },
             confidence: 0.82,
             age: 5,
-            position_3d: Some(Position3D { x: 0.18, y: 0.65, z: 0.68, confidence: 0.4 }),
+            position_3d: Some(Position3D {
+                x: 0.18,
+                y: 0.65,
+                z: 0.68,
+                confidence: 0.4,
+            }),
             mask: None,
             remembered: false,
             last_seen: Instant::now(),
@@ -447,7 +495,9 @@ mod tests {
         let fresh = PersonState::from_track(&track(11), now);
         w.people.push(stale);
         w.people.push(fresh);
-        let n = w.fresh_people(now, std::time::Duration::from_millis(100)).count();
+        let n = w
+            .fresh_people(now, std::time::Duration::from_millis(100))
+            .count();
         assert_eq!(n, 1, "only the fresh person within 100ms");
     }
 
@@ -458,7 +508,12 @@ mod tests {
         let mk = |id: u32, age_ms: u64| ObjectState {
             id,
             class: "cup".into(),
-            bbox: BBox { x1: 0.1, y1: 0.1, x2: 0.2, y2: 0.2 },
+            bbox: BBox {
+                x1: 0.1,
+                y1: 0.1,
+                x2: 0.2,
+                y2: 0.2,
+            },
             confidence: 0.8,
             age: 1,
             position_3d: None,
@@ -508,7 +563,10 @@ mod tests {
         // People keep being seen → clock advances → never expires.
         w.mark_people_seen(t0 + Duration::from_secs(20));
         assert!(!w.session_expired(t0 + Duration::from_secs(40), timeout));
-        assert!(w.maybe_close_session(t0 + Duration::from_secs(45), timeout).is_none());
+        assert!(
+            w.maybe_close_session(t0 + Duration::from_secs(45), timeout)
+                .is_none()
+        );
         assert!(w.session_active());
 
         // 29s after last presence: still inside the window.
@@ -528,6 +586,9 @@ mod tests {
         w.mark_people_seen(t0);
         // No session open → nothing to expire or close.
         assert!(!w.session_expired(t0 + Duration::from_secs(600), Duration::from_secs(30)));
-        assert!(w.maybe_close_session(t0 + Duration::from_secs(600), Duration::from_secs(30)).is_none());
+        assert!(
+            w.maybe_close_session(t0 + Duration::from_secs(600), Duration::from_secs(30))
+                .is_none()
+        );
     }
 }
