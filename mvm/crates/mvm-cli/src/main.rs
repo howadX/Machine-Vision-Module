@@ -15,6 +15,7 @@
 
 mod agents;
 mod config_file;
+mod cortex_report;
 mod dataset_cmd;
 mod doctor;
 mod gallery;
@@ -1067,17 +1068,17 @@ fn build_live_mesh(
     )));
     mesh.add(Box::new(agents::CortexAgent::new(
         fused_frames.clone(),
-        cortex_frames,
+        cortex_frames.clone(),
         attention_policies.clone(),
         config.clone(),
         mvm_cortex::CortexConfig { enabled: true },
     )));
     mesh.add(Box::new(agents::PolicySchedulerAgent::new(
         agents::PolicySchedulerWiring {
-            policies: attention_policies,
+            policies: attention_policies.clone(),
             scenes: scene_observations.clone(),
             depths: depth_observations.clone(),
-            outcomes: policy_outcomes,
+            outcomes: policy_outcomes.clone(),
             scene_control,
             depth_control,
             scene_available,
@@ -1085,6 +1086,12 @@ fn build_live_mesh(
             mode: args.scheduling_mode,
             metrics: scheduling_metrics,
         },
+    )));
+    mesh.add(Box::new(agents::CortexReportWriter::new(
+        cortex_frames.clone(),
+        attention_policies.clone(),
+        policy_outcomes,
+        product.data_dir.join("current_cortex.json"),
     )));
     mesh.add(Box::new(
         agents::StateFileWriter::new(
@@ -1156,6 +1163,24 @@ fn run_snapshot(raw: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// `mvm cortex` (phase 18.9) — render the latest atomic cognitive artifact.
+fn run_cortex(raw: &[String]) -> Result<()> {
+    let product = config_file::load()?;
+    let args = cortex_report::parse_args(raw)?;
+    let path = args
+        .input
+        .unwrap_or_else(|| product.data_dir.join("current_cortex.json"));
+    let output = cortex_report::render_file(
+        &path,
+        args.view,
+        args.top_k,
+        args.horizon_seconds,
+        args.raw_json,
+    )?;
+    println!("{output}");
+    Ok(())
+}
+
 /// `mvm serve --with-camera` (phase 14.3) — one process: the producer mesh runs
 /// on its own threads writing state/logs/journal to `data_dir`, while the MCP
 /// server runs on the main thread serving snapshot/recap/inspect over *those*
@@ -1209,6 +1234,9 @@ fn main() -> Result<()> {
     }
     if sub == Some("snapshot") {
         return run_snapshot(&raw);
+    }
+    if sub == Some("cortex") {
+        return run_cortex(&raw);
     }
     if sub == Some("recap") {
         return recap_cmd::run_recap(recap_cmd::parse_recap_args(&raw));

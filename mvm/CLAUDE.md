@@ -50,7 +50,9 @@
   ≤5% throughput gate записаны в `benchmark/baselines/18.8b.1-adaptive-mesh-2026-08-05.md`.
   18.6 не выдумывает world camera
   pose, полную геометрию зон или отсутствующую emotion entropy: они явно unknown/withheld.
-  Далее — 18.9 Cortex Report + CLI/MCP. План — `docs/phase-18-plan.md`.
+  18.9 добавляет atomic `current_cortex.json`, read-only `mvm cortex` views и MCP tool `mvm_cortex`;
+  current_state.md и labels.jsonl остаются facts/history surfaces. Далее — 18.10 Benchmark Evaluation.
+  План — `docs/phase-18-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,

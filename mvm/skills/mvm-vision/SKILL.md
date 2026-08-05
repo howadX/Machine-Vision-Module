@@ -33,6 +33,7 @@ Prefer the read-only MCP tools in an agent loop:
 - `mvm_snapshot`
 - `mvm_recap`
 - `mvm_inspect`
+- `mvm_cortex`
 
 Use the equivalent CLI when a shell is available:
 
@@ -40,6 +41,7 @@ Use the equivalent CLI when a shell is available:
 mvm snapshot
 mvm recap --last 10m
 mvm inspect --around 2026-07-05T17:51:23 --window 5
+mvm cortex --view attention --top-k 5
 ```
 
 Require a running producer. Start `mvm run` once and leave it running, or use
@@ -49,6 +51,22 @@ The producer writes a durable text-only session by default.
 
 Treat `--scene-log` and flat `scene-*.jsonl` / `events-*.jsonl` as legacy
 backward compatibility, not the normal workflow.
+
+## Read the Cortex view
+
+Use `mvm cortex` or the read-only MCP tool `mvm_cortex` after `snapshot` when
+the question is about the agent's current attention, bounded forecast, visual
+self-model, uncertainty inventory, affordances, or advisory re-observation
+policy. Views are `full`, `attention`, `forecast`, `self`, and `uncertainty`.
+`top_k` bounds attention output; `horizon_seconds` is a requested display
+horizon, not permission to extrapolate beyond the Cortex forecast evidence.
+
+The source is the atomic `current_cortex.json` artifact. It is a cognitive view,
+not canonical scene truth and not durable semantic history. `--json`/`raw=true`
+is explicit raw output; the default is compact human-readable text. Preserve
+`asserted`, `withheld`, and `unknown` statuses and their reason/evidence fields.
+An entity key is the stable evidence reference (`run_id`, track domain, track id,
+incarnation); it is not a claim that a reused numeric display id is the same entity.
 
 ## Read a Snapshot
 

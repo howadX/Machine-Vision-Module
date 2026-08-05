@@ -18,8 +18,9 @@ description: Use MVM snapshot, recap, or inspect to read a live or historical sc
 
 # MVM Vision
 
-Use `snapshot`, then `recap`, then `inspect`. Preserve `withheld` and `unknown`.
+Use `snapshot`, then `recap`, then `inspect`, or `mvm_cortex`. Preserve `withheld` and `unknown`.
 Treat a `phantom` as uncertain. Read `using_object`. Start `mvm run`.
+The `current_cortex.json` entity key preserves incarnation semantics.
 See [mvm-dataset](../mvm-dataset/SKILL.md).
 """
 

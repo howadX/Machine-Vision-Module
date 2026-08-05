@@ -19,6 +19,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
     Some(match name {
         "run" | "mesh" => RUN,
         "snapshot" => SNAPSHOT,
+        "cortex" => CORTEX,
         "recap" => RECAP,
         "inspect" => INSPECT,
         "serve" => SERVE,
@@ -41,6 +42,7 @@ USAGE:
 COMMANDS:
     run        Live vision mesh (production): camera + all models → scene graph
     snapshot   Print the current scene (current_state.md) once and exit
+    cortex     Read the latest cognitive Cortex frame (current_cortex.json)
     recap      Summarise a period from the durable logs (presence, activities, zones)
     inspect    Print raw per-frame slices at full precision (adjudicate a recap)
     serve      MCP stdio server: expose snapshot/recap/inspect as LLM tools
@@ -144,6 +146,23 @@ FLAGS:
                      (default: ~/.local/share/mvm/current_state.md, or [output] state_path)
 
 Reads the file a running `mvm run` writes — start `mvm run` (or `mvm mesh`) first.
+";
+
+pub const CORTEX: &str = "\
+mvm cortex — read the latest Visual Cortex report (read-only).
+
+USAGE:
+    mvm cortex [--view <full|attention|forecast|self|uncertainty>] [flags]
+
+FLAGS:
+    --view <VIEW>          Report section (default: full)
+    --top-k <N>            Attention items, bounded to 1..20 (default: 5)
+    --horizon-seconds <S>  Requested forecast horizon (Cortex remains bounded by evidence)
+    --input <PATH>         Explicit current_cortex.json path
+    --json                 Explicit raw JSON output; default is compact human-readable text
+
+Reads the atomic artifact written by a running `mvm run` or `mvm serve --with-camera`.
+The report is a cognitive view, not a replacement for canonical scene facts.
 ";
 
 pub const RECAP: &str = "\

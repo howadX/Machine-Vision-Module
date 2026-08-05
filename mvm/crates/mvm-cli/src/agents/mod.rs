@@ -15,6 +15,7 @@
 
 mod capture;
 mod cortex;
+pub(crate) use crate::cortex_report::CortexReportWriter;
 mod dataset_writer;
 mod depth;
 mod fusion;

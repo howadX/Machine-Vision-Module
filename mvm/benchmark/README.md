@@ -42,6 +42,11 @@ and competing Scene+Depth permits on the same camera profile and under 4/2
 CPU-core affinity. Runtime metrics remain diagnostic and are not canonical scene
 facts or durable semantic history.
 
+The 18.9 report-surface live validation is recorded in
+`baselines/18.9-cortex-report-live-2026-08-05.md`. `current_cortex.json` is an
+atomic latest cognitive artifact, while `current_state.md` remains facts-only
+and `labels.jsonl` remains the sole durable semantic history.
+
 ## Invariants
 
 1. Canonical facts are deterministic under sink cadence changes.
