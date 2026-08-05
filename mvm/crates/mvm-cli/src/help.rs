@@ -34,18 +34,28 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
 }
 
 pub const MAIN: &str = "\
-mvm — Machine Vision Module: a local, $0/CPU vision module that emits facts, not pixels.
+mvm — Machine Vision Module: local, CPU-only structured vision.
+
+MVM turns a camera stream into evidence-linked scene facts. It is an ensemble of
+specialist models, not a general visual-question-answering system: use it for
+people, objects, posture, motion, relations, zones and activities, and preserve
+its confidence, freshness, `withheld`, and `unknown` results.
 
 USAGE:
     mvm <command> [flags]
 
+START HERE:
+    1. mvm run                         Start the camera producer (leave it running)
+    2. mvm snapshot                    Read canonical facts about the current scene
+    3. mvm cortex --view attention     Read the separate cognitive view when needed
+
 COMMANDS:
-    run        Live vision mesh (production): camera + all models → scene graph
-    snapshot   Print the current scene (current_state.md) once and exit
-    cortex     Read the latest cognitive Cortex frame (current_cortex.json)
-    recap      Summarise a period from the durable logs (presence, activities, zones)
-    inspect    Print raw per-frame slices at full precision (adjudicate a recap)
-    serve      MCP stdio server: expose snapshot/recap/inspect as LLM tools
+    run        Start live production vision: camera → experts → canonical scene facts
+    snapshot   Read canonical facts now, once (current_state.md)
+    cortex     Read attention, bounded forecast, self-model or uncertainty, once
+    recap      Summarise durable semantic history over a time window
+    inspect    Inspect raw recorded evidence around a time or track
+    serve      Start the read-only MCP stdio server (for an LLM host)
     setup      Fetch the ONNX models into the models dir (checksum-verified)
     gallery    Manage the identity gallery (add a person's photos, list people)
     mcp        Register MVM as an MCP server with an LLM host (install)
@@ -53,17 +63,35 @@ COMMANDS:
     dataset    Inspect & maintain recorded Dataset Factory sessions (list/info/stats/prune)
     doctor     Check the setup: camera, models, data dir, config
 
-PULL MODEL (cheap → expensive):
-    snapshot  → what's happening now
-    recap     → what happened over a window
-    inspect   → the raw frames behind a claim
+READING THE SYSTEM:
+    snapshot  → canonical facts now; begin every live-scene question here
+    cortex    → evidence-linked cognitive interpretation; never replaces facts
+    recap     → what happened over a window from durable labels.jsonl history
+    inspect   → raw recorded slices that adjudicate a specific recap claim
+
+ARTIFACTS AND AUTHORITY:
+    current_state.md     Canonical current-scene facts, written atomically by run
+    labels.jsonl         Sole durable semantic history (text-only by default)
+    current_cortex.json  Atomic, runtime cognitive view; not facts or history
+
+MCP:
+    mvm serve --mcp                  Read a separately running producer
+    mvm serve --mcp --with-camera    Run producer and MCP server together
+    Tools: mvm_snapshot, mvm_cortex, mvm_recap, mvm_inspect (all read-only)
+
+EXAMPLES:
+    mvm run
+    mvm snapshot
+    mvm cortex --view uncertainty
+    mvm recap --last 10m
+    mvm inspect --id 12
 
 FLAGS:
     -h, --help       Show help (add to any command for its flags)
     -V, --version    Print version
 
-Add --help to any command for its flags. Agent workflows live in
-mvm/skills/mvm-vision and mvm/skills/mvm-dataset.
+Run `mvm <command> --help` for exact flags and examples. `mvm run` is the
+production path; `mvm run --stub` is a model-free CI smoke test, not live vision.
 ";
 
 pub const RUN: &str = "\
@@ -151,6 +179,11 @@ Reads the file a running `mvm run` writes — start `mvm run` (or `mvm mesh`) fi
 pub const CORTEX: &str = "\
 mvm cortex — read the latest Visual Cortex report (read-only).
 
+Use after `mvm snapshot` when the question concerns current attention, a bounded
+forecast, the visual self-model, uncertainty, affordances, or advisory
+re-observation. This is an evidence-linked cognitive interpretation: it never
+replaces canonical scene facts and it is not durable history.
+
 USAGE:
     mvm cortex [--view <full|attention|forecast|self|uncertainty>] [flags]
 
@@ -162,7 +195,9 @@ FLAGS:
     --json                 Explicit raw JSON output; default is compact human-readable text
 
 Reads the atomic artifact written by a running `mvm run` or `mvm serve --with-camera`.
-The report is a cognitive view, not a replacement for canonical scene facts.
+`attention` ranks focus items; `forecast` reports only the horizon supported by
+evidence; `self` reports camera/world-pose knowledge; `uncertainty` preserves
+withheld/unknown status and reasons. Use `--json` only for an explicit raw-data need.
 ";
 
 pub const RECAP: &str = "\
@@ -175,7 +210,7 @@ USAGE:
 FLAGS:
     --input <PATH>   Data dir, a session dir/labels.jsonl, or a legacy scene file
                      (default: ~/.local/share/mvm — where `mvm run` writes). Prefers
-                     flat logs when present, else reads semantic sessions.
+                     semantic sessions; legacy flat logs are fallback only.
     --events <PATH>  Explicit events file (when --input is a single file)
     --last <DUR>     Keep only the last window before the latest entry: 30s, 10m, 2h
     --from <ISO>     Inclusive ISO8601 lower bound
@@ -207,7 +242,7 @@ EXAMPLES:
 ";
 
 pub const SERVE: &str = "\
-mvm serve --mcp — MCP stdio server exposing snapshot/recap/inspect as LLM tools (read-only).
+mvm serve --mcp — MCP stdio server exposing scene and Cortex tools (read-only).
 
 USAGE:
     mvm serve --mcp [--with-camera] [--state <PATH>] [--logs <DIR>]
@@ -222,6 +257,9 @@ FLAGS:
 
 Without --with-camera: read-only over the artifacts a separate `mvm run` writes
 (producer and server decoupled). With --with-camera: one self-contained process.
+The server exposes `mvm_snapshot`, `mvm_cortex`, `mvm_recap`, and `mvm_inspect`.
+`mvm_cortex` reads current_cortex.json as a cognitive view; it does not alter
+current_state.md or labels.jsonl.
 ";
 
 pub const DOCTOR: &str = "\
@@ -380,8 +418,34 @@ mod tests {
     /// The top-level screen must list every command so `mvm --help` is a complete map.
     #[test]
     fn main_help_lists_all_commands() {
-        for cmd in ["run", "snapshot", "recap", "inspect", "serve"] {
+        for cmd in ["run", "snapshot", "cortex", "recap", "inspect", "serve"] {
             assert!(MAIN.contains(cmd), "top-level help must list `{cmd}`");
         }
+    }
+
+    #[test]
+    fn main_help_explains_the_producer_reader_authority_boundary() {
+        for needle in [
+            "START HERE:",
+            "mvm run",
+            "current_state.md",
+            "labels.jsonl",
+            "current_cortex.json",
+            "never replaces facts",
+            "mvm_snapshot, mvm_cortex, mvm_recap, mvm_inspect",
+        ] {
+            assert!(
+                MAIN.contains(needle),
+                "top-level help must explain `{needle}`"
+            );
+        }
+    }
+
+    #[test]
+    fn cortex_and_mcp_help_preserve_the_cognitive_boundary() {
+        assert!(CORTEX.contains("never\nreplaces canonical scene facts"));
+        assert!(CORTEX.contains("withheld/unknown"));
+        assert!(SERVE.contains("mvm_cortex"));
+        assert!(SERVE.contains("does not alter\ncurrent_state.md or labels.jsonl"));
     }
 }

@@ -5,7 +5,8 @@
 //!   mvm snapshot   print the current scene (current_state.md) once
 //!   mvm recap      summarise a period from the durable logs
 //!   mvm inspect    raw per-frame slices at full precision
-//!   mvm serve --mcp   MCP stdio server (snapshot/recap/inspect as tools)
+//!   mvm cortex     read the latest cognitive Cortex report
+//!   mvm serve --mcp   MCP stdio server (snapshot/cortex/recap/inspect as tools)
 //!   mvm --help / --version
 //!
 //! Compatibility flags (hidden, not subcommands):
