@@ -39,6 +39,7 @@ pub(crate) struct FusionAgent {
     /// Zero point for the journal's monotonic clock.
     epoch: std::time::Instant,
     last_fused_frame: Option<u64>,
+    metrics: super::SchedulingMetrics,
 }
 
 impl FusionAgent {
@@ -49,6 +50,7 @@ impl FusionAgent {
         depth_observations: DepthObservationBus,
         fused_frames: FusedFrameBus,
         run_id: impl Into<String>,
+        metrics: super::SchedulingMetrics,
     ) -> Self {
         let camera_height_m = config.camera_height_m;
         let run_id = run_id.into();
@@ -70,6 +72,7 @@ impl FusionAgent {
             last_frame: None,
             epoch: std::time::Instant::now(),
             last_fused_frame: None,
+            metrics,
         }
     }
 
@@ -138,6 +141,7 @@ impl Agent for FusionAgent {
             if let Some(frame) = ctx.frames.latest()
                 && self.last_fused_frame != Some(frame.id)
             {
+                let started = std::time::Instant::now();
                 self.last_fused_frame = Some(frame.id);
                 let human = self
                     .human_observations
@@ -239,6 +243,8 @@ impl Agent for FusionAgent {
                         eprintln!("  fusion: canonical assembly error: {error}");
                     }
                 }
+                self.metrics
+                    .record_duration(super::MetricAgent::Fusion, started.elapsed());
                 ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(15));
@@ -743,6 +749,7 @@ mod tests {
             DepthObservationBus::new(),
             FusedFrameBus::new(),
             "test-run",
+            super::super::SchedulingMetrics::new(super::super::SchedulingMode::SceneAndDepth),
         )
     }
 

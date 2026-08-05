@@ -12,6 +12,225 @@ use mvm_cortex::{
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// Experimental adaptive scheduling modes used only by the 18.8b.1 spike.
+/// Fixed cadence remains the default production behavior until the measured
+/// decision is recorded; none of these modes change persistent expert cadence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchedulingMode {
+    Fixed,
+    Scene,
+    SceneAndDepth,
+}
+
+impl SchedulingMode {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "fixed" => Some(Self::Fixed),
+            "scene" => Some(Self::Scene),
+            "scene-depth" => Some(Self::SceneAndDepth),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fixed => "fixed",
+            Self::Scene => "scene",
+            Self::SceneAndDepth => "scene-depth",
+        }
+    }
+
+    fn allows(self, target: &ObservationTarget) -> bool {
+        matches!(
+            (self, target),
+            (Self::Scene, ObservationTarget::Scene)
+                | (
+                    Self::SceneAndDepth,
+                    ObservationTarget::Scene | ObservationTarget::Depth
+                )
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MetricAgent {
+    Human,
+    Fusion,
+}
+
+#[derive(Default)]
+struct MetricsState {
+    human_us: Vec<u64>,
+    fusion_us: Vec<u64>,
+    scene_extra_runs: u64,
+    depth_extra_runs: u64,
+    accepted: u64,
+    deferred: u64,
+    rejected: u64,
+    dispatched: u64,
+    resolved: u64,
+    expired: u64,
+    unavailable: u64,
+    dispatch_wait_frames: Vec<u64>,
+    resolution_wait_frames: Vec<u64>,
+}
+
+/// Bounded, runtime-only instrumentation. It is deliberately not a Cortex
+/// fact, MCP payload, or durable semantic history.
+#[derive(Clone)]
+pub(crate) struct SchedulingMetrics {
+    mode: SchedulingMode,
+    state: Arc<Mutex<MetricsState>>,
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) struct SchedulingReport {
+    pub(crate) mode: SchedulingMode,
+    pub(crate) scene_extra_runs: u64,
+    pub(crate) depth_extra_runs: u64,
+    pub(crate) accepted: u64,
+    pub(crate) deferred: u64,
+    pub(crate) rejected: u64,
+    pub(crate) dispatched: u64,
+    pub(crate) resolved: u64,
+    pub(crate) expired: u64,
+    pub(crate) unavailable: u64,
+    pub(crate) human_ms_p50: Option<f64>,
+    pub(crate) human_ms_p95: Option<f64>,
+    pub(crate) fusion_ms_p50: Option<f64>,
+    pub(crate) fusion_ms_p95: Option<f64>,
+    pub(crate) dispatch_wait_frames_p50: Option<u64>,
+    pub(crate) dispatch_wait_frames_p95: Option<u64>,
+    pub(crate) resolution_wait_frames_p50: Option<u64>,
+    pub(crate) resolution_wait_frames_p95: Option<u64>,
+}
+
+impl SchedulingMetrics {
+    const MAX_SAMPLES: usize = 4_096;
+
+    pub(crate) fn new(mode: SchedulingMode) -> Self {
+        Self {
+            mode,
+            state: Arc::new(Mutex::new(MetricsState::default())),
+        }
+    }
+
+    pub(crate) fn record_duration(&self, agent: MetricAgent, duration: Duration) {
+        let mut state = self.state.lock().unwrap();
+        let samples = match agent {
+            MetricAgent::Human => &mut state.human_us,
+            MetricAgent::Fusion => &mut state.fusion_us,
+        };
+        push_bounded(
+            samples,
+            u64::try_from(duration.as_micros()).unwrap_or(u64::MAX),
+        );
+    }
+
+    pub(crate) fn record_extra_run(&self, target: ObservationTarget) {
+        let mut state = self.state.lock().unwrap();
+        match target {
+            ObservationTarget::Scene => state.scene_extra_runs += 1,
+            ObservationTarget::Depth => state.depth_extra_runs += 1,
+            ObservationTarget::ExternalAgent { .. } => {}
+        }
+    }
+
+    fn record_outcome(&self, outcome: &RequestOutcome) {
+        let mut state = self.state.lock().unwrap();
+        match outcome {
+            RequestOutcome::Accepted { .. } => state.accepted += 1,
+            RequestOutcome::Deferred { .. } => state.deferred += 1,
+            RequestOutcome::Rejected { .. } => state.rejected += 1,
+            RequestOutcome::Dispatched => state.dispatched += 1,
+            RequestOutcome::Resolved { .. } => state.resolved += 1,
+            RequestOutcome::Expired => state.expired += 1,
+            RequestOutcome::Unavailable => state.unavailable += 1,
+            RequestOutcome::Proposed => {}
+        }
+    }
+
+    fn record_dispatch_wait(&self, frames: u64) {
+        push_bounded(&mut self.state.lock().unwrap().dispatch_wait_frames, frames);
+    }
+
+    fn record_resolution_wait(&self, frames: u64) {
+        push_bounded(
+            &mut self.state.lock().unwrap().resolution_wait_frames,
+            frames,
+        );
+    }
+
+    pub(crate) fn report(&self) -> SchedulingReport {
+        let state = self.state.lock().unwrap();
+        SchedulingReport {
+            mode: self.mode,
+            scene_extra_runs: state.scene_extra_runs,
+            depth_extra_runs: state.depth_extra_runs,
+            accepted: state.accepted,
+            deferred: state.deferred,
+            rejected: state.rejected,
+            dispatched: state.dispatched,
+            resolved: state.resolved,
+            expired: state.expired,
+            unavailable: state.unavailable,
+            human_ms_p50: percentile_ms(&state.human_us, 50),
+            human_ms_p95: percentile_ms(&state.human_us, 95),
+            fusion_ms_p50: percentile_ms(&state.fusion_us, 50),
+            fusion_ms_p95: percentile_ms(&state.fusion_us, 95),
+            dispatch_wait_frames_p50: percentile_u64(&state.dispatch_wait_frames, 50),
+            dispatch_wait_frames_p95: percentile_u64(&state.dispatch_wait_frames, 95),
+            resolution_wait_frames_p50: percentile_u64(&state.resolution_wait_frames, 50),
+            resolution_wait_frames_p95: percentile_u64(&state.resolution_wait_frames, 95),
+        }
+    }
+
+    pub(crate) fn emit_report(&self) {
+        let report = self.report();
+        eprintln!(
+            "  scheduling-metrics mode={} scene_extra={} depth_extra={} outcomes=accepted:{}/deferred:{}/rejected:{}/dispatched:{}/resolved:{}/expired:{}/unavailable:{} human_ms=p50:{:?},p95:{:?} fusion_ms=p50:{:?},p95:{:?} dispatch_wait_frames=p50:{:?},p95:{:?} resolution_wait_frames=p50:{:?},p95:{:?}",
+            report.mode.as_str(),
+            report.scene_extra_runs,
+            report.depth_extra_runs,
+            report.accepted,
+            report.deferred,
+            report.rejected,
+            report.dispatched,
+            report.resolved,
+            report.expired,
+            report.unavailable,
+            report.human_ms_p50,
+            report.human_ms_p95,
+            report.fusion_ms_p50,
+            report.fusion_ms_p95,
+            report.dispatch_wait_frames_p50,
+            report.dispatch_wait_frames_p95,
+            report.resolution_wait_frames_p50,
+            report.resolution_wait_frames_p95,
+        );
+    }
+}
+
+fn push_bounded(values: &mut Vec<u64>, value: u64) {
+    if values.len() == SchedulingMetrics::MAX_SAMPLES {
+        values.remove(0);
+    }
+    values.push(value);
+}
+
+fn percentile_u64(values: &[u64], percentile: usize) -> Option<u64> {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    let rank = sorted.len().saturating_mul(percentile).saturating_add(99) / 100;
+    let index = rank.saturating_sub(1);
+    sorted.get(index).copied()
+}
+
+fn percentile_ms(values: &[u64], percentile: usize) -> Option<f64> {
+    percentile_u64(values, percentile).map(|micros| micros as f64 / 1_000.0)
+}
 
 #[derive(Default)]
 struct ControlState {
@@ -64,6 +283,8 @@ pub(crate) struct PolicySchedulerWiring {
     pub(crate) depth_control: DepthExecutionControl,
     pub(crate) scene_available: bool,
     pub(crate) depth_available: bool,
+    pub(crate) mode: SchedulingMode,
+    pub(crate) metrics: SchedulingMetrics,
 }
 
 pub(crate) struct PolicySchedulerAgent {
@@ -76,6 +297,7 @@ pub(crate) struct PolicySchedulerAgent {
     last_scene_frame: Option<u64>,
     last_depth_frame: Option<u64>,
     published_outcomes: usize,
+    metrics: SchedulingMetrics,
 }
 
 impl PolicySchedulerAgent {
@@ -85,6 +307,8 @@ impl PolicySchedulerAgent {
             wiring.depth_control,
             SchedulerBudget::default(),
         );
+        scheduler.mode = wiring.mode;
+        scheduler.metrics = wiring.metrics.clone();
         scheduler.scene_available = wiring.scene_available;
         scheduler.depth_available = wiring.depth_available;
         Self {
@@ -97,6 +321,7 @@ impl PolicySchedulerAgent {
             last_scene_frame: None,
             last_depth_frame: None,
             published_outcomes: 0,
+            metrics: wiring.metrics,
         }
     }
 }
@@ -116,10 +341,10 @@ impl Agent for PolicySchedulerAgent {
                 self.scheduler.submit(policy, now);
             }
             for request_id in self.scheduler.scene_control.take_dispatched() {
-                self.scheduler.dispatched(request_id);
+                self.scheduler.dispatched(request_id, now);
             }
             for request_id in self.scheduler.depth_control.take_dispatched() {
-                self.scheduler.dispatched(request_id);
+                self.scheduler.dispatched(request_id, now);
             }
             if let Some(scene) = self.scenes.latest()
                 && self.last_scene_frame != Some(scene.stamp.source_frame_id)
@@ -178,6 +403,7 @@ impl Agent for PolicySchedulerAgent {
             ticks += 1;
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        self.metrics.emit_report();
         AgentHealth {
             name: self.name(),
             ticks,
@@ -218,6 +444,8 @@ pub(crate) struct PolicyScheduler {
     outcome_revision: usize,
     scene_available: bool,
     depth_available: bool,
+    mode: SchedulingMode,
+    metrics: SchedulingMetrics,
 }
 
 impl PolicyScheduler {
@@ -239,6 +467,8 @@ impl PolicyScheduler {
             outcome_revision: 0,
             scene_available: true,
             depth_available: true,
+            mode: SchedulingMode::SceneAndDepth,
+            metrics: SchedulingMetrics::new(SchedulingMode::SceneAndDepth),
         }
     }
 
@@ -279,6 +509,16 @@ impl PolicyScheduler {
             }
             if matches!(request.target, ObservationTarget::ExternalAgent { .. }) {
                 self.push_outcome(request.request_id, RequestOutcome::Unavailable);
+                continue;
+            }
+            if !self.mode.allows(&request.target) {
+                self.push_outcome(
+                    request.request_id,
+                    RequestOutcome::Deferred {
+                        retry_at_frame: now_frame_id.saturating_add(1),
+                        reason: format!("scheduling_mode_{}", self.mode.as_str()),
+                    },
+                );
                 continue;
             }
             let expert_unavailable = match request.target {
@@ -353,14 +593,24 @@ impl PolicyScheduler {
         }
     }
 
-    pub(crate) fn dispatched(&mut self, request_id: u64) {
+    pub(crate) fn dispatched(&mut self, request_id: u64, now_frame_id: u64) {
         if self.pending.contains_key(&request_id) && self.dispatched.insert(request_id) {
+            if let Some(request) = self.pending.get(&request_id) {
+                self.metrics.record_dispatch_wait(
+                    now_frame_id.saturating_sub(request.source_scene_frame_id),
+                );
+            }
             self.push_outcome(request_id, RequestOutcome::Dispatched);
         }
     }
 
     pub(crate) fn resolve(&mut self, request_id: u64, source_frame_id: u64, outcome: Resolution) {
-        if self.dispatched.remove(&request_id) && self.pending.remove(&request_id).is_some() {
+        if self.dispatched.remove(&request_id)
+            && let Some(request) = self.pending.remove(&request_id)
+        {
+            self.metrics.record_resolution_wait(
+                source_frame_id.saturating_sub(request.source_scene_frame_id),
+            );
             self.push_outcome(
                 request_id,
                 RequestOutcome::Resolved {
@@ -386,6 +636,7 @@ impl PolicyScheduler {
     }
 
     fn push_outcome(&mut self, request_id: u64, outcome: RequestOutcome) {
+        self.metrics.record_outcome(&outcome);
         let capacity = self.budget.max_outcomes.max(1);
         if self.outcomes.len() == capacity {
             self.outcomes.remove(0);
@@ -405,6 +656,37 @@ mod tests {
     use super::*;
     use mvm_cortex::{EvidenceRef, ReasonCode};
     use serde::Deserialize;
+
+    #[test]
+    fn scheduling_mode_limits_adaptive_targets_without_rewriting_cadence() {
+        assert!(!SchedulingMode::Fixed.allows(&ObservationTarget::Scene));
+        assert!(SchedulingMode::Scene.allows(&ObservationTarget::Scene));
+        assert!(!SchedulingMode::Scene.allows(&ObservationTarget::Depth));
+        assert!(SchedulingMode::SceneAndDepth.allows(&ObservationTarget::Depth));
+    }
+
+    #[test]
+    fn metrics_summary_reports_bounded_latency_percentiles() {
+        let metrics = SchedulingMetrics::new(SchedulingMode::SceneAndDepth);
+        metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(1));
+        metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(3));
+        metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(5));
+        metrics.record_extra_run(ObservationTarget::Scene);
+        metrics.record_outcome(&RequestOutcome::Accepted {
+            dispatch_deadline_frame: 9,
+        });
+        metrics.record_dispatch_wait(2);
+        metrics.record_resolution_wait(4);
+
+        let report = metrics.report();
+        assert_eq!(report.mode, SchedulingMode::SceneAndDepth);
+        assert_eq!(report.scene_extra_runs, 1);
+        assert_eq!(report.accepted, 1);
+        assert_eq!(report.human_ms_p50, Some(3.0));
+        assert_eq!(report.human_ms_p95, Some(5.0));
+        assert_eq!(report.dispatch_wait_frames_p50, Some(2));
+        assert_eq!(report.resolution_wait_frames_p95, Some(4));
+    }
 
     fn request(id: u64, expires_at_frame: u64) -> ObservationRequest {
         ObservationRequest {
@@ -444,7 +726,7 @@ mod tests {
         );
         assert_eq!(control.take_for(8).unwrap().request_id, 9);
         assert!(control.take_for(8).is_none());
-        scheduler.dispatched(9);
+        scheduler.dispatched(9, 8);
         scheduler.resolve(9, 8, Resolution::Inconclusive);
         assert!(matches!(
             scheduler.outcomes().last(),
@@ -480,7 +762,7 @@ mod tests {
         );
 
         assert_eq!(control.take_for(8).unwrap().request_id, 10);
-        scheduler.dispatched(10);
+        scheduler.dispatched(10, 8);
         scheduler.resolve(10, 8, Resolution::Supported);
         assert!(!scheduler.pending.contains_key(&10));
     }
@@ -660,7 +942,7 @@ mod tests {
                         8,
                     );
                     let dispatched = depth_control.take_for(8).unwrap().request_id;
-                    scheduler.dispatched(dispatched);
+                    scheduler.dispatched(dispatched, 8);
                 }
                 "resolve" => {
                     scheduler.submit(
@@ -671,7 +953,7 @@ mod tests {
                         8,
                     );
                     let dispatched = scene_control.take_for(8).unwrap().request_id;
-                    scheduler.dispatched(dispatched);
+                    scheduler.dispatched(dispatched, 8);
                     scheduler.resolve(dispatched, 8, Resolution::Inconclusive);
                 }
                 "external" => {

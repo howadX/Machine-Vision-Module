@@ -18,6 +18,7 @@ pub(crate) struct DepthAgent {
     observations: DepthObservationBus,
     cadence: u32,
     control: DepthExecutionControl,
+    metrics: super::SchedulingMetrics,
 }
 
 impl DepthAgent {
@@ -26,12 +27,14 @@ impl DepthAgent {
         observations: DepthObservationBus,
         cadence: u32,
         control: DepthExecutionControl,
+        metrics: super::SchedulingMetrics,
     ) -> Self {
         Self {
             estimator,
             observations,
             cadence,
             control,
+            metrics,
         }
     }
 }
@@ -51,6 +54,10 @@ impl Agent for DepthAgent {
             {
                 let permit = self.control.take_for(frame.id);
                 if cadence_due(frame.id, self.cadence) || permit.is_some() {
+                    if permit.is_some() && !cadence_due(frame.id, self.cadence) {
+                        self.metrics
+                            .record_extra_run(mvm_cortex::ObservationTarget::Depth);
+                    }
                     last_id = Some(frame.id);
                     match self.estimator.estimate(frame.image.as_ref()) {
                         Ok(map) => {

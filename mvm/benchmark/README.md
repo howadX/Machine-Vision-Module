@@ -36,6 +36,12 @@ The bounded live-camera result for commit `0159c8a5` is recorded in
 execution and zero agent errors, while leaving the controlled ≤5% A/B throughput
 gate explicitly open for phase 18.8b.1.
 
+The completed 18.8b.1 adaptive scheduling spike is recorded in
+`baselines/18.8b.1-adaptive-mesh-2026-08-05.md`. It compares fixed, Scene-only,
+and competing Scene+Depth permits on the same camera profile and under 4/2
+CPU-core affinity. Runtime metrics remain diagnostic and are not canonical scene
+facts or durable semantic history.
+
 ## Invariants
 
 1. Canonical facts are deterministic under sink cadence changes.

@@ -41,7 +41,8 @@ pub(crate) use observations::{
     SceneObservationFrame,
 };
 pub(crate) use policy::{
-    DepthExecutionControl, PolicySchedulerAgent, PolicySchedulerWiring, SceneExecutionControl,
+    DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,
+    SceneExecutionControl, SchedulingMetrics, SchedulingMode,
 };
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};

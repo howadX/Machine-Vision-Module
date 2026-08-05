@@ -45,10 +45,12 @@
   one-shot permits с TTL, semantic dedupe, cooldown, global inter-run budget и explicit outcomes;
   external request без executor получает `Unavailable`. Durable semantic store остаётся один
   (`labels.jsonl`). Live 300-frame run (`0159c8a5`) дал Scene 130 / Depth 11 ticks против cadence
-  ожидания ~100/10, Human/Fusion/Cortex без agent errors и ~23.5 delivered FPS; controlled ≤5% A/B
-  throughput gate остаётся за 18.8b.1. 18.6 не выдумывает world camera
+  ожидания ~100/10, Human/Fusion/Cortex без agent errors и ~23.5 delivered FPS. 18.8b.1 завершила
+  fixed/Scene/Scene+Depth A/B spike на all, 4-core и 2-core affinity; прямые runtime metrics и bounded
+  ≤5% throughput gate записаны в `benchmark/baselines/18.8b.1-adaptive-mesh-2026-08-05.md`.
+  18.6 не выдумывает world camera
   pose, полную геометрию зон или отсутствующую emotion entropy: они явно unknown/withheld.
-  Далее — 18.8b.1 Adaptive Mesh Scheduling Spike. План — `docs/phase-18-plan.md`.
+  Далее — 18.9 Cortex Report + CLI/MCP. План — `docs/phase-18-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,

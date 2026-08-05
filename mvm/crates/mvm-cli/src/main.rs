@@ -188,6 +188,18 @@ mod tests {
     }
 
     #[test]
+    fn mesh_parse_scheduling_mode_for_spike_runs() {
+        let raw: Vec<String> = ["mvm", "run", "--scheduling-mode", "scene"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_mesh_args(&raw).scheduling_mode,
+            agents::SchedulingMode::Scene
+        );
+    }
+
+    #[test]
     fn native_camera_alias_maps_legacy_cadence_to_canonical_mesh() {
         let raw: Vec<String> = [
             "mvm",
@@ -550,6 +562,9 @@ struct MeshArgs {
     /// StateFileWriter snapshot interval (ms). `None` = take it from the
     /// product config (`[cadence] snapshot_ms`, default 1000) — CLI > config.
     interval_ms: Option<u64>,
+    /// Experimental 18.8b.1 diagnostic selector. It only gates one-shot
+    /// permits; fixed expert cadence remains unchanged.
+    scheduling_mode: agents::SchedulingMode,
     /// Flags shared with the legacy sync root path (phase 13.A1).
     common: CommonFlags,
 }
@@ -560,6 +575,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         max_frames: None,
         dump_landmarks: false,
         interval_ms: None,
+        scheduling_mode: agents::SchedulingMode::SceneAndDepth,
         common: CommonFlags::default(),
     };
     let mut i = 2; // skip program name + subcommand (`mesh` / `run`)
@@ -583,6 +599,15 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
                     i += 1;
                 }
             }
+            "--scheduling-mode" => {
+                if let Some(mode) = raw
+                    .get(i + 1)
+                    .and_then(|value| agents::SchedulingMode::parse(value))
+                {
+                    a.scheduling_mode = mode;
+                    i += 1;
+                }
+            }
             _ => {}
         }
         i += 1;
@@ -600,6 +625,7 @@ fn parse_native_camera_alias(raw: &[String]) -> Result<MeshArgs> {
         max_frames: None,
         dump_landmarks: false,
         interval_ms: None,
+        scheduling_mode: agents::SchedulingMode::SceneAndDepth,
         common: CommonFlags::default(),
     };
     let mut i = 1;
@@ -970,6 +996,7 @@ fn build_live_mesh(
     let policy_outcomes = agents::PolicyOutcomeBus::new();
     let scene_control = agents::SceneExecutionControl::default();
     let depth_control = agents::DepthExecutionControl::default();
+    let scheduling_metrics = agents::SchedulingMetrics::new(args.scheduling_mode);
     let scene_available = yolo.is_some();
     let depth_available = depth.is_some();
     let run_id = format!(
@@ -1005,6 +1032,7 @@ fn build_live_mesh(
         scene_observations.clone(),
         human_observations.clone(),
         config.object_cadence,
+        scheduling_metrics.clone(),
     )));
     if let Some(yolo) = yolo {
         mesh.add(Box::new(agents::SceneAgent::new(
@@ -1016,6 +1044,7 @@ fn build_live_mesh(
             config.object_min_area,
             config.object_cadence,
             scene_control.clone(),
+            scheduling_metrics.clone(),
         )));
     }
     if let Some(depth) = depth {
@@ -1024,6 +1053,7 @@ fn build_live_mesh(
             depth_observations.clone(),
             config.depth_cadence,
             depth_control.clone(),
+            scheduling_metrics.clone(),
         )));
     }
     mesh.add(Box::new(agents::FusionAgent::new(
@@ -1033,6 +1063,7 @@ fn build_live_mesh(
         depth_observations.clone(),
         fused_frames.clone(),
         run_id,
+        scheduling_metrics.clone(),
     )));
     mesh.add(Box::new(agents::CortexAgent::new(
         fused_frames.clone(),
@@ -1051,6 +1082,8 @@ fn build_live_mesh(
             depth_control,
             scene_available,
             depth_available,
+            mode: args.scheduling_mode,
+            metrics: scheduling_metrics,
         },
     )));
     mesh.add(Box::new(

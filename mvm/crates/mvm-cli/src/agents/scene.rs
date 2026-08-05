@@ -27,6 +27,7 @@ pub(crate) struct SceneAgent {
     min_area: f32,
     cadence: u32,
     control: SceneExecutionControl,
+    metrics: super::SchedulingMetrics,
 }
 
 impl SceneAgent {
@@ -43,6 +44,7 @@ impl SceneAgent {
         min_area: f32,
         cadence: u32,
         control: SceneExecutionControl,
+        metrics: super::SchedulingMetrics,
     ) -> Self {
         Self {
             detector,
@@ -54,6 +56,7 @@ impl SceneAgent {
             min_area,
             cadence,
             control,
+            metrics,
         }
     }
 }
@@ -73,6 +76,10 @@ impl Agent for SceneAgent {
             {
                 let permit = self.control.take_for(frame.id);
                 if cadence_due(frame.id, self.cadence) || permit.is_some() {
+                    if permit.is_some() && !cadence_due(frame.id, self.cadence) {
+                        self.metrics
+                            .record_extra_run(mvm_cortex::ObservationTarget::Scene);
+                    }
                     last_id = Some(frame.id);
                     match self.detector.detect(frame.image.as_ref()) {
                         Ok(objs) => {

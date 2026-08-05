@@ -53,6 +53,7 @@ pub(crate) struct HumanAgent {
     scene_observations: SceneObservationBus,
     observations: HumanObservationBus,
     max_mask_age_frames: u64,
+    metrics: super::SchedulingMetrics,
 }
 
 impl HumanAgent {
@@ -62,6 +63,7 @@ impl HumanAgent {
         scene_observations: SceneObservationBus,
         observations: HumanObservationBus,
         object_cadence: u32,
+        metrics: super::SchedulingMetrics,
     ) -> Self {
         Self {
             pipeline,
@@ -69,6 +71,7 @@ impl HumanAgent {
             scene_observations,
             observations,
             max_mask_age_frames: u64::from(object_cadence.max(1)) * 2,
+            metrics,
         }
     }
 }
@@ -86,6 +89,7 @@ impl Agent for HumanAgent {
             if let Some(frame) = ctx.frames.latest()
                 && last_id != Some(frame.id)
             {
+                let started = std::time::Instant::now();
                 last_id = Some(frame.id);
                 let prev_tracks: Vec<mvm_core::BBox> =
                     self.tracker.active().map(|t| t.bbox).collect();
@@ -158,6 +162,8 @@ impl Agent for HumanAgent {
                         stamp.produced_at,
                     )),
                 });
+                self.metrics
+                    .record_duration(super::MetricAgent::Human, started.elapsed());
                 ticks += 1;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
