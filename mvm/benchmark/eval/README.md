@@ -10,9 +10,11 @@ cd mvm
 python3 benchmark/eval/evaluate.py --output benchmark/eval/18.10-results.json
 ```
 
-`skeleton` scenarios are excluded from denominators. Synthetic replay scores
-are labelled as such; Rust contract tests are referenced as evidence rather
-than silently being presented as camera measurements. The six core claims are
+`skeleton` scenarios are excluded from denominators. The initial six core
+scenario envelopes are now deterministic synthetic replay fixtures, while
+synthetic replay scores remain explicitly labelled and are not camera claims.
+Rust Cortex tests are referenced as evidence rather than silently being
+presented as camera measurements. The six core claims are
 explicitly pinned by the evaluator: temporal QA, identity continuity, object
 permanence, uncertainty honesty, forecast IoU, and attention recall@3.
 The advisory loop gate requires at least three independent replay scenarios

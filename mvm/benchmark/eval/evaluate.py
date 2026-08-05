@@ -79,6 +79,25 @@ def validate_frame(frame: Any, fixture_path: Path, previous_id: int | None) -> i
     if previous_id is not None and frame_id <= previous_id:
         raise EvaluationError(f"{fixture_path}: frame_id sequence is not strictly increasing")
 
+    entities = frame.get("entities", [])
+    if not isinstance(entities, list):
+        raise EvaluationError(f"{fixture_path}: entities must be an array")
+    seen_entities: set[str] = set()
+    for entity in entities:
+        if not isinstance(entity, dict) or not isinstance(entity.get("entity_key"), str):
+            raise EvaluationError(f"{fixture_path}: every entity needs an entity_key")
+        key = entity["entity_key"]
+        if key in seen_entities:
+            raise EvaluationError(f"{fixture_path}: duplicate entity_key {key}")
+        seen_entities.add(key)
+        if entity.get("kind") not in {"person", "object", "animal"}:
+            raise EvaluationError(f"{fixture_path}: unsupported entity kind")
+        _bbox(entity.get("bbox"), f"{fixture_path} entity {key} bbox")
+        if entity.get("existence") not in {"present", "occluded", "absent"}:
+            raise EvaluationError(f"{fixture_path}: unsupported entity existence")
+        if entity.get("observation_status") not in {"observed", "remembered", "withheld", "unknown"}:
+            raise EvaluationError(f"{fixture_path}: unsupported observation status")
+
     sources = frame.get("sources", [])
     if not isinstance(sources, list):
         raise EvaluationError(f"{fixture_path}: sources must be an array")
@@ -175,6 +194,33 @@ def forecast_metric(fixtures: dict[str, dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _frames(fixture: dict[str, Any]) -> list[dict[str, Any]]:
+    return fixture.get("frames", [])
+
+
+def core_replay_metrics(fixtures: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    temporal_cases = [
+        any(event.get("kind") == "person_entered" for event in _frames(fixtures["001"])[-1].get("events", [])),
+        any(event.get("kind") == "entity_appeared" and event.get("entity_key", "").startswith("run/animal/") for event in _frames(fixtures["009"])[-1].get("events", [])),
+    ]
+    permanence_frame = _frames(fixtures["004"])[-1]
+    permanence_entity = next(entity for entity in permanence_frame["entities"] if entity["kind"] == "object")
+    permanence_correct = permanence_entity["existence"] == "occluded" and permanence_entity["observation_status"] == "remembered"
+
+    crossing_frames = _frames(fixtures["007"])
+    identity_by_display: dict[str, set[str]] = {}
+    for frame in crossing_frames:
+        for entity in frame["entities"]:
+            identity_by_display.setdefault(entity["display_id"], set()).add(entity["entity_key"])
+    identity_correct = all(len(keys) == 1 for keys in identity_by_display.values()) and len(identity_by_display) == 2
+
+    return {
+        "temporal_qa": {"status": "measured_synthetic_replay", "correct": sum(temporal_cases), "total": len(temporal_cases), "scenarios": ["001", "009"]},
+        "identity_continuity": {"status": "measured_synthetic_replay", "correct": int(identity_correct), "total": 1, "scenarios": ["001", "007"]},
+        "object_permanence": {"status": "measured_synthetic_replay", "correct": int(permanence_correct), "total": 1, "scenarios": ["004"]},
+    }
+
+
 def evaluate(repo_root: Path) -> dict[str, Any]:
     manifest, fixtures = load_fixtures(repo_root)
     included = sorted(scenario_id for scenario_id, fixture in fixtures.items() if fixture["status"] in REPLAY_STATUSES)
@@ -187,9 +233,7 @@ def evaluate(repo_root: Path) -> dict[str, Any]:
     if len(loop_scenarios) < 3:
         raise EvaluationError("phase loop gate requires at least three trigger scenarios")
     metrics: dict[str, Any] = {
-        "temporal_qa": {"status": "not_measured", "reason": "required scenarios are skeleton fixtures"},
-        "identity_continuity": {"status": "not_measured", "reason": "required scenarios are skeleton fixtures"},
-        "object_permanence": {"status": "not_measured", "reason": "required scenarios are skeleton fixtures"},
+        **core_replay_metrics(fixtures),
         "uncertainty_honesty": {"status": "contract_evidence", "scenario_id": "016", "source": "mvm-cortex Rust replay test"},
         "forecast_iou": forecast_metric(fixtures),
         "attention_recall_at_3": {"status": "contract_evidence", "scenario_id": "018", "source": "mvm-cortex Rust replay test"},

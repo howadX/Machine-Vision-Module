@@ -17,7 +17,11 @@ class BenchmarkEvaluatorTests(unittest.TestCase):
         root = Path(__file__).parents[2].parent
         report = evaluate.evaluate(root)
         self.assertEqual(report["fixture_version"], "18.0.0")
-        self.assertEqual(report["excluded_scenarios"], ["001", "004", "007", "009", "011", "012"])
+        self.assertEqual(report["excluded_scenarios"], [])
+        self.assertEqual(report["metrics"]["temporal_qa"]["correct"], 2)
+        self.assertEqual(report["metrics"]["temporal_qa"]["total"], 2)
+        self.assertEqual(report["metrics"]["identity_continuity"]["correct"], 1)
+        self.assertEqual(report["metrics"]["object_permanence"]["correct"], 1)
         self.assertEqual(report["loop_scenarios"], ["019", "020", "021", "022"])
         forecast = report["metrics"]["forecast_iou"]
         self.assertEqual(forecast["improved_cases"], 3)

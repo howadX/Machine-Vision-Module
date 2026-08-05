@@ -1,12 +1,12 @@
 {
   "fixture_version": "18.0.0",
   "scenarios": [
-    {"id": "001", "name": "person_enters", "status": "skeleton"},
-    {"id": "004", "name": "object_occluded_by_body", "status": "skeleton"},
-    {"id": "007", "name": "two_people_cross", "status": "skeleton"},
-    {"id": "009", "name": "dog_enters", "status": "skeleton"},
-    {"id": "011", "name": "person_stays_still", "status": "skeleton"},
-    {"id": "012", "name": "sudden_motion", "status": "skeleton"},
+    {"id": "001", "name": "person_enters", "status": "synthetic_replay"},
+    {"id": "004", "name": "object_occluded_by_body", "status": "synthetic_replay"},
+    {"id": "007", "name": "two_people_cross", "status": "synthetic_replay"},
+    {"id": "009", "name": "dog_enters", "status": "synthetic_replay"},
+    {"id": "011", "name": "person_stays_still", "status": "synthetic_replay"},
+    {"id": "012", "name": "sudden_motion", "status": "synthetic_replay"},
     {"id": "013", "name": "constant_velocity_right", "status": "synthetic_replay"},
     {"id": "014", "name": "constant_velocity_left", "status": "synthetic_replay"},
     {"id": "015", "name": "constant_velocity_diagonal", "status": "synthetic_replay"},

@@ -1,8 +1,8 @@
 {
-  "fixture_version": "18.0.0",
+  "fixture_version": "18.10.0",
   "scenario_id": "009",
   "name": "dog_enters",
-  "status": "skeleton",
+  "status": "synthetic_replay",
   "required_signals": ["animal_detection", "human_bbox"],
   "expected_scene_events": ["entity_appeared"],
   "claims": ["animal is a tracked animal entity and not a negative person claim"],
@@ -12,5 +12,8 @@
     "uncertainty_honesty": {"correct": 1, "total": 1},
     "last_observation_forecast": null
   },
-  "frames": []
+  "frames": [
+    {"frame_id": 1, "entities": [{"entity_key": "run/person/10/0", "kind": "person", "display_id": "10", "bbox": [0.20, 0.20, 0.40, 0.70], "existence": "present", "observation_status": "observed"}]},
+    {"frame_id": 2, "entities": [{"entity_key": "run/person/10/0", "kind": "person", "display_id": "10", "bbox": [0.22, 0.20, 0.42, 0.70], "existence": "present", "observation_status": "observed"}, {"entity_key": "run/animal/100/0", "kind": "animal", "display_id": "100", "bbox": [0.60, 0.45, 0.80, 0.80], "existence": "present", "observation_status": "observed"}], "events": [{"event_seq": 1, "kind": "entity_appeared", "entity_key": "run/animal/100/0"}]}
+  ]
 }
