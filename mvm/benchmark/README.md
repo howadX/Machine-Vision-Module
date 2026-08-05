@@ -31,6 +31,11 @@ dedupe, expiry, one-shot Depth permits, single resolution, explicit unavailable
 external execution and overload deferral. It does not substitute for the
 same-hardware live throughput gate required before expanding adaptive scheduling.
 
+The bounded live-camera result for commit `0159c8a5` is recorded in
+`baselines/18.8b-live-2026-08-05.md`. It confirms real Scene/Depth permit
+execution and zero agent errors, while leaving the controlled ≤5% A/B throughput
+gate explicitly open for phase 18.8b.1.
+
 ## Invariants
 
 1. Canonical facts are deterministic under sink cadence changes.

@@ -44,7 +44,9 @@
   production AgentMesh, но не мутирует `FusedSceneFrame`; CLI scheduler выдаёт bounded Scene/Depth
   one-shot permits с TTL, semantic dedupe, cooldown, global inter-run budget и explicit outcomes;
   external request без executor получает `Unavailable`. Durable semantic store остаётся один
-  (`labels.jsonl`). 18.6 не выдумывает world camera
+  (`labels.jsonl`). Live 300-frame run (`0159c8a5`) дал Scene 130 / Depth 11 ticks против cadence
+  ожидания ~100/10, Human/Fusion/Cortex без agent errors и ~23.5 delivered FPS; controlled ≤5% A/B
+  throughput gate остаётся за 18.8b.1. 18.6 не выдумывает world camera
   pose, полную геометрию зон или отсутствующую emotion entropy: они явно unknown/withheld.
   Далее — 18.8b.1 Adaptive Mesh Scheduling Spike. План — `docs/phase-18-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`

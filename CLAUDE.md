@@ -126,7 +126,10 @@ activity, anomaly, identity и affordance; без canonical zone-violation fact 
 публикует отдельный cognitive frame и не мутирует canonical facts; scheduler исполняет только
 ограниченные Scene/Depth one-shot permits с TTL, semantic dedupe, cooldown, budget/fairness и
 explicit outcomes; внешний request без executor становится `Unavailable`, а `labels.jsonl` остаётся
-единственным durable semantic store. Далее — 18.8b.1 Adaptive Mesh Scheduling Spike. План —
+единственным durable semantic store. 18.8b live-проверена на 300 camera frames: Scene 130 и Depth 11
+ticks при fixed-cadence ожидании около 100/10, Human/Fusion/Cortex без agent errors, delivery ~23.5 FPS.
+Это подтверждает permit path, но не закрывает controlled ≤5% A/B throughput gate — он остаётся в
+18.8b.1 Adaptive Mesh Scheduling Spike. План —
 `mvm/docs/phase-18-plan.md`.
 
 ## Для Agents
