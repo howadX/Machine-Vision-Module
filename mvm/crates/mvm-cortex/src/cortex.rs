@@ -1,8 +1,9 @@
 use crate::{
-    AttentionPolicy, CortexConfig, CortexFrame, CortexInput, EvidenceRef,
-    affordance::AffordanceLayer, attention::AttentionLayer, events::EventInterpretationLayer,
-    memory::EventMemoryLayer, predict::PredictiveLayer, report::ReportLayer,
-    self_model::SelfModelLayer, uncertainty::UncertaintyLayer,
+    AttentionPolicy, CortexConfig, CortexFrame, CortexInput, EvidenceRef, ObservationRequest,
+    ObservationTarget, ReasonCode, UncertaintyCode, affordance::AffordanceLayer,
+    attention::AttentionLayer, events::EventInterpretationLayer, memory::EventMemoryLayer,
+    predict::PredictiveLayer, report::ReportLayer, self_model::SelfModelLayer,
+    uncertainty::UncertaintyLayer,
 };
 
 /// Owner of Cortex ordering and runtime-only temporal state.
@@ -43,10 +44,90 @@ impl VisualCortex {
         self.events.policy(input.current_scene, input.scene_events)
     }
 
+    /// Derive bounded advisory requests from this tick's actual cognitive
+    /// output. This runs after `update`: uncertainty and prediction errors may
+    /// request another observation, but cannot alter the fused facts that
+    /// produced them.
+    pub fn attention_policy_for_frame(
+        &self,
+        input: CortexInput<'_>,
+        frame: &CortexFrame,
+    ) -> AttentionPolicy {
+        let mut policy = self.attention_policy(input);
+        let scene_frame_id = frame.scene_frame_id;
+        if !policy
+            .requests
+            .iter()
+            .any(|request| request.target == ObservationTarget::Scene)
+            && frame.uncertainty.claims.iter().any(|claim| {
+                claim.code == UncertaintyCode::SourceFreshness
+                    && claim.reasons.iter().any(|reason| {
+                        matches!(reason, ReasonCode::StaleSource | ReasonCode::CoastedSource)
+                    })
+            })
+        {
+            policy.requests.push(ObservationRequest {
+                request_id: (1_u64 << 61) | scene_frame_id,
+                source_scene_frame_id: scene_frame_id,
+                target: ObservationTarget::Scene,
+                reason: ReasonCode::HighUncertaintySceneSource,
+                evidence: vec![EvidenceRef {
+                    scene_frame_id,
+                    entity: None,
+                    event_seq: None,
+                }],
+                priority: 192,
+                max_extra_runs: 1,
+                expires_at_frame: scene_frame_id.saturating_add(2),
+            });
+        }
+        if !policy
+            .requests
+            .iter()
+            .any(|request| request.target == ObservationTarget::Depth)
+            && !frame.prediction_errors.is_empty()
+        {
+            let evidence = frame
+                .prediction_errors
+                .iter()
+                .flat_map(|error| error.evidence.iter().cloned())
+                .collect::<Vec<_>>();
+            policy.requests.push(ObservationRequest {
+                request_id: (1_u64 << 60) | scene_frame_id,
+                source_scene_frame_id: scene_frame_id,
+                target: ObservationTarget::Depth,
+                reason: ReasonCode::Other("prediction_error_reobservation".into()),
+                evidence: if evidence.is_empty() {
+                    vec![EvidenceRef {
+                        scene_frame_id,
+                        entity: None,
+                        event_seq: None,
+                    }]
+                } else {
+                    evidence
+                },
+                priority: 208,
+                max_extra_runs: 1,
+                expires_at_frame: scene_frame_id.saturating_add(2),
+            });
+        }
+        policy.requests.sort_by(|left, right| {
+            right
+                .priority
+                .cmp(&left.priority)
+                .then_with(|| left.request_id.cmp(&right.request_id))
+        });
+        policy
+    }
+
     /// Interpret only canonical Fusion events. Cortex never performs a second
     /// scene diff: each asserted interpretation carries its event evidence.
     pub fn update(&mut self, input: CortexInput<'_>) -> CortexFrame {
-        let (forecast, prediction_errors) = self.predictor.update(input.current_scene);
+        let (forecasts, prediction_errors) = self.predictor.update(input.current_scene);
+        let forecast = forecasts
+            .iter()
+            .find(|forecast| forecast.horizon_ms == 1_000)
+            .cloned();
         let memory = self
             .memory
             .update(input.current_scene, input.scene_events, input.now_unix_ms);
@@ -85,7 +166,8 @@ impl VisualCortex {
                     event_seq: Some(event.event_seq),
                 })
                 .collect(),
-            forecast: Some(forecast),
+            forecast,
+            forecasts,
             prediction_errors,
             memory,
             self_model,
@@ -99,7 +181,10 @@ impl VisualCortex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClaimStatus, CognitiveClaim, ReasonCode};
+    use crate::{
+        ClaimStatus, CognitiveClaim, ObservationTarget, PredictionError, PredictionErrorKind,
+        ReasonCode,
+    };
     use mvm_core::canonical::{
         EventTailView, FactEvidenceRef, FactReason, FactSource, FactStatus, FrameStamp,
         FusedSceneFrame, SceneEvent, SceneEventKind, SceneFact, SceneQuality,
@@ -133,6 +218,18 @@ mod tests {
             now_unix_ms: 1_002,
         });
         assert_eq!(frame.scene_frame_id, 7);
+        assert_eq!(
+            frame
+                .forecasts
+                .iter()
+                .map(|forecast| forecast.horizon_ms)
+                .collect::<Vec<_>>(),
+            vec![1_000, 2_000]
+        );
+        assert_eq!(
+            frame.forecast.as_ref().map(|forecast| forecast.horizon_ms),
+            Some(1_000)
+        );
         assert!(frame.claims.is_empty());
         assert_eq!(frame.attention.source_scene_frame_id, 7);
         assert!(frame.attention.validate().is_ok());
@@ -162,6 +259,7 @@ mod tests {
         assert!(frame.memory.recent.is_empty());
         assert!(frame.memory.relevant.is_empty());
         assert!(frame.forecast.is_none());
+        assert!(frame.forecasts.is_empty());
         assert!(frame.prediction_errors.is_empty());
         assert_eq!(frame.self_model.source_scene_frame_id, 0);
         assert_eq!(frame.uncertainty.source_scene_frame_id, 0);
@@ -170,6 +268,52 @@ mod tests {
     #[test]
     fn asserted_claim_requires_evidence() {
         assert!(CognitiveClaim::asserted("forecast".to_string(), 0.8, Vec::new()).is_err());
+    }
+
+    #[test]
+    fn prediction_error_creates_a_bounded_depth_reobservation_request() {
+        let scene = scene();
+        let config = mvm_core::Config::default();
+        let mut cortex = VisualCortex::new(CortexConfig::default());
+        let mut frame = cortex.update(CortexInput {
+            previous_scene: None,
+            current_scene: &scene,
+            scene_events: &[],
+            scene_event_gap: false,
+            config: &config,
+            now_unix_ms: 1_002,
+        });
+        frame.prediction_errors.push(PredictionError {
+            kind: PredictionErrorKind::BboxDrift,
+            forecast_source_scene_frame_id: 6,
+            forecast_horizon_ms: 1_000,
+            observed_scene_frame_id: 7,
+            entities: Vec::new(),
+            magnitude: Some(1.0),
+            confidence: 0.9,
+            evidence: vec![EvidenceRef {
+                scene_frame_id: 7,
+                entity: None,
+                event_seq: None,
+            }],
+        });
+        let policy = cortex.attention_policy_for_frame(
+            CortexInput {
+                previous_scene: None,
+                current_scene: &scene,
+                scene_events: &[],
+                scene_event_gap: false,
+                config: &config,
+                now_unix_ms: 1_002,
+            },
+            &frame,
+        );
+        assert!(policy.requests.iter().any(|request| {
+            request.target == ObservationTarget::Depth
+                && request.reason == ReasonCode::Other("prediction_error_reobservation".into())
+                && request.max_extra_runs == 1
+                && request.expires_at_frame == 9
+        }));
     }
 
     #[test]

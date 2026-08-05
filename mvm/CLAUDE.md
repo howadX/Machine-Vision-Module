@@ -51,7 +51,14 @@
   18.6 не выдумывает world camera
   pose, полную геометрию зон или отсутствующую emotion entropy: они явно unknown/withheld.
   18.9 добавляет atomic `current_cortex.json`, read-only `mvm cortex` views и MCP tool `mvm_cortex`;
-  current_state.md и labels.jsonl остаются facts/history surfaces. Далее — 18.10 Benchmark Evaluation.
+  current_state.md и labels.jsonl остаются facts/history surfaces. **18.10 ✅:** frozen synthetic replay
+  evaluator fail-closed валидирует frame/source/event envelopes, измеряет 1 s/2 s forecast IoU,
+  uncertainty, attention, affordance, memory и advisory loops. Три closure-loop сценария требуют
+  `Accepted → Dispatched → Resolved` только после нового stamped observation; ни request, ни resolution
+  не мутируют facts. Gate: 6/6 pinned cognitive claims improve over the documented no-Cortex synthetic
+  comparator (требуется ≥4/6), honesty regressions = 0; controlled adaptive runtime remains +0.31% ≤5%.
+  Фаза 18 завершена replay+live runtime evidence; Phase 19 остаётся отдельной approved фазой и требует
+  собственного slice approval.
   План — `docs/phase-18-plan.md`.
 - **Версия — `v0.3.0` ОПУБЛИКОВАНА** (2026-07-23, Dataset Factory): `master` = `kaggle`+merge, тег `v0.3.0`
   пушнут → CI `release.yml` собрал x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory);
@@ -285,7 +292,7 @@ Machine Vision Module/           ← корень (cwd при запуске)
 | **16 → v0.3.0** | ✅ 16.0–16.6-A | **Dataset Factory** (`kaggle`, +крейт `mvm-dataset`, чистый потребитель WorldState): **16.0 ✅** Semantic Contract (Canonical Observation, статусы, provenance, Router G₁–G₅) · **16.1 ✅** инфра (session-grouper, `DatasetConfig`, `DatasetWriter`+агент, `--record`) · **16.2 ✅** сырьё (RGB/depth-16bit/masks-RLE) + quality-as-data · **16.3 ✅** CLI `mvm dataset list/info/stats/prune` · **16.4 ✅** Python-экспортёры (PyTorch/TFRecord/WebDataset) · **16.5 ✅** точный YuNet-face-bbox privacy (`--privacy` флаг) · **16.6-A ✅** data-quality gates (`mvm dataset check` + Python `validate.py`, CI exit-code). Всё live-провалидировано, релиз v0.3.0. **Осталось:** 16.6-B (hard-example mining). План — `docs/phase-16-plan.md` |
 | **16.7** | ✅ live | **Semantic Session Log** (`kaggle`): два стора истории сцены → один. **1 ✅** text-only запись (`save_frames`) · **1.5 ✅** обогащение роутера (relations/activities/events, SCHEMA 16.7.0, `route_with_relations`+`SceneRelations`) · **2 ✅** миграция ридеров (recap/inspect читают сессии через flat-shape shim + `Source`-resolver, golden-паритет) · **3 ✅** default-on text-only (`effective_recorder`, `vision_log`, ретайр плоских логов, `--no-vision-log`). Live-провалидировано (4-мин камера). План — `docs/phase-16.7-plan.md` |
 | **17** | ✅ | **Canonical MVM Agent Skills** — repo-canonical `mvm-vision` + `mvm-dataset`, CI contract gate, portability и Hermes integration завершены. Только know-how-слой: ядро/версия не затронуты. План — `docs/phase-17-plan.md` |
-| **18 → v0.4.0** | 🚧 18.0–18.8b ✅ | **Visual Cortex Layer:** canonical state/fusion, events + interpretations, runtime memory, prediction, self-model/uncertainty, affordance, attention и bounded active re-observation закрыты; далее scheduling spike → CLI/MCP + benchmark evaluation. План — `docs/phase-18-plan.md` |
+| **18 → v0.4.0** | ✅ | **Visual Cortex Layer:** canonical state/fusion, events + interpretations, runtime memory, 1 s/2 s prediction, self-model/uncertainty, affordance, attention, bounded active re-observation, CLI/MCP и benchmark closure завершены. Порог 4/6 cognitive claims пройден (6/6 synthetic replay), honesty regressions = 0, adaptive runtime +0.31% ≤5%. План — `docs/phase-18-plan.md` |
 
 ## Терминология
 

@@ -412,6 +412,7 @@ mod tests {
         let errors = vec![PredictionError {
             kind: PredictionErrorKind::EntityAppeared,
             forecast_source_scene_frame_id: 6,
+            forecast_horizon_ms: 1_000,
             observed_scene_frame_id: 7,
             entities: Vec::new(),
             magnitude: Some(1.0),
@@ -475,6 +476,7 @@ mod tests {
                 "prediction_error" => errors.push(PredictionError {
                     kind: PredictionErrorKind::EntityAppeared,
                     forecast_source_scene_frame_id: 6,
+                    forecast_horizon_ms: 1_000,
                     observed_scene_frame_id: 7,
                     entities: Vec::new(),
                     magnitude: Some(1.0),

@@ -65,15 +65,18 @@ impl Agent for CortexAgent {
                     config: &self.config,
                     now_unix_ms: packet.scene.stamp.published_at_unix_ms,
                 };
-                let policy = self.cortex.attention_policy(CortexInput {
-                    previous_scene: input.previous_scene,
-                    current_scene: input.current_scene,
-                    scene_events: input.scene_events,
-                    scene_event_gap: input.scene_event_gap,
-                    config: input.config,
-                    now_unix_ms: input.now_unix_ms,
-                });
                 let frame = self.cortex.update(input);
+                let policy = self.cortex.attention_policy_for_frame(
+                    CortexInput {
+                        previous_scene: self.previous_scene.as_deref(),
+                        current_scene: packet.scene.as_ref(),
+                        scene_events: &events,
+                        scene_event_gap,
+                        config: &self.config,
+                        now_unix_ms: packet.scene.stamp.published_at_unix_ms,
+                    },
+                    &frame,
+                );
                 self.previous_scene = Some(Arc::clone(&packet.scene));
                 self.cortex_frames.publish(frame);
                 self.policies.publish(policy);

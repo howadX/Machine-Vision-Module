@@ -58,8 +58,9 @@ Use `mvm cortex` or the read-only MCP tool `mvm_cortex` after `snapshot` when
 the question is about the agent's current attention, bounded forecast, visual
 self-model, uncertainty inventory, affordances, or advisory re-observation
 policy. Views are `full`, `attention`, `forecast`, `self`, and `uncertainty`.
-`top_k` bounds attention output; `horizon_seconds` is a requested display
-horizon, not permission to extrapolate beyond the Cortex forecast evidence.
+`top_k` bounds attention output. `horizon_seconds` selects the closest published
+forecast horizon (currently 1 s or 2 s); it is not permission to extrapolate
+beyond Cortex forecast evidence.
 
 The source is the atomic `current_cortex.json` artifact. It is a cognitive view,
 not canonical scene truth and not durable semantic history. `--json`/`raw=true`

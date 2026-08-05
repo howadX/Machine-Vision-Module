@@ -9,7 +9,7 @@ use mvm_core::canonical::{
 use mvm_core::{BBox, Position3D};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-const FORECAST_HORIZON_MS: i64 = 1_000;
+const FORECAST_HORIZONS_MS: [i64; 2] = [1_000, 2_000];
 const FORECAST_CONFIDENCE_DECAY: f32 = 0.9;
 const MAX_PENDING_FORECASTS: usize = 128;
 
@@ -26,25 +26,31 @@ impl PredictiveLayer {
     pub(crate) fn update(
         &mut self,
         current: &FusedSceneFrame,
-    ) -> (SceneForecast, Vec<PredictionError>) {
+    ) -> (Vec<SceneForecast>, Vec<PredictionError>) {
         self.reset_if_timeline_changed(current);
 
-        let mut due = None;
+        let mut due = Vec::new();
         while self.pending.front().is_some_and(|forecast| {
             forecast.target_timestamp_unix_ms <= current.stamp.captured_at_unix_ms
         }) {
-            due = self.pending.pop_front();
+            if let Some(forecast) = self.pending.pop_front() {
+                due.push(forecast);
+            }
         }
         let errors = due
-            .as_ref()
-            .map_or_else(Vec::new, |forecast| compare(forecast, current));
-        let forecast = build_forecast(current);
-        if self.pending.len() == MAX_PENDING_FORECASTS {
+            .iter()
+            .flat_map(|forecast| compare(forecast, current))
+            .collect();
+        let forecasts = FORECAST_HORIZONS_MS
+            .into_iter()
+            .map(|horizon_ms| build_forecast(current, horizon_ms))
+            .collect::<Vec<_>>();
+        while self.pending.len() + forecasts.len() > MAX_PENDING_FORECASTS {
             self.pending.pop_front();
         }
-        self.pending.push_back(forecast.clone());
+        self.pending.extend(forecasts.iter().cloned());
         self.last_timestamp_unix_ms = Some(current.stamp.captured_at_unix_ms);
-        (forecast, errors)
+        (forecasts, errors)
     }
 
     fn reset_if_timeline_changed(&mut self, current: &FusedSceneFrame) {
@@ -59,8 +65,8 @@ impl PredictiveLayer {
     }
 }
 
-fn build_forecast(scene: &FusedSceneFrame) -> SceneForecast {
-    let horizon_seconds = FORECAST_HORIZON_MS as f32 / 1_000.0;
+fn build_forecast(scene: &FusedSceneFrame, horizon_ms: i64) -> SceneForecast {
+    let horizon_seconds = horizon_ms as f32 / 1_000.0;
     let active = active_entity_keys(scene);
     let entities = scene
         .entities
@@ -137,11 +143,8 @@ fn build_forecast(scene: &FusedSceneFrame) -> SceneForecast {
     SceneForecast {
         source_scene_frame_id: scene.stamp.frame_id,
         source_timestamp_unix_ms: scene.stamp.captured_at_unix_ms,
-        target_timestamp_unix_ms: scene
-            .stamp
-            .captured_at_unix_ms
-            .saturating_add(FORECAST_HORIZON_MS),
-        horizon_ms: FORECAST_HORIZON_MS,
+        target_timestamp_unix_ms: scene.stamp.captured_at_unix_ms.saturating_add(horizon_ms),
+        horizon_ms,
         entities,
         activities,
         relations,
@@ -369,6 +372,7 @@ fn prediction_error(
     PredictionError {
         kind,
         forecast_source_scene_frame_id: forecast.source_scene_frame_id,
+        forecast_horizon_ms: forecast.horizon_ms,
         observed_scene_frame_id: observed.stamp.frame_id,
         entities,
         magnitude: magnitude.filter(|value| value.is_finite()),
@@ -659,6 +663,9 @@ mod tests {
             include_str!("../../../benchmark/scenarios/013.json"),
             include_str!("../../../benchmark/scenarios/014.json"),
             include_str!("../../../benchmark/scenarios/015.json"),
+            include_str!("../../../benchmark/scenarios/023.json"),
+            include_str!("../../../benchmark/scenarios/024.json"),
+            include_str!("../../../benchmark/scenarios/025.json"),
         ]
         .into_iter()
         .map(|raw| serde_json::from_str(raw).unwrap())
@@ -666,10 +673,10 @@ mod tests {
     }
 
     #[test]
-    fn forecast_at_one_second_beats_last_observation_on_three_benchmark_scenarios() {
+    fn forecast_at_each_published_horizon_beats_last_observation_on_benchmark_scenarios() {
         for fixture in fixtures() {
             assert_eq!(fixture.status, "synthetic_replay");
-            assert_eq!(fixture.horizon_ms, 1_000);
+            assert!(FORECAST_HORIZONS_MS.contains(&fixture.horizon_ms));
             let source_bbox = bbox(fixture.source_bbox);
             let observed_bbox = bbox(fixture.observed_bbox);
             let mut predictor = PredictiveLayer::default();
@@ -685,7 +692,10 @@ mod tests {
             let candidate_iou = 1.0
                 - errors
                     .iter()
-                    .find(|error| error.kind == PredictionErrorKind::BboxDrift)
+                    .find(|error| {
+                        error.kind == PredictionErrorKind::BboxDrift
+                            && error.forecast_horizon_ms == fixture.horizon_ms
+                    })
                     .and_then(|error| error.magnitude)
                     .expect("bbox error");
             let baseline_iou = source_bbox.iou(&observed_bbox);
@@ -709,9 +719,12 @@ mod tests {
         )
         .unwrap();
 
-        let (forecast, _) = PredictiveLayer::default().update(&input);
-        assert_eq!(forecast.entities[0].bbox.status, ClaimStatus::Withheld);
-        assert!(forecast.entities[0].bbox.value.is_none());
+        let (forecasts, _) = PredictiveLayer::default().update(&input);
+        assert_eq!(forecasts.len(), 2);
+        for forecast in forecasts {
+            assert_eq!(forecast.entities[0].bbox.status, ClaimStatus::Withheld);
+            assert!(forecast.entities[0].bbox.value.is_none());
+        }
     }
 
     #[test]

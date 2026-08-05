@@ -3,8 +3,8 @@
   "scenario_id": "021",
   "name": "prediction_error_depth_refresh",
   "status": "synthetic_replay",
-  "loop": {"trigger": "prediction_error", "expected_transition": "accepted_to_dispatched"},
+  "loop": {"trigger": "prediction_error", "expected_transition": "accepted_to_resolved"},
   "cases": [
-    {"name": "depth refresh receives one bounded permit", "action": "depth", "expected": "dispatched"}
+    {"name": "depth refresh resolves after a newer stamped observation", "action": "depth_resolve", "expected": "resolved"}
   ]
 }

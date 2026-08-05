@@ -276,7 +276,20 @@ fn render_attention(out: &mut String, cortex: &Value, top_k: usize) {
 
 fn render_forecast(out: &mut String, cortex: &Value, horizon_seconds: f64) {
     out.push_str("\n## Forecast\n");
-    match cortex.get("forecast") {
+    let requested_ms = (horizon_seconds * 1_000.0).round() as i64;
+    let selected = cortex
+        .get("forecasts")
+        .and_then(Value::as_array)
+        .and_then(|forecasts| {
+            forecasts.iter().min_by_key(|forecast| {
+                forecast
+                    .get("horizon_ms")
+                    .and_then(Value::as_i64)
+                    .map_or(i64::MAX, |actual_ms| (actual_ms - requested_ms).abs())
+            })
+        })
+        .or_else(|| cortex.get("forecast"));
+    match selected {
         Some(forecast) if !forecast.is_null() => {
             let actual_ms = forecast
                 .get("horizon_ms")
@@ -415,12 +428,17 @@ mod tests {
             "cortex": {
                 "timestamp_unix_ms": 1,
                 "scene_frame_id": 7,
-                "forecast": {"horizon_seconds": 1.0, "entities": []},
+                "forecast": {"horizon_ms": 1000, "entities": []},
+                "forecasts": [
+                    {"horizon_ms": 1000, "entities": []},
+                    {"horizon_ms": 2000, "entities": []}
+                ],
                 "uncertainty": {"claims": [{"status":"unknown","reasons":["uncalibrated"]}]}
             }
         });
         let output = render_value(&artifact, CortexView::Forecast, 5, 2.0).unwrap();
         assert!(output.contains("bounded"));
+        assert!(output.contains("2.000s (requested 2.000s)"));
         assert!(output.contains("unknown"));
         assert!(output.contains("uncalibrated"));
     }

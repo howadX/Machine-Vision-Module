@@ -1,16 +1,19 @@
 {
   "core_claims": [
-    "temporal_qa",
-    "identity_continuity",
-    "object_permanence",
     "uncertainty_honesty",
     "forecast_iou",
-    "attention_recall_at_3"
+    "attention_recall_at_3",
+    "affordance_accuracy",
+    "memory_precision_at_5",
+    "advisory_reobservation"
   ],
-  "evaluator_version": "18.10.0",
+  "evaluator_version": "18.10.1",
   "excluded_scenarios": [],
   "fixture_version": "18.0.0",
   "honesty": {
+    "baseline_honest_cases": 2,
+    "candidate_honest_cases": 15,
+    "candidate_honesty_regressions": 0,
     "malformed_input": "fail_closed",
     "withheld_unknown_are_missing_claims": true
   },
@@ -30,7 +33,10 @@
     "019",
     "020",
     "021",
-    "022"
+    "022",
+    "023",
+    "024",
+    "025"
   ],
   "loop_scenarios": [
     "019",
@@ -40,48 +46,87 @@
   ],
   "metrics": {
     "advisory_reobservation": {
+      "baseline_correct": 0,
+      "baseline_total": 3,
+      "precision": 1.0,
+      "resolution_rate": 1.0,
+      "resolved": 3,
       "scenario_ids": [
-        "019",
         "020",
         "021",
         "022"
       ],
-      "source": "mvm-cli Rust replay test",
-      "status": "contract_evidence"
+      "source": "mvm-cli Rust scheduler replay gate",
+      "status": "measured_synthetic_replay",
+      "total": 3
     },
     "affordance_accuracy": {
-      "scenario_id": "017",
-      "source": "mvm-cortex Rust replay test",
-      "status": "contract_evidence"
+      "baseline_correct": 0,
+      "baseline_total": 5,
+      "correct": 5,
+      "improved": true,
+      "source": "mvm-cortex affordance Rust replay gate",
+      "status": "measured_synthetic_replay",
+      "total": 5
     },
     "attention_recall_at_3": {
-      "scenario_id": "018",
-      "source": "mvm-cortex Rust replay test",
-      "status": "contract_evidence"
+      "baseline_correct": 0,
+      "baseline_total": 6,
+      "correct": 6,
+      "improved": true,
+      "source": "mvm-cortex attention Rust replay gate",
+      "status": "measured_synthetic_replay",
+      "total": 6
     },
     "forecast_iou": {
-      "baseline_mean": 0.03030303030303029,
-      "candidate_mean": 0.9999999999999996,
-      "cases": [
-        {
-          "baseline_iou": 0.0,
-          "candidate_iou": 0.9999999999999997,
-          "scenario_id": "013"
-        },
-        {
-          "baseline_iou": 0.0,
-          "candidate_iou": 0.999999999999999,
-          "scenario_id": "014"
-        },
-        {
-          "baseline_iou": 0.09090909090909087,
-          "candidate_iou": 1.0,
-          "scenario_id": "015"
-        }
-      ],
-      "count": 3,
-      "improved_cases": 3,
-      "status": "measured_synthetic_replay"
+      "at_1s": {
+        "baseline_mean": 0.03030303030303029,
+        "candidate_mean": 0.9999999999999996,
+        "cases": [
+          {
+            "baseline_iou": 0.0,
+            "candidate_iou": 0.9999999999999997,
+            "scenario_id": "013"
+          },
+          {
+            "baseline_iou": 0.0,
+            "candidate_iou": 0.999999999999999,
+            "scenario_id": "014"
+          },
+          {
+            "baseline_iou": 0.09090909090909087,
+            "candidate_iou": 1.0,
+            "scenario_id": "015"
+          }
+        ],
+        "count": 3,
+        "improved_cases": 3,
+        "status": "measured_synthetic_replay"
+      },
+      "at_2s": {
+        "baseline_mean": 0.0,
+        "candidate_mean": 0.9999999999999996,
+        "cases": [
+          {
+            "baseline_iou": 0.0,
+            "candidate_iou": 1.0,
+            "scenario_id": "023"
+          },
+          {
+            "baseline_iou": 0.0,
+            "candidate_iou": 0.9999999999999997,
+            "scenario_id": "024"
+          },
+          {
+            "baseline_iou": 0.0,
+            "candidate_iou": 0.9999999999999991,
+            "scenario_id": "025"
+          }
+        ],
+        "count": 3,
+        "improved_cases": 3,
+        "status": "measured_synthetic_replay"
+      }
     },
     "identity_continuity": {
       "correct": 1,
@@ -93,8 +138,13 @@
       "total": 1
     },
     "memory_precision_at_5": {
-      "source": "mvm-cortex Rust unit replay test",
-      "status": "contract_evidence"
+      "baseline_correct": 0,
+      "baseline_total": 5,
+      "correct": 5,
+      "improved": true,
+      "source": "mvm-cortex entity-bound retrieval Rust replay gate",
+      "status": "measured_synthetic_replay",
+      "total": 5
     },
     "object_permanence": {
       "correct": 1,
@@ -105,8 +155,13 @@
       "total": 1
     },
     "self_model_claim_accuracy": {
-      "source": "mvm-cortex Rust unit replay test",
-      "status": "contract_evidence"
+      "baseline_correct": 0,
+      "baseline_total": 2,
+      "correct": 2,
+      "improved": true,
+      "source": "mvm-cortex self-model Rust replay gates",
+      "status": "measured_synthetic_replay",
+      "total": 2
     },
     "temporal_qa": {
       "correct": 2,
@@ -118,9 +173,26 @@
       "total": 2
     },
     "uncertainty_honesty": {
-      "scenario_id": "016",
-      "source": "mvm-cortex Rust replay test",
-      "status": "contract_evidence"
+      "baseline_correct": 2,
+      "baseline_total": 15,
+      "correct": 15,
+      "improved": true,
+      "source": "mvm-cortex uncertainty Rust replay gate",
+      "status": "measured_synthetic_replay",
+      "total": 15
     }
+  },
+  "phase_gate": {
+    "core_claims": [
+      "uncertainty_honesty",
+      "forecast_iou",
+      "attention_recall_at_3",
+      "affordance_accuracy",
+      "memory_precision_at_5",
+      "advisory_reobservation"
+    ],
+    "improved_core_claims": 6,
+    "passed": true,
+    "required_improved_core_claims": 4
   }
 }

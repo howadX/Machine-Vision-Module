@@ -10,13 +10,13 @@ cd mvm
 python3 benchmark/eval/evaluate.py --output benchmark/eval/18.10-results.json
 ```
 
-`skeleton` scenarios are excluded from denominators. The initial six core
-scenario envelopes are now deterministic synthetic replay fixtures, while
-synthetic replay scores remain explicitly labelled and are not camera claims.
-Rust Cortex tests are referenced as evidence rather than silently being
-presented as camera measurements. The six core claims are
-explicitly pinned by the evaluator: temporal QA, identity continuity, object
-permanence, uncertainty honesty, forecast IoU, and attention recall@3.
+`skeleton` scenarios are excluded from denominators. Synthetic replay scores
+remain explicitly labelled and are not camera claims. The evaluator's six
+phase-gate core claims are uncertainty honesty, forecast IoU, attention
+recall@3, affordance accuracy, memory precision@5, and advisory
+re-observation. Each numeric result is backed by its named Rust replay gate in
+the full verification command; the evaluator never pretends to execute live
+camera data.
 The advisory loop gate requires at least three independent replay scenarios
 with an uncertainty or prediction-error trigger; they are 019–022 in the
 current fixture set.
@@ -49,3 +49,7 @@ Initial metrics:
 - affordance accuracy;
 - memory precision@5;
 - self-model claim accuracy.
+
+Forecast results contain separate `at_1s` and `at_2s` rows. Advisory results
+contain only loops that complete `Accepted → Dispatched → Resolved` with a newer
+stamped source result.

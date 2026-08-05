@@ -220,6 +220,12 @@ pub struct CortexFrame {
     /// It is never an observed fact and may contain withheld component claims.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forecast: Option<SceneForecast>,
+    /// Bounded forecast set produced by the same predictor. `forecast` remains
+    /// the one-second compatibility projection; this field makes every
+    /// published horizon explicit instead of letting a report pretend that a
+    /// requested horizon was computed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forecasts: Vec<SceneForecast>,
     /// Differences between the newest due forecast and the current observation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prediction_errors: Vec<PredictionError>,
@@ -599,6 +605,10 @@ pub enum PredictionErrorKind {
 pub struct PredictionError {
     pub kind: PredictionErrorKind,
     pub forecast_source_scene_frame_id: u64,
+    /// Exact horizon of the forecast that became due. This keeps a two-second
+    /// mismatch distinguishable from a one-second mismatch on the same tick.
+    #[serde(default)]
+    pub forecast_horizon_ms: i64,
     pub observed_scene_frame_id: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entities: Vec<EntityKey>,

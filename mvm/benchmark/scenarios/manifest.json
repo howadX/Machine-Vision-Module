@@ -16,6 +16,9 @@
     {"id": "019", "name": "bounded_active_reobservation", "status": "synthetic_replay"},
     {"id": "020", "name": "uncertainty_scene_refresh", "status": "synthetic_replay"},
     {"id": "021", "name": "prediction_error_depth_refresh", "status": "synthetic_replay"},
-    {"id": "022", "name": "bounded_policy_overload", "status": "synthetic_replay"}
+    {"id": "022", "name": "prediction_error_scene_refresh", "status": "synthetic_replay"},
+    {"id": "023", "name": "constant_velocity_right_2s", "status": "synthetic_replay"},
+    {"id": "024", "name": "constant_velocity_left_2s", "status": "synthetic_replay"},
+    {"id": "025", "name": "constant_velocity_diagonal_2s", "status": "synthetic_replay"}
   ]
 }

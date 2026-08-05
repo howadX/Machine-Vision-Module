@@ -883,7 +883,14 @@ mod tests {
 
     #[derive(Deserialize)]
     struct PolicyFixture {
+        #[serde(default, rename = "loop")]
+        loop_: Option<LoopFixture>,
         cases: Vec<PolicyCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct LoopFixture {
+        expected_transition: String,
     }
 
     #[derive(Deserialize)]
@@ -954,6 +961,21 @@ mod tests {
                         let dispatched = depth_control.take_for(8).unwrap().request_id;
                         scheduler.dispatched(dispatched, 8);
                     }
+                    "depth_resolve" => {
+                        primary.target = ObservationTarget::Depth;
+                        scheduler.submit(
+                            AttentionPolicy {
+                                source_scene_frame_id: 7,
+                                requests: vec![primary],
+                            },
+                            8,
+                        );
+                        let dispatched = depth_control.take_for(8).unwrap().request_id;
+                        scheduler.dispatched(dispatched, 8);
+                        // The source tick is newer than the policy's scene tick;
+                        // this is an expert result, never a facts rewrite.
+                        scheduler.resolve(dispatched, 9, Resolution::Inconclusive);
+                    }
                     "resolve" => {
                         scheduler.submit(
                             AttentionPolicy {
@@ -1008,6 +1030,23 @@ mod tests {
                     "fixture action {} did not produce {}",
                     case.action, case.expected
                 );
+                if fixture
+                    .loop_
+                    .as_ref()
+                    .is_some_and(|loop_| loop_.expected_transition == "accepted_to_resolved")
+                {
+                    let outcomes = scheduler
+                        .outcomes()
+                        .iter()
+                        .filter(|(request_id, _)| *request_id == id)
+                        .map(|(_, outcome)| outcome)
+                        .collect::<Vec<_>>();
+                    assert!(matches!(outcomes.as_slice(), [
+                        RequestOutcome::Accepted { .. },
+                        RequestOutcome::Dispatched,
+                        RequestOutcome::Resolved { source_frame_id, .. },
+                    ] if *source_frame_id > 7));
+                }
             }
         }
     }

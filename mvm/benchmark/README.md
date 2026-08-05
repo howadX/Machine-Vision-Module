@@ -18,7 +18,8 @@ required signals, questions and expected events; captured/replayed frame packets
 are added before the feature whose gate consumes them. `status="skeleton"` must
 never be reported as a measured benchmark result.
 
-Synthetic replay fixtures 013–015 exercise the 18.5 forecast comparator. Fixture
+Synthetic replay fixtures 013–015 and 023–025 exercise the 18.5 forecast comparator
+at its published 1 s and 2 s horizons. Fixture
 016 exercises the 18.6 uncertainty inventory with positive and negative cases;
 its score is a deterministic contract result, not a live-camera measurement.
 Fixture 017 exercises the 18.7 hand-interaction affordance boundary, including
@@ -30,6 +31,9 @@ Fixture 019 exercises the 18.8b bounded re-observation lifecycle: semantic
 dedupe, expiry, one-shot Depth permits, single resolution, explicit unavailable
 external execution and overload deferral. It does not substitute for the
 same-hardware live throughput gate required before expanding adaptive scheduling.
+Fixtures 020–022 are the closure loops: each requires
+`Accepted → Dispatched → Resolved` only after a newer stamped observation.
+Neither the request nor its resolution can rewrite canonical facts.
 
 The bounded live-camera result for commit `0159c8a5` is recorded in
 `baselines/18.8b-live-2026-08-05.md`. It confirms real Scene/Depth permit
