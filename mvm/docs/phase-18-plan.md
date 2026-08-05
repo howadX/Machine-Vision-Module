@@ -1,10 +1,13 @@
 # Фаза 18 — Visual Cortex Layer: явный когнитивный слой MVM
 
-> **Версия:** 0.4 (27 июля 2026)
-> **Статус:** 🚧 реализация; 18.0 State Contract + Benchmark Baseline ✅;
-> 18.1 Typed Observation Bus + Canonical Fusion ✅; 18.2 Cortex Skeleton ✅; далее 18.3 Scene Events + Cortex Interpretation
+> **Версия:** 0.4 (6 августа 2026)
+> **Статус:** ✅ закрыта; 18.0–18.10 реализованы, прошли deterministic replay gate и финальную live-валидацию.
 > **Ветка:** `kaggle`
 > **Цель фазы:** сначала завершить канонический facts-слой `FusedSceneFrame`, затем добавить над ним явный, читаемый и проверяемый когнитивный слой `mvm-cortex`, превращающий perception pipeline в visual substrate for agency.
+>
+> **Архитектурное утверждение владельцем — 2026-08-03:** план Phase 18 утверждён как финальный. Cortex реализует evidence-backed visual cognitive loop `observation → fused facts → interpretation/forecast → prediction error → attention policy → re-observation`; он не заменяет Fusion, не превращает hypothesis/memory в факт и не управляет physical actuators. Реализация сохраняет CPU-first/$0/privacy-first/Rust-hot-path инварианты, не добавляет новые модели/VLM/GPU в Phase 18 и движется по gates: Scene Events + Interpretation → forecast/prediction error → bounded event memory → affordances → advisory attention/re-observation → visual self-model. Любое изменение runtime проходит replay/live baseline, TDD и latency/throughput/honesty gates.
+>
+> **Зафиксированная цель:** **functional cognitive vision loop** — система строит evidence-backed модель текущей сцены, формирует прогноз и рабочий контекст, сравнивает ожидание с новым наблюдением, ранжирует значимое и выпускает ограниченную advisory-политику уточняющего наблюдения или действия агента. Новое наблюдение остаётся единственным способом подтвердить либо опровергнуть когнитивную гипотезу.
 > **Манифест:** `~/wiki/mvm/north-star-visual-cortex-agent.md`
 > **Родительский манифест:** `~/wiki/mvm/north-star-conscious-vision.md`
 > **Академическое основание:** `~/wiki/machine-vision/deconstructing-consciousness-as-engineering-method.md`
@@ -45,6 +48,20 @@ immutable `FusedSceneFrame`. Старый `WorldState` остаётся толь
 - cognitive report для CLI/MCP/LLM.
 
 Главная задача фазы — **не распылить когницию по ядру, CLI, dataset и отдельным крейтам**, а сделать её видимой как один красивый слой.
+
+### 0.1. Граница functional cognitive vision loop
+
+```text
+observations → FusedSceneFrame → forecast / memory / uncertainty
+             → prediction error → attention → advisory policy
+             → scheduler / agent re-observation or action → new observation
+```
+
+Это не feedback-мутация facts layer: Cortex не переписывает прошлые frames, не поднимает
+`remembered`/`weak` до `observed` и не меняет Fusion. Он публикует только typed advisory
+`AttentionPolicy` / `ObservationRequest`; scheduler или внешний агент вправе принять, отложить
+либо отклонить её в пределах latency/CPU/safety budget. `FusedSceneFrame` остаётся единственным
+authority наблюдаемых фактов.
 
 ---
 
@@ -100,6 +117,10 @@ immutable `FusedSceneFrame`. Старый `WorldState` остаётся толь
 12. **Camera-driven immutable ticks.** Canonical revision задаёт RGB capture frame. Поздний expert result не переписывает прошлое, а входит в следующий tick со своим source stamp и честным age.
 13. **Cortex — consumer/peer, не replacement.** Fusion остаётся арифметическим интерфейсом. Cortex читает результат fusion, но не заменяет его.
 14. **Схематическая читаемость важнее микрокрейтной чистоты.** На старте лучше один `mvm-cortex` с модулями, чем пять новых островов.
+15. **Advisory feedback, не cognitive overwrite.** Attention может запрашивать уточняющее наблюдение или рекомендовать действие агенту, но не мутирует Fusion, не меняет прошлые ticks и не становится новым источником scene facts.
+16. **`CortexFrame` — content, не facts-store.** Он является immutable, capacity-bounded и evidence-linked содержимым операционального visual Global Workspace на один tick: selected focus, expectations, uncertainty, memory context, attention и policy outcomes. Полный factual substrate остаётся в `FusedSceneFrame`; `LatestValue<CortexFrame>` — transport/broadcast, но не сам по себе Global Workspace.
+17. **Cortex предлагает, runtime исполняет.** `mvm-cortex` порождает pure advisory policy. Единственный scheduler-адаптер принадлежит runtime/`mvm-cli`; `mvm-mesh` остаётся generic и не получает cognitive semantics, `ExpertKind` или policy rules.
+18. **Адаптивный cadence — bounded control, не запуск нового graph.** Existing expert threads не перезапускаются и не получают прямые cognitive цели. Они читают только временные execution permits/deadlines, а все результаты проходят прежний stamped путь Experts → Fusion.
 
 ---
 
@@ -116,6 +137,7 @@ immutable `FusedSceneFrame`. Старый `WorldState` остаётся толь
 │ L3. Visual Cortex / Cognitive Layer        │
 │ prediction / events / memory / attention   │
 │ affordance / self-model / uncertainty      │
+│ advisory observation/action policy         │
 └────────────────────────────────────────────┘
                     ▲
 ┌────────────────────────────────────────────┐
@@ -609,7 +631,11 @@ let cortex_frame = cortex.update(CortexInput {
    rank entities/events using novelty, prediction error, uncertainty,
    recent events, affordance, identity, activity and anomaly
 
-9. Report
+9. Advisory policy
+   convert top attention targets into bounded observation/action requests;
+   scheduler or external agent accepts/rejects them without mutating facts
+
+10. Report
    produce compact human/LLM-readable cognitive summary
 ```
 
@@ -621,6 +647,7 @@ Prediction before Attention.
 SelfModel before Report.
 Affordance before Attention.
 Attention after all salience sources are known.
+Advisory policy after Attention; only a new observation can resolve a claim.
 ```
 
 ---
@@ -645,6 +672,7 @@ mvm-cli/src/agents/cortex.rs
 read LatestValue<FusedSceneFrame>
 call VisualCortex::update(...)
 write LatestValue<CortexFrame>
+write bounded AttentionPolicy / ObservationRequest
 ```
 
 Вся когнитивная логика остаётся в `mvm-cortex`.
@@ -662,7 +690,8 @@ CaptureAgent → LatestValue<Frame>
 FusionAgent → LatestValue<FusedFramePacket>
     ↓
 CortexAgent → LatestValue<CortexFrame>
-    ↓
+    ├──→ AttentionPolicy / ObservationRequest → Scheduler / external agent
+    └──→
 StateFileWriter / MCP / CLI render / Dataset consumer
 ```
 
@@ -1019,6 +1048,25 @@ Cortex output: evidence-linked `CortexEvent`/`CognitiveClaim`, например 
 
 ---
 
+### 18.3b — Scene Re-observation Vertical Slice
+
+**Цель:** сразу после появления canonical `SceneEvent` проверить минимальный замкнутый cognitive loop, не дожидаясь полного Prediction/Memory/Affordance/Attention stack.
+
+```text
+UnexpectedAppearance | HighUncertaintySceneSource
+  → RefreshScene(max_extra_runs = 1, deadline)
+  → CLI-local scheduler grants one Scene permit
+  → existing SceneAgent produces stamped observation
+  → Fusion publishes next facts frame
+  → request becomes Supported | Contradicted | Inconclusive | Expired
+```
+
+**Границы:** только Scene; не менять Human/body-primary path, не ускорять Depth, не добавлять task graph, async runtime или новые models. Вся policy/result semantics использует контракт 18.8b, но этот thin slice фиксирует его раньше как executable evidence boundary.
+
+**Гейт:** synthetic replay доказывает policy → permit → observation → Fusion → resolution без facts mutation; forced budget rejection/TTL создают `Deferred`/`Expired`, а не asserted claim. Same-run capture throughput и Human/Fusion p95 не деградируют более чем на 5% от baseline.
+
+---
+
 ### 18.4 — Runtime Event Memory
 
 **Цель:** дать Cortex рабочую эпизодическую память без создания второго durable store.
@@ -1144,7 +1192,7 @@ Interactable
 
 **Не делать:** learned affordance predictor. Только geometry + scoring + reason strings.
 
-**Гейт:** 5 основных классов (`reachable`, `held`, `attended`, `blocked`, `sittable`) accuracy > 0.85 на размеченных сценариях.
+**Гейт:** 5 основных классов (`reachable`, `held`, `attended`, `blocked`, `interactable`) accuracy > 0.85 на размеченных сценариях.
 
 ---
 
@@ -1186,6 +1234,116 @@ AttentionMap / top-k AttentionScore
 ```
 
 **Гейт:** top-3 attention покрывает >80% реальных событий benchmark.
+
+---
+
+### 18.8b — Advisory Attention Policy / Active Re-observation
+
+**Цель:** превратить attention из read-only ranking в ограниченный functional cognitive vision loop: Cortex может рекомендовать, *какое новое evidence полезно получить*, но не объявляет интерпретацию фактом и не мутирует runtime scene.
+
+`CortexFrame` в этом контуре — не второй facts store, а **capacity-bounded content операционального visual Global Workspace**: selected focus, expectations/prediction errors, relevant memory, uncertainty/self-model, attention и outcomes policy. `FusedSceneFrame` остаётся полным immutable factual substrate; `LatestValue<CortexFrame>` — механизм latest-wins broadcast для consumers, но не authority фактов.
+
+**Разделение ответственности:**
+
+```text
+Fusion → CortexAgent → LatestValue<AttentionPolicy>
+                         ↓
+                CLI-owned PolicyScheduler
+                         ↓
+         temporary ExpertExecutionControl for Scene / Depth
+                         ↓
+                existing expert → Fusion → new facts
+```
+
+- `mvm-cortex` создаёт только pure serializable proposal из attention и evidence;
+- scheduler живёт в `mvm-cli` runtime layer, применяет CPU/latency/fairness budgets и публикует bounded control values;
+- `mvm-mesh` остаётся generic: не знает `ExpertKind`, cognitive reason, policy или scene semantics;
+- experts остаются persistent threads и получают только временный execution permit/deadline, а не прямую cognitive цель и не новый task graph;
+- Human/body-primary V1 не управляется policy: его baseline cadence и latency reserve неприкосновенны.
+
+**Публичный контракт:**
+
+```rust
+pub struct AttentionPolicy {
+    pub source_scene_frame_id: u64,
+    pub requests: Vec<ObservationRequest>,
+}
+
+pub struct ObservationRequest {
+    pub request_id: RequestId,
+    pub source_scene_frame_id: u64,
+    pub target: ObservationTarget,
+    pub reason: ReasonCode,
+    pub evidence: Vec<EvidenceRef>,
+    pub priority: Salience,
+    pub max_extra_runs: u8,
+    pub expires_at_frame: u64,
+}
+
+pub enum ObservationTarget {
+    SceneEntity(EntityKey),
+    SceneZone(ZoneId),
+    Expert(ExpertKind),
+    ExternalAgent(AgentQuestion),
+}
+
+pub enum RequestOutcome {
+    Proposed,
+    Accepted { dispatch_deadline_frame: u64 },
+    Deferred { retry_at_frame: u64, reason: BudgetReason },
+    Rejected { reason: PolicyReason },
+    Dispatched,
+    Resolved { source_frame_id: u64, outcome: Resolution },
+    Expired,
+    Unavailable,
+}
+
+pub enum Resolution {
+    Supported,
+    Contradicted,
+    Inconclusive,
+}
+```
+
+`max_extra_runs` — bounded one-shot permit, а не постоянная запись `cadence = 1`. Для latest-wins semantics scheduling опирается на `next_due_at` / source age / deadline, а не только на `frame_id % cadence`: под нагрузкой modulo gate может не встретить подходящий latest frame.
+
+**Правила:**
+
+- policy только advisory: scheduler/внешний агент может принять, отложить или отклонить request;
+- policy всегда ссылается на `source_scene_frame_id`, attention evidence и reason code;
+- Cortex не пишет в `FusedSceneFrame`, не переиздаёт старый tick и не делает `observed` из forecast/memory;
+- только новое stamped observation, опубликованное обычным путём Experts → Fusion, может разрешить request и поддержать/опровергнуть hypothesis;
+- `Accepted` не означает `Resolved`; `Executed` не означает подтверждение; `Deferred`/`Rejected`/`Expired`/`Unavailable` — явные cognitive outcomes, но не scene facts;
+- request ограничен TTL, dedupe `(expert, target, reason)`, cooldown, max burst, per-expert token budget и global minimum inter-run interval;
+- scheduler не меняет persistent `Config` или Fusion state; temporary override истекает сам;
+- отсутствие ответа или отказ scheduler'а — явный status, а не молчаливое подтверждение гипотезы.
+
+**Полный scope 18.8b:** после отдельного 18.3b slice расширить policy от Scene-only refresh до bounded requests для существующих Scene/Depth observations и `AskExternalAgent`. Не трогать Human/body-primary path, camera actuation/PTZ, новый detector, внешний side effect, второй agent graph или отдельный async runtime.
+
+**Гейты первого vertical slice:**
+
+1. Policy содержит source frame, reason и evidence; proposal детерминирован для идентичного replay input.
+2. Один canonical `UnexpectedAppearance` или stale Scene source создаёт максимум один deduplicated `RefreshScene` request.
+3. Scheduler выдаёт SceneAgent один temporary permit; результат проходит существующим stamped путем в Fusion и не меняет опубликованные facts задним числом.
+4. Новый source frame даёт ровно один `Resolved(Supported|Contradicted|Inconclusive)`; no response до TTL даёт `Expired`, а не asserted claim.
+5. Forced overload возвращает явный `Deferred`; cooldown/token cap/max-wait предотвращают storm и starvation.
+6. Canonical facts/events остаются детерминированными при иной cadence sink'ов; повторное чтение cursor не создаёт duplicate request.
+7. Capture throughput ухудшается не более чем на 5% относительно same-run baseline; отдельно измеряются Human/Fusion p50/p95, extra Scene run count, request wait/resolution latency и dropped-frame ratio.
+
+### 18.8b.1 — Adaptive Mesh Scheduling Spike
+
+**Цель:** до расширения policy на несколько heavy experts измерить, даёт ли адаптивная диспетчеризация больше resolution/attention value, чем fixed cadence, без регрессии body-primary path.
+
+**Сравнить на replay и live same-hardware baseline:**
+
+```text
+A. fixed cadence
+B. Scene one-shot permit
+C. competing Scene + Depth permits
+D. A–C под ограничением 4 и 2 CPU cores
+```
+
+**Решение после spike:** не добавлять Tokio и не заменять `std::thread` runtime без измеримого преимущества. Если C проходит budgets и улучшает resolution rate, следующий scope — bounded heavy-job execution pool в `mvm-cli`; если нет — оставить thread-per-expert + temporary grants. Полноценный pool не является результатом по умолчанию этой подфазы.
 
 ---
 
@@ -1248,9 +1406,12 @@ Attention recall@3
 Affordance accuracy
 Memory precision@5
 Self-model claim accuracy
+Advisory re-observation precision / resolution rate
 ```
 
-**Гейт фазы:** Cortex улучшает минимум 4 из 6 core claims без ухудшения honesty и без нарушения runtime-инвариантов.
+**Дополнительный loop-гейт:** в benchmark есть минимум три сценария, где uncertainty или prediction error создаёт `ObservationRequest`, scheduler принимает либо явно отклоняет его, а следующее stamped observation разрешает claim без facts mutation.
+
+**Гейт фазы:** Cortex улучшает минимум 4 из 6 core claims без ухудшения honesty и без нарушения runtime-инвариантов; advisory loop не ухудшает same-run capture throughput более чем на 5%.
 
 ---
 
@@ -1262,23 +1423,25 @@ Self-model claim accuracy
 | 18.1 | Typed bus + canonical fusion | 18.0 | 2 нед. |
 | 18.2 | Cortex skeleton | 18.1 | 1 нед. |
 | 18.3 | Scene events + Cortex interpretation | 18.1/18.2 | 1 нед. |
+| 18.3b | Scene re-observation vertical slice | 18.3 | 0.5 нед. |
 | 18.4 | Runtime Event Memory | 18.3 | 1 нед. |
 | 18.5 | Predictive Layer | 18.1/18.3 | 2 нед. |
 | 18.6 | SelfModel + Uncertainty | 18.2 | 1 нед. |
 | 18.7 | Affordance Layer | 18.3/18.4 | 2 нед. |
 | 18.8 | Attention Layer | 18.4/18.5/18.6/18.7 | 1 нед. |
-| 18.9 | CLI/MCP/Report + skills | все слои | 1 нед. |
+| 18.8b | Advisory Attention Policy / Active Re-observation | 18.8 | 1 нед. |
+| 18.9 | CLI/MCP/Report + skills | все cognitive layers + 18.8b | 1 нед. |
 | 18.10 | Benchmark Evaluation | benchmark + все слои | 1 нед. |
 
 Критический путь:
 
 ```text
-18.0 → 18.1 → 18.2/18.3 → 18.4/18.5/18.6/18.7 → 18.8 → 18.9 → 18.10
+18.0 → 18.1 → 18.2/18.3 → 18.3b → 18.4/18.5/18.6/18.7 → 18.8 → 18.8b → 18.9 → 18.10
 ```
 
-Оценка: **10–12 недель**.
+Оценка: **11.5–13.5 недель**.
 
-Оптимистичный путь после закрытия state migration: **8–9 недель**.
+Оптимистичный путь после закрытия state migration: **9.5–10.5 недель**.
 
 ---
 
@@ -1292,7 +1455,7 @@ Self-model claim accuracy
 - deprecated read-only `WorldState` compatibility projection;
 - `--native-camera` как общий mesh capture backend;
 - deprecated Python `--native` warning/compatibility path;
-- Visual Cortex, CLI/MCP `cortex` и atomic `current_cortex.json`;
+- Visual Cortex, advisory `AttentionPolicy` / `ObservationRequest`, CLI/MCP `cortex` и atomic `current_cortex.json`;
 - additive `entity_key`/event provenance при неизменной schema 16.7.0.
 
 Удаление `WorldState` projection и Python bridge — post-v0.4 cleanup после compatibility window.
@@ -1341,6 +1504,7 @@ v0.4.0 — Visual Cortex / фаза 18
 | AffordanceLayer | action-oriented perception | Gibson affordance / embodied cognition |
 | SelfModelLayer | observer/world separation | HOT / AST / embodied cognition |
 | UncertaintyLayer | honesty / precision weighting | PP precision weighting |
+| AttentionPolicy / ObservationRequest | active re-observation under bounded control | active inference / closed-loop perception |
 | CortexFrame | global workspace content | GWT |
 
 Фаза 18 — не “создать сознание”.
@@ -1363,15 +1527,18 @@ v0.4.0 — Visual Cortex / фаза 18
                            │
              ┌─────────────┴──────────────┐
              │        CortexFrame          │
-             │ forecast                    │
-             │ prediction_errors           │
-             │ interpretations             │
-             │ memory                      │
-             │ affordances                 │
-             │ attention                   │
-             │ self_model                  │
-             │ uncertainty                 │
-             └─────────────▲──────────────┘
+             │ forecast / memory /         │
+             │ affordance / attention /    │
+             │ self-model / uncertainty    │
+             └───────┬───────────▲─────────┘
+                     │           │
+     advisory policy │           │ accepted request is resolved through Experts → Fusion
+                     ▼           │
+             ┌───────────────────┴────────┐
+             │ Scheduler / External Agent  │
+             │ accepts, defers or rejects  │
+             └────────────────────────────┘
+                           ▲
                            │
              ┌─────────────┴──────────────┐
              │       VisualCortex          │
@@ -1405,12 +1572,19 @@ v0.4.0 — Visual Cortex / фаза 18
 > MVM публикует один immutable `FusedSceneFrame` с stamped sources, unified entities, relations,
 > persistent zones и sequenced scene events, а поверх него формирует `CortexFrame` — прогноз, ошибки
 > ожидания, интерпретации событий, рабочую память, affordances, attention, self-model и uncertainty.
-> Оба слоя доступны через стабильные CLI/MCP projections, проверены benchmark'ом и не нарушают
-> CPU-first / $0 / интерпретируемость / honesty-first инварианты.
+> Cortex превращает top attention targets в ограниченную advisory `AttentionPolicy` / `ObservationRequest`;
+> scheduler или внешний агент явно принимает, отклоняет либо откладывает request, а только новое stamped
+> observation через обычный путь Experts → Fusion может подтвердить или опровергнуть claim. Оба слоя и
+> loop доступны через стабильные CLI/MCP projections, проверены benchmark'ом и не нарушают CPU-first /
+> $0 / интерпретируемость / honesty-first инварианты.
 
 ---
 
-*План обновлён 27 июля 2026 г.; 18.0–18.2 реализованы и проверены полным workspace gate.*
+*Фаза закрыта 6 августа 2026 г. Commit `a202a2dd` фиксирует 18.10 benchmark gate: 6/6 core
+cognitive claims улучшаются над synthetic no-Cortex comparator при zero honesty regressions; 1s/2s
+forecast и три advisory resolution loop проверены frozen replay. Commit `0047e4ef` фиксирует
+финальную live-валидацию production producer: оба published horizons, evidence-linked Cortex views,
+honesty-preserving facts и semantic-session pull path. Controlled 18.8b.1 runtime result: +0.31% ≤5%.*
 *Основание: фазовый план 18 v0.2, актуальные runtime/dataset contracts, `north-star-visual-cortex-agent.md`,
 `north-star-conscious-vision.md`, академическая работа `deconstructing-consciousness-as-engineering-method.md`
 и утверждённые решения о canonical `FusedSceneFrame`, evidence split и едином `mvm-cortex`.*
