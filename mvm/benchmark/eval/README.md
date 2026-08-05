@@ -1,5 +1,8 @@
 # Evaluator contract
 
+The evaluator measures MVM's visual evidence and Cortex contracts only. It
+does not claim robot control, safety authority, or physical-world correctness.
+
 The executable entry point is `python3 benchmark/eval/evaluate.py`. It is
 stdlib-only and consumes the frozen scenario fixtures under `benchmark/`; it
 never reads `current_state.md`, `current_cortex.json`, or mutable live state.

@@ -1,132 +1,44 @@
-# Machine Vision Module
+# MVM Python Prototype — архив
 
-[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://python.org)
-[![Rust](https://img.shields.io/badge/rust-1.93+-orange.svg)](https://rust-lang.org)
-[![CUDA](https://img.shields.io/badge/CUDA-12.x-green.svg)](https://developer.nvidia.com/cuda-toolkit)
-[![GPU](https://img.shields.io/badge/GPU-RTX_4070_Ti-76B900.svg)]()
+> **Исторический каталог, не production MVM.**
+>
+> Актуальный MVM — Rust-based evidence-backed visual subsystem для будущего робота: visual facts → bounded visual memory/world model → advisory Visual Cortex. Смотрите [корневой README](../README.md) и [`mvm/README.md`](../mvm/README.md).
 
-**Локальная система восприятия для LLM-агентов.**
+Этот каталог сохраняет раннюю Python-линию экспериментов: face recognition, emotion, posture, 3D spikes и Dataset Factory exporters. Он нужен для воспроизводимости исследований и offline ML-работ, но не определяет текущие runtime-контракты и не является source of truth.
 
-Кадр с веб-камеры → многослойный контекст: кто перед камерой, эмоция, поза, направление взгляда, предметы, активность. Всё в текстовом формате `key: value` для парсинга агентом.
+## Что здесь находится
 
----
+- `pipeline/` — старые training/data scripts и research spikes;
+- `pipeline/dataset/` — Python-consumer для pixel sessions, экспорт PyTorch/TFRecord/WebDataset и validation;
+- `core/`, `tools/` в корне репозитория — legacy/compatibility bridge;
+- `legacy/` — ещё более ранние эксперименты.
 
-## Философия
+## Граница с production
 
-MVM — это не один скрипт, а **стек слоёв восприятия**, расширяющийся от человека наружу:
+| Слой | Актуальный статус |
+|---|---|
+| Production capture, experts, Fusion, facts, Cortex | [`mvm/`](../mvm/) — Rust workspace |
+| Semantic Session Log и pixel recording | `mvm-dataset`, `labels.jsonl`, `mvm run --record` |
+| Python ML/export ecosystem | этот архив, только как consumer/research layer |
+| Robot planning, control, actuators, safety authority | вне MVM |
 
-```
-Слой 0: Ядро — кто + эмоция + поза (готово, 98.3% VAE)
-Слой 1: Взаимодействие — gaze + руки (MediaPipe, бесплатно)
-Слой 2: Предметы — YOLO-детекция (планируется)
-Слой 3: Активность — fusion-правила (планируется)
-Слой 4: Сцена — тип помещения (опционально)
-```
+Не переносите старые GPU/CUDA, `key: value`, `sightd`, Python-daemon или early posture assumptions в новые production-инструкции. Для текущих команд используйте `mvm --help` и canonical skills в [`mvm/skills/`](../mvm/skills/).
 
-**Скоро:** переход на постоянно работающий Rust-демон (`sightd`) с непрерывным трекингом людей и объектов.
+## Dataset exporter
 
----
-
-## Ветки
-
-| Ветка | Назначение |
-|-------|-----------|
-| `master` | Python-прод: sight.py, whoishere.py, VAE, Workspace3D |
-| `python-prototype` | Полигон: обучение моделей, эксперименты, MediaPipe |
-| `rust-core` | Rust-демон: трекер, камера, state-file (чистый лист) |
-
----
-
-## Архитектура (текущая: Python)
-
-```
-Кадр (HD 1280×720 + SD 640×480)
-  │
-  ├─ PoseLandmarker (33 COCO, CPU, ~20ms)
-  │    ├─ body_bbox → head_crop
-  │    │    ├─ FaceLM PASS 1 → bbox + 5 kps → ArcFace HD → identity
-  │    │    └─ FaceLM PASS 2 → 468 landmarks → MLP → emotion
-  │    └─ Spatial Encoding → VAE → posture (6 кл, 98.3%)
-  │
-  └─ Вывод: key: value → state file → sight-journal → wiki
-```
-
----
-
-## Быстрый старт
+Pixel exporters требуют записанную pixel session:
 
 ```bash
-cd ~/repos/Machine\ Vision\ Module
-
-# Кто перед камерой? (Face ID + сцена, ~3s)
-venv/bin/python3 tools/whoishere.py
-
-# Полный анализ (Face ID + MLP-эмоции + VAE-поза + plausibility, ~15s)
-venv/bin/python3 tools/sight.py
+mvm run --record
+cd prototype/pipeline/dataset
+python validate.py ~/.local/share/mvm/datasets --strict
+python test_dataset.py
 ```
 
-Вывод — `key: value`, пригоден для парсинга LLM:
+Подробности: [`pipeline/dataset/README.md`](pipeline/dataset/README.md).
 
-```
-camera: /dev/video0
-face_count: 1
-lighting: normal
-brightness: 91
-face_1:
-  identity: Вадим
-  confidence: 0.60
-  emotion: Нейтральная
-  emotion_confidence: 0.69
-  posture: сидит_за_ПК
-  posture_confidence: 0.94
-  recon_error: 0.0234
-  plausibility: normal
-```
+## История
 
----
+Python-прототип предшествовал переходу на полноценный Rust AgentMesh. История сохранена намеренно: она показывает путь от локального perception script к evidence-backed visual subsystem, но не должна восприниматься как текущий API.
 
-## Технологии
-
-| Компонент | Технология |
-|-----------|-----------|
-| Детектор | PoseLandmarker (CPU) |
-| Face ID | ArcFace 512d (GPU) |
-| Эмоции | MLP 468 геом. (68%) + HSEmotion fallback (73%) |
-| Поза | PoseVAE 48K + Classifier 4K (98.3%, 6 классов) |
-| GPU | onnxruntime-gpu + CUDA 12 |
-
-### 6 классов позы
-
-| стоит | сидит | сидит_за_ПК | лежит_на_спине | лежит_на_боку | руки_скрещены |
-|-------|-------|-------------|----------------|---------------|---------------|
-
----
-
-## Структура
-
-```
-Machine Vision Module/
-├── tools/              # Точки входа для LLM
-│   ├── whoishere.py    # Face ID + сцена (~3s)
-│   ├── sight.py        # Полный анализ (~15s)
-│   └── whois.py        # Для человека (HSEmotion)
-├── core/               # Модели и утилиты
-│   ├── face_id.py      # ArcFace
-│   ├── pose_vae.py     # PoseVAE
-│   ├── pose_heads.py   # Классификатор поз
-│   └── workspace_3d.py # 3D-пространство
-├── pipeline/           # Обучение и реалтайм
-│   ├── rlm.py          # Монитор с оверлеем
-│   ├── train_pose_vae.py
-│   └── capture/        # Захват датасетов
-├── models/             # Веса
-│   ├── emotion/        # MLP, VAE, fallback
-│   └── references/     # Галерея Face ID
-└── legacy/             # Архив
-```
-
----
-
-## Лицензия
-
-MIT © 2019–2026
+Лицензия production-проекта: Apache-2.0; исторические артефакты могут иметь собственные условия.

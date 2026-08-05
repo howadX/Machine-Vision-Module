@@ -1,72 +1,54 @@
 # MVM — ML Engineering Laboratory
 
-> **Kaggle-профиль как живая лаборатория.** Каждый ноутбук = design doc с воспроизводимыми экспериментами.
-> Обновляется при изменениях в production. Не архив — платформа прототипирования.
+> Kaggle-портфолио — исследовательская лаборатория MVM, а не отдельный runtime.
 
-**Production:** [github.com/howadX/Machine-Vision-Module](https://github.com/howadX/Machine-Vision-Module) — Rust, 670 тестов, v0.3.0 на GitHub Releases
-**Автор:** Вадим Ховрин · ML / Computer Vision Engineer
-**Как это поддерживается:** [WORKFLOW.md](./WORKFLOW.md) — build → Kaggle push/pull через `kctl.py` (ноутбуки генерируются, не редактируются вручную)
+**Production:** [Machine Vision Module](https://github.com/howadX/Machine-Vision-Module) — Rust, `v0.4.0`, Phase 18 Visual Cortex closed; next approved track is Phase 19 Visual Spatial Substrate.
 
-## Структура каталога
+MVM — evidence-backed **visual subsystem будущего робота**. Лаборатория проверяет perception experts и их data/quality trade-offs; production собирает их в Rust-пайплайн:
 
-```
-kctl.py                 — драйвер сборки/синка + манифест ноутбуков
-README · WORKFLOW · CHECKPOINT   — обзор, процесс, точка возобновления
-notebooks/<nb>/         — по папке на ноутбук: _build_nbX.py + .ipynb + skeleton.md
-research/               — исследования и заметки по ML-разработке (design docs, аудиты, планы)
-results/metrics.json    — реальные числа, стянутые с прогонов Kaggle
+```text
+visual evidence → canonical facts → spatial/temporal visual memory → Cortex interpretation → external robot runtime
 ```
 
----
+MVM не является planner/controller/actuator/safety authority. Ноутбуки не должны расширять проект в эту область и не должны превращать `unknown`/`withheld` в отрицательный класс.
 
-## Временная шкала: от EmoZid к MVM
+## Как поддерживается
 
-```
-2019 ─ EmoZid: Haar + dlib + SVM (45%)
- │
-2023 ─ LightGBM на 468 точках MediaPipe (68%)
- │      COCO + эвристика для поз (71.7%)
- │
-2024 ─ CNN EfficientNet-B0 на FER2013 (73%)
- │      PoseVAE: manifold + few-shot + anomaly
- │
-2025 ─ Knowledge distillation: CNN → MLP (72%, 7× легче)
- │      GRIP: 14 фич → RF → 0.959
- │
-2026 ─ Production: EmotiEffLib ONNX + GRIP в Rust
-        MVM v0.3.0: 670 тестов, Dataset Factory, MCP, systemd
+[WORKFLOW.md](./WORKFLOW.md) описывает build → Kaggle push/pull через `kctl.py`. Ноутбуки генерируются и проверяются, а не редактируются вручную без обновления источника.
+
+## Структура
+
+```text
+kctl.py                 — build/sync driver и notebook manifest
+notebooks/<nb>/         — design docs, builders, notebooks, skeletons
+research/               — исследования, аудиты и ML design docs
+results/metrics.json    — фактические experiment results
 ```
 
----
+## Связь research ↔ production
 
-## Коллекция ноутбуков
+Каждый эксперимент должен явно отвечать:
 
-| # | Ноутбук | ML-задача | Период | Production-крейт |
-|---|---------|-----------|--------|-----------------|
-| **0** | EmoZid: SVM на 68 точках лица | Face emotion, classical ML | 2019–2020 | (исторический) |
-| **1** | Distilling CNN → geometric MLP | Knowledge distillation, edge inference | 2023–2025 | `mvm-emotion` |
-| **2** | PoseVAE: manifold that knows when it's surprised | Representation learning, few-shot, anomaly | 2024–2025 | `mvm-posture` (OOD-gate) |
-| **3** | Weak supervision at scale | Data-centric ML, HPO, свой датасет | 2024 | `mvm-posture` (data pipeline) |
-| **3b** | GRIP: 14 features beat VAE | Feature engineering, production classifier | 2025–2026 | `mvm-posture` (core) |
-| **4** | Why identity embeddings are the wrong tool for emotion | Engineering judgment, component teardown | 2023 | `mvm-identity` + `mvm-emotion` |
+1. какой visual signal он улучшает;
+2. какой production crate его потребляет (`mvm-posture`, `mvm-identity`, `mvm-emotion` и т. п.);
+3. какие данные и domain limits измерены;
+4. как сохраняется provenance и honesty semantics;
+5. есть ли CPU/latency/footprint trade-off.
 
----
+Production source of truth — [`../mvm/CLAUDE.md`](../mvm/CLAUDE.md), а не исторический notebook.
 
-## Формат «живого документа»
+## Линия экспериментов
 
-Каждый ноутбук содержит:
+История идёт от classical face/emotion и geometric models к production ONNX/Rust experts, GRIP posture и Dataset Factory. Эти материалы объясняют инженерные решения и ограничения; числа остаются экспериментальными и не являются универсальными claims без указанного benchmark protocol.
 
-1. **Заголовок + TL;DR + временная метка** (когда последний раз обновлялся)
-2. **Исторический контекст** (как пришли к этому решению)
-3. **Воспроизводимый эксперимент** (публичные данные, фиксированные seeds)
-4. **Метрики и выводы** (честно: что измерено, что спроецировано)
-5. **Production Status** — как это живёт в MVM сегодня
-6. **What Changed** — хронология обновлений ноутбука
-7. **Связи:** ← предыдущий ноутбук | → следующий ноутбук
+| Область | Production boundary |
+|---|---|
+| face / identity / emotion | visual evidence для canonical Human facts |
+| posture / hands | body-primary facts с confidence и coverage |
+| objects / depth / masks | Scene/Depth evidence для Fusion и будущего spatial substrate |
+| dataset / active learning | `mvm-dataset`, semantic + pixel sessions |
+| Cortex | consumer/interpreter; не perception ground truth |
 
-### Принципы
+## Лицензия
 
-- **Честность.** Приватные данные → публичный аналог с явной пометкой. Проекции помечены как проекции.
-- **Воспроизводимость.** Run All на Kaggle без внешних файлов. Seeds зафиксированы.
-- **Живость.** При изменении production-модели → обновляется ноутбук (новая секция «What Changed»).
-- **Связность.** Каждый ноутбук ссылается на предыдущий/следующий и на GitHub-крейт.
+См. лицензию корневого production-проекта и лицензии конкретных моделей/датасетов.

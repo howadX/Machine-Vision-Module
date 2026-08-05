@@ -1,15 +1,18 @@
-# MVM Dataset Factory — exporters (phase 16.4)
+# MVM Dataset Factory — Python exporters
 
-Turn recorded MVM sessions into ML-ready datasets. The Rust side accumulates
+Turn recorded MVM pixel sessions into ML-ready research datasets. The Rust side accumulates
 self-describing sessions; this Python layer compiles them into PyTorch / TFRecord
 / WebDataset views. Python is the research consumer's ecosystem, so the
 ML-framework deps live **here**, never in the Rust core (invariant #2).
 
-> **Needs pixel sessions.** Since phase 16.7 `mvm run` records **text-only** sessions
+> **Research consumer, not runtime.** Since the Semantic Session Log `mvm run` records **text-only** sessions
 > by default (labels only, no `frames/`/`depth/`). These exporters consume pixels, so
 > record with **`mvm run --record`** to produce sessions the image/depth loaders can read.
 
 ## Input: a recorded session
+
+The exported labels are visual observations and provenance, not robot state,
+planner commands, or safety labels. `unknown`/`withheld` remain missing claims.
 
 ```
 <root>/sessions/<YYYY-MM-DD_HHMMSS>/
@@ -100,7 +103,7 @@ range is in each label's `frame.depth_range = [min, max]`. `Record.load_depth()`
 de-normalizes back to the recorder's affine-relative scale (larger = nearer; not
 metres). Frames without depth simply have no `depth` key.
 
-## Validation gate (16.6-A)
+## Validation gate
 
 Two complementary gates guard data quality before training — both exit non-zero on
 failure, so either drops into CI:

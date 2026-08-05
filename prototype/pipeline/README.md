@@ -1,33 +1,23 @@
 # Легаси-пайплайн (dlib + SVM)
 
-> ⚠️ **Исторический документ.** Этот README — оригинальная инструкция к проекту EmoZid (~2019–2020).  
-> Нижеприведённые инструкции описывают установку через Visual Studio 2019 + Anaconda и **неактуальны** для текущей версии.  
-> Современный стек и инструкции — в [корневом README](../../README.md).
+> ⚠️ **Исторический документ.** Этот README — оригинальная инструкция к проекту EmoZid (~2019–2020).
+> Нижеприведённые инструкции описывают установку через Visual Studio 2019 + Anaconda и **неактуальны** для текущей версии.
+> Современный MVM — Rust-based evidence-backed visual subsystem будущего робота: visual evidence → canonical facts → bounded visual memory/world model → advisory Cortex. Он не является planner/controller/safety authority. Актуальный стек и инструкции — в [корневом README](../../README.md) и [`mvm/README.md`](../../mvm/README.md).
 
 ---
 
-В папке scripts находятся скрипты, с помощью которых работает АПК.
-В папке Final находятся основные файлы и скрипты для рабочего состояния АПК.
-Если вы хотите проверить АПК на работоспособность, то скачивать лучше именно её.
+В папке scripts находятся скрипты, с помощью которых работало раннее приложение.
+В папке Final находились основные файлы и скрипты для рабочего состояния АПК.
 
-Процесс установки:
-1) Вы должны установить Python не ниже версии 3.6.
-Рекомендуется скачать последнию версию этого языка с целью избежания неожиданных трудностей, связанных с этим.
-Ссылка на скачивание Python: https://www.python.org/
-Там вы должны будете навести на Downloads, после чего нажать в списке на свою операционную систему и скачать последний релиз.
-2) Установка anaconda:
-cкачиваем по вот этой ссылке анаконду: https://www.anaconda.com/distribution/#download-section
-3) Установка Visual Studio 2019(VS):
-Скачайте VS2019 c оффициального сайта:
-https://visualstudio.microsoft.com/ru/vs/
-4) Установка библиотек:
-Входим в Visual Studio в папку проекта и вбиваем в поиск «Окружения Python».
-Жмем на первый в списке блок и справа у нас появляется новая вкладка.
-В ней выбираем anaconda, затем ниже выбираем «пакеты PyPl» вместо «Общие сведения» и скачиваем:
-scipy, pygame, keyboard, glob, cv2, dlib, PIL, pincle, numpy, sklearn, csv, cv2, CMake, opencv-contrib-python, opencv-python, Pillow, chardet.
-5) Запуск.
-Поздравляем, вы установили все необходимое и теперь осталось лишь запустить программу.
-Для этого откройте файл Indefication_4.py в Visual Studio, нажмите на правую кнопку мыши и нажмите на пункт «запуск без отладки».
+## Оригинальная среда
+
+1. Python 3.6+.
+2. Anaconda.
+3. Visual Studio 2019.
+4. Зависимости: `scipy`, `pygame`, `keyboard`, `glob`, `cv2`, `dlib`, `PIL`, `pincle`, `numpy`, `sklearn`, `csv`, `CMake`, `opencv-contrib-python`, `opencv-python`, `Pillow`, `chardet`.
+5. Историческая точка запуска: `Indefication_4.py` в Visual Studio, без отладки.
+
+Эта среда сохранена только для археологии/воспроизводимости. Не используйте её для production MVM.
 
 ---
 
@@ -41,9 +31,10 @@ scipy, pygame, keyboard, glob, cv2, dlib, PIL, pincle, numpy, sklearn, csv, cv2,
 | 4 | `4_identification.py` | Рантайм: Face ID + эмоции + аудио-фидбек |
 
 ### Технологии v1
+
 - **Детектор:** Haar Cascade (OpenCV)
 - **Лица:** dlib HOG + ResNet 128d
 - **Эмоции:** sklearn SVM на 68 точках лица
 - **Аудио:** pygame mixer
 
-Запуск: `bash run.sh` (требует venv с зависимостями из `requirements.txt`)
+Исторический запуск: `bash run.sh` (требует окружение с зависимостями из `requirements.txt`).

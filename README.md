@@ -2,137 +2,203 @@
 
 # MVM — Machine Vision Module
 
-**Structured Decomposed Agentic Vision** — локальный модуль зрения: камера →
-**метрический 3D scene-graph** каждый кадр (не VLM). Ансамбль независимых микро-агентов вместо
-одной end-to-end модели. **Два потребителя:** LLM-агент (pull-модель/MCP) и накопительная
-**Dataset Factory** (структурированная память для обучения). CPU-first, $0, приватно, интерпретируемо.
+### Зрение, на которое может опираться остальная система
+
+**MVM превращает поток с камеры в честную, долговременную и проверяемую модель видимого мира.**
+
+Локально · CPU-first · Rust hot path · $0 runtime · privacy-first · evidence-backed
 
 ![release](https://img.shields.io/github/v/release/howadX/Machine-Vision-Module?label=release&color=8A2BE2)
-![phase](https://img.shields.io/badge/phase-16.7%20(Semantic%20Session%20Log)-brightgreen)
-![tests](https://img.shields.io/badge/tests-689%20green-brightgreen)
-![crates](https://img.shields.io/badge/crates-13-informational)
-![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
-![rust](https://img.shields.io/badge/rust-edition%202024-orange)
+![status](https://img.shields.io/badge/status-v0.4.0%20%7C%20Visual%20Cortex%20closed-brightgreen)
+![runtime](https://img.shields.io/badge/runtime-local%20CPU%20%2F%20%240-success)
 ![license](https://img.shields.io/badge/license-Apache--2.0-blue)
 
 </div>
 
 ---
 
-## Установка
+## Зачем нужен MVM
+
+Роботу или агенту недостаточно получать отдельные ответы на вопрос «что сейчас в кадре». Ему нужна **устойчивая зрительная картина мира**, к которой можно вернуться:
+
+- кто и какие объекты были видны;
+- где они находились и как были связаны;
+- что менялось со временем;
+- что система действительно наблюдала, а что лишь предполагает;
+- каких данных всё ещё не хватает.
+
+**Цель MVM** — стать настолько глубоким и контекстным зрением, чтобы остальные модули могли использовать его как свою **долговременную визуальную память** и **evidence-backed модель окружающего мира**.
+
+```text
+камера + доступный sensor/body context
+        ↓
+специализированные visual experts
+        ↓
+canonical visual facts о сцене
+        ↓
+долговременная semantic history + bounded visual world model
+        ↓
+Visual Cortex: память, прогноз, неопределённость, внимание, affordance
+        ↓
+внешний агент / robot runtime принимает решения и действует
+```
+
+MVM не пытается быть всем роботом. Он **не** planner, controller, actuator interface, safety authority или универсальный VLM. Планирование задач, моторика, физическое действие, звук, тактильность и проприоцепция принадлежат внешним модулям. Зона ответственности MVM — зрительные факты и их честная интерпретация.
+
+## Что MVM делает сейчас
+
+MVM — ансамбль небольших независимых vision experts, а не одна непрозрачная end-to-end модель.
+
+| Слой | Что даёт |
+|---|---|
+| **Human** | тело как главная сущность, pose, лицо, identity, emotion, hands |
+| **Scene** | объекты, tracking, optional instance masks |
+| **Depth / geometry** | camera-relative depth и метрический 3D context, когда его поддерживают evidence и calibration |
+| **Fusion** | immutable scene facts: entities, relations, zones, activities, events |
+| **Semantic Session Log** | durable `labels.jsonl`: текстовая история наблюдений по умолчанию |
+| **Dataset Factory** | `--record` добавляет RGB/depth/masks для обучения и data-quality gates |
+| **Visual Cortex** | evidence-linked memory, 1s/2s forecast, uncertainty, attention, affordance и advisory re-observation |
+
+Главное правило MVM: **неизвестное остаётся неизвестным**. `unknown`, `withheld`, stale result или отсутствие детекции никогда не трактуются как отрицательный факт.
+
+## Быстрый старт
+
+### Установить release-бинарь
+
+Linux `x86_64` и `aarch64`:
 
 ```bash
-# одна команда (GitHub Releases, linux x86_64/aarch64)
 curl -fsSL https://raw.githubusercontent.com/howadX/Machine-Vision-Module/master/install.sh | sh
 
-mvm setup           # дотянет модели (sha256-verified, HTTP range-resume)
-mvm run             # живой mesh: камера + все агенты → снимок сцены + text-only сессия (16.7)
-mvm snapshot        # что происходит прямо сейчас — одной командой
-
-# Dataset Factory (фаза 16/16.7) — сессии на диске
-mvm run --record    # доростить сессию до пикселей (RGB+depth+masks+labels, privacy-safe)
-mvm dataset list    # что накоплено (info / stats / check / prune / export)
-mvm dataset check   # data-quality гейт (целостность/privacy/баланс, CI exit-code)
+mvm setup    # скачать ONNX-модели с SHA-256 проверкой
+mvm doctor   # проверить камеру, модели, конфиг и data directory
 ```
 
-Полная инструкция, CLI-дерево, выходной JSON-контракт и honesty-семантика — **[`mvm/README.md`](mvm/README.md)**.
-Agent skills: **[`mvm-vision`](mvm/skills/mvm-vision/SKILL.md)** для pull-модели/MCP и
-**[`mvm-dataset`](mvm/skills/mvm-dataset/SKILL.md)** для записи и обслуживания сессий.
+Если репозиторий закрыт и анонимная загрузка недоступна, установщик автоматически использует аутентифицированный `gh release download`, если GitHub CLI уже настроен.
 
-## Что это
+### Или собрать из исходников
 
-MVM превращает видеопоток в граф: **узлы-сущности** с метрической 3D-позицией (origin = камера,
-pinhole-геометрия от known-size априоров — не depth-сеть) и **рёбра-отношения** (близость,
-пересечение, зоны). Несущая сущность — **тело** (body-primary): человек трекается по телу, а
-лицо, identity и эмоция — это его *атрибуты*, которые переживают отворот головы и окклюзию.
+```bash
+git clone https://github.com/howadX/Machine-Vision-Module.git
+cd Machine-Vision-Module/mvm
+cargo build --release
 
-Каждый сигнал несёт числовую уверенность, а неопределённость выражается **явно** (⚠️), а не
-замалчивается — модуль скорее скажет «поза withheld, видна только верхняя часть», чем угадает.
-
-Этот же граф питает **двух потребителей**. Первый — **LLM-агент**: pull-модель `snapshot`/`recap`/
-`inspect` через MCP, read-only, поверх durable **text-only семантической сессии**, которую `mvm run` пишет
-по умолчанию (фаза 16.7). Второй (фаза 16) — **Dataset Factory**: `mvm run --record` доращивает ту же
-сессию до полного пиксельного датасета (Canonical Observation + provenance + статусы честности,
-`withheld` ≠ negative) и отдаёт её Python-экспортёрам (PyTorch/TFRecord/WebDataset). Это **память системы** —
-не архив кадров, а компилятор наблюдений.
-
-## Архитектура: агенты и потоки данных
-
-```mermaid
-flowchart TD
-    CAM(["📷 Камера /dev/video0<br/>нативный v4l2 MJPG mmap, eye-level ~175см<br/>ноль Python"])
-
-    subgraph MESH["Agent Mesh — std::thread, mvm run"]
-        direction LR
-        subgraph HUMAN["HumanAgent · тело (body-primary)"]
-            direction TB
-            POSE["BlazePose 33lm → RandomForest<br/>standing / sitting / lying + torso-3D"]
-            FACE["YuNet → лицо, матч по носу тела"]
-            ID["SFace → identity (галерея)"]
-            EMO["EmotiEffLib → emotion×8 + entropy"]
-            HANDS["Handpose 21lm/рука → жесты"]
-        end
-        SCENE["SceneAgent<br/>YOLO26n объекты + YOLO-seg маски (opt-in)"]
-        DEPTH["DepthAgent<br/>Depth-Anything-V2 → относит. карта"]
-    end
-
-    FUSION["FusionAgent<br/>build_scene: 3D-граф + зоны · activity-FSM · anomaly v2"]
-
-    subgraph C1["Потребитель 1 — LLM (pull-модель)"]
-        OUT1["current_state.md · snapshot"]
-        OUT3["journal.md · rolling recap"]
-        MCP["MCP stdio · serve --mcp"]
-    end
-    subgraph C2["Потребитель 2 — Dataset Factory (фаза 16, mvm-dataset)"]
-        REC["mvm run --record<br/>sessions/: frames + depth + masks + labels.jsonl"]
-        GATE["mvm dataset check<br/>+ validate.py · quality-гейт"]
-        EXP["Python-экспортёры<br/>PyTorch / TFRecord / WebDataset"]
-    end
-    LLM(["🤖 LLM-агент<br/>Hermes / Claude Code / Alter"])
-
-    CAM --> HUMAN
-    CAM --> SCENE
-    CAM --> DEPTH
-    HUMAN --> FUSION
-    SCENE --> FUSION
-    DEPTH --> FUSION
-    FUSION --> OUT1 & OUT3 & MCP
-    FUSION -->|WorldState-снимок| REC
-    REC --> GATE --> EXP
-    MCP -->|snapshot → recap → inspect| LLM
+./target/release/mvm setup
+./target/release/mvm doctor
 ```
 
-Пословный разбор каждого агента, крейтов, кадансов и Scene-JSON контракта — **[`mvm/README.md`](mvm/README.md)**.
+## Первый запуск
 
-## Раскладка репозитория
+```bash
+# запустить production vision pipeline; работает до Ctrl-C
+mvm run
 
-| Путь | Что | Статус |
-|------|-----|--------|
-| **`mvm/`** | **Rust-продакшн** — 13 крейтов (+`mvm-dataset`), ансамбль агентов, бинарь `mvm` | ★ основной; фаза 16 (Dataset Factory) 16.0–16.6-A + фаза 16.7 (Semantic Session Log) закрыты, 689 тестов |
-| `install.sh` | `curl \| sh`-установщик (детект ОС/арх, sha256-verify) | рабочий |
-| `core/`, `tools/` | Python гибрид-**bridge** (`mvm_bridge.py`) для пути `--native` (тесты/дебаг) | вспом. |
-| `models/` | Веса ONNX/MediaPipe; крупные — gitignored, тянутся `mvm setup` | вспом. |
-| **`prototype/pipeline/dataset/`** | Python-экспортёры Dataset Factory (PyTorch/TFRecord/WebDataset) + `validate.py` | фаза 16 |
-| **`prototype/`** | Python-прототип (архив): `sight.py`, `pipeline/`, `data/`, `legacy/` | заморожен |
+# в другом терминале — прочитать canonical facts о сцене сейчас
+mvm snapshot
 
-**Релизы:** `v0.1.0` (фаза 14, Продукт) и `v0.3.0` (фаза 16, Dataset Factory) опубликованы на GitHub
-Releases. `v0.2.0` (фаза 15, ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась).
+# посмотреть отдельный cognitive view: что требует внимания
+mvm cortex --view attention
+```
 
-История: проект прошёл путь Python-прототип → полная Rust-переписка. Python-линия сохранена на
-ветках `python-prototype`/`3d-workspace` и теге `backup/master-pre-merge`.
+`mvm run` автоматически ищет камеру, запускает Rust AgentMesh и пишет артефакты в `~/.local/share/mvm` (путь настраивается через `~/.config/mvm/config.toml`).
 
-## Roadmap (кратко)
+## Как пользоваться зрительной памятью
 
-Фазы 1–14 закрыты: стабилизация → metric 3D scene-graph → pure-Rust hot-path → body-primary
-Agent Mesh → tracker (Hungarian) → full data collection + segmentation → fusion-полировка
-(activity-FSM, anomaly v2) → LLM-render (snapshot/recap/inspect, MCP) → agent-tools polish →
-**Продукт** (v0.1.0: auto-setup моделей, watched-галерея, `mvm service`, `mvm mcp install`, дистрибуция).
-**Фаза 15 (v0.2.0) — ML Refactor:** lab-first пересмотр всей ML-логики (frozen bench, паспорт данных/кода) —
-2D-GRIP поза, E2 fall (AUROC≈1.0), ⭐ SFace align +19.5 п.п., footprint −79%. **Фаза 16 (v0.3.0) — Dataset
-Factory:** двухпотребительская архитектура, крейт `mvm-dataset`, `mvm run --record`, экспортёры, quality-гейты
-(16.6-A ✅); осталось 16.6-B (hard-example mining). Детальный статус — **[`mvm/CLAUDE.md`](mvm/CLAUDE.md)**.
+Начинайте с самого дешёвого и надёжного слоя, затем углубляйтесь только когда это нужно:
+
+```bash
+mvm snapshot                         # Что наблюдается сейчас: canonical facts
+mvm cortex --view uncertainty         # Чего MVM не знает и почему
+mvm cortex --view forecast            # Короткий evidence-backed прогноз
+mvm recap --last 10m                  # Что происходило за последние 10 минут
+mvm inspect --id 12                   # Проверить evidence вокруг конкретного track
+```
+
+### Что является источником истины
+
+| Артефакт | Роль |
+|---|---|
+| `current_state.md` | атомарный снимок **canonical facts** текущей сцены |
+| `labels.jsonl` | единственная durable text-only semantic history |
+| `current_cortex.json` | текущая cognitive интерпретация: не facts и не долговременная история |
+
+Cortex не переписывает `FusedSceneFrame`: прогноз, attention, affordance и advisory request всегда остаются отдельными от наблюдённых фактов.
+
+## Запись данных для обучения
+
+По умолчанию `mvm run` сохраняет только text-only semantic session — без кадров. Это и есть безопасная долговременная визуальная память.
+
+Если нужны пиксели для обучения или отладки, включите запись:
+
+```bash
+mvm run --record                      # RGB + depth + masks + labels, privacy-safe default
+mvm dataset list                      # список сессий
+mvm dataset check --strict            # integrity/privacy/quality gate
+```
+
+Privacy modes:
+
+- `safe` — по умолчанию, размывает лица анонимных людей;
+- `anonymous` — размывает все лица;
+- `full` — не размывает лица.
+
+```bash
+mvm run --record --privacy anonymous
+```
+
+Python exporters для PyTorch, TFRecord и WebDataset находятся в [`prototype/pipeline/dataset/`](prototype/pipeline/dataset/), но production hot path остаётся полностью Rust.
+
+## Подключить LLM через MCP
+
+MVM предоставляет read-only инструменты для LLM-host:
+
+```bash
+mvm serve --mcp                  # MCP над уже работающим producer
+mvm serve --mcp --with-camera    # producer и MCP в одном процессе
+```
+
+Инструменты MCP: `mvm_snapshot`, `mvm_cortex`, `mvm_recap`, `mvm_inspect`.
+
+Рекомендуемый порядок для агента:
+
+```text
+snapshot → cortex / recap → inspect только для проверки конкретного утверждения
+```
+
+## Архитектурные принципы
+
+1. **Honesty-first.** Facts, memories, forecasts и hypotheses не смешиваются. Неизвестность видима пользователю и downstream-модулям.
+2. **Evidence before interpretation.** У каждого существенного утверждения есть source, timestamp, freshness и confidence.
+3. **Immutable canonical facts.** Fusion публикует facts; Dataset Factory, memory и Cortex читают их, но не переписывают.
+4. **CPU-first, local-first.** Без обязательных GPU, cloud API или утечки пикселей/embeddings.
+5. **Минимализм.** Fusion, tracking, uncertainty и spatial reasoning строятся на простой арифметике и bounded state поверх уже доступных evidence.
+6. **Rust в hot path.** Python сохранён для прототипов, bridge и offline ML/export workflows.
+
+## Куда развивается проект
+
+- **Phase 18 — Visual Cortex:** закрыта в `v0.4.0`. MVM уже умеет строить evidence-linked cognitive view поверх canonical facts.
+- **Phase 19 — Visual Spatial Substrate:** approved следующий этап. Цель — развить object-centric scene graph в graph-first camera-/agent-relative spatial world model: regions, surfaces, visibility, occupancy и bounded temporal visual memory.
+
+При этом MVM не будет выдавать `free`, `passable` или `safe` из одного отсутствующего detector output. Для spatial/robotic claims нужны положительные evidence, calibration и явно заданный reference frame.
+
+## Репозиторий
+
+| Путь | Назначение |
+|---|---|
+| [`mvm/`](mvm/) | Production Rust workspace, бинарь `mvm`, полный CLI и архитектурные детали |
+| [`mvm/skills/`](mvm/skills/) | Canonical agent skills: visual pull/MCP и Dataset Factory |
+| [`mvm/benchmark/`](mvm/benchmark/) | Replay и Visual QA contracts для Cortex |
+| [`mvm/docs/phase-19-plan.md`](mvm/docs/phase-19-plan.md) | План следующего spatial substrate этапа |
+| [`prototype/`](prototype/) | Исторический Python prototype и offline research/export tools |
+| [`kaggle-portfolio/`](kaggle-portfolio/) | Воспроизводимая ML laboratory и связь experiments ↔ production |
+
+## Подробнее
+
+- Полный CLI, модельный стек и технические контракты: [`mvm/README.md`](mvm/README.md)
+- Visual pull-model / MCP: [`mvm/skills/mvm-vision/SKILL.md`](mvm/skills/mvm-vision/SKILL.md)
+- Запись, privacy, quality gates и export: [`mvm/skills/mvm-dataset/SKILL.md`](mvm/skills/mvm-dataset/SKILL.md)
+- Текущие архитектурные правила: [`AGENTS.md`](AGENTS.md)
 
 ## Лицензия
 
-Apache-2.0 (см. [`LICENSE`](LICENSE)). Модели — под своими лицензиями (YOLO26n/YOLO-seg — AGPL-3.0),
-подробности — таблица агентов в `mvm/README.md`.
+Apache-2.0. ONNX-модели распространяются по собственным лицензиям.

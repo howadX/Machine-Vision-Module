@@ -1,5 +1,9 @@
 # MVM Visual QA Benchmark
 
+This benchmark is part of MVM's visual subsystem: it evaluates evidence-backed
+facts, bounded visual memory and advisory Cortex behavior. It is not a robot
+controller, safety case, planner benchmark, or open-world VLM evaluation.
+
 This directory is the executable evaluation contract for phase 18. It is not a
 runtime history store and never competes with Dataset Factory `labels.jsonl`.
 
@@ -8,7 +12,7 @@ runtime history store and never competes with Dataset Factory `labels.jsonl`.
 - `scenarios/manifest.json` is the canonical scenario index.
 - `scenarios/<id>.json` contains replay inputs and expected observable claims.
 - `questions/temporal-v1.json` defines deterministic QA prompts and answer keys.
-- `schemas/` pins the JSON fixture envelopes for facts and future Cortex output.
+- `schemas/` pins the JSON fixture envelopes for facts and Cortex output.
 - `baselines/v0.3.0.md` records the pre-Cortex baseline without inventing
   unavailable measurements.
 - `eval/` documents the evaluator contract.
@@ -35,10 +39,9 @@ Fixtures 020–022 are the closure loops: each requires
 `Accepted → Dispatched → Resolved` only after a newer stamped observation.
 Neither the request nor its resolution can rewrite canonical facts.
 
-The bounded live-camera result for commit `0159c8a5` is recorded in
+Phase 18 is closed. The bounded live-camera result for commit `0159c8a5` is recorded in
 `baselines/18.8b-live-2026-08-05.md`. It confirms real Scene/Depth permit
-execution and zero agent errors, while leaving the controlled ≤5% A/B throughput
-gate explicitly open for phase 18.8b.1.
+execution and zero agent errors, while leaving the controlled ≤5% A/B throughput gate for phase 18.8b.1.
 
 The completed 18.8b.1 adaptive scheduling spike is recorded in
 `baselines/18.8b.1-adaptive-mesh-2026-08-05.md`. It compares fixed, Scene-only,
