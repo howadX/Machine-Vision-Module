@@ -39,6 +39,9 @@ pub struct CameraSection {
     pub device: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// Explicit mount state used by Phase 19.1. `false` never means moving; it
+    /// means that zero optical flow lacks authority to assert a fixed camera.
+    pub fixed: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -75,6 +78,7 @@ pub struct ProductConfig {
     pub camera_device: String,
     pub camera_width: u32,
     pub camera_height: u32,
+    pub camera_fixed: bool,
     pub data_dir: PathBuf,
     /// Defaults to `<data_dir>/current_state.md`.
     pub state_path: PathBuf,
@@ -139,6 +143,10 @@ pub(crate) fn resolve(
         .and_then(|v| v.parse().ok())
         .or(file.camera.height)
         .unwrap_or(720);
+    let camera_fixed = pick("MVM_CAMERA_FIXED", None)
+        .and_then(|value| value.parse().ok())
+        .or(file.camera.fixed)
+        .unwrap_or(false);
 
     let data_dir = pick("MVM_DATA_DIR", file.output.data_dir.as_ref())
         .map(|v| expand_tilde(&v, &home))
@@ -177,6 +185,7 @@ pub(crate) fn resolve(
         camera_device,
         camera_width,
         camera_height,
+        camera_fixed,
         data_dir,
         state_path,
         models_dir,
@@ -242,6 +251,7 @@ mod tests {
             device = "/dev/video2"
             width = 640
             height = 480
+            fixed = true
 
             [output]
             data_dir = "~/mydata"
@@ -260,6 +270,7 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.camera.device.as_deref(), Some("/dev/video2"));
         assert_eq!(cfg.camera.width, Some(640));
+        assert_eq!(cfg.camera.fixed, Some(true));
         assert_eq!(cfg.output.data_dir.as_deref(), Some("~/mydata"));
         assert_eq!(cfg.models.dir.as_deref(), Some("~/models"));
         assert_eq!(cfg.gallery.dir.as_deref(), Some("~/faces"));
@@ -285,6 +296,7 @@ mod tests {
         let c = resolve(None, &env, NOTHING_EXISTS);
         assert_eq!(c.camera_device, "auto");
         assert_eq!((c.camera_width, c.camera_height), (1280, 720));
+        assert!(!c.camera_fixed);
         assert_eq!(c.data_dir, PathBuf::from("/home/u/.local/share/mvm"));
         assert_eq!(
             c.state_path,
@@ -326,10 +338,12 @@ mod tests {
             ("HOME", "/home/u"),
             ("MVM_CAMERA_DEVICE", "/dev/video9"),
             ("MVM_MODELS_DIR", "/env/models"),
+            ("MVM_CAMERA_FIXED", "true"),
         ]);
         let c = resolve(Some(file), &env, NOTHING_EXISTS);
         assert_eq!(c.camera_device, "/dev/video9");
         assert_eq!(c.models_dir, PathBuf::from("/env/models"));
+        assert!(c.camera_fixed);
     }
 
     #[test]

@@ -70,6 +70,12 @@ pub(crate) struct DepthObservationFrame {
     pub map: Arc<mvm_depth::DepthMap>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct MotionObservationFrame {
+    pub stamp: ObservationStamp,
+    pub camera_motion: mvm_core::canonical::SceneFact<mvm_core::canonical::RelativeCameraMotion>,
+}
+
 #[derive(Clone)]
 pub(crate) struct FrameEvidenceHandles {
     pub rgb: Arc<image::DynamicImage>,
@@ -87,6 +93,7 @@ pub(crate) struct FusedFramePacket {
 pub(crate) type HumanObservationBus = LatestValue<HumanObservationFrame>;
 pub(crate) type SceneObservationBus = LatestValue<SceneObservationFrame>;
 pub(crate) type DepthObservationBus = LatestValue<DepthObservationFrame>;
+pub(crate) type MotionObservationBus = LatestValue<MotionObservationFrame>;
 pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;
 /// Runtime output of the optional Cortex adapter. It is intentionally separate
 /// from canonical facts: Cortex publishes an interpretation, never a mutation.

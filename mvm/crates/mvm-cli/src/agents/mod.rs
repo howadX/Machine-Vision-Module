@@ -24,6 +24,7 @@ mod fusion;
 #[cfg(test)]
 mod golden;
 mod human;
+mod motion;
 mod observations;
 mod policy;
 mod scene;
@@ -35,11 +36,12 @@ pub(crate) use dataset_writer::DatasetWriterAgent;
 pub(crate) use depth::DepthAgent;
 pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
+pub(crate) use motion::MotionAgent;
 pub(crate) use observations::{
     AttentionPolicyBus, CortexFrameBus, DepthObservationBus, DepthObservationFrame,
     FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
-    HumanObservationFrame, ObservationStamp, PolicyOutcomeBus, SceneObservationBus,
-    SceneObservationFrame,
+    HumanObservationFrame, MotionObservationBus, MotionObservationFrame, ObservationStamp,
+    PolicyOutcomeBus, SceneObservationBus, SceneObservationFrame,
 };
 pub(crate) use policy::{
     DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,

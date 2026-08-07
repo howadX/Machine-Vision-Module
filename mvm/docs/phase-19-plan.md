@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
-> **Версия:** 0.3 (7 августа 2026)
-> **Статус:** 19.0 ✅ закрыта; 19.1–19.6 approved как последующие отдельные slices; графовая архитектура утверждена как основа spatial substrate
+> **Версия:** 0.4 (7 августа 2026)
+> **Статус:** 19.0–19.1 ✅ закрыты; 19.2–19.6 approved как последующие отдельные slices; графовая архитектура утверждена как основа spatial substrate
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -307,6 +307,18 @@ mvm/docs/phase-19-plan.md
 
 ### 19.1 — Motion Field + Camera-State Spike
 
+**Статус:** ✅ закрыта 7 августа 2026 г. Выбран dependency-free classical sparse block matcher
+на 160×120 analysis field и включён отдельным `MotionAgent` в production AgentMesh. Stamped
+observation попадает в additive `SpatialScene.camera_motion` только через Fusion; Cortex остаётся
+read-only. Нулевой flow утверждает `stationary_configured` только при явном `[camera].fixed = true`;
+без него результат `withheld/insufficient_parallax`. Frame gaps, low texture/blur, dynamic-scene
+dominance и odometry conflict также fail closed.
+
+Synthetic decision gate: 6/6 обязательных outcomes, labelled flow EPE `0.0 px`, static-background
+consensus `1.0`, false ego-motion rate `0.0`, release CPU p50 `0.705 ms`, p95 `0.980 ms` при бюджете
+`50 ms`. Новый ONNX/model dependency не добавлен. Артефакты —
+`benchmark/visual-spatial/motion-19.1/`.
+
 **Goal:** prove whether optical flow/static-background consensus can yield useful camera-motion evidence within CPU budget before committing to a production expert.
 
 **Scope:**
@@ -492,7 +504,7 @@ Phase 18 closed
   ↓
 19.0 spatial contract + replay baseline ✅
   ↓
-19.1 motion/camera-state spike ─┐
+19.1 motion/camera-state spike ✅ ─┐
                                 ├→ 19.2 semantic/panoptic surfaces
                                 ↓
                        19.3 occupancy/visibility
@@ -506,7 +518,9 @@ Phase 18 closed
                          benchmark + live validation
 ```
 
-`19.1` is a spike/decision gate, not automatic commitment to an implementation. `19.2` can research/select an expert while 19.1 is measured, but no shared production contract beyond 19.0 is changed without its evidence.
+`19.1` closed its spike/decision gate by selecting the classical implementation; the decision does
+not authorize world pose, persistent mapping or semantic surfaces. `19.2` remains a separate gated
+expert-selection slice.
 
 ---
 

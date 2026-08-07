@@ -1,0 +1,11 @@
+{
+  "fixture_version": "19.1.0",
+  "scenarios": [
+    {"id": "mf001", "name": "static_room_camera_pan", "expected": "image_translation", "labelled_flow_px": [3.0, -2.0]},
+    {"id": "mf002", "name": "moving_person_fixed_room", "expected": "stationary_configured"},
+    {"id": "mf003", "name": "moving_object_fixed_room", "expected": "stationary_configured"},
+    {"id": "mf004", "name": "blur_low_texture", "expected": "withheld", "reason": "low_texture"},
+    {"id": "mf005", "name": "dropped_frames", "expected": "withheld", "reason": "frame_gap"},
+    {"id": "mf006", "name": "dynamic_crowd", "expected": "withheld", "reason": "dynamic_scene_dominance"}
+  ]
+}

@@ -246,9 +246,16 @@ fn reason_for_fact<T>(fact: &SceneFact<T>) -> ReasonCode {
         Some(FactReason::Occluded) => ReasonCode::Occluded,
         Some(FactReason::InsufficientCoverage) => ReasonCode::InsufficientEvidence,
         Some(FactReason::Uncalibrated) => ReasonCode::Uncalibrated,
-        Some(FactReason::LowConfidence | FactReason::OutOfDistribution) => {
-            ReasonCode::LowConfidence
-        }
+        Some(
+            FactReason::LowConfidence
+            | FactReason::OutOfDistribution
+            | FactReason::LowTexture
+            | FactReason::MotionBlur
+            | FactReason::DynamicSceneDominance
+            | FactReason::InsufficientParallax,
+        ) => ReasonCode::LowConfidence,
+        Some(FactReason::FrameGap) => ReasonCode::MissingSource,
+        Some(FactReason::OdometryConflict) => ReasonCode::Other("odometry_conflict".to_owned()),
         Some(FactReason::MissingSource) => ReasonCode::MissingSource,
         Some(FactReason::Other(reason)) => ReasonCode::Other(reason.clone()),
         None if matches!(fact.status, FactStatus::Remembered) => ReasonCode::RememberedSource,

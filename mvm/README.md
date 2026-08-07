@@ -7,7 +7,7 @@
 Ансамбль маленьких специалистов вместо одной end-to-end модели: камера → **метрический 3D scene-graph каждый кадр**, с confidence на каждый сигнал. CPU, $0, приватно, интерпретируемо. Факты питают LLM/MCP и **Dataset Factory**; поверх них Phase 18 добавляет evidence-linked Visual Cortex без mutation facts. Следующий слой — bounded visual spatial world model Phase 19.
 
 ![version](https://img.shields.io/badge/version-0.4.0-8A2BE2)
-![phase](https://img.shields.io/badge/phase-19.0%20Spatial%20Contract-8A2BE2)
+![phase](https://img.shields.io/badge/phase-19.1%20Motion%20Field-8A2BE2)
 ![tests](https://img.shields.io/badge/tests-workspace%20green-brightgreen)
 ![crates](https://img.shields.io/badge/crates-15-informational)
 ![runtime](https://img.shields.io/badge/runtime-CPU%20%2F%20%240-success)
@@ -55,7 +55,7 @@ Active: seated_at_workstation · using_object(mouse)
 
 MVM — **только visual subsystem**: `visual evidence → canonical facts → bounded visual memory/world model → Cortex interpretation → внешний robot runtime`. Он не является полным robot brain, planner, controller, actuator interface или safety authority. Physical action, task planning, audio/tactile/proprioception и принятие решений принадлежат внешним модулям.
 
-`FusedSceneFrame` остаётся immutable authority canonical facts. `mvm-cortex` только интерпретирует evidence и публикует forecast, uncertainty, attention, affordance и advisory observation requests; он не переписывает facts и не подтверждает гипотезы отсутствием ответа. Phase 19.0 уже зафиксировала graph-first Visual Spatial Substrate contract; следующие runtime slices остаются gated.
+`FusedSceneFrame` остаётся immutable authority canonical facts. `mvm-cortex` только интерпретирует evidence и публикует forecast, uncertainty, attention, affordance и advisory observation requests; он не переписывает facts и не подтверждает гипотезы отсутствием ответа. Phase 19.0 зафиксировала graph-first contract, а 19.1 добавила stamped camera-local motion evidence через Fusion; semantic/occupancy slices остаются gated.
 
 Это не картинка и не свободный текст от VLM — это **детерминированный рендер** графа сцены: кто, в каком состоянии, где (в метрах), что делает, и **что модуль честно не смог подтвердить** (`⚠️`).
 
@@ -353,7 +353,7 @@ cargo xtask bundle             # → dist/mvm (embed мелких моделей
 ./target/release/mvm --native --once --dump-json
 ```
 
-**Конфиг:** `~/.config/mvm/config.toml` (`[camera] device`, `[output] data_dir`, `[models] dir`,
+**Конфиг:** `~/.config/mvm/config.toml` (`[camera] device/fixed`, `[output] data_dir`, `[models] dir`,
 `[cadence] snapshot_ms`) + env `MVM_*`; флаги CLI переопределяют (фаза 14.0).
 
 **Камера:** `run` использует прямой v4l2 MJPG mmap через шов `CameraSource` (`device = "auto"` —
@@ -393,7 +393,8 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **17** | ✅ | **Canonical MVM Agent Skills** — repo-canonical [`mvm-vision`](skills/mvm-vision/SKILL.md) + [`mvm-dataset`](skills/mvm-dataset/SKILL.md), CI gate, portability и Hermes integration завершены. Детали — [`docs/phase-17-plan.md`](docs/phase-17-plan.md) |
 | **18 → v0.4.0** | ✅ | **Visual Cortex Layer** — immutable canonical facts + `mvm-cortex`: events, memory, 1s/2s forecast, self-model/uncertainty, affordance, attention, bounded advisory re-observation, `mvm cortex`/MCP и benchmark closure. 6/6 replay claims improve, honesty regressions = 0, adaptive runtime +0.31% ≤5%. Детали — [`docs/phase-18-plan.md`](docs/phase-18-plan.md) |
 | **19.0** | ✅ contract/replay | **Visual Spatial Substrate foundation** — typed camera-/agent-relative spatial facts, calibration gates, bounded `GraphDelta`, append-only evidence links и 10 deterministic honesty-first fixtures. Runtime experts и spatial memory остаются следующими отдельными slices. Детали — [`docs/phase-19-plan.md`](docs/phase-19-plan.md) |
-| **19.1–19.6** | approved / gated | Motion/camera-state spike → semantic surfaces → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. Каждый slice требует собственного evidence gate. |
+| **19.1** | ✅ runtime/replay | **Motion Field + Camera State** — dependency-free sparse block matcher, static/dynamic consensus, explicit fixed-camera authority, stamped Fusion publication и fail-closed blur/gap/crowd/odometry gates. |
+| **19.2–19.6** | approved / gated | Semantic surfaces → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. Каждый slice требует собственного evidence gate. |
 
 ---
 

@@ -2,9 +2,10 @@ use mvm_core::canonical::{
     CameraIntrinsics, CameraToBodyExtrinsics, CellOccupancyFact, EntityKey, FactEvidenceRef,
     FactReason, FactSource, FactStatus, FrameId, GraphDelta, GraphEdge, GraphEdgeId, GraphEdgeKind,
     GraphNode, GraphNodeId, GraphOperation, GraphProjection, ObservationId, OccupancyCell,
-    OccupancyState, ReferenceFrame, SceneFact, SourceStamp, SpatialCalibration,
-    SpatialRelationFact, SpatialRelationKind, SpatialScene, SpatialShardId, SurfaceFact,
-    SurfaceGeometry, SurfaceId, SurfaceKind, TrackDomain, VisibilityFact, VisibilityState,
+    OccupancyState, ReferenceFrame, RelativeCameraMotion, RelativeCameraMotionKind, SceneFact,
+    SourceStamp, SpatialCalibration, SpatialRelationFact, SpatialRelationKind, SpatialScene,
+    SpatialShardId, SurfaceFact, SurfaceGeometry, SurfaceId, SurfaceKind, TrackDomain,
+    VisibilityFact, VisibilityState,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -16,6 +17,42 @@ fn evidence(source: FactSource, frame_id: u64) -> FactEvidenceRef {
         entity: None,
         event_seq: None,
     }
+}
+
+#[test]
+fn stationary_camera_claim_requires_fresh_motion_and_camera_state_evidence() {
+    let frame_id = 3;
+    let camera_motion = SceneFact::claimed(
+        FactStatus::Derived,
+        RelativeCameraMotion {
+            kind: RelativeCameraMotionKind::StationaryConfigured,
+            reference_frame: ReferenceFrame::CameraLocal,
+            displacement_px: [0.0, 0.0],
+            static_background_ratio: 0.9,
+            candidate_count: 100,
+            inlier_count: 90,
+        },
+        0.9,
+        vec![evidence(FactSource::Motion, frame_id)],
+    )
+    .unwrap();
+    let mut scene = SpatialScene {
+        camera_motion,
+        ..Default::default()
+    };
+    let motion = SourceStamp::at_frame(FactSource::Motion, frame_id, 1_000);
+    assert!(
+        scene
+            .validate("run", std::slice::from_ref(&motion))
+            .is_err()
+    );
+
+    scene
+        .camera_motion
+        .evidence
+        .push(evidence(FactSource::CameraState, frame_id));
+    let camera_state = SourceStamp::at_frame(FactSource::CameraState, frame_id, 1_000);
+    scene.validate("run", &[motion, camera_state]).unwrap();
 }
 
 fn claimed<T>(source: FactSource, frame_id: u64, value: T) -> SceneFact<T> {
@@ -171,6 +208,7 @@ fn spatial_scene_canonical_order_and_round_trip_are_deterministic() {
     let frame_id = 11;
     let mut scene = SpatialScene {
         calibration: calibration(frame_id),
+        camera_motion: SceneFact::unknown(FactReason::MissingSource),
         surfaces: vec![
             SurfaceFact {
                 id: SurfaceId::new("run", 2).unwrap(),

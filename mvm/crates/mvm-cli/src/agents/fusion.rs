@@ -10,8 +10,8 @@
 
 use crate::agents::{
     DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
-    FusedFramePacket, HumanObservationBus, HumanObservationFrame, SceneObservationBus,
-    SceneObservationFrame,
+    FusedFramePacket, HumanObservationBus, HumanObservationFrame, MotionObservationBus,
+    MotionObservationFrame, SceneObservationBus, SceneObservationFrame,
 };
 use mvm_core::{
     Activity, ActivityEvent, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState,
@@ -26,6 +26,7 @@ pub(crate) struct FusionAgent {
     human_observations: HumanObservationBus,
     scene_observations: SceneObservationBus,
     depth_observations: DepthObservationBus,
+    motion_observations: MotionObservationBus,
     fused_frames: FusedFrameBus,
     canonical: CanonicalFusion,
     run_id: String,
@@ -43,11 +44,13 @@ pub(crate) struct FusionAgent {
 }
 
 impl FusionAgent {
+    #[allow(clippy::too_many_arguments)] // typed buses remain explicit at the agent boundary
     pub(crate) fn new(
         config: mvm_core::Config,
         human_observations: HumanObservationBus,
         scene_observations: SceneObservationBus,
         depth_observations: DepthObservationBus,
+        motion_observations: MotionObservationBus,
         fused_frames: FusedFrameBus,
         run_id: impl Into<String>,
         metrics: super::SchedulingMetrics,
@@ -59,6 +62,7 @@ impl FusionAgent {
             human_observations,
             scene_observations,
             depth_observations,
+            motion_observations,
             fused_frames,
             canonical: CanonicalFusion::new(run_id.clone()),
             run_id,
@@ -156,6 +160,10 @@ impl Agent for FusionAgent {
                         .age_at(frame.id)
                         .is_some_and(|age| age <= u64::from(self.config.depth_cadence.max(1)) * 2)
                 });
+                let motion = self
+                    .motion_observations
+                    .latest()
+                    .filter(|obs| obs.stamp.age_at(frame.id).is_some_and(|age| age <= 1));
 
                 let mut world = WorldState::new(frame.captured);
                 world.frame_id = frame.id;
@@ -202,6 +210,7 @@ impl Agent for FusionAgent {
                     human.as_ref(),
                     scene.as_ref(),
                     depth.as_ref(),
+                    motion.as_ref(),
                     self.config.object_cadence,
                     self.config.depth_cadence,
                 );
@@ -217,7 +226,20 @@ impl Agent for FusionAgent {
                     ended_activities: &ended,
                     anomaly_score: world.anomaly_score,
                 }) {
-                    Ok(scene_frame) => {
+                    Ok(mut scene_frame) => {
+                        scene_frame.spatial.camera_motion = motion.as_ref().map_or_else(
+                            || {
+                                mvm_core::canonical::SceneFact::unknown(
+                                    mvm_core::canonical::FactReason::MissingSource,
+                                )
+                            },
+                            |observation| observation.camera_motion.clone(),
+                        );
+                        scene_frame.canonicalize();
+                        if let Err(error) = scene_frame.validate() {
+                            eprintln!("  fusion: spatial motion contract error: {error}");
+                            continue;
+                        }
                         let mut compatibility =
                             (*scene_frame.compatibility_world_state(frame.captured)).clone();
                         // Preserve rich legacy-only evidence during the v0.4
@@ -264,16 +286,27 @@ fn unix_ms_now() -> i64 {
         .unwrap_or(0)
 }
 
+#[allow(clippy::too_many_arguments)] // source cadence and stamped buses are intentionally explicit
 fn source_stamps(
     fused_frame_id: u64,
     published_at_unix_ms: i64,
     human: Option<&HumanObservationFrame>,
     scene: Option<&SceneObservationFrame>,
     depth: Option<&DepthObservationFrame>,
+    motion: Option<&MotionObservationFrame>,
     object_cadence: u32,
     depth_cadence: u32,
 ) -> Vec<mvm_core::canonical::SourceStamp> {
     use mvm_core::canonical::{FactSource, SourceStamp};
+
+    let camera_state_frame = motion.and_then(|observation| {
+        observation
+            .camera_motion
+            .evidence
+            .iter()
+            .find(|evidence| evidence.source == FactSource::CameraState)
+            .map(|evidence| evidence.source_frame_id)
+    });
 
     let mut sources = vec![
         SourceStamp::at_frame(FactSource::Capture, fused_frame_id, published_at_unix_ms)
@@ -299,6 +332,25 @@ fn source_stamps(
             fused_frame_id,
             u64::from(depth_cadence.max(1)),
             u64::from(depth_cadence.max(1)) * 2,
+        ),
+        observation_source(
+            FactSource::Motion,
+            motion.map(|observation| &observation.stamp),
+            fused_frame_id,
+            1,
+            1,
+        ),
+        camera_state_frame.map_or_else(
+            || SourceStamp::unavailable(FactSource::CameraState),
+            |source_frame_id| {
+                SourceStamp::at_frame(
+                    FactSource::CameraState,
+                    source_frame_id,
+                    published_at_unix_ms,
+                )
+                .relative_to(fused_frame_id, 1, 1)
+                .unwrap_or_else(|_| SourceStamp::unavailable(FactSource::CameraState))
+            },
         ),
     ];
     sources.sort_by_key(|source| source.source);
@@ -747,6 +799,7 @@ mod tests {
             HumanObservationBus::new(),
             SceneObservationBus::new(),
             DepthObservationBus::new(),
+            MotionObservationBus::new(),
             FusedFrameBus::new(),
             "test-run",
             super::super::SchedulingMetrics::new(super::super::SchedulingMode::SceneAndDepth),

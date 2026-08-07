@@ -170,8 +170,50 @@ pub enum FactReason {
     MissingSource,
     Occluded,
     Uncalibrated,
+    LowTexture,
+    MotionBlur,
+    FrameGap,
+    DynamicSceneDominance,
+    InsufficientParallax,
+    OdometryConflict,
     Remembered,
     Other(String),
+}
+
+/// Image-plane camera motion supported by a pair of stamped RGB frames.
+/// This is deliberately relative and camera-local: it is not a world pose,
+/// odometry replacement, or claim that a zero-flow camera is physically fixed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelativeCameraMotionKind {
+    StationaryConfigured,
+    ImageTranslation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelativeCameraMotion {
+    pub kind: RelativeCameraMotionKind,
+    pub reference_frame: ReferenceFrame,
+    pub displacement_px: [f32; 2],
+    pub static_background_ratio: f32,
+    pub candidate_count: u32,
+    pub inlier_count: u32,
+}
+
+impl RelativeCameraMotion {
+    fn validate(&self) -> Result<(), CanonicalContractError> {
+        if self.reference_frame != ReferenceFrame::CameraLocal
+            || !self.displacement_px.iter().all(|value| value.is_finite())
+            || !self.static_background_ratio.is_finite()
+            || !(0.0..=1.0).contains(&self.static_background_ratio)
+            || self.inlier_count > self.candidate_count
+        {
+            return Err(CanonicalContractError::new(
+                "relative camera motion has invalid camera-local evidence",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Stable reference from a fact to the expert observation that supports it.
@@ -693,10 +735,14 @@ pub struct SpatialQuality {
     pub stale_sources: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpatialScene {
     #[serde(default)]
     pub calibration: SpatialCalibration,
+    /// Phase 19.1 relative camera-state evidence. Missing/withheld values never
+    /// imply a fixed camera or zero world motion.
+    #[serde(default = "unknown_camera_motion")]
+    pub camera_motion: SceneFact<RelativeCameraMotion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<SurfaceFact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -709,12 +755,28 @@ pub struct SpatialScene {
     pub quality: SpatialQuality,
 }
 
+impl Default for SpatialScene {
+    fn default() -> Self {
+        Self {
+            calibration: SpatialCalibration::default(),
+            camera_motion: unknown_camera_motion(),
+            surfaces: Vec::new(),
+            visibility: Vec::new(),
+            occupancy: Vec::new(),
+            relations: Vec::new(),
+            quality: SpatialQuality::default(),
+        }
+    }
+}
+
 impl SpatialScene {
     pub fn is_empty(&self) -> bool {
         self.surfaces.is_empty()
             && self.visibility.is_empty()
             && self.occupancy.is_empty()
             && self.relations.is_empty()
+            && self.camera_motion.status == FactStatus::Unknown
+            && self.camera_motion.reason == Some(FactReason::MissingSource)
             && !self.calibration.intrinsics.status.is_asserted()
             && !self.calibration.camera_to_body.status.is_asserted()
     }
@@ -746,6 +808,11 @@ impl SpatialScene {
         sources: &[SourceStamp],
     ) -> Result<(), CanonicalContractError> {
         self.calibration.validate(sources)?;
+        self.camera_motion.validate()?;
+        validate_camera_motion_evidence(&self.camera_motion, sources)?;
+        if let Some(motion) = &self.camera_motion.value {
+            motion.validate()?;
+        }
         for surface in &self.surfaces {
             surface.validate(run_id, &self.calibration, sources)?;
         }
@@ -767,19 +834,20 @@ impl SpatialScene {
         self.quality.visibility_count = saturating_u32(self.visibility.len());
         self.quality.occupancy_cell_count = saturating_u32(self.occupancy.len());
         self.quality.relation_count = saturating_u32(self.relations.len());
-        let statuses = self
-            .surfaces
-            .iter()
-            .flat_map(|fact| [fact.kind.status, fact.geometry.status])
-            .chain(self.visibility.iter().map(|fact| fact.state.status))
-            .chain(self.occupancy.iter().flat_map(|fact| {
-                [
-                    fact.occupancy.status,
-                    fact.visibility.status,
-                    fact.clearance_m.status,
-                ]
-            }))
-            .chain(self.relations.iter().map(|fact| fact.fact.status));
+        let statuses = std::iter::once(self.camera_motion.status).chain(
+            self.surfaces
+                .iter()
+                .flat_map(|fact| [fact.kind.status, fact.geometry.status])
+                .chain(self.visibility.iter().map(|fact| fact.state.status))
+                .chain(self.occupancy.iter().flat_map(|fact| {
+                    [
+                        fact.occupancy.status,
+                        fact.visibility.status,
+                        fact.clearance_m.status,
+                    ]
+                }))
+                .chain(self.relations.iter().map(|fact| fact.fact.status)),
+        );
         let (unknown, withheld) = statuses.fold((0_u32, 0_u32), |counts, status| match status {
             FactStatus::Unknown => (counts.0.saturating_add(1), counts.1),
             FactStatus::Withheld => (counts.0, counts.1.saturating_add(1)),
@@ -788,6 +856,51 @@ impl SpatialScene {
         self.quality.unknown_facts = unknown;
         self.quality.withheld_facts = withheld;
     }
+}
+
+fn unknown_camera_motion() -> SceneFact<RelativeCameraMotion> {
+    SceneFact::unknown(FactReason::MissingSource)
+}
+
+fn validate_camera_motion_evidence(
+    fact: &SceneFact<RelativeCameraMotion>,
+    sources: &[SourceStamp],
+) -> Result<(), CanonicalContractError> {
+    if !fact.status.is_asserted() {
+        return Ok(());
+    }
+    if fact.evidence.is_empty()
+        || !fact
+            .evidence
+            .iter()
+            .any(|evidence| evidence.source == FactSource::Motion)
+    {
+        return Err(CanonicalContractError::new(
+            "asserted camera motion requires motion evidence",
+        ));
+    }
+    for evidence in &fact.evidence {
+        let source = sources.iter().find(|source| {
+            source.source == evidence.source && source.source_frame_id == evidence.source_frame_id
+        });
+        if !source.is_some_and(|source| source.freshness == SourceFreshness::Fresh) {
+            return Err(CanonicalContractError::new(
+                "asserted camera motion cites a missing or non-fresh source",
+            ));
+        }
+    }
+    if fact.value.as_ref().is_some_and(|motion| {
+        motion.kind == RelativeCameraMotionKind::StationaryConfigured
+            && !fact
+                .evidence
+                .iter()
+                .any(|evidence| evidence.source == FactSource::CameraState)
+    }) {
+        return Err(CanonicalContractError::new(
+            "stationary camera motion requires explicit camera-state evidence",
+        ));
+    }
+    Ok(())
 }
 
 fn saturating_u32(value: usize) -> u32 {

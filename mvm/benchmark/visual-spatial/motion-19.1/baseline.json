@@ -1,0 +1,15 @@
+{
+  "baseline_version": "19.1.0",
+  "implementation": "classical_sparse_block_matching",
+  "model_dependency_added": false,
+  "scenario_count": 6,
+  "expected_outcomes_passed": 6,
+  "labelled_flow_epe_px": 0.0,
+  "static_background_consensus": 1.0,
+  "false_ego_motion_rate": 0.0,
+  "cpu_release_p50_ms": 0.705,
+  "cpu_release_p95_ms": 0.980,
+  "cpu_budget_ms": 50.0,
+  "decision": "select_classical_runtime_expert",
+  "measurement_note": "Synthetic 160x120 fixture, 30 post-warmup samples, release profile, 2026-08-07"
+}

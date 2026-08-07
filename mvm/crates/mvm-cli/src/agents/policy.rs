@@ -57,12 +57,14 @@ impl SchedulingMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetricAgent {
     Human,
+    Motion,
     Fusion,
 }
 
 #[derive(Default)]
 struct MetricsState {
     human_us: Vec<u64>,
+    motion_us: Vec<u64>,
     fusion_us: Vec<u64>,
     scene_extra_runs: u64,
     depth_extra_runs: u64,
@@ -99,6 +101,8 @@ pub(crate) struct SchedulingReport {
     pub(crate) unavailable: u64,
     pub(crate) human_ms_p50: Option<f64>,
     pub(crate) human_ms_p95: Option<f64>,
+    pub(crate) motion_ms_p50: Option<f64>,
+    pub(crate) motion_ms_p95: Option<f64>,
     pub(crate) fusion_ms_p50: Option<f64>,
     pub(crate) fusion_ms_p95: Option<f64>,
     pub(crate) dispatch_wait_frames_p50: Option<u64>,
@@ -121,6 +125,7 @@ impl SchedulingMetrics {
         let mut state = self.state.lock().unwrap();
         let samples = match agent {
             MetricAgent::Human => &mut state.human_us,
+            MetricAgent::Motion => &mut state.motion_us,
             MetricAgent::Fusion => &mut state.fusion_us,
         };
         push_bounded(
@@ -178,6 +183,8 @@ impl SchedulingMetrics {
             unavailable: state.unavailable,
             human_ms_p50: percentile_ms(&state.human_us, 50),
             human_ms_p95: percentile_ms(&state.human_us, 95),
+            motion_ms_p50: percentile_ms(&state.motion_us, 50),
+            motion_ms_p95: percentile_ms(&state.motion_us, 95),
             fusion_ms_p50: percentile_ms(&state.fusion_us, 50),
             fusion_ms_p95: percentile_ms(&state.fusion_us, 95),
             dispatch_wait_frames_p50: percentile_u64(&state.dispatch_wait_frames, 50),
@@ -190,7 +197,7 @@ impl SchedulingMetrics {
     pub(crate) fn emit_report(&self) {
         let report = self.report();
         eprintln!(
-            "  scheduling-metrics mode={} scene_extra={} depth_extra={} outcomes=accepted:{}/deferred:{}/rejected:{}/dispatched:{}/resolved:{}/expired:{}/unavailable:{} human_ms=p50:{:?},p95:{:?} fusion_ms=p50:{:?},p95:{:?} dispatch_wait_frames=p50:{:?},p95:{:?} resolution_wait_frames=p50:{:?},p95:{:?}",
+            "  scheduling-metrics mode={} scene_extra={} depth_extra={} outcomes=accepted:{}/deferred:{}/rejected:{}/dispatched:{}/resolved:{}/expired:{}/unavailable:{} human_ms=p50:{:?},p95:{:?} motion_ms=p50:{:?},p95:{:?} fusion_ms=p50:{:?},p95:{:?} dispatch_wait_frames=p50:{:?},p95:{:?} resolution_wait_frames=p50:{:?},p95:{:?}",
             report.mode.as_str(),
             report.scene_extra_runs,
             report.depth_extra_runs,
@@ -203,6 +210,8 @@ impl SchedulingMetrics {
             report.unavailable,
             report.human_ms_p50,
             report.human_ms_p95,
+            report.motion_ms_p50,
+            report.motion_ms_p95,
             report.fusion_ms_p50,
             report.fusion_ms_p95,
             report.dispatch_wait_frames_p50,
@@ -671,6 +680,7 @@ mod tests {
         metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(1));
         metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(3));
         metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(5));
+        metrics.record_duration(MetricAgent::Motion, std::time::Duration::from_micros(900));
         metrics.record_extra_run(ObservationTarget::Scene);
         metrics.record_outcome(&RequestOutcome::Accepted {
             dispatch_deadline_frame: 9,
@@ -684,6 +694,8 @@ mod tests {
         assert_eq!(report.accepted, 1);
         assert_eq!(report.human_ms_p50, Some(3.0));
         assert_eq!(report.human_ms_p95, Some(5.0));
+        assert_eq!(report.motion_ms_p50, Some(0.9));
+        assert_eq!(report.motion_ms_p95, Some(0.9));
         assert_eq!(report.dispatch_wait_frames_p50, Some(2));
         assert_eq!(report.resolution_wait_frames_p95, Some(4));
     }

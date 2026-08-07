@@ -59,8 +59,12 @@
   comparator (требуется ≥4/6), honesty regressions = 0; controlled adaptive runtime remains +0.31% ≤5%.
   Фаза 18 завершена replay+live runtime evidence. **Phase 19.0 ✅:** additive spatial facts contract,
   calibration/reference-frame gates, bounded `GraphDelta`/append-only evidence projection и 10
-  deterministic synthetic replay fixtures; runtime spatial experts не включены. Phase 19.1–19.6
-  остаются отдельными approved slices с собственными evidence gates. План — `docs/phase-19-plan.md`.
+  deterministic synthetic replay fixtures. **Phase 19.1 ✅:** dependency-free classical sparse
+  block matcher работает отдельным MotionAgent, публикует stamped camera-local relative motion через
+  Fusion и fail closed на frame gaps, low texture/blur, dynamic dominance и odometry conflict.
+  `stationary_configured` требует явного `[camera].fixed=true`. Synthetic gate: 6/6, EPE 0 px,
+  false ego-motion 0, release CPU p95 0.980 ms. Phase 19.2–19.6 остаются отдельными gated slices.
+  План — `docs/phase-19-plan.md`.
 - **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`
   пушнут → CI `release.yml` собирает x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory) · **v0.4.0** (Visual Cortex);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,
@@ -166,7 +170,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 | **mvm-pipeline** | Camera (Python bridge subprocess) + NativeCamera (v4l2 MJPG) |
 | **mvm-dataset** | ★ **Dataset Factory (фаза 16/16.7)** — чистый потребитель WorldState. `observation` (Canonical Observation SCHEMA 16.7.0, статусы `observed/derived/temporal/weak/withheld/unknown`, provenance, ключи связывания, +`activities`), `router` (Semantic Router G₁–G₅ + `route_with_relations`: relations/activities/events из WorldState+`SceneRelations`), `config` (`DatasetConfig`, `vision_log`/`effective_recorder` — 16.7 default-on text-only), `writer` (`DatasetWriter`: сессии+JSONL+session.toml, text-only-гейт), `privacy` (blur-регионы), `session` (ридеры для `mvm dataset`), **`validate` (16.6-A data-quality gate → `mvm dataset check`)**. Deps: только serde/serde_json/toml — **ноль ML-фреймворков** |
 | **mvm-cortex** | ★ **Visual Cortex (18.2–18.8b)** — cognitive interpretation поверх immutable `FusedSceneFrame`: canonical event interpretation, bounded runtime memory, forecast/prediction errors, attention и advisory re-observation, camera-relative self-model, explicit uncertainty inventory и evidence-linked affordances. Нет durable store, новых ML-зависимостей или scene mutation. |
-| **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`/**`dataset`**; `pipeline.rs` (BodyPrimaryPipeline), `agents/` (+`dataset_writer` 16.1.2b), `dataset_cmd.rs` (16.3), `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
+| **mvm-cli** | main + подкоманды `run`/`snapshot`/`recap`/`inspect`/`serve`/`setup`/`doctor`/**`dataset`**; `pipeline.rs` (BodyPrimaryPipeline), `agents/` (+`dataset_writer` 16.1.2b, dependency-free `MotionAgent` 19.1), `dataset_cmd.rs` (16.3), `state.rs`, product-слой (`paths.rs`/`config_file.rs`/`manifest.rs`/`setup.rs`/`doctor.rs`), `scene_debug.rs` |
 
 > Модели ONNX (YuNet/SFace/EmotiEffLib/BlazePose/YOLO26n/Depth-Anything/handpose) — единый **манифест**
 > `mvm-cli/src/manifest.rs` (URL+sha256+size, проверены 2026-07-06). `mvm setup` тянет их в models-dir

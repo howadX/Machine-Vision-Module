@@ -992,6 +992,7 @@ fn build_live_mesh(
     let human_observations = agents::HumanObservationBus::new();
     let scene_observations = agents::SceneObservationBus::new();
     let depth_observations = agents::DepthObservationBus::new();
+    let motion_observations = agents::MotionObservationBus::new();
     let fused_frames = agents::FusedFrameBus::new();
     let cortex_frames = agents::CortexFrameBus::new();
     let attention_policies = agents::AttentionPolicyBus::new();
@@ -1036,6 +1037,13 @@ fn build_live_mesh(
         config.object_cadence,
         scheduling_metrics.clone(),
     )));
+    mesh.add(Box::new(agents::MotionAgent::new(
+        product.camera_fixed,
+        human_observations.clone(),
+        scene_observations.clone(),
+        motion_observations.clone(),
+        scheduling_metrics.clone(),
+    )));
     if let Some(yolo) = yolo {
         mesh.add(Box::new(agents::SceneAgent::new(
             yolo,
@@ -1063,6 +1071,7 @@ fn build_live_mesh(
         human_observations,
         scene_observations.clone(),
         depth_observations.clone(),
+        motion_observations,
         fused_frames.clone(),
         run_id,
         scheduling_metrics.clone(),

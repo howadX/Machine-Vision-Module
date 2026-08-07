@@ -255,6 +255,7 @@ mod tests {
             camera_device: "auto".into(),
             camera_width: 1280,
             camera_height: 720,
+            camera_fixed: false,
             data_dir: PathBuf::from("/d"),
             state_path: PathBuf::from("/d/current_state.md"),
             models_dir: PathBuf::from("/d/models"),
