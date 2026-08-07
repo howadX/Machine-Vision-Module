@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
 > **Версия:** 0.7 (8 августа 2026)
-> **Статус:** 19.0–19.2.1 ✅ закрыты; 19.2.2 Iteration A reject, Iteration B provisional quality candidate (parity и sparse CPU/integrity budget проходят); quality и controlled A/B gates pending; 19.2.3 не авторизован; 19.3–19.6 остаются gated
+> **Статус:** 19.0–19.2.1 ✅ закрыты; 19.2.2 Iteration A reject, Iteration B provisional quality candidate (parity и sparse CPU/integrity budget проходят; deterministic scheduler harness проходит); quality и integrated controlled A/B gates pending; 19.2.3 не авторизован; 19.3–19.6 остаются gated
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -378,8 +378,9 @@ semantic field + instance masks + depth + temporal consistency
    Iteration B проходит static ONNX parity argmax 1.0 и revised sparse budget: invocation p95
    164.979/231.357 ms на 256/320 при лимите 250 ms; amortized 5.499/7.714 ms на capture frame при
    cadence 30; depth+semantic aggregate 13.166/15.711 ms/frame при лимите 20 ms. Capture remains
-   non-blocking with queue=1, stamped source frames and stale-drop policy. Quality и controlled A/B
-   integrity ещё pending; model/manifest/runtime и 19.2.3 не авторизованы. Measurement record —
+   non-blocking with queue=1, stamped source frames and stale-drop policy. Deterministic scheduler
+   harness passes, but quality и integrated controlled A/B integrity ещё pending; model/manifest/runtime
+   и 19.2.3 не авторизованы. Measurement record —
    `benchmark/visual-spatial/semantic-19.2.2/iteration-b/`.
 3. **19.2.3 — Stamped runtime expert (not authorized).** Separate `SemanticAgent`, `LatestValue`
    observation bus, cadence/freshness gates and optional fail-soft startup начинаются только после

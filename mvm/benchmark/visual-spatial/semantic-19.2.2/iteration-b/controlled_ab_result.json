@@ -1,0 +1,17 @@
+{
+  "accepted_results": 2,
+  "busy_submission_skips": 0,
+  "cadence_frames": 30,
+  "capture_blocking": false,
+  "capture_period_max_ms": 40.0,
+  "capture_period_min_ms": 40.0,
+  "capture_wall_time_delta_pct": 0.0,
+  "fps": 25.0,
+  "frames": 180,
+  "harness_version": "19.2.2-b.1",
+  "max_queue_depth": 1,
+  "source_frame_stamp_required": true,
+  "stale_results_dropped": true,
+  "stale_results_withheld": 4,
+  "worker_p95_ms": 164.979
+}

@@ -81,3 +81,17 @@ depth ≤20 ms/frame), FP32 passes: p95 164.979/231.357 ms, amortized
 INT8 reduced the artifact to 4.20 MB but made p95 worse: 312.644/494.692 ms.
 Quality and controlled A/B integrity gates remain pending; no 5-surface
 fine-tune or runtime integration is authorized yet.
+
+The deterministic scheduler harness is executable with:
+
+```bash
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/controlled_ab.py
+python3 -m unittest benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_controlled_ab.py
+```
+
+It verifies the cadence-30, queue-1, non-blocking capture contract and stamped
+stale-result withholding using the measured p95 envelope. This is a contract
+harness only; it does not replace the required integrated runtime A/B wall-time
+measurement. ADE20K/SceneParse150 access remains download-and-hash pending, and
+ScanNet v2 still requires its access agreement, so quality is intentionally
+unmeasured and the candidate remains provisional.
