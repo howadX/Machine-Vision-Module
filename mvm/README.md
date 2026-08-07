@@ -395,7 +395,8 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **19.0** | ✅ contract/replay | **Visual Spatial Substrate foundation** — typed camera-/agent-relative spatial facts, calibration gates, bounded `GraphDelta`, append-only evidence links и 10 deterministic honesty-first fixtures. Runtime experts и spatial memory остаются следующими отдельными slices. Детали — [`docs/phase-19-plan.md`](docs/phase-19-plan.md) |
 | **19.1** | ✅ runtime/replay | **Motion Field + Camera State** — dependency-free sparse block matcher, static/dynamic consensus, explicit fixed-camera authority, stamped Fusion publication и fail-closed blur/gap/crowd/odometry gates. |
 | **19.2.1** | ✅ contract/replay | **Semantic Surface Taxonomy** — 5 canonical surface classes, expert-label normalization и 9 synthetic pixel-grid fixtures с IoU/boundary/OOD/unknown gates. Runtime expert ещё не реализован. |
-| **19.2.2–19.6** | approved / gated | ONNX spike → stamped semantic expert → Fusion surfaces → replay/live closure → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. Каждый slice требует собственного evidence gate. |
+| **19.2.2** | ✅ reject/defer | **Semantic ONNX spike** — PP-MobileSeg-Tiny принят Rust ORT structurally, но провалил Paddle↔ONNX parity, CPU p95 <50 ms и production-provenance gates. Никаких весов/manifest/runtime изменений. |
+| **19.2.3–19.6** | gated | Stamped semantic expert не авторизован до пригодного кандидата; далее Fusion surfaces → replay/live closure → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. |
 
 ---
 

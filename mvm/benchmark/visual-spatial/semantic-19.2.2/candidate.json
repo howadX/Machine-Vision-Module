@@ -1,0 +1,82 @@
+{
+  "record_version": "19.2.2",
+  "candidate": "pp_mobileseg_tiny_ade20k",
+  "architecture": "PP-MobileSeg-Tiny / StrideFormer-Tiny",
+  "source": {
+    "repository": "https://github.com/PaddlePaddle/PaddleSeg/tree/release/2.10/configs/pp_mobileseg",
+    "exported_model_url": "https://bj.bcebos.com/paddleseg/dygraph/ade20k/pp_mobileseg_tiny/export_model.zip",
+    "training_weights_url": "https://bj.bcebos.com/paddleseg/dygraph/ade20k/pp_mobileseg_tiny/model.pdparams",
+    "exported_zip_sha256": "223e8ee24d29b7dac1db74f5d20caa58ec4f967f121a189b62f9c240773bbd7c",
+    "training_weights_sha256": "e42f1aa5ee52baa3ad561f1a720e27e8becd5a12fa88e4b4e4b77055a4ba39ed"
+  },
+  "provenance": {
+    "implementation_license": "Apache-2.0",
+    "training_dataset": "ADE20K",
+    "dataset_terms_url": "https://ade20k.csail.mit.edu/terms/",
+    "pretrained_model_terms": "research_only",
+    "production_redistribution_clear": false
+  },
+  "toolchain": {
+    "paddleseg": "release/2.10",
+    "paddlepaddle": "2.6.2",
+    "paddle2onnx": "1.3.1",
+    "onnx_opset": 16,
+    "rust_ort": "2.0.0-rc.12/api-22"
+  },
+  "measurements": {
+    "official_vim_export": {
+      "input_shape": [1, 3, 512, 512],
+      "onnx_checker_passed": true,
+      "output_shape_matches": true,
+      "exact_match": false,
+      "max_abs_label_error": 8.0,
+      "onnx_unique_labels": [0],
+      "release_single_thread_p95_ms": 95.884,
+      "parity_passed": false
+    },
+    "control_flow_free_onnx": {
+      "input_shape": [1, 3, 256, 256],
+      "output_shape": [1, 150, 256, 256],
+      "onnx_sha256": "2013b6ba3b7cda921cf4c21e2a4c0b6ea8cb06015353e3319ad31e41a9970b64",
+      "onnx_bytes": 6179545,
+      "onnx_checker_passed": true,
+      "output_shape_matches": true,
+      "argmax_pixel_agreement": 0.0,
+      "max_abs_logit_error": 18.2565,
+      "paddle_unique_labels": [0, 8, 14],
+      "onnx_unique_labels": [2],
+      "parity_passed": false
+    },
+    "rust_ort_release": {
+      "hardware": "Intel Core i7-12700K x86_64",
+      "threads": 1,
+      "warmup_runs": 5,
+      "measured_runs": 30,
+      "current_ort_loads_and_runs": true,
+      "output_shape": [1, 150, 256, 256],
+      "unique_argmax_labels": [2],
+      "p50_ms": 39.793,
+      "p95_ms": 55.624,
+      "cpu_budget_ms": 50.0,
+      "latency_gate_passed": false,
+      "process_max_rss_kib": 132300
+    }
+  },
+  "quality_gate": {
+    "contract": "semantic-19.2.1",
+    "measured_predictions_available": false,
+    "reason": "export_parity_failed",
+    "per_class_iou": null,
+    "boundary_f1": null,
+    "unknown_discipline_violations": null,
+    "passed": false
+  },
+  "integration": {
+    "model_bytes_committed": false,
+    "model_manifest_added": false,
+    "runtime_dependency_added": false,
+    "runtime_semantic_expert_enabled": false,
+    "occupancy_or_traversability_authorized": false
+  },
+  "decision": "reject_candidate_defer_runtime_expert"
+}

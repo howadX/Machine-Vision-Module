@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
-> **Версия:** 0.5 (7 августа 2026)
-> **Статус:** 19.0–19.2.1 ✅ закрыты; 19.2.2–19.6 approved как последующие отдельные slices; графовая архитектура утверждена как основа spatial substrate
+> **Версия:** 0.6 (7 августа 2026)
+> **Статус:** 19.0–19.2.2 ✅ закрыты; 19.2.2 завершён решением reject/defer, поэтому 19.2.3 не авторизован до отдельного пригодного model candidate; 19.3–19.6 остаются gated
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -373,10 +373,14 @@ semantic field + instance masks + depth + temporal consistency
    nine synthetic pixel-grid scenarios and fail-closed gates for per-class IoU, floor/opening boundary
    F1, corruption/OOD coverage and unknown abstention. Baseline is explicitly a synthetic oracle;
    runtime semantic availability remains 0/9.
-2. **19.2.2 — ONNX model spike.** Export parity, model provenance/license, CPU p50/p95, RSS/footprint
-   and the first measured predictions against the 19.2.1 contract.
-3. **19.2.3 — Stamped runtime expert.** Separate `SemanticAgent`, `LatestValue` observation bus,
-   cadence/freshness gates and optional fail-soft startup.
+2. **19.2.2 ✅ reject/defer — ONNX model spike.** PP-MobileSeg-Tiny/ADE20K проверен через официальный
+   Paddle export, Paddle2ONNX и текущий Rust ORT. Control-flow-free 256×256 ONNX structurally valid,
+   но parity провален (argmax agreement 0.0, ONNX collapsed to one class), Rust single-thread p95
+   55.624 ms > 50 ms, а production provenance pretrained ADE20K weights не подтверждён. Quality
+   metrics не выдумываются без parity-valid predictions; model/manifest/runtime не изменены.
+3. **19.2.3 — Stamped runtime expert (not authorized).** Separate `SemanticAgent`, `LatestValue`
+   observation bus, cadence/freshness gates and optional fail-soft startup начинаются только после
+   отдельного кандидата, прошедшего provenance + parity + CPU + 19.2.1 quality gates.
 4. **19.2.4 — Fusion-owned surfaces.** Deterministic boundary extraction and evidence-linked
    `SurfaceFact`; raw class grids never become world truth directly.
 5. **19.2.5 — Replay/live closure.** Corruption/OOD replay, controlled throughput A/B and final model

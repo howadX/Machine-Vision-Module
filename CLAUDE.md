@@ -134,8 +134,9 @@ closing binary confirmed 25 FPS, 1s/2s forecasts, evidence-linked Cortex output,
 withheld/unknown facts and semantic-session recap. Phase 19.0 provides the additive spatial
 contract/replay baseline; Phase 19.1 adds dependency-free stamped camera-local motion evidence with
 explicit fixed-camera authority and fail-closed quality gates. Phase 19.2.1 fixes the semantic surface
-taxonomy and executable synthetic honesty corpus without claiming a runtime expert; Phase 19.2.2+
-remains separately gated. Plan —
+taxonomy and executable synthetic honesty corpus without claiming a runtime expert. Phase 19.2.2
+rejects/defers PP-MobileSeg-Tiny after failed parity, CPU and pretrained-provenance gates; no weights
+or runtime path were added, and 19.2.3 requires a new passing candidate. Plan —
 `mvm/docs/phase-19-plan.md`.
 
 ## Для Agents

@@ -1,0 +1,43 @@
+{
+  "candidate": "pp_mobileseg_tiny_ade20k",
+  "contract": {
+    "model_manifest_unchanged": true,
+    "occupancy_authority_violations": 0,
+    "overclaim_violations": 0,
+    "passed": true,
+    "runtime_dependency_unchanged": true
+  },
+  "decision": "reject_candidate_defer_runtime_expert",
+  "evaluator_version": "19.2.2",
+  "gates": {
+    "cpu_p95_within_50ms": false,
+    "current_rust_ort_loads_and_runs": true,
+    "onnx_structure_valid": true,
+    "paddle_onnx_parity_passed": false,
+    "production_provenance_clear": false,
+    "semantic_19_2_1_quality_measured": false,
+    "source_artifacts_hashed": true
+  },
+  "measurement_scope": "single_candidate_export_parity_and_cpu_spike",
+  "measurements": {
+    "argmax_pixel_agreement": 0.0,
+    "input_shape": [
+      1,
+      3,
+      256,
+      256
+    ],
+    "max_abs_logit_error": 18.2565,
+    "onnx_bytes": 6179545,
+    "output_shape": [
+      1,
+      150,
+      256,
+      256
+    ],
+    "rust_process_max_rss_kib": 132300,
+    "rust_release_single_thread_p50_ms": 39.793,
+    "rust_release_single_thread_p95_ms": 55.624
+  },
+  "runtime_semantic_expert": "not_implemented_after_19.2.2"
+}
