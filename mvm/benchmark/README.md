@@ -6,9 +6,11 @@ controller, safety case, planner benchmark, or open-world VLM evaluation.
 
 This directory is the executable evaluation contract for phase 18. Phase 19.0
 adds its separate contract-only corpus under `benchmark/visual-spatial/`; Phase
-19.1 adds the measured classical motion decision gate under `motion-19.1/`. Neither
-benchmark directory is a runtime history store or competes with Dataset Factory
-`labels.jsonl`.
+19.1 adds the measured classical motion decision gate under `motion-19.1/`, and
+Phase 19.2.1 adds the semantic taxonomy/outcome contract under
+`semantic-19.2.1/`. The 19.2.1 oracle scores validate evaluator wiring, not a
+runtime model. None of these benchmark directories is a runtime history store
+or competes with Dataset Factory `labels.jsonl`.
 
 ## Layout
 

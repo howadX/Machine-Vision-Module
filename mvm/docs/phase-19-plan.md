@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
-> **Версия:** 0.4 (7 августа 2026)
-> **Статус:** 19.0–19.1 ✅ закрыты; 19.2–19.6 approved как последующие отдельные slices; графовая архитектура утверждена как основа spatial substrate
+> **Версия:** 0.5 (7 августа 2026)
+> **Статус:** 19.0–19.2.1 ✅ закрыты; 19.2.2–19.6 approved как последующие отдельные slices; графовая архитектура утверждена как основа spatial substrate
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -366,6 +366,21 @@ semantic field + instance masks + depth + temporal consistency
 **Metrics:** per-class mIoU, floor/door boundary quality, corruption/OOD robustness, CPU latency and memory footprint.
 
 **Decision gate:** no occupancy/traversability claim consumes the expert until semantic quality and unknown discipline pass replay/live validation.
+
+#### Внутренние подпункты 19.2
+
+1. **19.2.1 ✅ — Taxonomy + executable corpus.** Canonical surface taxonomy, expert-label normalization,
+   nine synthetic pixel-grid scenarios and fail-closed gates for per-class IoU, floor/opening boundary
+   F1, corruption/OOD coverage and unknown abstention. Baseline is explicitly a synthetic oracle;
+   runtime semantic availability remains 0/9.
+2. **19.2.2 — ONNX model spike.** Export parity, model provenance/license, CPU p50/p95, RSS/footprint
+   and the first measured predictions against the 19.2.1 contract.
+3. **19.2.3 — Stamped runtime expert.** Separate `SemanticAgent`, `LatestValue` observation bus,
+   cadence/freshness gates and optional fail-soft startup.
+4. **19.2.4 — Fusion-owned surfaces.** Deterministic boundary extraction and evidence-linked
+   `SurfaceFact`; raw class grids never become world truth directly.
+5. **19.2.5 — Replay/live closure.** Corruption/OOD replay, controlled throughput A/B and final model
+   decision. Occupancy/free-space remains outside this slice.
 
 ---
 

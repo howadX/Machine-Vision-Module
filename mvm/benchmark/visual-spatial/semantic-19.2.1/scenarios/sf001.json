@@ -1,0 +1,27 @@
+{
+  "fixture_version": "19.2.1",
+  "scenario_id": "sf001",
+  "name": "room_floor_wall_ceiling",
+  "status": "synthetic_contract",
+  "measurement_scope": "semantic_outcome_contract",
+  "width": 6,
+  "height": 4,
+  "truth": [
+    ["ceiling", "ceiling", "ceiling", "ceiling", "ceiling", "ceiling"],
+    ["wall", "wall", "wall", "wall", "wall", "wall"],
+    ["floor", "floor", "floor", "floor", "floor", "floor"],
+    ["floor", "floor", "floor", "floor", "floor", "floor"]
+  ],
+  "prediction": [
+    ["ceiling", "ceiling", "ceiling", "ceiling", "ceiling", "ceiling"],
+    ["wall", "wall", "wall", "wall", "wall", "wall"],
+    ["floor", "floor", "floor", "floor", "floor", "floor"],
+    ["floor", "floor", "floor", "floor", "floor", "floor"]
+  ],
+  "prediction_source": "synthetic_oracle",
+  "corruptions": [],
+  "honesty_assertions": [
+    "surface labels remain camera-local observations",
+    "floor class alone does not imply free space"
+  ]
+}

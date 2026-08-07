@@ -1,0 +1,27 @@
+{
+  "fixture_version": "19.2.1",
+  "scenario_id": "sf003",
+  "name": "partially_occluded_door_opening",
+  "status": "synthetic_contract",
+  "measurement_scope": "semantic_outcome_contract",
+  "width": 6,
+  "height": 4,
+  "truth": [
+    ["wall", "wall", "wall", "wall", "wall", "wall"],
+    ["wall", "wall", "opening", "opening", "wall", "wall"],
+    ["wall", "wall", "opening", "unknown", "wall", "wall"],
+    ["floor", "floor", "floor", "unknown", "floor", "floor"]
+  ],
+  "prediction": [
+    ["wall", "wall", "wall", "wall", "wall", "wall"],
+    ["wall", "wall", "opening", "opening", "wall", "wall"],
+    ["wall", "wall", "opening", "unknown", "wall", "wall"],
+    ["floor", "floor", "floor", "unknown", "floor", "floor"]
+  ],
+  "prediction_source": "synthetic_oracle",
+  "corruptions": [],
+  "honesty_assertions": [
+    "occluded part of opening remains unknown",
+    "opening label does not assert open state or traversability"
+  ]
+}

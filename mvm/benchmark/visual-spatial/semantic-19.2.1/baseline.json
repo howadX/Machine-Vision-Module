@@ -1,0 +1,50 @@
+{
+  "contract": {
+    "corruptions_covered": [
+      "blur",
+      "glare",
+      "low_light",
+      "mirror",
+      "ood"
+    ],
+    "false_floor_on_unknown": 0,
+    "honesty_assertion_count": 15,
+    "passed": true,
+    "unknown_discipline_violations": 0
+  },
+  "evaluator_version": "19.2.1",
+  "fixture_version": "19.2.1",
+  "measurement_scope": "synthetic_contract_no_runtime_expert",
+  "metrics": {
+    "boundary_f1": {
+      "floor": 1.0,
+      "opening": 1.0
+    },
+    "mean_surface_iou": 1.0,
+    "per_class_iou": {
+      "ceiling": 1.0,
+      "floor": 1.0,
+      "opening": 1.0,
+      "support": 1.0,
+      "wall": 1.0
+    },
+    "unknown_abstention_recall": 1.0
+  },
+  "runtime_semantic_expert": "not_implemented_in_19.2.1",
+  "runtime_surface_availability": {
+    "available": 0,
+    "total": 9
+  },
+  "scenario_count": 9,
+  "taxonomy": {
+    "opening_does_not_imply_traversability": true,
+    "surface_classes": [
+      "floor",
+      "wall",
+      "ceiling",
+      "support",
+      "opening"
+    ],
+    "unknown_and_ignore_are_not_surfaces": true
+  }
+}

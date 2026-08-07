@@ -1,0 +1,27 @@
+{
+  "fixture_version": "19.2.1",
+  "measurement_scope": "synthetic_contract_no_runtime_expert",
+  "grid_encoding": "row_major_benchmark_class_names",
+  "thresholds": {
+    "mean_surface_iou_min": 0.6,
+    "floor_iou_min": 0.75,
+    "opening_iou_min": 0.55,
+    "floor_boundary_f1_min": 0.8,
+    "opening_boundary_f1_min": 0.7,
+    "unknown_abstention_recall_min": 0.9,
+    "unknown_discipline_violations_max": 0,
+    "false_floor_on_unknown_max": 0
+  },
+  "required_corruptions": ["blur", "glare", "low_light", "mirror", "ood"],
+  "scenarios": [
+    {"id": "sf001", "name": "room_floor_wall_ceiling"},
+    {"id": "sf002", "name": "table_top_support_candidate"},
+    {"id": "sf003", "name": "partially_occluded_door_opening"},
+    {"id": "sf004", "name": "window_maps_to_opening_not_free"},
+    {"id": "sf005", "name": "glare_and_mirror_abstention"},
+    {"id": "sf006", "name": "blur_low_light_abstention"},
+    {"id": "sf007", "name": "ood_background_abstention"},
+    {"id": "sf008", "name": "no_floor_counterfactual"},
+    {"id": "sf009", "name": "person_occludes_observed_floor"}
+  ]
+}

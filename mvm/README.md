@@ -394,7 +394,8 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **18 → v0.4.0** | ✅ | **Visual Cortex Layer** — immutable canonical facts + `mvm-cortex`: events, memory, 1s/2s forecast, self-model/uncertainty, affordance, attention, bounded advisory re-observation, `mvm cortex`/MCP и benchmark closure. 6/6 replay claims improve, honesty regressions = 0, adaptive runtime +0.31% ≤5%. Детали — [`docs/phase-18-plan.md`](docs/phase-18-plan.md) |
 | **19.0** | ✅ contract/replay | **Visual Spatial Substrate foundation** — typed camera-/agent-relative spatial facts, calibration gates, bounded `GraphDelta`, append-only evidence links и 10 deterministic honesty-first fixtures. Runtime experts и spatial memory остаются следующими отдельными slices. Детали — [`docs/phase-19-plan.md`](docs/phase-19-plan.md) |
 | **19.1** | ✅ runtime/replay | **Motion Field + Camera State** — dependency-free sparse block matcher, static/dynamic consensus, explicit fixed-camera authority, stamped Fusion publication и fail-closed blur/gap/crowd/odometry gates. |
-| **19.2–19.6** | approved / gated | Semantic surfaces → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. Каждый slice требует собственного evidence gate. |
+| **19.2.1** | ✅ contract/replay | **Semantic Surface Taxonomy** — 5 canonical surface classes, expert-label normalization и 9 synthetic pixel-grid fixtures с IoU/boundary/OOD/unknown gates. Runtime expert ещё не реализован. |
+| **19.2.2–19.6** | approved / gated | ONNX spike → stamped semantic expert → Fusion surfaces → replay/live closure → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. Каждый slice требует собственного evidence gate. |
 
 ---
 

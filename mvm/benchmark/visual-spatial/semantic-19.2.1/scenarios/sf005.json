@@ -1,0 +1,27 @@
+{
+  "fixture_version": "19.2.1",
+  "scenario_id": "sf005",
+  "name": "glare_and_mirror_abstention",
+  "status": "synthetic_contract",
+  "measurement_scope": "semantic_outcome_contract",
+  "width": 6,
+  "height": 4,
+  "truth": [
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"]
+  ],
+  "prediction": [
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"]
+  ],
+  "prediction_source": "synthetic_oracle",
+  "corruptions": ["glare", "mirror"],
+  "honesty_assertions": [
+    "glare remains unknown",
+    "mirror reflection cannot create a floor surface"
+  ]
+}

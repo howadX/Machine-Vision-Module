@@ -1,0 +1,26 @@
+{
+  "fixture_version": "19.2.1",
+  "scenario_id": "sf007",
+  "name": "ood_background_abstention",
+  "status": "synthetic_contract",
+  "measurement_scope": "semantic_outcome_contract",
+  "width": 6,
+  "height": 4,
+  "truth": [
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"],
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"],
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"],
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"]
+  ],
+  "prediction": [
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"],
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"],
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"],
+    ["unknown", "unknown", "unknown", "unknown", "unknown", "unknown"]
+  ],
+  "prediction_source": "synthetic_oracle",
+  "corruptions": ["ood"],
+  "honesty_assertions": [
+    "unmapped background and OOD content remain unknown"
+  ]
+}

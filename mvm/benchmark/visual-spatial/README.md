@@ -5,13 +5,19 @@ are deterministic synthetic replay descriptions, not live-camera measurements
 and not evidence that a production spatial expert exists.
 
 The baseline checks honesty, reference-frame authority, source freshness and
-bounded graph-delta envelopes. Runtime motion, semantic surfaces, occupancy and
-mapping remain gated by later Phase 19 slices.
+bounded graph-delta envelopes. Runtime occupancy and mapping remain gated by
+later Phase 19 slices. Additional executable gates live in:
+
+- `motion-19.1/` — selected classical camera-motion expert;
+- `semantic-19.2.1/` — semantic taxonomy and synthetic outcome corpus, with no
+  runtime semantic expert yet.
 
 Run:
 
 ```bash
 python3 benchmark/visual-spatial/evaluate.py
+python3 benchmark/visual-spatial/motion-19.1/evaluate.py
+python3 benchmark/visual-spatial/semantic-19.2.1/evaluate.py
 ```
 
 `labels.jsonl` remains the only durable semantic history. These fixtures are a

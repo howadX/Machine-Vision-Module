@@ -1,0 +1,27 @@
+{
+  "fixture_version": "19.2.1",
+  "scenario_id": "sf009",
+  "name": "person_occludes_observed_floor",
+  "status": "synthetic_contract",
+  "measurement_scope": "semantic_outcome_contract",
+  "width": 6,
+  "height": 4,
+  "truth": [
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"]
+  ],
+  "prediction": [
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["wall", "wall", "unknown", "unknown", "wall", "wall"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"],
+    ["floor", "floor", "unknown", "unknown", "floor", "floor"]
+  ],
+  "prediction_source": "synthetic_oracle",
+  "corruptions": [],
+  "honesty_assertions": [
+    "person silhouette masks the floor behind it to unknown",
+    "occluded floor is not inferred from neighbouring pixels"
+  ]
+}
