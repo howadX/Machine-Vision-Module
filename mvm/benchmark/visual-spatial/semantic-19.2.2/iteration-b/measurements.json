@@ -1,6 +1,6 @@
 {
-  "measurement_version": "19.2.2-b.1",
-  "measurement_scope": "segformer_sceneparse150_static_export_parity_and_rust_cpu_spike",
+  "measurement_version": "19.2.2-b.2",
+  "measurement_scope": "segformer_sceneparse150_static_export_parity_rust_cpu_and_ade20k_quality_rejection",
   "candidate_revision": "489d5cd81a0b59fab9b7ea758d3548ebe99677da",
   "toolchain": {
     "python": "3.11.15",
@@ -91,18 +91,33 @@
     "controlled_ab_measured": false
   },
   "quality": {
-    "semantic_19_2_1_measured": false,
-    "reason": "ADE20K_and_ScanNet_evaluation_frames_not_downloaded",
-    "unknown_discipline_measured": false,
-    "per_class_iou": null,
+    "semantic_19_2_1_measured": true,
+    "measurement_file": "quality_measurement.json",
+    "measured_frames": 200,
+    "unknown_discipline_measured": true,
+    "per_class_iou": {
+      "wall": 0.597713,
+      "floor": 0.641646,
+      "ceiling": 0.739643,
+      "support": 0.279541,
+      "opening": 0.427946
+    },
+    "mean_surface_iou": 0.537298,
+    "unknown_abstention_recall": 0.908628,
+    "unknown_discipline_violations": 51519,
+    "false_floor_on_unknown": 9946,
     "boundary_f1": null
   },
-  "decision": "provisionally_accept_for_quality_gate",
-  "decision_scope": "candidate_cpu_and_integrity_budget_pass;_quality_and_runtime_ab_pending",
-  "rejection_reasons": [],
+  "decision": "reject_candidate_defer_runtime_expert",
+  "decision_scope": "candidate_passes_export_parity_and_sparse_cpu_budget_but_fails_measured_ade20k_surface_quality_and_unknown_discipline",
+  "rejection_reasons": [
+    "mean_surface_iou_below_0_60",
+    "floor_iou_below_0_75",
+    "opening_iou_below_0_55",
+    "unknown_discipline_violations_above_0",
+    "conditional_fine_tunes_do_not_improve_the_baseline"
+  ],
   "pending_gates": [
-    "semantic_19_2_1_quality",
-    "controlled_ab_wall_time_delta",
-    "stamped_runtime_expert_replay"
+    "new_candidate_selection"
   ]
 }

@@ -1,0 +1,84 @@
+{
+  "quality_measurement_version": "19.2.2-b.2",
+  "toolchain": {
+    "python": "3.11.15",
+    "torch": "2.7.1+cpu",
+    "transformers": "4.53.2",
+    "onnxruntime": "1.22.1",
+    "threads": 10,
+    "seed": 1922
+  },
+  "dataset": {
+    "name": "ADEChallengeData2016_validation",
+    "source_url": "https://data.csail.mit.edu/places/ADEchallenge/ADEChallengeData2016.zip",
+    "archive_bytes": 967382037,
+    "archive_sha256": "7ff1be44964418441f542a7cc1e1a650e7dc0fc275f5d23252bc9bbdbc977b29",
+    "available_validation_frames": 2000,
+    "selection": "lexicographic_every_tenth_frame",
+    "measured_frames": 200,
+    "ground_truth_label_policy": "ADE_mask_0_ignore;_labels_1_to_150_map_to_model_ids_0_to_149",
+    "evaluation_resolution": [64, 64]
+  },
+  "selected_baseline": {
+    "name": "fp32_256_sceneparse150_to_5_reducer",
+    "confidence_threshold": 0.4,
+    "per_class_iou": {
+      "wall": 0.597713,
+      "floor": 0.641646,
+      "ceiling": 0.739643,
+      "support": 0.279541,
+      "opening": 0.427946
+    },
+    "mean_surface_iou": 0.537298,
+    "unknown_abstention_recall": 0.908628,
+    "unknown_pixels": 563841,
+    "unknown_discipline_violations": 51519,
+    "false_floor_on_unknown": 9946,
+    "passed": false
+  },
+  "conditional_fine_tunes": [
+    {
+      "name": "frozen_encoder_train_full_decoder",
+      "steps": 1000,
+      "batch_size": 4,
+      "input_size": 256,
+      "learning_rate": 0.0002,
+      "class_weights": [1.0, 1.5, 2.0, 2.5, 2.5, 0.75],
+      "trainable_scope": "decode_head",
+      "checkpoint_bytes": 1593551,
+      "checkpoint_sha256": "6cb27281fdbcb76e3c36d19ac6ad622546395f471afbebe01600180492549382",
+      "mean_surface_iou": 0.501806,
+      "floor_iou": 0.602862,
+      "opening_iou": 0.364976,
+      "unknown_abstention_recall": 0.868339,
+      "passed": false
+    },
+    {
+      "name": "frozen_encoder_and_decoder_train_classifier_only",
+      "steps": 500,
+      "batch_size": 4,
+      "input_size": 256,
+      "learning_rate": 0.001,
+      "class_weights": [1.0, 1.5, 2.0, 2.5, 2.5, 0.75],
+      "trainable_scope": "classifier_only",
+      "checkpoint_bytes": 1593725,
+      "checkpoint_sha256": "deac64ecd428ed5909a291cb10cac736ae3fa71584378db8bdf03b0ed14aa52a",
+      "mean_surface_iou": 0.502583,
+      "floor_iou": 0.587253,
+      "opening_iou": 0.353021,
+      "unknown_abstention_recall": 0.859464,
+      "passed": false
+    }
+  ],
+  "decision": "reject_candidate_defer_runtime_expert",
+  "reasons": [
+    "mean_surface_iou_below_0_60",
+    "floor_iou_below_0_75",
+    "opening_iou_below_0_55",
+    "unknown_discipline_violations_above_0",
+    "conditional_fine_tunes_do_not_improve_the_baseline"
+  ],
+  "boundary_f1": null,
+  "boundary_gate_status": "not_needed_for_rejection_after_mandatory_iou_and_honesty_failures",
+  "model_or_dataset_bytes_committed": false
+}

@@ -66,12 +66,13 @@
   false ego-motion 0, release CPU p95 0.980 ms. **Phase 19.2.1 ✅:** зафиксированы canonical-compatible
   surface taxonomy и 9-сценарный executable synthetic corpus с per-class IoU, floor/opening boundary
   F1, corruption/OOD и fail-closed unknown gates; baseline честно помечен как synthetic oracle,
-  runtime semantic expert ещё отсутствует. **Phase 19.2.2 Iteration A ✅ reject; Iteration B
-  provisional quality candidate:** PP-MobileSeg-Tiny провалил parity и p95 55.624 ms; SegFormer-B0/ADE20K
+  runtime semantic expert ещё отсутствует. **Phase 19.2.2 ✅ measured reject:** PP-MobileSeg-Tiny
+  провалил parity и p95 55.624 ms; SegFormer-B0/ADE20K
   прошёл static ONNX argmax parity 1.0 и revised sparse budget: invocation p95 164.979/231.357 ms,
   amortized 5.499/7.714 ms per capture frame at cadence 30, depth+semantic aggregate 13.166/15.711 ms.
-  Quality и controlled A/B integrity gates pending; веса/manifest/runtime не изменены, 19.2.3 не
-  авторизован.
+  Но real ADE20K quality провалена: mean surface IoU 0.537, floor 0.642, opening 0.428 и honesty
+  violations; два bounded 5-surface fine-tune не улучшили baseline. Веса/manifest/runtime не изменены,
+  19.2.3 не авторизован до нового кандидата.
   Phase 19.3–19.6 остаются отдельными gated slices.
   План — `docs/phase-19-plan.md`.
 - **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`

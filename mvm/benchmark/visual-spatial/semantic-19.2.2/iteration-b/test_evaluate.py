@@ -31,10 +31,10 @@ class SegFormerDecisionContractTests(unittest.TestCase):
         with patch.object(MODULE, "read_object", side_effect=read):
             return MODULE.evaluate(ROOT)
 
-    def test_committed_plan_contract_passes_without_claiming_measurements(self):
+    def test_committed_contract_preserves_measured_rejection_without_runtime(self):
         result = self.evaluate_with()
         self.assertTrue(result["contract"]["passed"])
-        self.assertEqual(result["decision"], "measurement_pending")
+        self.assertEqual(result["decision"], "reject_candidate_defer_runtime_expert")
         self.assertEqual(result["runtime_semantic_expert"], "not_implemented_in_19.2.2")
 
     def test_cpu_threshold_cannot_be_weakened(self):

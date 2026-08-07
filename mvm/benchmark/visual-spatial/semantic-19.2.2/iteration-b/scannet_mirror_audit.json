@@ -1,0 +1,46 @@
+{
+  "audit_version": "19.2.2-b.2",
+  "audited_at": "2026-08-08",
+  "method": "hugging_face_repository_metadata_and_complete_sibling_listing",
+  "repositories": [
+    {
+      "id": "marvex/scannet-dataset",
+      "revision": "4a7e31161c7867505f172131a42459fdf2bea697",
+      "file_count": 7568,
+      "total_size_reported_bytes": 20100000000,
+      "contents": {"json": 3026, "ply": 3026, "txt": 1513, "readme": 1},
+      "paired_2d_rgb": false,
+      "paired_2d_semantic_masks": false,
+      "depth": false,
+      "pose": false,
+      "quality_gate_eligible": false
+    },
+    {
+      "id": "frankielp/freevocab-scannet-scannetpp-output",
+      "revision": "9e6fae3e6ddb6dfd146b7a8553e876c6d5760111",
+      "file_count": 45689,
+      "contents": {"pth": 44691, "debug_jpg": 956, "txt": 40, "python": 1},
+      "paired_2d_rgb": false,
+      "paired_2d_semantic_masks": false,
+      "is_derived_model_output": true,
+      "quality_gate_eligible": false
+    },
+    {
+      "id": "frankielp/scannet-multi",
+      "revision": "5ab82d9db78bca9e5ba4f6ad2a520aff4d94a691",
+      "file_count": 99339,
+      "contents": {"txt": 51650, "jpg": 23824, "png": 23824, "pth": 40},
+      "scannetpp_rgb_depth_pose_intrinsic_frames": 23824,
+      "scannet200_validation_scenes": 10,
+      "paired_2d_semantic_masks": false,
+      "quality_gate_eligible": false,
+      "auxiliary_depth_pose_ood_eligible": true
+    }
+  ],
+  "decision": "none_of_the_three_mirrors_can_supply_semantic_ground_truth_for_19_2_2",
+  "honesty": {
+    "pseudo_labels_are_ground_truth": false,
+    "mirror_license_overrides_upstream_terms": false,
+    "absence_of_semantic_mask_is_unknown_not_negative": true
+  }
+}

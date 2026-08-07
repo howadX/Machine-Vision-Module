@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed pre-measurement contract for Phase 19.2.2 Iteration B."""
+"""Fail-closed contract and provenance record for Phase 19.2.2 Iteration B."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def evaluate(root: Path) -> dict[str, Any]:
     datasets = read_object(root / "datasets.json")
     taxonomy = read_object(root / "taxonomy.json")
 
-    if contract.get("contract_version") != "19.2.2-b" or contract.get("status") != "measurement_pending":
+    if contract.get("contract_version") != "19.2.2-b" or contract.get("status") != "candidate_rejected_after_quality_measurement":
         raise EvaluationError("iteration-B contract identity drift")
     candidate = _object(contract, "candidate")
     if candidate.get("name") != "segformer_b0_sceneparse150":
@@ -105,11 +105,18 @@ def evaluate(root: Path) -> dict[str, Any]:
     if datasets.get("download_policy") != "external_artifacts_not_committed":
         raise EvaluationError("dataset bytes cannot enter git")
     sources = datasets.get("sources")
-    if not isinstance(sources, list) or [source.get("name") for source in sources] != [
-        "ADE20K", "ScanNet_v2", "Structured3D", "MVM_owned_video"
-    ]:
+    expected_sources = [
+        "ADE20K",
+        "ScanNet_v2",
+        "HF_marvex_scannet_dataset",
+        "HF_frankielp_freevocab_scannet_scannetpp_output",
+        "HF_frankielp_scannet_multi",
+        "Structured3D",
+        "MVM_owned_video",
+    ]
+    if not isinstance(sources, list) or [source.get("name") for source in sources] != expected_sources:
         raise EvaluationError("dataset source set drift")
-    for source in sources[:3]:
+    for source in (sources[0], sources[1], sources[5]):
         terms = _object(source, "terms")
         if terms.get("accepted_for_current_research_phase") is not True:
             raise EvaluationError(f"research terms not explicitly accepted for {source.get('name')}")
@@ -118,7 +125,7 @@ def evaluate(root: Path) -> dict[str, Any]:
                 raise EvaluationError(f"invalid archive hash for {source.get('name')}")
         if source.get("archive_sha256_required_before_measurement") is not True:
             raise EvaluationError(f"archive hash gate missing for {source.get('name')}")
-    own_terms = _object(sources[3], "terms")
+    own_terms = _object(sources[6], "terms")
     if own_terms.get("accepted_for_current_research_phase") is not False:
         raise EvaluationError("uncollected MVM video cannot claim completed consent/provenance")
 
@@ -161,7 +168,7 @@ def evaluate(root: Path) -> dict[str, Any]:
     return {
         "evaluator_version": "19.2.2-b",
         "candidate": candidate["name"],
-        "decision": "measurement_pending",
+        "decision": "reject_candidate_defer_runtime_expert",
         "planned_input_sizes": candidate["static_input_sizes"],
         "depth_inference_input": depth["inference_input"],
         "source_count": len(sources),

@@ -20,12 +20,13 @@ class SegFormerMeasurementTests(unittest.TestCase):
         with patch.object(MODULE, "read_object", side_effect=lambda path: measurements):
             return MODULE.evaluate(ROOT)
 
-    def test_committed_measurement_passes_sparse_cpu_budget_but_stays_provisional(self):
+    def test_committed_measurement_passes_sparse_cpu_but_rejects_quality(self):
         result = self.evaluate_with(self.measurements)
-        self.assertEqual(result["decision"], "provisionally_accept_for_quality_gate")
+        self.assertEqual(result["decision"], "reject_candidate_defer_runtime_expert")
         self.assertTrue(result["gates"]["cpu_invocation_within_250ms"])
         self.assertTrue(result["gates"]["cpu_amortized_within_10ms_per_capture_frame"])
-        self.assertFalse(result["gates"]["semantic_19_2_1_quality_measured"])
+        self.assertTrue(result["gates"]["semantic_19_2_1_quality_measured"])
+        self.assertFalse(result["gates"]["semantic_19_2_1_quality_passed"])
 
     def test_sparse_invocation_over_budget_cannot_be_reported_as_pass(self):
         measurements = copy.deepcopy(self.measurements)
@@ -39,9 +40,9 @@ class SegFormerMeasurementTests(unittest.TestCase):
         with self.assertRaises(MODULE.EvaluationError):
             self.evaluate_with(measurements)
 
-    def test_unmeasured_quality_cannot_pass(self):
+    def test_unmeasured_quality_cannot_support_rejection(self):
         measurements = copy.deepcopy(self.measurements)
-        measurements["quality"]["semantic_19_2_1_measured"] = True
+        measurements["quality"]["semantic_19_2_1_measured"] = False
         with self.assertRaises(MODULE.EvaluationError):
             self.evaluate_with(measurements)
 

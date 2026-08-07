@@ -8,11 +8,11 @@
     "runtime_dependency_unchanged": true,
     "taxonomy_authority_violations": 0
   },
-  "decision": "measurement_pending",
+  "decision": "reject_candidate_defer_runtime_expert",
   "depth_inference_input": "rgb_only",
   "evaluator_version": "19.2.2-b",
   "planned_input_sizes": [256, 320],
   "runtime_semantic_expert": "not_implemented_in_19.2.2",
-  "source_count": 4,
+  "source_count": 7,
   "surface_mapping_count": 15
 }

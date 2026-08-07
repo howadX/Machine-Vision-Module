@@ -1,8 +1,8 @@
 # Phase 19.2.2 Semantic Model Spike
 
-This directory contains two measured records. Iteration A is a **reject/defer**
-for PP-MobileSeg-Tiny ADE20K; Iteration B is a **provisional quality candidate**
-for the research-allowed SegFormer-B0 SceneParse150 model. Neither is a runtime
+This directory contains two measured **reject/defer** records: Iteration A for
+PP-MobileSeg-Tiny ADE20K and Iteration B for the research-allowed SegFormer-B0
+SceneParse150 model. Neither is a runtime
 expert, and no downloaded or converted model bytes are committed.
 
 ## Why this candidate
@@ -70,6 +70,8 @@ python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/evaluate.py
 python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_evaluate.py
 python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/evaluate_measurement.py
 python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_measurement.py
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/evaluate_quality.py
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_quality.py
 ```
 
 SegFormer-B0 revision `489d5cd81a0b59fab9b7ea758d3548ebe99677da` exported to
@@ -79,8 +81,12 @@ amortized semantic cost ≤10 ms per capture frame at cadence 30, aggregate with
 depth ≤20 ms/frame), FP32 passes: p95 164.979/231.357 ms, amortized
 5.499/7.714 ms/frame; depth+semantic aggregate is 13.166/15.711 ms/frame.
 INT8 reduced the artifact to 4.20 MB but made p95 worse: 312.644/494.692 ms.
-Quality and controlled A/B integrity gates remain pending; no 5-surface
-fine-tune or runtime integration is authorized yet.
+On a fixed 200-frame ADEChallenge validation subset, the best 150→5 reducer
+reached mean surface IoU 0.537, floor IoU 0.642 and opening IoU 0.428. Unknown
+recall was 0.909, but 9,946 unknown pixels became floor. A 1,000-step decoder
+fine-tune and a 500-step classifier-only fine-tune both scored about 0.502 mean
+IoU and did not improve the baseline. The candidate is therefore rejected; no
+runtime integration is authorized.
 
 The deterministic scheduler harness is executable with:
 
@@ -92,6 +98,7 @@ python3 -m unittest benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_co
 It verifies the cadence-30, queue-1, non-blocking capture contract and stamped
 stale-result withholding using the measured p95 envelope. This is a contract
 harness only; it does not replace the required integrated runtime A/B wall-time
-measurement. ADE20K/SceneParse150 access remains download-and-hash pending, and
-ScanNet v2 still requires its access agreement, so quality is intentionally
-unmeasured and the candidate remains provisional.
+measurement. The three audited Hugging Face ScanNet mirrors are not semantic-GT
+substitutes: one is mesh-only, one contains derived model outputs, and one has
+RGB/depth/pose without paired semantic masks. Their exact revisions and roles
+are recorded in `scannet_mirror_audit.json` and `datasets.json`.

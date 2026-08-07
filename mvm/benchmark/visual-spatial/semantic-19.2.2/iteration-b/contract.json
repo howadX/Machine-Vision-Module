@@ -1,6 +1,6 @@
 {
   "contract_version": "19.2.2-b",
-  "status": "measurement_pending",
+  "status": "candidate_rejected_after_quality_measurement",
   "candidate": {
     "name": "segformer_b0_sceneparse150",
     "repository": "nvidia/segformer-b0-finetuned-ade-512-512",

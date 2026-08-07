@@ -30,6 +30,42 @@
       }
     },
     {
+      "name": "HF_marvex_scannet_dataset",
+      "role": "auxiliary_3d_mesh_only_not_semantic_rgb_ground_truth",
+      "url": "https://huggingface.co/datasets/marvex/scannet-dataset",
+      "revision": "4a7e31161c7867505f172131a42459fdf2bea697",
+      "status": "rejected_for_19_2_2_quality_gate",
+      "reason": "contains_1513_mesh_scenes_with_ply_aggregation_and_segmentation_files_but_no_rgb_depth_pose_or_2d_masks",
+      "terms": {
+        "mirror_card_license": "apache-2.0",
+        "upstream_scannet_terms_still_apply": true
+      }
+    },
+    {
+      "name": "HF_frankielp_freevocab_scannet_scannetpp_output",
+      "role": "auxiliary_pseudo_label_and_feature_output_only",
+      "url": "https://huggingface.co/datasets/frankielp/freevocab-scannet-scannetpp-output",
+      "revision": "9e6fae3e6ddb6dfd146b7a8553e876c6d5760111",
+      "status": "rejected_for_training_and_quality_ground_truth",
+      "reason": "derived_clip_sam2_and_pth_outputs_without_dataset_card_license_or_paired_semantic_ground_truth",
+      "terms": {
+        "mirror_card_license": null,
+        "upstream_scannet_terms_still_apply": true
+      }
+    },
+    {
+      "name": "HF_frankielp_scannet_multi",
+      "role": "optional_auxiliary_rgb_depth_pose_consistency_and_ood_replay",
+      "url": "https://huggingface.co/datasets/frankielp/scannet-multi",
+      "revision": "5ab82d9db78bca9e5ba4f6ad2a520aff4d94a691",
+      "status": "auxiliary_only_not_semantic_ground_truth",
+      "reason": "scannetpp_part_has_rgb_depth_pose_intrinsics_without_semantic_masks;_scannet200_2d_part_has_intrinsics_only",
+      "terms": {
+        "mirror_card_license": null,
+        "upstream_scannet_and_scannetpp_terms_still_apply": true
+      }
+    },
+    {
       "name": "Structured3D",
       "role": "optional_synthetic_layout_and_boundary_stress",
       "url": "https://structured3d-dataset.org/",

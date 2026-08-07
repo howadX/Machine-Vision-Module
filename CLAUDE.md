@@ -138,8 +138,9 @@ explicit fixed-camera authority and fail-closed quality gates. Phase 19.2.1 fixe
 taxonomy and executable synthetic honesty corpus without claiming a runtime expert. Phase 19.2.2
 Iteration A rejects PP-MobileSeg-Tiny; Iteration B SegFormer-B0 passes static ONNX argmax parity and
 the revised sparse-expert budget (FP32 invocation p95 164.979/231.357 ms, amortized 5.499/7.714 ms per
-capture frame at cadence 30; depth+semantic aggregate 13.166/15.711 ms). Quality and controlled A/B
-integrity gates remain pending; no weights or runtime path were added. Plan —
+capture frame at cadence 30; depth+semantic aggregate 13.166/15.711 ms), but is rejected after measured
+ADE20K quality (mean surface IoU 0.537, floor 0.642, opening 0.428; honesty violations remain). Two
+bounded 5-surface fine-tunes did not improve it. No weights or runtime path were added. Plan —
 `mvm/docs/phase-19-plan.md`.
 
 ## Для Agents

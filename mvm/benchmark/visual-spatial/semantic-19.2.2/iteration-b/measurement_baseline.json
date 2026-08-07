@@ -1,7 +1,7 @@
 {
   "candidate": "segformer_b0_sceneparse150",
-  "decision": "provisionally_accept_for_quality_gate",
-  "evaluator_version": "19.2.2-b.1",
+  "decision": "reject_candidate_defer_runtime_expert",
+  "evaluator_version": "19.2.2-b.2",
   "gates": {
     "aggregate_sparse_experts_within_20ms_per_capture_frame": true,
     "controlled_ab_wall_time_gate_measured": false,
@@ -10,14 +10,15 @@
     "current_rust_ort_loads_and_runs": true,
     "onnx_structure_valid": true,
     "pytorch_onnx_parity_passed": true,
-    "semantic_19_2_1_quality_measured": false
+    "semantic_19_2_1_quality_measured": true,
+    "semantic_19_2_1_quality_passed": false
   },
   "integration": {
     "model_manifest_unchanged": true,
     "occupancy_authority_violations": 0,
     "runtime_dependency_unchanged": true
   },
-  "measurement_scope": "segformer_sceneparse150_static_export_parity_and_rust_cpu_spike",
+  "measurement_scope": "segformer_sceneparse150_static_export_parity_rust_cpu_and_ade20k_quality_rejection",
   "measurements": {
     "fp32_256_onnx_bytes": 15163724,
     "fp32_256_p95_ms": 164.979,
@@ -30,7 +31,13 @@
     "aggregate_fp32_256_plus_depth_amortized_ms_per_capture_frame": 13.166,
     "aggregate_fp32_320_plus_depth_amortized_ms_per_capture_frame": 15.711,
     "fp32_256_amortized_ms_per_capture_frame": 5.4993,
-    "fp32_320_amortized_ms_per_capture_frame": 7.714
+    "fp32_320_amortized_ms_per_capture_frame": 7.714,
+    "mean_surface_iou": 0.537298,
+    "floor_iou": 0.641646,
+    "opening_iou": 0.427946,
+    "unknown_abstention_recall": 0.908628,
+    "unknown_discipline_violations": 51519,
+    "false_floor_on_unknown": 9946
   },
   "runtime_semantic_expert": "not_implemented_in_19.2.2"
 }

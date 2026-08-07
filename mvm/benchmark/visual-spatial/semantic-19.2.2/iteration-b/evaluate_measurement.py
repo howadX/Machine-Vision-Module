@@ -15,7 +15,6 @@ SEMANTIC_AMORTIZED_BUDGET_MS = 10.0
 AGGREGATE_SPARSE_BUDGET_MS = 20.0
 PARITY_MIN = 0.999
 REJECT = "reject_candidate_defer_runtime_expert"
-PROVISIONAL = "provisionally_accept_for_quality_gate"
 
 
 class EvaluationError(ValueError):
@@ -47,7 +46,7 @@ def _finite_number(value: Any, name: str) -> float:
 
 def evaluate(root: Path) -> dict[str, Any]:
     measurement = read_object(root / "measurements.json")
-    if measurement.get("measurement_version") != "19.2.2-b.1":
+    if measurement.get("measurement_version") != "19.2.2-b.2":
         raise EvaluationError("measurement version drift")
     if measurement.get("candidate_revision") != "489d5cd81a0b59fab9b7ea758d3548ebe99677da":
         raise EvaluationError("candidate revision drift")
@@ -84,12 +83,33 @@ def evaluate(root: Path) -> dict[str, Any]:
         latency_results[name] = p95 <= SEMANTIC_INVOCATION_BUDGET_MS
 
     quality = _object(measurement, "quality")
-    if quality.get("semantic_19_2_1_measured") is not False:
-        raise EvaluationError("quality must remain unmeasured until dataset evaluation exists")
-    if quality.get("unknown_discipline_measured") is not False:
-        raise EvaluationError("unknown discipline cannot be claimed without predictions")
-    if quality.get("per_class_iou") is not None or quality.get("boundary_f1") is not None:
-        raise EvaluationError("unmeasured quality fields must remain null")
+    if quality.get("semantic_19_2_1_measured") is not True or quality.get("unknown_discipline_measured") is not True:
+        raise EvaluationError("measured rejection requires quality and unknown-discipline evidence")
+    class_iou = _object(quality, "per_class_iou")
+    if set(class_iou) != {"wall", "floor", "ceiling", "support", "opening"}:
+        raise EvaluationError("surface IoU class set drift")
+    for label, value in class_iou.items():
+        score = _finite_number(value, f"{label} IoU")
+        if not 0.0 <= score <= 1.0:
+            raise EvaluationError(f"invalid {label} IoU")
+    mean_iou = _finite_number(quality.get("mean_surface_iou"), "mean surface IoU")
+    unknown_recall = _finite_number(quality.get("unknown_abstention_recall"), "unknown abstention recall")
+    violations = quality.get("unknown_discipline_violations")
+    false_floor = quality.get("false_floor_on_unknown")
+    if not isinstance(violations, int) or violations <= 0 or not isinstance(false_floor, int) or false_floor <= 0:
+        raise EvaluationError("quality rejection must preserve measured honesty violations")
+    quality_passed = (
+        mean_iou >= 0.60
+        and class_iou["floor"] >= 0.75
+        and class_iou["opening"] >= 0.55
+        and unknown_recall >= 0.90
+        and violations == 0
+        and false_floor == 0
+    )
+    if quality_passed:
+        raise EvaluationError("rejected measurement unexpectedly passes quality gates")
+    if quality.get("boundary_f1") is not None:
+        raise EvaluationError("boundary F1 must remain null when rejection short-circuits before that gate")
     scheduling = _object(measurement, "scheduling_integrity")
     cadence = scheduling.get("semantic_cadence_frames")
     if cadence != 30:
@@ -118,18 +138,19 @@ def evaluate(root: Path) -> dict[str, Any]:
         key = f"aggregate_{name}_plus_depth_amortized_ms_per_capture_frame"
         if _finite_number(scheduling.get(key), key) > AGGREGATE_SPARSE_BUDGET_MS:
             raise EvaluationError(f"{key} exceeds aggregate sparse budget")
-    if measurement.get("decision") != PROVISIONAL:
-        raise EvaluationError("CPU-passing candidate must remain provisional until quality/A-B gates")
-    if measurement.get("rejection_reasons") != []:
-        raise EvaluationError("provisionally accepted candidate cannot retain rejection reasons")
+    if measurement.get("decision") != REJECT:
+        raise EvaluationError("quality-failing candidate must be rejected")
+    reasons = measurement.get("rejection_reasons")
+    if not isinstance(reasons, list) or "mean_surface_iou_below_0_60" not in reasons:
+        raise EvaluationError("quality rejection reasons are missing")
     pending = measurement.get("pending_gates")
-    if not isinstance(pending, list) or "semantic_19_2_1_quality" not in pending:
-        raise EvaluationError("pending quality gate is missing")
+    if pending != ["new_candidate_selection"]:
+        raise EvaluationError("rejected candidate must not retain runtime gates")
 
     return {
-        "evaluator_version": "19.2.2-b.1",
+        "evaluator_version": "19.2.2-b.2",
         "candidate": "segformer_b0_sceneparse150",
-        "decision": PROVISIONAL,
+        "decision": REJECT,
         "measurement_scope": measurement["measurement_scope"],
         "gates": {
             "onnx_structure_valid": all(artifact.get("onnx_checker_passed") is True for artifact in artifacts.values()),
@@ -150,7 +171,8 @@ def evaluate(root: Path) -> dict[str, Any]:
                 <= AGGREGATE_SPARSE_BUDGET_MS
                 for name in ("fp32_256", "fp32_320")
             ),
-            "semantic_19_2_1_quality_measured": False,
+            "semantic_19_2_1_quality_measured": True,
+            "semantic_19_2_1_quality_passed": False,
             "controlled_ab_wall_time_gate_measured": False,
         },
         "measurements": {
@@ -170,6 +192,12 @@ def evaluate(root: Path) -> dict[str, Any]:
             "aggregate_fp32_320_plus_depth_amortized_ms_per_capture_frame": scheduling[
                 "aggregate_fp32_320_plus_depth_amortized_ms_per_capture_frame"
             ],
+            "mean_surface_iou": mean_iou,
+            "floor_iou": class_iou["floor"],
+            "opening_iou": class_iou["opening"],
+            "unknown_abstention_recall": unknown_recall,
+            "unknown_discipline_violations": violations,
+            "false_floor_on_unknown": false_floor,
         },
         "runtime_semantic_expert": "not_implemented_in_19.2.2",
         "integration": {
