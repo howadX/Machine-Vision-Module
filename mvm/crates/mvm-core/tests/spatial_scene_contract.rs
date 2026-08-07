@@ -314,8 +314,7 @@ fn graph_delta_is_capacity_bounded_and_rejects_revision_gaps() {
 
 #[test]
 fn visual_spatial_benchmark_has_the_required_replay_contract() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../benchmark/visual-spatial");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../benchmark/visual-spatial");
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
     let scenarios = manifest["scenarios"].as_array().unwrap();
@@ -325,10 +324,12 @@ fn visual_spatial_benchmark_has_the_required_replay_contract() {
         .collect();
 
     for required in [
-        "vs001", "vs002", "vs003", "vs004", "vs005", "vs006", "vs007", "vs008",
-        "vs009", "vs010",
+        "vs001", "vs002", "vs003", "vs004", "vs005", "vs006", "vs007", "vs008", "vs009", "vs010",
     ] {
-        assert!(ids.contains(required), "missing spatial scenario {required}");
+        assert!(
+            ids.contains(required),
+            "missing spatial scenario {required}"
+        );
         let fixture: serde_json::Value = serde_json::from_slice(
             &std::fs::read(root.join(format!("scenarios/{required}.json"))).unwrap(),
         )
@@ -336,7 +337,11 @@ fn visual_spatial_benchmark_has_the_required_replay_contract() {
         assert_eq!(fixture["scenario_id"], required);
         assert_eq!(fixture["status"], "synthetic_replay");
         assert_eq!(fixture["measurement_scope"], "contract_only");
-        assert!(fixture["honesty_assertions"].as_array().is_some_and(|v| !v.is_empty()));
+        assert!(
+            fixture["honesty_assertions"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty())
+        );
     }
 
     assert!(root.join("schemas/spatial-replay-v1.json").is_file());
