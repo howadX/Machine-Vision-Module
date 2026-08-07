@@ -20,15 +20,16 @@ class SegFormerMeasurementTests(unittest.TestCase):
         with patch.object(MODULE, "read_object", side_effect=lambda path: measurements):
             return MODULE.evaluate(ROOT)
 
-    def test_committed_measurement_rejects_over_budget_candidate(self):
+    def test_committed_measurement_passes_sparse_cpu_budget_but_stays_provisional(self):
         result = self.evaluate_with(self.measurements)
-        self.assertEqual(result["decision"], "reject_candidate_defer_runtime_expert")
-        self.assertFalse(result["gates"]["cpu_p95_within_50ms"])
+        self.assertEqual(result["decision"], "provisionally_accept_for_quality_gate")
+        self.assertTrue(result["gates"]["cpu_invocation_within_250ms"])
+        self.assertTrue(result["gates"]["cpu_amortized_within_10ms_per_capture_frame"])
         self.assertFalse(result["gates"]["semantic_19_2_1_quality_measured"])
 
-    def test_cpu_over_budget_cannot_be_reported_as_pass(self):
+    def test_sparse_invocation_over_budget_cannot_be_reported_as_pass(self):
         measurements = copy.deepcopy(self.measurements)
-        measurements["rust_release_single_thread"]["fp32_256"]["p95_ms"] = 40.0
+        measurements["rust_release_single_thread"]["fp32_256"]["p95_ms"] = 260.0
         with self.assertRaises(MODULE.EvaluationError):
             self.evaluate_with(measurements)
 
@@ -44,9 +45,15 @@ class SegFormerMeasurementTests(unittest.TestCase):
         with self.assertRaises(MODULE.EvaluationError):
             self.evaluate_with(measurements)
 
-    def test_failed_candidate_cannot_enable_runtime(self):
+    def test_quality_pending_candidate_cannot_select_runtime(self):
         measurements = copy.deepcopy(self.measurements)
         measurements["decision"] = "select_sceneparse150_candidate"
+        with self.assertRaises(MODULE.EvaluationError):
+            self.evaluate_with(measurements)
+
+    def test_stale_result_policy_cannot_be_disabled(self):
+        measurements = copy.deepcopy(self.measurements)
+        measurements["scheduling_integrity"]["stale_results_dropped"] = False
         with self.assertRaises(MODULE.EvaluationError):
             self.evaluate_with(measurements)
 

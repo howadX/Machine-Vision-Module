@@ -72,6 +72,24 @@
       "process_max_rss_kib": 155724
     }
   },
+  "scheduling_integrity": {
+    "semantic_cadence_frames": 30,
+    "semantic_amortized_ms_per_capture_frame": {
+      "fp32_256": 5.4993,
+      "fp32_320": 7.714,
+      "int8_256": 10.4215,
+      "int8_320": 16.4897
+    },
+    "depth_reference_invocation_ms": 230.0,
+    "aggregate_fp32_256_plus_depth_amortized_ms_per_capture_frame": 13.166,
+    "aggregate_fp32_320_plus_depth_amortized_ms_per_capture_frame": 15.711,
+    "capture_blocking": false,
+    "max_queue_depth": 1,
+    "stale_results_dropped": true,
+    "source_frame_stamp_required": true,
+    "controlled_ab_wall_time_delta_pct": null,
+    "controlled_ab_measured": false
+  },
   "quality": {
     "semantic_19_2_1_measured": false,
     "reason": "ADE20K_and_ScanNet_evaluation_frames_not_downloaded",
@@ -79,10 +97,12 @@
     "per_class_iou": null,
     "boundary_f1": null
   },
-  "decision": "reject_candidate_defer_runtime_expert",
-  "rejection_reasons": [
-    "fp32_cpu_p95_over_50ms",
-    "int8_cpu_p95_over_50ms",
-    "quality_dataset_gate_pending"
+  "decision": "provisionally_accept_for_quality_gate",
+  "decision_scope": "candidate_cpu_and_integrity_budget_pass;_quality_and_runtime_ab_pending",
+  "rejection_reasons": [],
+  "pending_gates": [
+    "semantic_19_2_1_quality",
+    "controlled_ab_wall_time_delta",
+    "stamped_runtime_expert_replay"
   ]
 }

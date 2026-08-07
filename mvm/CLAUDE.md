@@ -66,11 +66,12 @@
   false ego-motion 0, release CPU p95 0.980 ms. **Phase 19.2.1 ✅:** зафиксированы canonical-compatible
   surface taxonomy и 9-сценарный executable synthetic corpus с per-class IoU, floor/opening boundary
   F1, corruption/OOD и fail-closed unknown gates; baseline честно помечен как synthetic oracle,
-  runtime semantic expert ещё отсутствует. **Phase 19.2.2 Iteration A/B ✅ reject/defer:**
-  PP-MobileSeg-Tiny провалил parity и CPU p95 55.624 ms; SegFormer-B0/ADE20K прошёл static ONNX
-  argmax parity 1.0, но Rust FP32 p95 164.979/231.357 ms и INT8 p95 312.644/494.692 ms на 256/320.
-  Encoder CPU gate провален, quality не измерялась, веса/manifest/runtime не изменены; 5-surface
-  fine-tune и 19.2.3 ждут нового lightweight candidate.
+  runtime semantic expert ещё отсутствует. **Phase 19.2.2 Iteration A ✅ reject; Iteration B
+  provisional quality candidate:** PP-MobileSeg-Tiny провалил parity и p95 55.624 ms; SegFormer-B0/ADE20K
+  прошёл static ONNX argmax parity 1.0 и revised sparse budget: invocation p95 164.979/231.357 ms,
+  amortized 5.499/7.714 ms per capture frame at cadence 30, depth+semantic aggregate 13.166/15.711 ms.
+  Quality и controlled A/B integrity gates pending; веса/manifest/runtime не изменены, 19.2.3 не
+  авторизован.
   Phase 19.3–19.6 остаются отдельными gated slices.
   План — `docs/phase-19-plan.md`.
 - **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`
@@ -94,7 +95,9 @@
 1. **Минимализм / чистая арифметика.** Fusion, трекинг, 3D, uncertainty — это скалярная арифметика
    над данными, уже лежащими в памяти. **Ноль новых зависимостей** на каждую интеллектуальную фичу.
    Footprint растёт только когда добавляется новый ONNX-эксперт.
-2. **CPU-first, $0.** Ни рантайм, ни модели не требуют GPU. Никаких внешних API. Цель — `<50ms` CPU.
+2. **CPU-first, $0.** Ни рантайм, ни модели не требуют GPU. Никаких внешних API. Цель frame-critical
+   пути — `<50ms` CPU; sparse heavy experts оцениваются по bounded invocation latency, amortized cost
+   per capture frame, queue/freshness и controlled capture integrity.
 3. **Полный нативный Rust-пайплайн.** Python-модели — прототипы/леса. Новый код не углубляет связь
    с Python в hot-path.
 
@@ -103,7 +106,8 @@
 метрический (±15-30% абсолюта) + сильный относительный субстрат (робастный ординал «кто ближе» + зоны).
 Fusion: реляционная (граф близости/пересечений → зоны, главная) + атрибутивная (PoE по атрибуту, частный случай).
 
-**Почему не VLM:** ансамбль специалистов vs одна end-to-end модель. <50ms CPU / $0 / приватно /
+**Почему не VLM:** ансамбль специалистов vs одна end-to-end модель. <50ms frame-critical CPU path;
+sparse experts остаются cadence-bounded / $0 / приватно /
 per-signal confidence / интерпретируемо / per-agent заменяемо. Покрывает ~80% сценариев (присутствие,
 эмоция, поза, позиция) при 0.1% стоимости VLM; открытый мир / zero-shot / QA → VLM как fallback.
 

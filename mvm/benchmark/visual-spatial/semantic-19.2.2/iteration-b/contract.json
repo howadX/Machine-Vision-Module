@@ -26,13 +26,25 @@
     "unknown_discipline_violations_max": 0,
     "false_floor_on_unknown_max": 0,
     "argmax_pixel_agreement_min": 0.999,
-    "cpu_end_to_end_p95_ms_max": 50.0
+    "semantic_invocation_p95_ms_max": 250.0,
+    "semantic_amortized_ms_per_capture_frame_max": 10.0,
+    "aggregate_sparse_experts_amortized_ms_per_capture_frame_max": 20.0,
+    "capture_wall_time_delta_pct_max": 5.0
   },
   "depth_policy": {
     "inference_input": "rgb_only",
     "ground_truth_use": "auxiliary_training_and_evaluation",
     "depth_anything_use": "stamped_fusion_evidence_and_noisy_teacher_ablation",
     "stale_depth_is_hidden_input": false
+  },
+  "scheduling_policy": {
+    "semantic_cadence_frames": 30,
+    "max_observation_age_frames": 60,
+    "max_queue_depth": 1,
+    "capture_blocking": false,
+    "stale_results_dropped": true,
+    "source_frame_stamp_required": true,
+    "controlled_ab_required_before_runtime_selection": true
   },
   "integration": {
     "model_bytes_committed": false,

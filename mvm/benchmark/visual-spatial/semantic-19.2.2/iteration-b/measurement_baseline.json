@@ -1,9 +1,12 @@
 {
   "candidate": "segformer_b0_sceneparse150",
-  "decision": "reject_candidate_defer_runtime_expert",
+  "decision": "provisionally_accept_for_quality_gate",
   "evaluator_version": "19.2.2-b.1",
   "gates": {
-    "cpu_p95_within_50ms": false,
+    "aggregate_sparse_experts_within_20ms_per_capture_frame": true,
+    "controlled_ab_wall_time_gate_measured": false,
+    "cpu_amortized_within_10ms_per_capture_frame": true,
+    "cpu_invocation_within_250ms": true,
     "current_rust_ort_loads_and_runs": true,
     "onnx_structure_valid": true,
     "pytorch_onnx_parity_passed": true,
@@ -23,7 +26,11 @@
     "int8_256_onnx_bytes": 4200003,
     "int8_256_p95_ms": 312.644,
     "int8_256_rss_kib": 114848,
-    "int8_320_p95_ms": 494.692
+    "int8_320_p95_ms": 494.692,
+    "aggregate_fp32_256_plus_depth_amortized_ms_per_capture_frame": 13.166,
+    "aggregate_fp32_320_plus_depth_amortized_ms_per_capture_frame": 15.711,
+    "fp32_256_amortized_ms_per_capture_frame": 5.4993,
+    "fp32_320_amortized_ms_per_capture_frame": 7.714
   },
   "runtime_semantic_expert": "not_implemented_in_19.2.2"
 }

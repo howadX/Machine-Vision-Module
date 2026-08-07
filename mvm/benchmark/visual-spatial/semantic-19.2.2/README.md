@@ -1,9 +1,9 @@
 # Phase 19.2.2 Semantic Model Spike
 
-This directory contains two measured **reject/defer** records. Iteration A is
-PP-MobileSeg-Tiny ADE20K; Iteration B is the research-allowed SegFormer-B0
-SceneParse150 candidate. Neither is a runtime expert, and no downloaded or
-converted model bytes are committed.
+This directory contains two measured records. Iteration A is a **reject/defer**
+for PP-MobileSeg-Tiny ADE20K; Iteration B is a **provisional quality candidate**
+for the research-allowed SegFormer-B0 SceneParse150 model. Neither is a runtime
+expert, and no downloaded or converted model bytes are committed.
 
 ## Why this candidate
 
@@ -74,9 +74,10 @@ python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_measurement.py
 
 SegFormer-B0 revision `489d5cd81a0b59fab9b7ea758d3548ebe99677da` exported to
 valid static ONNX at 256×256 and 320×320. PyTorch↔ONNX argmax agreement was
-1.0, but current Rust ORT single-thread p95 was 164.979 ms and 231.357 ms for
-FP32. Dynamic INT8 weight quantization reduced the artifact to 4.20 MB but
-made p95 worse: 312.644 ms and 494.692 ms. The encoder, not the 150-class
-head, is the CPU bottleneck. 19.2.1 quality remains unmeasured because the
-candidate already fails the mandatory CPU gate; no 5-surface fine-tune or
-runtime integration is authorized.
+1.0. Under the revised sparse-expert budget (invocation p95 ≤250 ms,
+amortized semantic cost ≤10 ms per capture frame at cadence 30, aggregate with
+depth ≤20 ms/frame), FP32 passes: p95 164.979/231.357 ms, amortized
+5.499/7.714 ms/frame; depth+semantic aggregate is 13.166/15.711 ms/frame.
+INT8 reduced the artifact to 4.20 MB but made p95 worse: 312.644/494.692 ms.
+Quality and controlled A/B integrity gates remain pending; no 5-surface
+fine-tune or runtime integration is authorized yet.

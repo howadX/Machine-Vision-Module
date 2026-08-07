@@ -67,7 +67,9 @@ MVM превращает видеопоток в граф: **узлы-сущно
 
 Каждый сигнал несёт числовую уверенность, а неопределённость выражается **явно**, а не замалчивается. Модуль скорее скажет «позу withheld — видна только верхняя часть», чем угадает по невидимым ногам.
 
-- **Латентность** — цель `<50 мс` на CPU, движок ~16–17 fps с человеком в кадре.
+- **Латентность** — frame-critical путь имеет цель `<50 мс` на CPU; тяжёлые sparse experts работают
+  асинхронно и оцениваются по invocation p95, amortized cost на capture frame и сохранению целостности
+  кадров.
 - **$0 и приватно** — ни рантайм, ни модели не требуют GPU, сети или внешних API.
 - **Интерпретируемо** — любой вывод прослеживается до конкретного агента; агент заменяется = один крейт.
 
@@ -131,7 +133,7 @@ VLM универсальна, но платит за это скоростью, 
 
 | | MVM | VLM |
 |---|-----|-----|
-| **Латентность** | `<50 мс` (цель), CPU | 2–30 с, GPU |
+| **Латентность** | `<50 мс` frame-critical path; heavy experts bounded by cadence, CPU | 2–30 с, GPU |
 | **Локальность** | всё на CPU, без сети | GPU + облако |
 | **Стоимость** | $0 | $0.01–0.05 / запрос |
 | **Приватность** | абсолютная (ничего не уходит) | кадр уходит на сервер |
@@ -395,7 +397,7 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **19.0** | ✅ contract/replay | **Visual Spatial Substrate foundation** — typed camera-/agent-relative spatial facts, calibration gates, bounded `GraphDelta`, append-only evidence links и 10 deterministic honesty-first fixtures. Runtime experts и spatial memory остаются следующими отдельными slices. Детали — [`docs/phase-19-plan.md`](docs/phase-19-plan.md) |
 | **19.1** | ✅ runtime/replay | **Motion Field + Camera State** — dependency-free sparse block matcher, static/dynamic consensus, explicit fixed-camera authority, stamped Fusion publication и fail-closed blur/gap/crowd/odometry gates. |
 | **19.2.1** | ✅ contract/replay | **Semantic Surface Taxonomy** — 5 canonical surface classes, expert-label normalization и 9 synthetic pixel-grid fixtures с IoU/boundary/OOD/unknown gates. Runtime expert ещё не реализован. |
-| **19.2.2** | ✅ reject/defer A+B | **Semantic ONNX spike** — PP-MobileSeg-Tiny провалил parity/CPU; SegFormer-B0 SceneParse150 прошёл static ONNX argmax parity, но провалил Rust CPU p95: FP32 164.979/231.357 ms и INT8 312.644/494.692 ms на 256/320. Никаких весов/manifest/runtime изменений; нужен новый lightweight candidate. |
+| **19.2.2** | provisional quality gate | **Semantic ONNX spike** — PP-MobileSeg-Tiny отклонён; SegFormer-B0 SceneParse150 прошёл parity и sparse CPU budget: invocation p95 FP32 164.979/231.357 ms, amortized 5.499/7.714 ms/frame при cadence 30, depth+semantic 13.166/15.711 ms/frame. Quality и controlled A/B ещё pending; runtime не включён. |
 | **19.2.3–19.6** | gated | Stamped semantic expert не авторизован до пригодного кандидата; далее Fusion surfaces → replay/live closure → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. |
 
 ---

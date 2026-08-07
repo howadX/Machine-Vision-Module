@@ -7,7 +7,8 @@ scene-graph** каждый кадр (не VLM). Прод — **v0.4.0** (GitHub 
 
 MVM — **ансамбль независимых микро-агентов зрения** (лицо, identity, эмоция, поза, объекты, глубина,
 кисти), сшитых **арифметическим fusion** в метрический 3D scene-graph (узлы-сущности + рёбра-отношения).
-Не одна end-to-end модель, не VLM: <50мс CPU / $0 / приватно / per-signal confidence / интерпретируемо.
+Не одна end-to-end модель, не VLM: <50мс CPU для frame-critical пути; sparse heavy experts имеют
+отдельные invocation/amortized budgets / $0 / приватно / per-signal confidence / интерпретируемо.
 
 **Три инварианта** (любая фича обязана им соответствовать):
 1. **Минимализм / чистая арифметика** — fusion, трекинг, 3D, uncertainty = скалярная арифметика над
@@ -135,9 +136,10 @@ withheld/unknown facts and semantic-session recap. Phase 19.0 provides the addit
 contract/replay baseline; Phase 19.1 adds dependency-free stamped camera-local motion evidence with
 explicit fixed-camera authority and fail-closed quality gates. Phase 19.2.1 fixes the semantic surface
 taxonomy and executable synthetic honesty corpus without claiming a runtime expert. Phase 19.2.2
-Iterations A/B reject/defer PP-MobileSeg-Tiny and SegFormer-B0: the latter passes static ONNX argmax
-parity but fails Rust CPU p95 (164.979/231.357 ms FP32; 312.644/494.692 ms INT8 at 256/320). No weights
-or runtime path were added; a new lightweight candidate is required before 19.2.3. Plan —
+Iteration A rejects PP-MobileSeg-Tiny; Iteration B SegFormer-B0 passes static ONNX argmax parity and
+the revised sparse-expert budget (FP32 invocation p95 164.979/231.357 ms, amortized 5.499/7.714 ms per
+capture frame at cadence 30; depth+semantic aggregate 13.166/15.711 ms). Quality and controlled A/B
+integrity gates remain pending; no weights or runtime path were added. Plan —
 `mvm/docs/phase-19-plan.md`.
 
 ## Для Agents

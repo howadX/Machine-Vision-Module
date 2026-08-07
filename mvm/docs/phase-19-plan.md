@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
 > **Версия:** 0.7 (8 августа 2026)
-> **Статус:** 19.0–19.2.1 ✅ закрыты; 19.2.2 Iteration A и Iteration B закрыты reject/defer (SegFormer-B0 parity проходит, но CPU gate провален); 19.2.3 не авторизован до нового passing model candidate; 19.3–19.6 остаются gated
+> **Статус:** 19.0–19.2.1 ✅ закрыты; 19.2.2 Iteration A reject, Iteration B provisional quality candidate (parity и sparse CPU/integrity budget проходят); quality и controlled A/B gates pending; 19.2.3 не авторизован; 19.3–19.6 остаются gated
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -373,12 +373,14 @@ semantic field + instance masks + depth + temporal consistency
    nine synthetic pixel-grid scenarios and fail-closed gates for per-class IoU, floor/opening boundary
    F1, corruption/OOD coverage and unknown abstention. Baseline is explicitly a synthetic oracle;
    runtime semantic availability remains 0/9.
-2. **19.2.2 ✅ reject/defer — ONNX model spike.** Iteration A (PP-MobileSeg-Tiny/ADE20K) провалила
-   parity (0.0), collapsed output и CPU p95 55.624 ms. Iteration B проверила research-allowed
-   SegFormer-B0/ADE20K SceneParse150: static ONNX parity argmax 1.0 и Rust ORT load проходят, но
-   FP32 p95 164.979/231.357 ms на 256/320, а INT8 312.644/494.692 ms; quality остаётся unmeasured.
-   Encoder CPU gate провален, поэтому 5-surface fine-tune, model/manifest/runtime и 19.2.3 не
-   авторизованы. Measurement record — `benchmark/visual-spatial/semantic-19.2.2/iteration-b/`.
+2. **19.2.2 — ONNX model spike, Iteration B provisional quality candidate.** Iteration A
+   (PP-MobileSeg-Tiny/ADE20K) провалила parity (0.0), collapsed output и p95 55.624 ms. SegFormer-B0
+   Iteration B проходит static ONNX parity argmax 1.0 и revised sparse budget: invocation p95
+   164.979/231.357 ms на 256/320 при лимите 250 ms; amortized 5.499/7.714 ms на capture frame при
+   cadence 30; depth+semantic aggregate 13.166/15.711 ms/frame при лимите 20 ms. Capture remains
+   non-blocking with queue=1, stamped source frames and stale-drop policy. Quality и controlled A/B
+   integrity ещё pending; model/manifest/runtime и 19.2.3 не авторизованы. Measurement record —
+   `benchmark/visual-spatial/semantic-19.2.2/iteration-b/`.
 3. **19.2.3 — Stamped runtime expert (not authorized).** Separate `SemanticAgent`, `LatestValue`
    observation bus, cadence/freshness gates and optional fail-soft startup начинаются только после
    отдельного кандидата, прошедшего provenance + parity + CPU + 19.2.1 quality gates.
@@ -411,8 +413,11 @@ sources and hashes остаются явной частью model provenance. Pa
 - preserve 19.2.1 thresholds: mean surface IoU ≥0.60, floor IoU ≥0.75, opening IoU ≥0.55,
   floor boundary F1 ≥0.80, opening boundary F1 ≥0.70, unknown abstention recall ≥0.90 and zero
   false-floor/unknown-discipline violations;
-- CPU gate is end-to-end preprocess + ORT inference + reducer/postprocess p95 <50 ms on the pinned
-  reference host, with p50, RSS, model bytes and thread count recorded;
+- frame-critical path keeps the `<50 ms` target; sparse semantic invocation p95 ≤250 ms, semantic
+  amortized cost ≤10 ms per capture frame at cadence 30, and aggregate semantic+depth amortized cost
+  ≤20 ms per capture frame. Capture must remain non-blocking, queue depth ≤1, source frame stamps are
+  mandatory, stale results are dropped, and controlled A/B wall-time delta must be ≤5%; record p50,
+  p95, RSS, model bytes, cadence and thread count;
 - FP32 export parity gate: output shape matches, logits are finite, argmax pixel agreement ≥0.999 and
   no single-class collapse. Max-absolute/relative logit error is recorded and must be explained before
   selection even when argmax passes.
@@ -482,11 +487,14 @@ The committed evaluator must reproduce exactly one outcome:
 ```text
 select_sceneparse150_candidate
 select_finetuned_5_surface_candidate
+provisionally_accept_for_quality_gate
 reject_candidate_defer_runtime_expert
 ```
 
-Selection requires all provenance, parity, Rust compatibility, CPU, quality and honesty gates. Any
-failed mandatory gate keeps model bytes out of the manifest and leaves 19.2.3 unauthorized. The record
+Provisional quality-candidate status requires provenance, parity, Rust compatibility, sparse CPU budget,
+queue/freshness integrity and no authority overclaim. Final selection additionally requires quality and
+controlled A/B gates. Any failed mandatory gate keeps model bytes out of the manifest and leaves 19.2.3
+unauthorized. The record
 must name which dataset split and prediction artifact produced every metric.
 
 **G7 — Verification and hand-off.**

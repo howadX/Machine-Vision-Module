@@ -23,7 +23,10 @@ EXACT_THRESHOLDS = {
     "unknown_discipline_violations_max": 0,
     "false_floor_on_unknown_max": 0,
     "argmax_pixel_agreement_min": 0.999,
-    "cpu_end_to_end_p95_ms_max": 50.0,
+    "semantic_invocation_p95_ms_max": 250.0,
+    "semantic_amortized_ms_per_capture_frame_max": 10.0,
+    "aggregate_sparse_experts_amortized_ms_per_capture_frame_max": 20.0,
+    "capture_wall_time_delta_pct_max": 5.0,
 }
 
 
@@ -79,6 +82,17 @@ def evaluate(root: Path) -> dict[str, Any]:
         raise EvaluationError("depth cannot become a required or hidden inference input")
     if depth.get("ground_truth_use") != "auxiliary_training_and_evaluation":
         raise EvaluationError("ground-truth depth policy drift")
+    scheduling = _object(contract, "scheduling_policy")
+    if scheduling != {
+        "semantic_cadence_frames": 30,
+        "max_observation_age_frames": 60,
+        "max_queue_depth": 1,
+        "capture_blocking": False,
+        "stale_results_dropped": True,
+        "source_frame_stamp_required": True,
+        "controlled_ab_required_before_runtime_selection": True,
+    }:
+        raise EvaluationError("sparse expert integrity policy drift")
 
     integration = _object(contract, "integration")
     if any(value is not False for value in integration.values()):

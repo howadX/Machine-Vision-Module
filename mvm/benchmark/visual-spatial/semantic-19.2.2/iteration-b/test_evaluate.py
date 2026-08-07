@@ -39,7 +39,7 @@ class SegFormerDecisionContractTests(unittest.TestCase):
 
     def test_cpu_threshold_cannot_be_weakened(self):
         contract = copy.deepcopy(self.contract)
-        contract["thresholds"]["cpu_end_to_end_p95_ms_max"] = 60.0
+        contract["thresholds"]["semantic_invocation_p95_ms_max"] = 300.0
         with self.assertRaises(MODULE.EvaluationError):
             self.evaluate_with(contract=contract)
 

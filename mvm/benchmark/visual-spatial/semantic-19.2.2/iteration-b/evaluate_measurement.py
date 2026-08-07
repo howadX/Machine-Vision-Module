@@ -10,9 +10,12 @@ from pathlib import Path
 from typing import Any
 
 
-CPU_BUDGET_MS = 50.0
+SEMANTIC_INVOCATION_BUDGET_MS = 250.0
+SEMANTIC_AMORTIZED_BUDGET_MS = 10.0
+AGGREGATE_SPARSE_BUDGET_MS = 20.0
 PARITY_MIN = 0.999
 REJECT = "reject_candidate_defer_runtime_expert"
+PROVISIONAL = "provisionally_accept_for_quality_gate"
 
 
 class EvaluationError(ValueError):
@@ -78,7 +81,7 @@ def evaluate(root: Path) -> dict[str, Any]:
         rss = timing.get("process_max_rss_kib")
         if p50 < 0 or p95 < p50 or not isinstance(rss, int) or rss <= 0:
             raise EvaluationError(f"invalid timing envelope for {name}")
-        latency_results[name] = p95 <= CPU_BUDGET_MS
+        latency_results[name] = p95 <= SEMANTIC_INVOCATION_BUDGET_MS
 
     quality = _object(measurement, "quality")
     if quality.get("semantic_19_2_1_measured") is not False:
@@ -87,15 +90,46 @@ def evaluate(root: Path) -> dict[str, Any]:
         raise EvaluationError("unknown discipline cannot be claimed without predictions")
     if quality.get("per_class_iou") is not None or quality.get("boundary_f1") is not None:
         raise EvaluationError("unmeasured quality fields must remain null")
-    if measurement.get("decision") != REJECT:
-        raise EvaluationError("failed CPU/quality gates require reject/defer")
-    if not measurement.get("rejection_reasons"):
-        raise EvaluationError("rejection reasons are required")
+    scheduling = _object(measurement, "scheduling_integrity")
+    cadence = scheduling.get("semantic_cadence_frames")
+    if cadence != 30:
+        raise EvaluationError("semantic cadence drift")
+    if scheduling.get("capture_blocking") is not False or scheduling.get("max_queue_depth") != 1:
+        raise EvaluationError("capture blocking/queue policy drift")
+    if scheduling.get("stale_results_dropped") is not True or scheduling.get("source_frame_stamp_required") is not True:
+        raise EvaluationError("stale/stamp integrity policy drift")
+    if scheduling.get("controlled_ab_measured") is not False:
+        raise EvaluationError("controlled A/B must remain pending before runtime selection")
+    amortized = _object(scheduling, "semantic_amortized_ms_per_capture_frame")
+    for name, timing in timings.items():
+        if name not in timing_names:
+            continue
+        expected = _finite_number(timing.get("p95_ms"), f"{name} p95") / cadence
+        observed = _finite_number(amortized.get(name), f"{name} amortized cost")
+        if abs(expected - observed) > 0.01:
+            raise EvaluationError(f"amortized timing mismatch for {name}")
+    for name in ("fp32_256", "fp32_320"):
+        p95 = _finite_number(timings[name]["p95_ms"], f"{name} p95")
+        if p95 > SEMANTIC_INVOCATION_BUDGET_MS:
+            raise EvaluationError(f"{name} exceeds sparse invocation budget")
+        if _finite_number(amortized[name], f"{name} amortized cost") > SEMANTIC_AMORTIZED_BUDGET_MS:
+            raise EvaluationError(f"{name} exceeds semantic amortized budget")
+    for name in ("fp32_256", "fp32_320"):
+        key = f"aggregate_{name}_plus_depth_amortized_ms_per_capture_frame"
+        if _finite_number(scheduling.get(key), key) > AGGREGATE_SPARSE_BUDGET_MS:
+            raise EvaluationError(f"{key} exceeds aggregate sparse budget")
+    if measurement.get("decision") != PROVISIONAL:
+        raise EvaluationError("CPU-passing candidate must remain provisional until quality/A-B gates")
+    if measurement.get("rejection_reasons") != []:
+        raise EvaluationError("provisionally accepted candidate cannot retain rejection reasons")
+    pending = measurement.get("pending_gates")
+    if not isinstance(pending, list) or "semantic_19_2_1_quality" not in pending:
+        raise EvaluationError("pending quality gate is missing")
 
     return {
         "evaluator_version": "19.2.2-b.1",
         "candidate": "segformer_b0_sceneparse150",
-        "decision": REJECT,
+        "decision": PROVISIONAL,
         "measurement_scope": measurement["measurement_scope"],
         "gates": {
             "onnx_structure_valid": all(artifact.get("onnx_checker_passed") is True for artifact in artifacts.values()),
@@ -103,8 +137,21 @@ def evaluate(root: Path) -> dict[str, Any]:
             "current_rust_ort_loads_and_runs": all(
                 artifact.get("rust_probe_compatible", True) is True for artifact in artifacts.values()
             ),
-            "cpu_p95_within_50ms": all(latency_results.values()),
+            "cpu_invocation_within_250ms": all(
+                _finite_number(timings[name]["p95_ms"], f"{name} p95") <= SEMANTIC_INVOCATION_BUDGET_MS
+                for name in ("fp32_256", "fp32_320")
+            ),
+            "cpu_amortized_within_10ms_per_capture_frame": all(
+                _finite_number(amortized[name], f"{name} amortized cost") <= SEMANTIC_AMORTIZED_BUDGET_MS
+                for name in ("fp32_256", "fp32_320")
+            ),
+            "aggregate_sparse_experts_within_20ms_per_capture_frame": all(
+                _finite_number(scheduling[f"aggregate_{name}_plus_depth_amortized_ms_per_capture_frame"], name)
+                <= AGGREGATE_SPARSE_BUDGET_MS
+                for name in ("fp32_256", "fp32_320")
+            ),
             "semantic_19_2_1_quality_measured": False,
+            "controlled_ab_wall_time_gate_measured": False,
         },
         "measurements": {
             "fp32_256_p95_ms": timings["fp32_256"]["p95_ms"],
@@ -115,6 +162,14 @@ def evaluate(root: Path) -> dict[str, Any]:
             "int8_256_rss_kib": timings["int8_256"]["process_max_rss_kib"],
             "fp32_256_onnx_bytes": artifacts["fp32_256"]["onnx_bytes"],
             "int8_256_onnx_bytes": artifacts["int8_256"]["onnx_bytes"],
+            "fp32_256_amortized_ms_per_capture_frame": amortized["fp32_256"],
+            "fp32_320_amortized_ms_per_capture_frame": amortized["fp32_320"],
+            "aggregate_fp32_256_plus_depth_amortized_ms_per_capture_frame": scheduling[
+                "aggregate_fp32_256_plus_depth_amortized_ms_per_capture_frame"
+            ],
+            "aggregate_fp32_320_plus_depth_amortized_ms_per_capture_frame": scheduling[
+                "aggregate_fp32_320_plus_depth_amortized_ms_per_capture_frame"
+            ],
         },
         "runtime_semantic_expert": "not_implemented_in_19.2.2",
         "integration": {

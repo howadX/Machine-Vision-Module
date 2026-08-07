@@ -11,8 +11,8 @@ later Phase 19 slices. Additional executable gates live in:
 - `motion-19.1/` — selected classical camera-motion expert;
 - `semantic-19.2.1/` — semantic taxonomy and synthetic outcome corpus, with no
   runtime semantic expert yet;
-- `semantic-19.2.2/` — measured PP-MobileSeg-Tiny export/parity/CPU spike and
-  executable reject/defer decision.
+- `semantic-19.2.2/` — measured PP-MobileSeg-Tiny and SegFormer-B0 export/parity,
+  cadence-aware CPU/integrity spike and executable decision records.
 
 Run:
 
