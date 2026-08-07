@@ -1,0 +1,14 @@
+{
+  "fixture_version": "19.0.0",
+  "scenario_id": "vs004",
+  "name": "table_occludes_floor",
+  "status": "synthetic_replay",
+  "measurement_scope": "contract_only",
+  "inputs": {"frame_id": 7, "intrinsics": true, "extrinsics": false, "sources": [{"source": "semantic", "source_frame_id": 7, "freshness": "fresh"}, {"source": "depth", "source_frame_id": 7, "freshness": "fresh"}]},
+  "expected_facts": [
+    {"kind": "occupancy", "cell": [5, 5], "reference_frame": "camera_local", "status": "unknown", "reason": "occluded"},
+    {"kind": "visibility", "cell": [5, 5], "reference_frame": "camera_local", "status": "derived", "value": "occluded", "positive_evidence": true},
+    {"kind": "passable", "reference_frame": "agent_local", "status": "withheld", "reason": "unknown_space"}
+  ],
+  "honesty_assertions": ["hidden_floor_is_not_free", "passability_is_not_a_scene_fact"]
+}

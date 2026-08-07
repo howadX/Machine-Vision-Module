@@ -1,0 +1,10 @@
+{
+  "fixture_version": "19.0.0",
+  "scenario_id": "vs007",
+  "name": "dynamic_scene_dominates",
+  "status": "synthetic_replay",
+  "measurement_scope": "contract_only",
+  "inputs": {"frame_id": 10, "intrinsics": true, "extrinsics": false, "sources": [{"source": "motion", "source_frame_id": 10, "freshness": "fresh", "static_background_ratio": 0.1}]},
+  "expected_facts": [{"kind": "camera_pose", "reference_frame": "camera_local", "status": "withheld", "reason": "insufficient_static_background"}],
+  "honesty_assertions": ["dynamic_actors_do_not_fabricate_ego_motion"]
+}

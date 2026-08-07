@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mvm://benchmark/spatial-replay-v1",
+  "title": "Phase 19 visual spatial replay fixture",
+  "type": "object",
+  "required": [
+    "fixture_version",
+    "scenario_id",
+    "name",
+    "status",
+    "measurement_scope",
+    "inputs",
+    "expected_facts",
+    "honesty_assertions"
+  ],
+  "properties": {
+    "fixture_version": {"const": "19.0.0"},
+    "scenario_id": {"type": "string"},
+    "name": {"type": "string"},
+    "status": {"const": "synthetic_replay"},
+    "measurement_scope": {"const": "contract_only"},
+    "inputs": {"type": "object"},
+    "expected_facts": {"type": "array"},
+    "graph_deltas": {"type": "array"},
+    "honesty_assertions": {"type": "array", "minItems": 1}
+  },
+  "additionalProperties": false
+}

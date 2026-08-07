@@ -1,0 +1,13 @@
+{
+  "fixture_version": "19.0.0",
+  "scenario_id": "vs009",
+  "name": "missing_camera_to_body_transform",
+  "status": "synthetic_replay",
+  "measurement_scope": "contract_only",
+  "inputs": {"frame_id": 15, "intrinsics": true, "extrinsics": false, "sources": [{"source": "semantic", "source_frame_id": 15, "freshness": "fresh"}]},
+  "expected_facts": [
+    {"kind": "surface", "reference_frame": "camera_local", "status": "observed", "value": "floor", "positive_evidence": true},
+    {"kind": "clearance", "reference_frame": "agent_local", "metric": true, "status": "withheld", "reason": "missing_extrinsics"}
+  ],
+  "honesty_assertions": ["camera_local_allowed_without_extrinsics", "agent_local_metric_withheld_without_extrinsics"]
+}

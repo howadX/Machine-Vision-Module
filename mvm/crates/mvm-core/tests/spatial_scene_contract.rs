@@ -6,6 +6,8 @@ use mvm_core::canonical::{
     SpatialRelationFact, SpatialRelationKind, SpatialScene, SpatialShardId, SurfaceFact,
     SurfaceGeometry, SurfaceId, SurfaceKind, TrackDomain, VisibilityFact, VisibilityState,
 };
+use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 fn evidence(source: FactSource, frame_id: u64) -> FactEvidenceRef {
     FactEvidenceRef {
@@ -308,4 +310,36 @@ fn graph_delta_is_capacity_bounded_and_rejects_revision_gaps() {
     gap.from_revision = 3;
     gap.to_revision = 4;
     assert!(projection.apply(&gap).is_err());
+}
+
+#[test]
+fn visual_spatial_benchmark_has_the_required_replay_contract() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../benchmark/visual-spatial");
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
+    let scenarios = manifest["scenarios"].as_array().unwrap();
+    let ids: BTreeSet<&str> = scenarios
+        .iter()
+        .map(|scenario| scenario["id"].as_str().unwrap())
+        .collect();
+
+    for required in [
+        "vs001", "vs002", "vs003", "vs004", "vs005", "vs006", "vs007", "vs008",
+        "vs009", "vs010",
+    ] {
+        assert!(ids.contains(required), "missing spatial scenario {required}");
+        let fixture: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join(format!("scenarios/{required}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fixture["scenario_id"], required);
+        assert_eq!(fixture["status"], "synthetic_replay");
+        assert_eq!(fixture["measurement_scope"], "contract_only");
+        assert!(fixture["honesty_assertions"].as_array().is_some_and(|v| !v.is_empty()));
+    }
+
+    assert!(root.join("schemas/spatial-replay-v1.json").is_file());
+    assert!(root.join("evaluate.py").is_file());
+    assert!(root.join("baseline-19.0.json").is_file());
 }

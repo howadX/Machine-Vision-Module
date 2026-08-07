@@ -1,0 +1,14 @@
+{
+  "fixture_version": "19.0.0",
+  "scenario_id": "vs002",
+  "name": "person_crosses_corridor",
+  "status": "synthetic_replay",
+  "measurement_scope": "contract_only",
+  "inputs": {"frame_id": 4, "intrinsics": true, "extrinsics": false, "sources": [{"source": "semantic", "source_frame_id": 4, "freshness": "fresh"}, {"source": "depth", "source_frame_id": 4, "freshness": "fresh"}]},
+  "expected_facts": [
+    {"kind": "occupancy", "cell": [2, 1], "reference_frame": "camera_local", "status": "observed", "value": "occupied", "positive_evidence": true},
+    {"kind": "occupancy", "cell": [2, 2], "reference_frame": "camera_local", "status": "unknown", "reason": "occluded"},
+    {"kind": "visibility", "cell": [2, 2], "reference_frame": "camera_local", "status": "derived", "value": "occluded", "positive_evidence": true}
+  ],
+  "honesty_assertions": ["occluded_region_remains_unknown", "person_never_implies_free_space_behind"]
+}

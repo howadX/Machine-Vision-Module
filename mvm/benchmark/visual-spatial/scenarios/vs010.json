@@ -1,0 +1,14 @@
+{
+  "fixture_version": "19.0.0",
+  "scenario_id": "vs010",
+  "name": "late_spatial_source",
+  "status": "synthetic_replay",
+  "measurement_scope": "contract_only",
+  "inputs": {"frame_id": 20, "intrinsics": true, "extrinsics": false, "sources": [{"source": "semantic", "source_frame_id": 21, "freshness": "fresh", "applies_to_frame": 22}]},
+  "expected_facts": [
+    {"kind": "surface", "reference_frame": "camera_local", "status": "unknown", "reason": "source_not_available_at_frame_20"},
+    {"kind": "surface", "reference_frame": "camera_local", "applies_to_frame": 22, "status": "observed", "value": "wall", "positive_evidence": true}
+  ],
+  "graph_deltas": [{"from_revision": 0, "to_revision": 1, "source_frame_id": 22, "operation_count": 2}],
+  "honesty_assertions": ["late_result_applies_to_next_tick_only", "prior_frame_remains_immutable"]
+}

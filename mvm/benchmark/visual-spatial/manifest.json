@@ -1,0 +1,16 @@
+{
+  "fixture_version": "19.0.0",
+  "measurement_scope": "contract_only",
+  "scenarios": [
+    {"id": "vs001", "name": "static_room_camera_pan", "status": "synthetic_replay"},
+    {"id": "vs002", "name": "person_crosses_corridor", "status": "synthetic_replay"},
+    {"id": "vs003", "name": "chair_moves_between_frames", "status": "synthetic_replay"},
+    {"id": "vs004", "name": "table_occludes_floor", "status": "synthetic_replay"},
+    {"id": "vs005", "name": "door_partially_visible", "status": "synthetic_replay"},
+    {"id": "vs006", "name": "blur_glare_low_light", "status": "synthetic_replay"},
+    {"id": "vs007", "name": "dynamic_scene_dominates", "status": "synthetic_replay"},
+    {"id": "vs008", "name": "revisit_after_occlusion", "status": "synthetic_replay"},
+    {"id": "vs009", "name": "missing_camera_to_body_transform", "status": "synthetic_replay"},
+    {"id": "vs010", "name": "late_spatial_source", "status": "synthetic_replay"}
+  ]
+}

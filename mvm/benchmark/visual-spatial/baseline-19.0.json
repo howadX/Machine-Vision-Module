@@ -1,0 +1,20 @@
+{
+  "baseline_spatial_availability": {
+    "available": 0,
+    "total": 10
+  },
+  "contract": {
+    "agent_local_calibration_violations": 0,
+    "graph_revision_or_capacity_violations": 0,
+    "missing_claim_payload_violations": 0,
+    "passed": true,
+    "unknown_not_free_violations": 0
+  },
+  "evaluator_version": "19.0.0",
+  "expected_fact_count": 19,
+  "fixture_version": "19.0.0",
+  "honesty_assertion_count": 16,
+  "measurement_scope": "contract_only_no_runtime_expert",
+  "runtime_spatial_expert": "not_implemented_in_19.0",
+  "scenario_count": 10
+}

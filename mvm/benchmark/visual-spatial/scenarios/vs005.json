@@ -1,0 +1,13 @@
+{
+  "fixture_version": "19.0.0",
+  "scenario_id": "vs005",
+  "name": "door_partially_visible",
+  "status": "synthetic_replay",
+  "measurement_scope": "contract_only",
+  "inputs": {"frame_id": 8, "intrinsics": true, "extrinsics": false, "sources": [{"source": "semantic", "source_frame_id": 8, "freshness": "fresh"}]},
+  "expected_facts": [
+    {"kind": "surface", "reference_frame": "camera_local", "status": "weak", "value": "opening", "positive_evidence": true},
+    {"kind": "openable", "reference_frame": "agent_local", "status": "withheld", "reason": "insufficient_boundary_evidence"}
+  ],
+  "honesty_assertions": ["partial_opening_does_not_assert_openable"]
+}

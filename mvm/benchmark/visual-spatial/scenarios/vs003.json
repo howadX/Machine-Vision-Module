@@ -1,0 +1,14 @@
+{
+  "fixture_version": "19.0.0",
+  "scenario_id": "vs003",
+  "name": "chair_moves_between_frames",
+  "status": "synthetic_replay",
+  "measurement_scope": "contract_only",
+  "inputs": {"frame_id": 6, "intrinsics": true, "extrinsics": false, "sources": [{"source": "semantic", "source_frame_id": 6, "freshness": "fresh"}]},
+  "expected_facts": [{"kind": "occupancy", "cell": [4, 3], "reference_frame": "camera_local", "status": "derived", "value": "occupied", "positive_evidence": true}],
+  "graph_deltas": [
+    {"from_revision": 0, "to_revision": 1, "source_frame_id": 5, "operation_count": 2},
+    {"from_revision": 1, "to_revision": 2, "source_frame_id": 6, "operation_count": 3}
+  ],
+  "honesty_assertions": ["new_revision_does_not_rewrite_prior_evidence", "graph_replay_is_contiguous"]
+}
