@@ -131,8 +131,9 @@ delta +0.31% ≤5%, no agent errors. 18.9 adds atomic `current_cortex.json`, rea
 views and MCP `mvm_cortex`; 18.10 frozen replay passes 6/6 pinned claims with zero honesty
 regressions and three `Accepted → Dispatched → Resolved` advisory loops. Final live validation on the
 closing binary confirmed 25 FPS, 1s/2s forecasts, evidence-linked Cortex output, preserved
-withheld/unknown facts and semantic-session recap. Phase 19 requires its own slice approval. Plan —
-`mvm/docs/phase-18-plan.md`.
+withheld/unknown facts and semantic-session recap. Phase 19.0 now provides the additive spatial
+contract/replay baseline; Phase 19.1+ still requires its own slice approval. Plan —
+`mvm/docs/phase-19-plan.md`.
 
 ## Для Agents
 

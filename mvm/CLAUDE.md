@@ -10,7 +10,7 @@
 ## Статус
 
 - **Фаза 15 (ML Refactor) ЗАКРЫТА; Фаза 16 (Dataset Factory) 16.0–16.6-A + Фаза 16.7 (Semantic Session Log)
-  закрыты и live-провалидированы (ветка `kaggle`). 14 крейтов, 717 Rust-тестов** (1 ignored — live-камера)
+  закрыты и live-провалидированы (ветка `kaggle`). 14 крейтов, 765 Rust-тестов** (1 ignored — live-камера)
   + Python-группы (экспортёры + validate-гейт). **Осталось: 16.6-B** (hard-example mining, зависит от данных).
 - **Фаза 16.7 — Semantic Session Log ✅:** свела два стора истории сцены в один. `mvm run` по умолчанию
   пишет **text-only семантическую сессию** (`datasets/sessions/<id>/labels.jsonl`, без пикселей — durable
@@ -57,9 +57,10 @@
   `Accepted → Dispatched → Resolved` только после нового stamped observation; ни request, ни resolution
   не мутируют facts. Gate: 6/6 pinned cognitive claims improve over the documented no-Cortex synthetic
   comparator (требуется ≥4/6), honesty regressions = 0; controlled adaptive runtime remains +0.31% ≤5%.
-  Фаза 18 завершена replay+live runtime evidence; Phase 19 остаётся отдельной approved фазой и требует
-  собственного slice approval.
-  План — `docs/phase-18-plan.md`.
+  Фаза 18 завершена replay+live runtime evidence. **Phase 19.0 ✅:** additive spatial facts contract,
+  calibration/reference-frame gates, bounded `GraphDelta`/append-only evidence projection и 10
+  deterministic synthetic replay fixtures; runtime spatial experts не включены. Phase 19.1–19.6
+  остаются отдельными approved slices с собственными evidence gates. План — `docs/phase-19-plan.md`.
 - **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`
   пушнут → CI `release.yml` собирает x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory) · **v0.4.0** (Visual Cortex);
   **v0.2.0** (ML Refactor) свёрнута в код v0.3.0 (отдельным тегом не выпускалась). CI триггерится тегом `v*`,
@@ -152,7 +153,7 @@ cargo run --release -- --native --once --dump-interval 1          # Python bridg
 
 | Крейт | Содержимое |
 |-------|------------|
-| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator` 11.D1), EMOTION fuse (PoE), **WorldState** (legacy blackboard), `canonical` (`FusedSceneFrame`/`SceneFact`/`EntityKey`, 18.0), `assignment` (Hungarian/Kuhn–Munkres, 9.10), `activity` (FSM+journal 11.C), `anomaly` (v2 scorer 11.B2), `mask` (`InstanceMask` 11.A1) |
+| **mvm-core** | типы, Config, PersonTracker (Kalman 4×скаляр + identity/cosine re-link + reserved-id), Pinhole/space (+`ScaleCalibrator` 11.D1), EMOTION fuse (PoE), **WorldState** (legacy blackboard), `canonical` (`FusedSceneFrame`/`SceneFact`/`EntityKey`, 18.0, additive Phase 19.0 spatial facts/IDs/`GraphDelta`), `assignment` (Hungarian/Kuhn–Munkres, 9.10), `activity` (FSM+journal 11.C), `anomaly` (v2 scorer 11.B2), `mask` (`InstanceMask` 11.A1) |
 | **mvm-detect** | YuNet ONNX (228KB, embed, multi-stride NMS) — лицо |
 | **mvm-identity** | SFace ONNX (37MB, 128d L2-эмбеддинг, gallery, `embed()`) |
 | **mvm-emotion** | EmotiEffLib B0 ONNX (16MB, 8-class VGAF), EmotionResult + entropy |

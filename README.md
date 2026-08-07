@@ -177,7 +177,7 @@ snapshot → cortex / recap → inspect только для проверки к�
 ## Куда развивается проект
 
 - **Phase 18 — Visual Cortex:** закрыта в `v0.4.0`. MVM уже умеет строить evidence-linked cognitive view поверх canonical facts.
-- **Phase 19 — Visual Spatial Substrate:** approved следующий этап. Цель — развить object-centric scene graph в graph-first camera-/agent-relative spatial world model: regions, surfaces, visibility, occupancy и bounded temporal visual memory.
+- **Phase 19 — Visual Spatial Substrate:** 19.0 contract/replay baseline ✅. Добавлены typed camera-/agent-relative spatial facts, bounded `GraphDelta` projection и 10 honesty-first synthetic fixtures; motion/surfaces/occupancy experts ещё не включены и требуют отдельных slice gates.
 
 При этом MVM не будет выдавать `free`, `passable` или `safe` из одного отсутствующего detector output. Для spatial/robotic claims нужны положительные evidence, calibration и явно заданный reference frame.
 

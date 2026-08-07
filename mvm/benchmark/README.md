@@ -4,8 +4,10 @@ This benchmark is part of MVM's visual subsystem: it evaluates evidence-backed
 facts, bounded visual memory and advisory Cortex behavior. It is not a robot
 controller, safety case, planner benchmark, or open-world VLM evaluation.
 
-This directory is the executable evaluation contract for phase 18. It is not a
-runtime history store and never competes with Dataset Factory `labels.jsonl`.
+This directory is the executable evaluation contract for phase 18. Phase 19.0
+adds its separate contract-only corpus under `benchmark/visual-spatial/`. Neither
+benchmark directory is a runtime history store or competes with Dataset Factory
+`labels.jsonl`.
 
 ## Layout
 

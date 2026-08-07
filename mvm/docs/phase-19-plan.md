@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
-> **Версия:** 0.2 (5 августа 2026)
-> **Статус:** ✅ approved; начинается только после закрытия Phase 18; графовая архитектура утверждена как основа spatial substrate
+> **Версия:** 0.3 (7 августа 2026)
+> **Статус:** 19.0 ✅ закрыта; 19.1–19.6 approved как последующие отдельные slices; графовая архитектура утверждена как основа spatial substrate
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -263,6 +263,13 @@ Observed | Derived | Temporal | Remembered | Weak | Withheld | Unknown
 
 ### 19.0 — Spatial Contract + Replay Baseline
 
+**Статус:** ✅ закрыта 7 августа 2026 г. Коммиты `c54797c7` (canonical contract) и
+`933f4930` (replay baseline). Добавлены additive `SpatialScene` facts, typed run-scoped IDs,
+reference-frame/calibration validation, bounded `GraphDelta` с append-only evidence links,
+deterministic incremental/batched projection replay и 10 contract-only synthetic fixtures.
+Runtime availability baseline остаётся `0/10`: Phase 19.0 намеренно не добавляет motion,
+semantic/panoptic, occupancy expert или новый ONNX dependency.
+
 **Goal:** define minimum typed spatial facts, graph IDs/GraphDelta, reference-frame rules and benchmark fixtures before adding a new model or changing runtime.
 
 **Likely files:**
@@ -483,7 +490,7 @@ capture throughput, Human/Fusion p50/p95, dropped-frame ratio
 ```text
 Phase 18 closed
   ↓
-19.0 spatial contract + replay baseline
+19.0 spatial contract + replay baseline ✅
   ↓
 19.1 motion/camera-state spike ─┐
                                 ├→ 19.2 semantic/panoptic surfaces
