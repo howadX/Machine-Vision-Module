@@ -356,6 +356,7 @@ mod tests {
                 )
                 .unwrap(),
             }],
+            spatial: Default::default(),
             events: EventTailView::default(),
             anomaly: SceneFact::unknown(FactReason::MissingSource),
             quality: SceneQuality::default(),

@@ -12,6 +12,7 @@
     "sources": {"type": "array"},
     "entities": {"type": "array"},
     "relations": {"type": "array"},
+    "spatial": {"type": "object"},
     "zones": {"type": "array"},
     "activities": {"type": "array"},
     "events": {"type": "object", "required": ["first_seq", "next_seq", "events"]},

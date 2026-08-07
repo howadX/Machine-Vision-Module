@@ -175,6 +175,7 @@ impl CanonicalFusion {
             hand_interactions,
             zones,
             activities,
+            spatial: Default::default(),
             events: EventTailView {
                 first_seq,
                 next_seq: self.next_event_seq,

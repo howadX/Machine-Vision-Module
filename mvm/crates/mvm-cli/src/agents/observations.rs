@@ -111,6 +111,7 @@ mod tests {
             hand_interactions: Vec::new(),
             zones: Vec::new(),
             activities: Vec::new(),
+            spatial: Default::default(),
             events: EventTailView::default(),
             anomaly: SceneFact::unknown(FactReason::MissingSource),
             quality: SceneQuality::default(),

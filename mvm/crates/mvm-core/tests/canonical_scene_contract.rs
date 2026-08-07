@@ -171,6 +171,7 @@ fn canonical_scene_contract_fused_frame_round_trip_is_deterministic() {
         hand_interactions: Vec::new(),
         zones: Vec::new(),
         activities: Vec::new(),
+        spatial: Default::default(),
         events: EventTailView::default(),
         anomaly: SceneFact::unknown(FactReason::MissingSource),
         quality: SceneQuality::default(),

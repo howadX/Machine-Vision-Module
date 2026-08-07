@@ -136,6 +136,7 @@ mod tests {
                 age_frames: 4,
             }],
             activities: Vec::new(),
+            spatial: Default::default(),
             events: EventTailView::default(),
             anomaly: mvm_core::canonical::SceneFact::unknown(FactReason::MissingSource),
             quality: SceneQuality::default(),
