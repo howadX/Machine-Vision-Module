@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
-> **Версия:** 0.6 (7 августа 2026)
-> **Статус:** 19.0–19.2.2 ✅ закрыты; 19.2.2 завершён решением reject/defer, поэтому 19.2.3 не авторизован до отдельного пригодного model candidate; 19.3–19.6 остаются gated
+> **Версия:** 0.7 (8 августа 2026)
+> **Статус:** 19.0–19.2.1 ✅ закрыты; первая попытка 19.2.2 (PP-MobileSeg-Tiny) закрыта reject/defer, план второй попытки с SegFormer-B0 подготовлен, но ещё не исполнен; 19.2.3 не авторизован до passing model decision; 19.3–19.6 остаются gated
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -373,11 +373,11 @@ semantic field + instance masks + depth + temporal consistency
    nine synthetic pixel-grid scenarios and fail-closed gates for per-class IoU, floor/opening boundary
    F1, corruption/OOD coverage and unknown abstention. Baseline is explicitly a synthetic oracle;
    runtime semantic availability remains 0/9.
-2. **19.2.2 ✅ reject/defer — ONNX model spike.** PP-MobileSeg-Tiny/ADE20K проверен через официальный
-   Paddle export, Paddle2ONNX и текущий Rust ORT. Control-flow-free 256×256 ONNX structurally valid,
-   но parity провален (argmax agreement 0.0, ONNX collapsed to one class), Rust single-thread p95
-   55.624 ms > 50 ms, а production provenance pretrained ADE20K weights не подтверждён. Quality
-   metrics не выдумываются без parity-valid predictions; model/manifest/runtime не изменены.
+2. **19.2.2 — ONNX model spike, iteration B planned.** Iteration A (PP-MobileSeg-Tiny/ADE20K)
+   закрыта reject/defer: parity 0.0, collapsed output и Rust single-thread p95 55.624 ms > 50 ms;
+   model/manifest/runtime не изменены. Iteration B проверит research-allowed SegFormer-B0/ADE20K
+   сначала с исходной SceneParse150 head и deterministic surface reducer, затем только при доказанной
+   необходимости — с 5-surface head и depth-aware auxiliary supervision на ScanNet. Полный план ниже.
 3. **19.2.3 — Stamped runtime expert (not authorized).** Separate `SemanticAgent`, `LatestValue`
    observation bus, cadence/freshness gates and optional fail-soft startup начинаются только после
    отдельного кандидата, прошедшего provenance + parity + CPU + 19.2.1 quality gates.
@@ -385,6 +385,122 @@ semantic field + instance masks + depth + temporal consistency
    `SurfaceFact`; raw class grids never become world truth directly.
 5. **19.2.5 — Replay/live closure.** Corruption/OOD replay, controlled throughput A/B and final model
    decision. Occupancy/free-space remains outside this slice.
+
+#### План 19.2.2 — SegFormer-B0 semantic model decision
+
+**Цель:** выбрать или снова честно отклонить конкретный semantic expert до появления runtime agent.
+Research/non-commercial pretrained data and weights допустимы для текущей стадии MVM, но их terms,
+sources and hashes остаются явной частью model provenance. Passing result 19.2.2 разрешает начать
+19.2.3; сам по себе он не публикует canonical facts.
+
+**Неподвижные границы slice:**
+
+- no `SemanticAgent`, observation bus, `mvm setup`/manifest entry or production default;
+- no raw semantic class becomes `SurfaceFact`; Fusion remains the only facts authority;
+- no semantic result authorizes `free`, `passable`, occupancy or door-open state;
+- depth is stamped complementary evidence, not an unstamped hidden override;
+- dataset/model bytes stay outside git; repository records only manifests, hashes, mappings,
+  reproducible commands and measured summaries.
+
+**G0 — Freeze candidate and acceptance contract.**
+
+- candidate A: `nvidia/segformer-b0-finetuned-ade-512-512`, SceneParse150 logits;
+- input variants measured independently at static 256×256 and 320×320; no dynamic-shape result may
+  substitute for them;
+- preserve 19.2.1 thresholds: mean surface IoU ≥0.60, floor IoU ≥0.75, opening IoU ≥0.55,
+  floor boundary F1 ≥0.80, opening boundary F1 ≥0.70, unknown abstention recall ≥0.90 and zero
+  false-floor/unknown-discipline violations;
+- CPU gate is end-to-end preprocess + ORT inference + reducer/postprocess p95 <50 ms on the pinned
+  reference host, with p50, RSS, model bytes and thread count recorded;
+- FP32 export parity gate: output shape matches, logits are finite, argmax pixel agreement ≥0.999 and
+  no single-class collapse. Max-absolute/relative logit error is recorded and must be explained before
+  selection even when argmax passes.
+
+**G1 — Dataset/provenance manifest before data download.**
+
+- ADE20K: model-pretraining and 150-class reference validation;
+- ScanNet v2: primary real indoor RGB sequence corpus, semantic/depth/camera-pose ground truth;
+- Structured3D: optional synthetic layout/boundary stress set, not a replacement for real validation;
+- MVM-owned video: camera-domain holdout only after consent/privacy/provenance audit;
+- pin source URLs, accepted research terms, archive hashes, label versions and scene-level train/val/test
+  splits. Adjacent frames from one scan/session may never cross a split.
+
+**G2 — Deterministic taxonomy adapter.**
+
+- keep all 150 expert logits available for measurement, but map only approved labels into the 19.2.1
+  evaluation taxonomy;
+- direct surfaces: `floor`, `wall`, `ceiling`;
+- opening candidates: `door`, `screen door`, `windowpane`; never open/free/traversable by label alone;
+- support candidates require an explicit allow-list such as `table`, `desk`, `counter`, `countertop`,
+  `shelf`, `bar`, `kitchen island`; vertical furniture pixels are not automatically support surfaces;
+- every unmapped, ignored, low-confidence, high-entropy or OOD pixel becomes `unknown`, never floor;
+- semantic object regions may be compared with YOLO/masks, but cannot create tracked object entities.
+
+**G3 — Reproducible PyTorch → ONNX parity spike.**
+
+- pin checkpoint revision, Transformers/PyTorch/ONNX/opset versions and preprocessing constants;
+- export raw logits without embedded argmax or ambiguous resize control flow;
+- compare framework and ONNX Runtime on deterministic synthetic tensors plus pinned ADE20K/ScanNet
+  frames; run an ORT-optimizations-disabled control when parity fails;
+- verify with the current Rust `ort 2.0.0-rc.12/api-22` probe and record artifact SHA-256;
+- a structural ONNX pass without numerical parity is a rejection, as demonstrated by iteration A.
+
+**G4 — Measure the unmodified 150-class baseline first.**
+
+- measure ADE20K reference accuracy separately from 5-class MVM surface metrics;
+- evaluate remapped predictions on a scene-stratified ScanNet subset and the executable 19.2.1
+  corruption/OOD contract;
+- record per-class confusion, boundary F1, confidence/entropy calibration and unknown abstention;
+- measure semantic support for object masks only as advisory overlap; do not score it as instance
+  detection or tracking;
+- if the baseline passes parity, CPU and surface quality, do not train a new head merely to reduce the
+  label count.
+
+**G5 — Conditional 5-surface fine-tune with depth-aware supervision.**
+
+This gate runs only if G4 proves the architecture/export viable but the 150→5 reducer misses quality or
+latency targets. The inference input remains RGB; ScanNet depth teaches geometry through auxiliary
+losses rather than becoming a mandatory fourth channel.
+
+- initialize from the research ADE20K SegFormer-B0 backbone and replace the classifier with five
+  surface logits; `ignore` is excluded from loss, while runtime `unknown` comes from calibrated
+  abstention rather than a fake visual class;
+- train first with frozen backbone/head-only, then unfreeze upper encoder stages only if validation
+  plateaus;
+- add bounded depth-boundary and surface-normal/geometry consistency losses from ScanNet ground-truth
+  depth; compare against a semantic-loss-only ablation;
+- evaluate with DepthAnything predictions as noisy auxiliary evidence/domain stress, but do not feed
+  stale DepthAnything output into the RGB model;
+- use class-balanced sampling and report support/opening frequency; no score may hide absent rare-class
+  coverage behind aggregate mIoU.
+
+**G6 — Fail-closed decision record.**
+
+The committed evaluator must reproduce exactly one outcome:
+
+```text
+select_sceneparse150_candidate
+select_finetuned_5_surface_candidate
+reject_candidate_defer_runtime_expert
+```
+
+Selection requires all provenance, parity, Rust compatibility, CPU, quality and honesty gates. Any
+failed mandatory gate keeps model bytes out of the manifest and leaves 19.2.3 unauthorized. The record
+must name which dataset split and prediction artifact produced every metric.
+
+**G7 — Verification and hand-off.**
+
+- negative evaluator tests: collapsed output, stale/missing depth, background→floor, opening→free,
+  object-region→entity, split leakage and over-budget latency must fail;
+- run all Phase 19 evaluators, skill contract validation, `cargo fmt --check`, targeted Rust probe tests,
+  Clippy and `cargo test --workspace`;
+- update README/CLAUDE status only after the decision record is reproducible;
+- hand-off to 19.2.3 contains the selected ONNX hash, preprocessing/postprocessing contract, cadence
+  recommendation, freshness envelope and explicit remaining unknowns.
+
+**Definition of done:** 19.2.2 ends with a reproducible select/reject decision, not merely a downloadable
+checkpoint. No runtime semantic availability is claimed until 19.2.3 implements and validates the
+stamped expert.
 
 ---
 

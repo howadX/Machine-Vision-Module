@@ -135,8 +135,9 @@ withheld/unknown facts and semantic-session recap. Phase 19.0 provides the addit
 contract/replay baseline; Phase 19.1 adds dependency-free stamped camera-local motion evidence with
 explicit fixed-camera authority and fail-closed quality gates. Phase 19.2.1 fixes the semantic surface
 taxonomy and executable synthetic honesty corpus without claiming a runtime expert. Phase 19.2.2
-rejects/defers PP-MobileSeg-Tiny after failed parity, CPU and pretrained-provenance gates; no weights
-or runtime path were added, and 19.2.3 requires a new passing candidate. Plan —
+Iteration A rejects/defers PP-MobileSeg-Tiny after failed parity and CPU gates; no weights or runtime
+path were added. Iteration B is planned around research-allowed SegFormer-B0/ADE20K, ScanNet spatial
+validation and conditional depth-supervised fine-tuning; 19.2.3 still requires a passing decision. Plan —
 `mvm/docs/phase-19-plan.md`.
 
 ## Для Agents

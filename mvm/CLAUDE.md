@@ -66,10 +66,11 @@
   false ego-motion 0, release CPU p95 0.980 ms. **Phase 19.2.1 ✅:** зафиксированы canonical-compatible
   surface taxonomy и 9-сценарный executable synthetic corpus с per-class IoU, floor/opening boundary
   F1, corruption/OOD и fail-closed unknown gates; baseline честно помечен как synthetic oracle,
-  runtime semantic expert ещё отсутствует. **Phase 19.2.2 ✅ reject/defer:** PP-MobileSeg-Tiny/ADE20K
-  structurally экспортирован в ONNX и принят текущим Rust ORT, но провалил parity (0.0 agreement,
-  collapsed output), single-thread CPU p95 55.624 ms >50 ms и production-provenance gate. Веса,
-  manifest и runtime не изменены; 19.2.3 не авторизован до нового прошедшего кандидата.
+  runtime semantic expert ещё отсутствует. **Phase 19.2.2 Iteration A ✅ reject/defer:**
+  PP-MobileSeg-Tiny/ADE20K structurally экспортирован в ONNX и принят текущим Rust ORT, но провалил
+  parity (0.0 agreement, collapsed output) и single-thread CPU p95 55.624 ms >50 ms. Веса, manifest и
+  runtime не изменены. **Iteration B planned:** research SegFormer-B0/ADE20K baseline → ScanNet
+  validation → conditional 5-surface depth-supervised fine-tune; 19.2.3 ждёт passing decision.
   Phase 19.3–19.6 остаются отдельными gated slices.
   План — `docs/phase-19-plan.md`.
 - **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`
