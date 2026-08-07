@@ -1,0 +1,18 @@
+{
+  "candidate": "segformer_b0_sceneparse150",
+  "contract": {
+    "dataset_bytes_committed": false,
+    "model_manifest_unchanged": true,
+    "occupancy_authority_violations": 0,
+    "passed": true,
+    "runtime_dependency_unchanged": true,
+    "taxonomy_authority_violations": 0
+  },
+  "decision": "measurement_pending",
+  "depth_inference_input": "rgb_only",
+  "evaluator_version": "19.2.2-b",
+  "planned_input_sizes": [256, 320],
+  "runtime_semantic_expert": "not_implemented_in_19.2.2",
+  "source_count": 4,
+  "surface_mapping_count": 15
+}

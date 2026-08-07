@@ -1,0 +1,45 @@
+{
+  "contract_version": "19.2.2-b",
+  "status": "measurement_pending",
+  "candidate": {
+    "name": "segformer_b0_sceneparse150",
+    "repository": "nvidia/segformer-b0-finetuned-ade-512-512",
+    "revision": "489d5cd81a0b59fab9b7ea758d3548ebe99677da",
+    "source_artifacts": {
+      "config_json_sha256": "209caa9091e4632f7c8883c11170cd08ad29af68b23c09590aa4a5befb1a2a7f",
+      "preprocessor_config_json_sha256": "8039d1d210abaa7117ad78e58cdfd6141a2ec72c03dae891b3cd76737e422c6c",
+      "model_safetensors_sha256": "6ae39addd01de6b1b8bde2cf677d43a5cd733424b8d186de3f95d1c51fee23f9",
+      "model_safetensors_bytes": 15036944
+    },
+    "input_channels": 3,
+    "static_input_sizes": [256, 320],
+    "output_classes": 150,
+    "output": "raw_logits"
+  },
+  "thresholds": {
+    "mean_surface_iou_min": 0.6,
+    "floor_iou_min": 0.75,
+    "opening_iou_min": 0.55,
+    "floor_boundary_f1_min": 0.8,
+    "opening_boundary_f1_min": 0.7,
+    "unknown_abstention_recall_min": 0.9,
+    "unknown_discipline_violations_max": 0,
+    "false_floor_on_unknown_max": 0,
+    "argmax_pixel_agreement_min": 0.999,
+    "cpu_end_to_end_p95_ms_max": 50.0
+  },
+  "depth_policy": {
+    "inference_input": "rgb_only",
+    "ground_truth_use": "auxiliary_training_and_evaluation",
+    "depth_anything_use": "stamped_fusion_evidence_and_noisy_teacher_ablation",
+    "stale_depth_is_hidden_input": false
+  },
+  "integration": {
+    "model_bytes_committed": false,
+    "model_manifest_added": false,
+    "runtime_dependency_added": false,
+    "runtime_semantic_expert_enabled": false,
+    "canonical_surface_publication_enabled": false,
+    "occupancy_or_traversability_authorized": false
+  }
+}

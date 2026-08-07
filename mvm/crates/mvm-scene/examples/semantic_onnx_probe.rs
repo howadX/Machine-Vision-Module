@@ -1,15 +1,15 @@
 //! Phase 19.2.2 one-model probe for ONNX compatibility and CPU cost.
 //!
 //! This is intentionally not a runtime semantic expert. It accepts an explicit
-//! model path and reports measurements without adding the model to MVM's
-//! manifest or publishing scene facts.
+//! model path and optional static input size and reports measurements without
+//! adding the model to MVM's manifest or publishing scene facts.
 
 use anyhow::{Context, Result, ensure};
 use ndarray::{Array, IxDyn};
 use ort::{session::Session, value::TensorRef};
 use std::{collections::BTreeSet, env, fs, path::PathBuf, time::Instant};
 
-const INPUT_SIZE: usize = 256;
+const DEFAULT_INPUT_SIZE: usize = 256;
 const WARMUP_RUNS: usize = 5;
 const MEASURED_RUNS: usize = 30;
 
@@ -31,10 +31,18 @@ fn max_rss_kib() -> Option<u64> {
 }
 
 fn main() -> Result<()> {
-    let model_path = env::args_os()
-        .nth(1)
+    let mut args = env::args_os().skip(1);
+    let model_path = args
+        .next()
         .map(PathBuf::from)
-        .context("usage: semantic_onnx_probe <model.onnx>")?;
+        .context("usage: semantic_onnx_probe <model.onnx> [input_size]")?;
+    let input_size = args
+        .next()
+        .map(|value| value.to_string_lossy().parse::<usize>())
+        .transpose()
+        .context("input_size must be a positive integer")?
+        .unwrap_or(DEFAULT_INPUT_SIZE);
+    ensure!(input_size > 0, "input_size must be positive");
     let model_bytes = fs::metadata(&model_path)
         .with_context(|| format!("cannot stat {}", model_path.display()))?
         .len();
@@ -44,10 +52,10 @@ fn main() -> Result<()> {
         .commit_from_file(&model_path)
         .with_context(|| format!("current Rust ORT rejected {}", model_path.display()))?;
 
-    let values: Vec<f32> = (0..3 * INPUT_SIZE * INPUT_SIZE)
-        .map(|index| -2.0 + 4.0 * index as f32 / (3 * INPUT_SIZE * INPUT_SIZE - 1) as f32)
+    let values: Vec<f32> = (0..3 * input_size * input_size)
+        .map(|index| -2.0 + 4.0 * index as f32 / (3 * input_size * input_size - 1) as f32)
         .collect();
-    let input = Array::from_shape_vec(IxDyn(&[1, 3, INPUT_SIZE, INPUT_SIZE]), values)?;
+    let input = Array::from_shape_vec(IxDyn(&[1, 3, input_size, input_size]), values)?;
 
     for _ in 0..WARMUP_RUNS {
         session.run(ort::inputs![TensorRef::from_array_view(&input)?])?;
@@ -63,10 +71,14 @@ fn main() -> Result<()> {
             let (shape, logits) = outputs[0].try_extract_tensor::<f32>()?;
             output_shape = shape.iter().copied().collect();
             ensure!(
-                output_shape == [1, 150, INPUT_SIZE as i64, INPUT_SIZE as i64],
+                output_shape.len() == 4
+                    && output_shape[0] == 1
+                    && output_shape[1] == 150
+                    && output_shape[2] > 0
+                    && output_shape[3] > 0,
                 "unexpected semantic output shape {output_shape:?}"
             );
-            let pixels = INPUT_SIZE * INPUT_SIZE;
+            let pixels = (output_shape[2] * output_shape[3]) as usize;
             for pixel in 0..pixels {
                 let mut best_class = 0usize;
                 let mut best_score = f32::NEG_INFINITY;

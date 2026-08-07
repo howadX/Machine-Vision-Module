@@ -1,0 +1,45 @@
+{
+  "taxonomy_version": "19.2.2-b",
+  "expert": "sceneparse150",
+  "official_id2label_sha256": "209caa9091e4632f7c8883c11170cd08ad29af68b23c09590aa4a5befb1a2a7f",
+  "expert_class_count": 150,
+  "surface_classes": ["floor", "wall", "ceiling", "support", "opening"],
+  "non_surface_classes": ["unknown", "ignore"],
+  "direct_surface_labels": {
+    "wall": "wall",
+    "floor": "floor",
+    "ceiling": "ceiling"
+  },
+  "opening_candidate_labels": {
+    "windowpane": "opening",
+    "door": "opening",
+    "screen door": "opening"
+  },
+  "support_candidate_labels": {
+    "table": "support",
+    "shelf": "support",
+    "desk": "support",
+    "counter": "support",
+    "coffee table": "support",
+    "bench": "support",
+    "countertop": "support",
+    "kitchen island": "support",
+    "bar": "support"
+  },
+  "default_unmapped_target": "unknown",
+  "confidence_policy": {
+    "low_confidence_target": "unknown",
+    "high_entropy_target": "unknown",
+    "ood_target": "unknown",
+    "ignore_is_scored_surface": false
+  },
+  "authority": {
+    "raw_label_is_canonical_fact": false,
+    "opening_implies_open": false,
+    "opening_implies_free": false,
+    "opening_implies_traversable": false,
+    "support_candidate_is_support_geometry": false,
+    "semantic_object_region_creates_entity": false,
+    "fusion_owns_surface_facts": true
+  }
+}

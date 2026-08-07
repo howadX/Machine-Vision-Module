@@ -1,7 +1,9 @@
 # Phase 19.2.2 Semantic Model Spike
 
-This is a measured **reject/defer** record for PP-MobileSeg-Tiny ADE20K. It is
-not a runtime expert, and no downloaded or converted model bytes are committed.
+This directory contains two measured **reject/defer** records. Iteration A is
+PP-MobileSeg-Tiny ADE20K; Iteration B is the research-allowed SegFormer-B0
+SceneParse150 candidate. Neither is a runtime expert, and no downloaded or
+converted model bytes are committed.
 
 ## Why this candidate
 
@@ -57,3 +59,24 @@ cargo run --release -p mvm-scene --example semantic_onnx_probe -- /path/to/model
 
 The exact artifact URLs, SHA-256 values, conversion versions and measurements
 are pinned in `candidate.json`.
+
+## Iteration B — SegFormer-B0
+
+The reproducible contract and measurement decision live under
+`iteration-b/`:
+
+```bash
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/evaluate.py
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_evaluate.py
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/evaluate_measurement.py
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-b/test_measurement.py
+```
+
+SegFormer-B0 revision `489d5cd81a0b59fab9b7ea758d3548ebe99677da` exported to
+valid static ONNX at 256×256 and 320×320. PyTorch↔ONNX argmax agreement was
+1.0, but current Rust ORT single-thread p95 was 164.979 ms and 231.357 ms for
+FP32. Dynamic INT8 weight quantization reduced the artifact to 4.20 MB but
+made p95 worse: 312.644 ms and 494.692 ms. The encoder, not the 150-class
+head, is the CPU bottleneck. 19.2.1 quality remains unmeasured because the
+candidate already fails the mandatory CPU gate; no 5-surface fine-tune or
+runtime integration is authorized.

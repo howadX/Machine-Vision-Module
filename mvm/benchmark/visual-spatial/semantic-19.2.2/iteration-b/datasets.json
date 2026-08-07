@@ -1,0 +1,59 @@
+{
+  "manifest_version": "19.2.2-b",
+  "split_policy": "scene_or_session_level",
+  "download_policy": "external_artifacts_not_committed",
+  "sources": [
+    {
+      "name": "ADE20K",
+      "role": "pretraining_and_sceneparse150_reference_validation",
+      "url": "https://ade20k.csail.mit.edu/",
+      "terms_url": "https://ade20k.csail.mit.edu/terms/",
+      "status": "terms_reviewed_download_pending",
+      "archive_sha256": null,
+      "archive_sha256_required_before_measurement": true,
+      "terms": {
+        "scope": "noncommercial_research_and_education",
+        "accepted_for_current_research_phase": true
+      }
+    },
+    {
+      "name": "ScanNet_v2",
+      "role": "primary_real_indoor_sequence_semantic_depth_pose_validation",
+      "url": "https://www.scan-net.org/ScanNet/",
+      "terms_url": "https://kaldir.vc.in.tum.de/scannet/ScanNet_TOS.pdf",
+      "status": "access_agreement_required",
+      "archive_sha256": null,
+      "archive_sha256_required_before_measurement": true,
+      "terms": {
+        "scope": "noncommercial_research_and_education",
+        "accepted_for_current_research_phase": true
+      }
+    },
+    {
+      "name": "Structured3D",
+      "role": "optional_synthetic_layout_and_boundary_stress",
+      "url": "https://structured3d-dataset.org/",
+      "terms_url": "https://structured3d-dataset.org/",
+      "status": "optional_access_agreement_required",
+      "archive_sha256": null,
+      "archive_sha256_required_before_measurement": true,
+      "terms": {
+        "scope": "research_terms",
+        "accepted_for_current_research_phase": true
+      }
+    },
+    {
+      "name": "MVM_owned_video",
+      "role": "future_camera_domain_holdout",
+      "url": null,
+      "terms_url": null,
+      "status": "not_yet_collected",
+      "archive_sha256": null,
+      "archive_sha256_required_before_measurement": true,
+      "terms": {
+        "scope": "consent_privacy_and_provenance_audit_required",
+        "accepted_for_current_research_phase": false
+      }
+    }
+  ]
+}

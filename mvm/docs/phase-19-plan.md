@@ -1,7 +1,7 @@
 # Фаза 19 — Visual Spatial Substrate: RGB → agent-relative пространство
 
 > **Версия:** 0.7 (8 августа 2026)
-> **Статус:** 19.0–19.2.1 ✅ закрыты; первая попытка 19.2.2 (PP-MobileSeg-Tiny) закрыта reject/defer, план второй попытки с SegFormer-B0 подготовлен, но ещё не исполнен; 19.2.3 не авторизован до passing model decision; 19.3–19.6 остаются gated
+> **Статус:** 19.0–19.2.1 ✅ закрыты; 19.2.2 Iteration A и Iteration B закрыты reject/defer (SegFormer-B0 parity проходит, но CPU gate провален); 19.2.3 не авторизован до нового passing model candidate; 19.3–19.6 остаются gated
 > **Ветка:** `kaggle`
 > **Цель фазы:** расширить MVM из object-centric 3D scene graph в evidence-backed **camera-/agent-relative spatial world model**, не заменяя существующих human-centric экспертов и не смешивая spatial facts с cognitive interpretation.
 >
@@ -373,11 +373,12 @@ semantic field + instance masks + depth + temporal consistency
    nine synthetic pixel-grid scenarios and fail-closed gates for per-class IoU, floor/opening boundary
    F1, corruption/OOD coverage and unknown abstention. Baseline is explicitly a synthetic oracle;
    runtime semantic availability remains 0/9.
-2. **19.2.2 — ONNX model spike, iteration B planned.** Iteration A (PP-MobileSeg-Tiny/ADE20K)
-   закрыта reject/defer: parity 0.0, collapsed output и Rust single-thread p95 55.624 ms > 50 ms;
-   model/manifest/runtime не изменены. Iteration B проверит research-allowed SegFormer-B0/ADE20K
-   сначала с исходной SceneParse150 head и deterministic surface reducer, затем только при доказанной
-   необходимости — с 5-surface head и depth-aware auxiliary supervision на ScanNet. Полный план ниже.
+2. **19.2.2 ✅ reject/defer — ONNX model spike.** Iteration A (PP-MobileSeg-Tiny/ADE20K) провалила
+   parity (0.0), collapsed output и CPU p95 55.624 ms. Iteration B проверила research-allowed
+   SegFormer-B0/ADE20K SceneParse150: static ONNX parity argmax 1.0 и Rust ORT load проходят, но
+   FP32 p95 164.979/231.357 ms на 256/320, а INT8 312.644/494.692 ms; quality остаётся unmeasured.
+   Encoder CPU gate провален, поэтому 5-surface fine-tune, model/manifest/runtime и 19.2.3 не
+   авторизованы. Measurement record — `benchmark/visual-spatial/semantic-19.2.2/iteration-b/`.
 3. **19.2.3 — Stamped runtime expert (not authorized).** Separate `SemanticAgent`, `LatestValue`
    observation bus, cadence/freshness gates and optional fail-soft startup начинаются только после
    отдельного кандидата, прошедшего provenance + parity + CPU + 19.2.1 quality gates.

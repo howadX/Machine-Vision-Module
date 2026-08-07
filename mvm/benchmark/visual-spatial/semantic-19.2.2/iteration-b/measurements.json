@@ -1,0 +1,88 @@
+{
+  "measurement_version": "19.2.2-b.1",
+  "measurement_scope": "segformer_sceneparse150_static_export_parity_and_rust_cpu_spike",
+  "candidate_revision": "489d5cd81a0b59fab9b7ea758d3548ebe99677da",
+  "toolchain": {
+    "python": "3.11.15",
+    "torch": "2.7.1+cpu",
+    "transformers": "4.53.2",
+    "onnx": "1.18.0",
+    "onnxruntime_python": "1.22.1",
+    "onnx_opset": 17,
+    "rust_ort": "2.0.0-rc.12/api-22"
+  },
+  "artifacts": {
+    "fp32_256": {
+      "input_shape": [1, 3, 256, 256],
+      "output_shape": [1, 150, 64, 64],
+      "onnx_bytes": 15163724,
+      "onnx_sha256": "033b5f64b1bbe111346ae228aced2d33d1359e46f806d47fc0564c23cf99727d",
+      "onnx_checker_passed": true,
+      "paddle_or_pytorch_onnx_argmax_agreement": 1.0,
+      "max_abs_logit_error": 0.0000247955,
+      "mean_abs_logit_error": 0.0000037352
+    },
+    "fp32_320": {
+      "input_shape": [1, 3, 320, 320],
+      "output_shape": [1, 150, 80, 80],
+      "onnx_bytes": 15163724,
+      "onnx_sha256": "c6209f2d5c93e56289ca9f169be0b14ae3e5686c3336d2344861c4152fcdda27",
+      "onnx_checker_passed": true,
+      "paddle_or_pytorch_onnx_argmax_agreement": 1.0,
+      "max_abs_logit_error": 1.124854,
+      "mean_abs_logit_error": 0.2769951
+    },
+    "int8_256": {
+      "input_shape": [1, 3, 256, 256],
+      "output_shape": [1, 150, 64, 64],
+      "onnx_bytes": 4200003,
+      "onnx_checker_passed": true,
+      "rust_probe_compatible": true
+    },
+    "int8_320": {
+      "input_shape": [1, 3, 320, 320],
+      "output_shape": [1, 150, 80, 80],
+      "onnx_bytes": 4200003,
+      "onnx_checker_passed": true,
+      "rust_probe_compatible": true
+    }
+  },
+  "rust_release_single_thread": {
+    "hardware": "Intel Core i7-12700K x86_64",
+    "warmup_runs": 5,
+    "measured_runs": 30,
+    "fp32_256": {
+      "p50_ms": 132.446,
+      "p95_ms": 164.979,
+      "process_max_rss_kib": 146644
+    },
+    "fp32_320": {
+      "p50_ms": 191.719,
+      "p95_ms": 231.357,
+      "process_max_rss_kib": 174996
+    },
+    "int8_256": {
+      "p50_ms": 296.165,
+      "p95_ms": 312.644,
+      "process_max_rss_kib": 114848
+    },
+    "int8_320": {
+      "p50_ms": 455.554,
+      "p95_ms": 494.692,
+      "process_max_rss_kib": 155724
+    }
+  },
+  "quality": {
+    "semantic_19_2_1_measured": false,
+    "reason": "ADE20K_and_ScanNet_evaluation_frames_not_downloaded",
+    "unknown_discipline_measured": false,
+    "per_class_iou": null,
+    "boundary_f1": null
+  },
+  "decision": "reject_candidate_defer_runtime_expert",
+  "rejection_reasons": [
+    "fp32_cpu_p95_over_50ms",
+    "int8_cpu_p95_over_50ms",
+    "quality_dataset_gate_pending"
+  ]
+}
