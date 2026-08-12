@@ -71,9 +71,10 @@
   прошёл static ONNX argmax parity 1.0 и revised sparse budget: invocation p95 164.979/231.357 ms,
   amortized 5.499/7.714 ms per capture frame at cadence 30, depth+semantic aggregate 13.166/15.711 ms.
   Но real ADE20K quality провалена: mean surface IoU 0.537, floor 0.642, opening 0.428 и honesty
-  violations; два bounded 5-surface fine-tune не улучшили baseline. Веса/manifest/runtime не изменены,
-  19.2.3 не авторизован до нового кандидата.
-  Phase 19.3–19.6 остаются отдельными gated slices.
+  violations; два bounded 5-surface fine-tune не улучшили baseline. Iteration C сохраняет measured
+  artifacts и авторизует только реализацию default-off 19.2.3a shadow runtime; canonical surfaces,
+  occupancy/free-space и production quality остаются неавторизованными. Веса/manifest/runtime ещё не
+  изменены. Phase 19.3–19.6 остаются отдельными gated slices.
   План — `docs/phase-19-plan.md`.
 - **Версия — `v0.4.0` ОПУБЛИКОВАНА** (2026-08-06, Visual Cortex): `master` = `kaggle`+merge, тег `v0.4.0`
   пушнут → CI `release.yml` собирает x86_64+aarch64. Релизы: **v0.1.0** (Продукт) · **v0.3.0** (Dataset Factory) · **v0.4.0** (Visual Cortex);

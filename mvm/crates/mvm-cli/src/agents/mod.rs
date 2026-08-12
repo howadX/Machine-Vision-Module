@@ -28,6 +28,7 @@ mod motion;
 mod observations;
 mod policy;
 mod scene;
+mod semantic;
 mod statefile;
 
 pub(crate) use capture::CaptureAgent;
@@ -41,13 +42,15 @@ pub(crate) use observations::{
     AttentionPolicyBus, CortexFrameBus, DepthObservationBus, DepthObservationFrame,
     FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
     HumanObservationFrame, MotionObservationBus, MotionObservationFrame, ObservationStamp,
-    PolicyOutcomeBus, SceneObservationBus, SceneObservationFrame,
+    PolicyOutcomeBus, SceneObservationBus, SceneObservationFrame, SemanticObservationBus,
+    SemanticObservationFrame,
 };
 pub(crate) use policy::{
     DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,
     SceneExecutionControl, SchedulingMetrics, SchedulingMode,
 };
 pub(crate) use scene::SceneAgent;
+pub(crate) use semantic::SemanticAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
 
 use crate::pipeline::BodyData;

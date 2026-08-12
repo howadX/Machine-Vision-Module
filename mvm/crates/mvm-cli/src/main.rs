@@ -771,6 +771,34 @@ fn load_depth(config: &mvm_core::Config) -> Option<mvm_depth::DepthEstimator> {
     }
 }
 
+fn load_semantic(config: &config_file::SemanticConfig) -> Option<mvm_semantic::SemanticEstimator> {
+    if !config.enabled {
+        return None;
+    }
+    if !config.model.is_file() {
+        eprintln!(
+            "  semantic-shadow: model missing at {} — shadow agent disabled",
+            config.model.display()
+        );
+        return None;
+    }
+    match mvm_semantic::SemanticEstimator::from_path(&config.model) {
+        Ok(estimator) => {
+            eprintln!(
+                "  semantic-shadow: SegFormer loaded ({}, cadence {}, max age {})",
+                config.model.display(),
+                config.cadence,
+                config.max_age_frames
+            );
+            Some(estimator)
+        }
+        Err(error) => {
+            eprintln!("  semantic-shadow: load failed: {error} — shadow agent disabled");
+            None
+        }
+    }
+}
+
 /// YOLO-seg expert (phase 10.4, +1 ONNX). Gated on the model file like the other
 /// heavy detectors; the `--masks` flag gate is applied by the caller. On the mesh
 /// (production) path this rides inside the SceneAgent — one seg forward yields
@@ -954,6 +982,7 @@ fn build_live_mesh(
     // Optional heavy detectors (own agents).
     let yolo = load_yolo(&config);
     let depth = load_depth(&config);
+    let semantic = load_semantic(&product.semantic);
     // YOLO-seg masks (opt-in --masks) ride the SceneAgent on the production path.
     let seg = if args.common.masks {
         load_seg(&config)
@@ -1064,6 +1093,14 @@ fn build_live_mesh(
             config.depth_cadence,
             depth_control.clone(),
             scheduling_metrics.clone(),
+        )));
+    }
+    if let Some(semantic) = semantic {
+        mesh.add(Box::new(agents::SemanticAgent::new(
+            semantic,
+            agents::SemanticObservationBus::new(),
+            product.semantic.cadence,
+            product.semantic.max_age_frames,
         )));
     }
     mesh.add(Box::new(agents::FusionAgent::new(

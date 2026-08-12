@@ -1,0 +1,49 @@
+{
+  "status": "observed_red_evidence",
+  "exact_log_text_claimed": false,
+  "note": "Reasons are durable summaries of observed failures; exact console log text was not retained and is not reconstructed.",
+  "runs": [
+    {
+      "stage": "initial_implementation_red",
+      "command": "python3 benchmark/visual-spatial/semantic-19.2.2/iteration-c/test_evaluate.py",
+      "expected_reason": "evaluate.py was absent",
+      "observed_status": "nonzero",
+      "source": "implementer summary"
+    },
+    {
+      "stage": "initial_provenance_red",
+      "command": "python3 benchmark/visual-spatial/semantic-19.2.2/iteration-c/test_evaluate.py",
+      "expected_reason": "the provenance test failed before prediction artifact pinning was implemented",
+      "observed_status": "nonzero",
+      "source": "implementer summary"
+    },
+    {
+      "stage": "review_fix_fixture_provenance_red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 iteration-c/test_evaluate.py",
+      "expected_reason": "the executable fixture result and fixture pins were absent",
+      "observed_status": "nonzero",
+      "source": "observed during Task 1 review-gap fix"
+    },
+    {
+      "stage": "review_fix_iteration_b_dual_pin_red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 iteration-c/test_evaluate.py",
+      "expected_reason": "source_artifacts did not pin both Iteration-B JSON files",
+      "observed_status": "nonzero",
+      "source": "observed during Task 1 review-gap fix"
+    },
+    {
+      "stage": "review_fix_preservation_red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 iteration-c/test_evaluate.py",
+      "expected_reason": "the snapshot omitted FP32/INT8 p50, RSS, bytes, scheduling fields, full selected quality metrics, and fine-tune results",
+      "observed_status": "nonzero",
+      "source": "observed during Task 1 review-gap fix"
+    },
+    {
+      "stage": "review_fix_tdd_and_bytecode_red",
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 iteration-c/test_evaluate.py",
+      "expected_reason": "tdd_evidence.json was absent and iteration-c/__pycache__ still existed",
+      "observed_status": "nonzero",
+      "source": "observed during Task 1 review-gap fix"
+    }
+  ]
+}

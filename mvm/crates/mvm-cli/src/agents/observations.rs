@@ -76,6 +76,12 @@ pub(crate) struct MotionObservationFrame {
     pub camera_motion: mvm_core::canonical::SceneFact<mvm_core::canonical::RelativeCameraMotion>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SemanticObservationFrame {
+    pub stamp: ObservationStamp,
+    pub grid: Arc<mvm_semantic::SemanticGrid>,
+}
+
 #[derive(Clone)]
 pub(crate) struct FrameEvidenceHandles {
     pub rgb: Arc<image::DynamicImage>,
@@ -94,6 +100,7 @@ pub(crate) type HumanObservationBus = LatestValue<HumanObservationFrame>;
 pub(crate) type SceneObservationBus = LatestValue<SceneObservationFrame>;
 pub(crate) type DepthObservationBus = LatestValue<DepthObservationFrame>;
 pub(crate) type MotionObservationBus = LatestValue<MotionObservationFrame>;
+pub(crate) type SemanticObservationBus = LatestValue<SemanticObservationFrame>;
 pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;
 /// Runtime output of the optional Cortex adapter. It is intentionally separate
 /// from canonical facts: Cortex publishes an interpretation, never a mutation.
@@ -162,6 +169,33 @@ mod tests {
         assert_eq!(observed.stamp.source_frame_id, 7);
         assert_eq!(observed.stamp.captured_at_unix_ms, 1_000);
         assert_eq!(observed.map.w, 2);
+    }
+
+    #[test]
+    fn semantic_bus_keeps_latest_source_stamp_and_immutable_grid() {
+        let bus = SemanticObservationBus::new();
+        for source_frame_id in [7, 9] {
+            bus.publish(SemanticObservationFrame {
+                stamp: ObservationStamp::new(source_frame_id, Instant::now(), 1_000),
+                grid: Arc::new(
+                    mvm_semantic::SemanticGrid::new(
+                        1,
+                        1,
+                        vec![mvm_semantic::SemanticMeasurementLabel::Floor],
+                        vec![0.9],
+                        vec![0.1],
+                        vec![true],
+                    )
+                    .unwrap(),
+                ),
+            });
+        }
+        let observed = bus.latest().unwrap();
+        assert_eq!(observed.stamp.source_frame_id, 9);
+        assert_eq!(
+            observed.grid.labels[0],
+            mvm_semantic::SemanticMeasurementLabel::Floor
+        );
     }
 
     #[test]

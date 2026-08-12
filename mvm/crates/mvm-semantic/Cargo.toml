@@ -1,0 +1,12 @@
+[package]
+name = "mvm-semantic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Measurement-only SegFormer semantic shadow expert"
+
+[dependencies]
+ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "download-binaries", "tls-rustls", "api-22"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+ndarray = "0.17"
+anyhow = "1"

@@ -262,6 +262,12 @@ mod tests {
             gallery_dir: PathBuf::from("/g"),
             snapshot_ms: 1000,
             dataset: mvm_dataset::DatasetConfig::default(),
+            semantic: crate::config_file::SemanticConfig {
+                enabled: false,
+                model: PathBuf::new(),
+                cadence: 30,
+                max_age_frames: 60,
+            },
         };
         let a = server_args(&product, false);
         assert_eq!(

@@ -26,6 +26,8 @@ pub struct FileConfig {
     pub gallery: GallerySection,
     #[serde(default)]
     pub cadence: CadenceSection,
+    #[serde(default)]
+    pub semantic: SemanticSection,
     /// Dataset Factory `[dataset]` section (phase 16.1.1). The struct lives in
     /// `mvm-dataset`; here it is just deserialized and its `dir` tilde-expanded.
     #[serde(default)]
@@ -71,6 +73,23 @@ pub struct CadenceSection {
     pub snapshot_ms: Option<u64>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SemanticSection {
+    pub enabled: Option<bool>,
+    pub model: Option<String>,
+    pub cadence: Option<u32>,
+    pub max_age_frames: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticConfig {
+    pub enabled: bool,
+    pub model: PathBuf,
+    pub cadence: u32,
+    pub max_age_frames: u64,
+}
+
 /// Fully resolved product config — what the rest of the CLI consumes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductConfig {
@@ -87,6 +106,8 @@ pub struct ProductConfig {
     pub snapshot_ms: u64,
     /// Dataset Factory config (phase 16.1). `dataset.dir` is already tilde-expanded.
     pub dataset: mvm_dataset::DatasetConfig,
+    /// Default-off runtime-only semantic shadow expert.
+    pub semantic: SemanticConfig,
 }
 
 type EnvFn<'a> = &'a dyn Fn(&str) -> Option<String>;
@@ -174,6 +195,25 @@ pub(crate) fn resolve(
         .or(file.cadence.snapshot_ms)
         .unwrap_or(1000);
 
+    let semantic = SemanticConfig {
+        enabled: pick("MVM_SEMANTIC_ENABLED", None)
+            .and_then(|value| value.parse().ok())
+            .or(file.semantic.enabled)
+            .unwrap_or(false),
+        model: pick("MVM_SEMANTIC_MODEL", file.semantic.model.as_ref())
+            .map(|value| expand_tilde(&value, &home))
+            .unwrap_or_else(|| PathBuf::from("segformer_b0_sceneparse150_256.onnx")),
+        cadence: pick("MVM_SEMANTIC_CADENCE", None)
+            .and_then(|value| value.parse().ok())
+            .or(file.semantic.cadence)
+            .unwrap_or(30)
+            .max(1),
+        max_age_frames: pick("MVM_SEMANTIC_MAX_AGE_FRAMES", None)
+            .and_then(|value| value.parse().ok())
+            .or(file.semantic.max_age_frames)
+            .unwrap_or(60),
+    };
+
     // Dataset Factory (phase 16.1): the section comes wholesale from the file
     // (serde defaults fill the rest); only its storage dir needs tilde expansion.
     let mut dataset = file.dataset;
@@ -192,6 +232,7 @@ pub(crate) fn resolve(
         gallery_dir,
         snapshot_ms,
         dataset,
+        semantic,
     }
 }
 
@@ -308,6 +349,31 @@ mod tests {
         );
         assert_eq!(c.gallery_dir, PathBuf::from("/home/u/.config/mvm/gallery"));
         assert_eq!(c.snapshot_ms, 1000);
+        assert!(!c.semantic.enabled);
+        assert_eq!(c.semantic.cadence, 30);
+        assert_eq!(c.semantic.max_age_frames, 60);
+        assert_eq!(
+            c.semantic.model,
+            PathBuf::from("segformer_b0_sceneparse150_256.onnx")
+        );
+    }
+
+    #[test]
+    fn semantic_file_and_env_follow_precedence_and_expand_tilde() {
+        let file: FileConfig = toml::from_str(
+            "[semantic]\nenabled = true\nmodel = \"~/file.onnx\"\ncadence = 15\nmax_age_frames = 45\n",
+        )
+        .unwrap();
+        let env = env_of(&[
+            ("HOME", "/home/u"),
+            ("MVM_SEMANTIC_MODEL", "~/env.onnx"),
+            ("MVM_SEMANTIC_CADENCE", "20"),
+        ]);
+        let c = resolve(Some(file), &env, NOTHING_EXISTS);
+        assert!(c.semantic.enabled);
+        assert_eq!(c.semantic.model, PathBuf::from("/home/u/env.onnx"));
+        assert_eq!(c.semantic.cadence, 20);
+        assert_eq!(c.semantic.max_age_frames, 45);
     }
 
     #[test]

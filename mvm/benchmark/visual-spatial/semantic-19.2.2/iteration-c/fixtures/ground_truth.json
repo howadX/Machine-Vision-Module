@@ -1,0 +1,15 @@
+{
+  "artifact_role": "ground_truth",
+  "contract_fixture_only": true,
+  "labels": [
+    "floor",
+    "wall",
+    "ceiling",
+    "support_region_candidate",
+    "opening_candidate",
+    "other_non_surface",
+    "withheld",
+    "floor"
+  ],
+  "scene_id": "contract-test-scene"
+}

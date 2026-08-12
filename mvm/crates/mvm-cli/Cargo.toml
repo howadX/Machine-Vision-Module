@@ -28,6 +28,7 @@ mvm-fusion = { path = "../mvm-fusion" }
 mvm-mesh = { path = "../mvm-mesh" }
 mvm-dataset = { path = "../mvm-dataset" }
 mvm-cortex = { path = "../mvm-cortex" }
+mvm-semantic = { path = "../mvm-semantic" }
 anyhow = "1"
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }

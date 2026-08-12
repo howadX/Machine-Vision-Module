@@ -1,0 +1,86 @@
+{
+  "contract_version": "19.2.2-c",
+  "status": "contract_gate_only",
+  "decision": "authorize_shadow_runtime_only",
+  "taxonomy": {
+    "labels": ["floor", "wall", "ceiling", "support_region_candidate", "opening_candidate", "other_non_surface", "withheld"],
+    "known_non_target_indoor_pixels": "other_non_surface",
+    "invalid_low_confidence_high_entropy_ood": "withheld",
+    "withheld_is_negative_class": false
+  },
+  "authority": {
+    "levels": ["raw_observation", "selective_surface_evidence", "fused_surface_fact", "occupancy_free_space"],
+    "forbidden_promotions": {
+      "raw_observation_to_selective_evidence_without_calibration": true,
+      "selective_evidence_to_fused_surface_fact_without_fusion": true,
+      "raw_observation_to_fused_surface_fact": true,
+      "opening_candidate_to_open_or_free": true,
+      "support_region_candidate_to_support_geometry": true,
+      "other_non_surface_to_withheld": true,
+      "withheld_to_other_non_surface": true,
+      "withheld_unknown_occluded_stale_to_free": true
+    },
+    "occupancy_honesty_gate_owner": "19.3"
+  },
+  "computed_artifact_provenance": {
+    "required_inputs": ["pinned_ground_truth", "predictions"],
+    "ground_truth_and_predictions_pinned": true,
+    "sha256_required_for": ["ground_truth", "predictions", "metric_artifact"],
+    "source_and_revision_required": true,
+    "separate_calibration_and_test_splits": true,
+    "split_unit": "scene_or_session",
+    "split_leakage_forbidden": true,
+    "contract_fixture": {
+      "contract_fixture_only": true,
+      "prohibited_uses": ["quality_evidence", "production_acceptance"],
+      "calibration_scene_ids": ["contract-calibration-scene"],
+      "test_scene_ids": ["contract-test-scene"],
+      "ground_truth": {
+        "path": "fixtures/ground_truth.json",
+        "source": "MVM Iteration-C deterministic conformance fixture",
+        "revision": "19.2.2-c-fixture-v1",
+        "sha256": "6e62e74eeb9e8eac504225d3b3f0bc623865dd6f26dd61c615f8bce42080c46a"
+      },
+      "predictions": {
+        "path": "fixtures/predictions.json",
+        "source": "MVM Iteration-C deterministic conformance fixture",
+        "revision": "19.2.2-c-fixture-v1",
+        "sha256": "6ac4ff48d644d3651c0f239be0a8e34513c14f87f4aa0a0a834bb04b3f35b4b9"
+      },
+      "metric_artifact": {
+        "path": "fixtures/expected_metric.json",
+        "metric": "exact_label_accuracy",
+        "sha256": "93cd13e68162801766227841682d35fa986370e884a033472d50e31d8071fe86",
+        "expected_result": {"accuracy": 0.75, "correct": 6, "total": 8}
+      }
+    }
+  },
+  "future_measurement_requirements": {
+    "per_class_metrics": ["support", "confusion", "boundary", "precision", "recall", "f1", "iou"],
+    "calibration_metrics": ["ece", "brier"],
+    "selective_metrics": ["risk", "coverage", "risk_coverage_curve"],
+    "metric_source_artifact_required": true
+  },
+  "dataset_roles": {
+    "ADE20K": "reference_only",
+    "NYUv2_or_ScanNet_equivalent_indoor_RGBD": "production_acceptance_indoor",
+    "MVM_camera_holdout": "production_acceptance_camera_domain"
+  },
+  "iteration_b_baseline": {
+    "authority": "truthful_reject_for_canonical_surface_and_runtime_authority",
+    "source_commit": "b9125c73",
+    "source_artifacts": [
+      {"path": "../iteration-b/measurements.json", "sha256": "c8ceeb42d09cbeba7909ee5b5744ddd7bd265d50e30b5174b499112f30d09c7f"},
+      {"path": "../iteration-b/quality_measurement.json", "sha256": "4af2c08924bdfff6b76ab9f31af36141d20556692323bb65c05e4d7cc1f888a0"}
+    ],
+    "snapshot_policy": "summarized_from_sources_while_sha256_pins_complete_artifacts",
+    "not_measured": ["boundary_metrics", "integrated_live_ab"]
+  },
+  "authorization": {
+    "shadow_runtime": true,
+    "canonical_surfaces": false,
+    "occupancy_free_space": false,
+    "production_quality_acceptance": false,
+    "live_ab_completed": false
+  }
+}

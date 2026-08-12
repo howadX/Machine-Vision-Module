@@ -1,0 +1,15 @@
+{
+  "artifact_role": "predictions",
+  "contract_fixture_only": true,
+  "labels": [
+    "floor",
+    "wall",
+    "ceiling",
+    "support_region_candidate",
+    "other_non_surface",
+    "other_non_surface",
+    "floor",
+    "floor"
+  ],
+  "scene_id": "contract-test-scene"
+}

@@ -2,8 +2,12 @@
 
 This directory contains two measured **reject/defer** records: Iteration A for
 PP-MobileSeg-Tiny ADE20K and Iteration B for the research-allowed SegFormer-B0
-SceneParse150 model. Neither is a runtime
-expert, and no downloaded or converted model bytes are committed.
+SceneParse150 model. Iteration B remains the truthful rejection of canonical
+surface authority. Iteration C adds an executable repaired acceptance contract
+whose exact decision is `authorize_shadow_runtime_only`; it does not rewrite the
+measurements, authorize canonical surfaces or occupancy, or claim that a shadow
+runtime has been implemented. No downloaded or converted model bytes are
+committed.
 
 ## Why this candidate
 
@@ -102,3 +106,27 @@ measurement. The three audited Hugging Face ScanNet mirrors are not semantic-GT
 substitutes: one is mesh-only, one contains derived model outputs, and one has
 RGB/depth/pose without paired semantic masks. Their exact revisions and roles
 are recorded in `scannet_mirror_audit.json` and `datasets.json`.
+
+## Iteration C — repaired authority contract
+
+Iteration C separates raw observation, selective evidence, Fusion-owned surface
+facts, and occupancy/free-space authority. It distinguishes known
+`other_non_surface` pixels from `withheld` invalid/uncertain/OOD evidence and
+makes ADE20K reference-only. Future production acceptance requires computed,
+hashed ground-truth and prediction artifacts on a real indoor RGB-D corpus plus
+an MVM-camera holdout, with disjoint calibration/test splits and complete
+per-class, calibration, and selective-risk metrics.
+
+The committed baseline preserves Iteration-B CPU/quality measurements and records
+that boundary quality and an integrated live A/B were not measured. Run the
+fail-closed gate with:
+
+```bash
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-c/test_evaluate.py
+python3 benchmark/visual-spatial/semantic-19.2.2/iteration-c/evaluate.py
+```
+
+A passing gate authorizes only implementation of the default-off 19.2.3a shadow
+runtime. Canonical surfaces, occupancy/free-space, and production quality remain
+unauthorized. See `iteration-c/README.md` and
+[`docs/phase-19.2.2c-plan.md`](../../../docs/phase-19.2.2c-plan.md).

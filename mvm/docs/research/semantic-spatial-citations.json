@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": 1,
+      "url": "https://arxiv.org/abs/2105.15203",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 2,
+      "url": "https://raw.githubusercontent.com/NVlabs/SegFormer/master/LICENSE",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 3,
+      "url": "https://huggingface.co/api/models/nvidia/segformer-b0-finetuned-ade-512-512",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 4,
+      "url": "https://pytorch.org/vision/main/models/generated/torchvision.models.segmentation.lraspp_mobilenet_v3_large.html",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 5,
+      "url": "https://raw.githubusercontent.com/pytorch/vision/main/LICENSE",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 6,
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleSeg/release/2.10/configs/pp_liteseg/README.md",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 7,
+      "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleSeg/release/2.10/LICENSE",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 8,
+      "url": "https://raw.githubusercontent.com/XuJiacong/PIDNet/main/README.md",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 9,
+      "url": "https://raw.githubusercontent.com/XuJiacong/PIDNet/main/LICENSE",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 10,
+      "url": "https://github.com/isl-org/MiDaS",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 11,
+      "url": "https://raw.githubusercontent.com/isl-org/MiDaS/master/LICENSE",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 12,
+      "url": "https://cs.nyu.edu/~fergus/datasets/nyu_depth_v2.html",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 13,
+      "url": "https://raw.githubusercontent.com/ScanNet/ScanNet/master/README.md",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 14,
+      "url": "https://rgbd.cs.princeton.edu",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 15,
+      "url": "https://niessner.github.io/Matterport",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 16,
+      "url": "https://raw.githubusercontent.com/apple/ml-hypersim/main/README.md",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 17,
+      "url": "https://structured3d-dataset.org",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 18,
+      "url": "https://arxiv.org/abs/1706.04599",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 19,
+      "url": "https://arxiv.org/abs/1705.08500",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 20,
+      "url": "https://arxiv.org/abs/1806.01260",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 21,
+      "url": "https://arxiv.org/abs/2104.14812",
+      "title": "",
+      "accessed": "2026-08-09"
+    },
+    {
+      "id": 22,
+      "url": "https://raw.githubusercontent.com/nianticlabs/monodepth2/master/LICENSE",
+      "title": "",
+      "accessed": "2026-08-09"
+    }
+  ]
+}

@@ -13,6 +13,7 @@ members = [
     "crates/mvm-pipeline",
     "crates/mvm-dataset",
     "crates/mvm-cortex",
+    "crates/mvm-semantic",
     "crates/mvm-cli",
     "xtask",
 ]

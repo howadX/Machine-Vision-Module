@@ -397,8 +397,8 @@ embed (`cargo xtask bundle`) покрывает только мелкие YuNet/
 | **19.0** | ✅ contract/replay | **Visual Spatial Substrate foundation** — typed camera-/agent-relative spatial facts, calibration gates, bounded `GraphDelta`, append-only evidence links и 10 deterministic honesty-first fixtures. Runtime experts и spatial memory остаются следующими отдельными slices. Детали — [`docs/phase-19-plan.md`](docs/phase-19-plan.md) |
 | **19.1** | ✅ runtime/replay | **Motion Field + Camera State** — dependency-free sparse block matcher, static/dynamic consensus, explicit fixed-camera authority, stamped Fusion publication и fail-closed blur/gap/crowd/odometry gates. |
 | **19.2.1** | ✅ contract/replay | **Semantic Surface Taxonomy** — 5 canonical surface classes, expert-label normalization и 9 synthetic pixel-grid fixtures с IoU/boundary/OOD/unknown gates. Runtime expert ещё не реализован. |
-| **19.2.2** | ✅ measured reject | **Semantic ONNX spike** — PP-MobileSeg-Tiny отклонён по parity; SegFormer-B0 прошёл export/parity и sparse CPU budget, но провалил ADE20K quality: mean surface IoU 0.537, floor 0.642, opening 0.428 и honesty violations. Два bounded 5-surface fine-tune не улучшили baseline; runtime не включён. |
-| **19.2.3–19.6** | gated | Stamped semantic expert не авторизован до пригодного кандидата; далее Fusion surfaces → replay/live closure → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. |
+| **19.2.2** | ✅ contract / measured reject | **Semantic ONNX spike + repaired authority contract** — Iteration B отклонил SegFormer-B0 для canonical surface authority по ADE20K quality, а Iteration C сохранил все measured values и авторизовал только реализацию default-off shadow runtime; runtime ещё не реализован. |
+| **19.2.3–19.6** | 19.2.3a authorized / gated | Stamped semantic shadow expert разрешён к реализации без `SurfaceFact`/occupancy authority; далее Fusion surfaces → replay/live closure → occupancy/visibility → spatial relations → bounded local memory → Cortex integration. |
 
 ---
 
