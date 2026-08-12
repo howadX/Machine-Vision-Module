@@ -2,7 +2,7 @@
 //! and owns its own `PersonTracker`. Every frame: process → track → project the
 //! active tracks into a stamped immutable observation. The pipeline is constructed with no
 //! scene/depth detector (those are their own agents now), so it does only the
-//! body-primary chain; objects/depth come from `SceneAgent`/`DepthAgent`.
+//! body-primary chain; objects/depth come from `SceneAgent`/typed depth providers.
 
 use crate::agents::{
     HumanObservationBus, HumanObservationFrame, ObservationStamp, SceneObservationBus,

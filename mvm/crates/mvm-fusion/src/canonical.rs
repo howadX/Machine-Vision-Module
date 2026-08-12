@@ -6,13 +6,13 @@
 
 use crate::{ZoneTracker, build_scene};
 use mvm_core::canonical::{
-    AnimalFacts, BodyCoverage, EntityKey, EventTailView, Existence, FactEvidenceRef, FactReason,
-    FactSource, FactStatus, FrameStamp, FusedSceneFrame, GalleryIdentity, HandFact, HandGesture,
-    HandInteractionFact, HandInteractionKind, HandSide, HeadFacing, HeadOrientationFact,
-    IncarnationRegistry, Kinematics, ObjectFacts, PersonFacts, PersonSensoryFacts, SceneActivity,
-    SceneEntity, SceneEntityKind, SceneEvent, SceneEventKind, SceneEventPayload, SceneFact,
-    SceneQuality, SceneRelation, SceneRelationKind, SceneZone, SourceFreshness, SourceStamp,
-    TrackDomain,
+    AnimalFacts, BodyCoverage, DirectMetricGeometry, EntityGeometryFacts, EntityKey, EventTailView,
+    Existence, FactEvidenceRef, FactReason, FactSource, FactStatus, FrameStamp, FusedSceneFrame,
+    GalleryIdentity, GeometryReferenceFrame, HandFact, HandGesture, HandInteractionFact,
+    HandInteractionKind, HandSide, HeadFacing, HeadOrientationFact, IncarnationRegistry,
+    Kinematics, ObjectFacts, PersonFacts, PersonSensoryFacts, SceneActivity, SceneEntity,
+    SceneEntityKind, SceneEvent, SceneEventKind, SceneEventPayload, SceneFact, SceneQuality,
+    SceneRelation, SceneRelationKind, SceneZone, SourceFreshness, SourceStamp, TrackDomain,
 };
 use mvm_core::types::{Entity, EntityKind, RelationKind};
 use mvm_core::{Activity, ActivityEvent, BBox, ObjectState, PersonState, Position3D};
@@ -38,6 +38,23 @@ pub struct CanonicalFusionInput<'a> {
     pub activities: &'a [Activity],
     pub ended_activities: &'a [ActivityEvent],
     pub anomaly_score: f32,
+    pub metric_geometry: &'a [MetricGeometryObservation],
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetricGeometryObservation {
+    pub track_domain: TrackDomain,
+    pub track_id: u32,
+    pub centroid_m: [f32; 3],
+    pub aabb_min_m: [f32; 3],
+    pub aabb_max_m: [f32; 3],
+    pub median_z_m: f32,
+    pub median_absolute_deviation_m: f32,
+    pub sample_count: u32,
+    pub valid_ratio: f32,
+    pub boundary_contamination: f32,
+    pub calibration_revision: String,
+    pub mask_aware: bool,
 }
 
 pub struct CanonicalFusion {
@@ -112,15 +129,29 @@ impl CanonicalFusion {
         let human_source = source(&input.sources, FactSource::Human);
         let scene_source = source(&input.sources, FactSource::Scene);
         let depth_source = source(&input.sources, FactSource::Depth);
+        let metric_depth_source = source(&input.sources, FactSource::MetricDepth);
 
         let mut entities = Vec::new();
         for person in input.people {
             let key = self.key(TrackDomain::Person, person.track_id);
-            entities.push(person_entity(person, key, human_source));
+            entities.push(person_entity(
+                person,
+                key,
+                human_source,
+                metric_depth_source,
+                metric_geometry(input.metric_geometry, TrackDomain::Person, person.track_id),
+            ));
         }
         for object in input.objects {
             let key = self.key(TrackDomain::Object, object.id);
-            entities.push(object_entity(object, key, scene_source, depth_source));
+            entities.push(object_entity(
+                object,
+                key,
+                scene_source,
+                depth_source,
+                metric_depth_source,
+                metric_geometry(input.metric_geometry, TrackDomain::Object, object.id),
+            ));
         }
         for animal in input.animals {
             let key = self.key(TrackDomain::Animal, animal.track_id);
@@ -675,10 +706,83 @@ fn position_fact(
     }
 }
 
+fn metric_geometry(
+    observations: &[MetricGeometryObservation],
+    domain: TrackDomain,
+    track_id: u32,
+) -> Option<&MetricGeometryObservation> {
+    observations
+        .iter()
+        .find(|value| value.track_domain == domain && value.track_id == track_id)
+}
+
+fn direct_metric_fact(
+    measurement: Option<&MetricGeometryObservation>,
+    stamp: Option<&SourceStamp>,
+    entity: &EntityKey,
+) -> SceneFact<DirectMetricGeometry> {
+    let Some(value) = measurement else {
+        return SceneFact::unknown(FactReason::MissingSource);
+    };
+    if stamp.is_none_or(|stamp| stamp.freshness == SourceFreshness::Stale) {
+        return SceneFact::unknown(FactReason::StaleSource);
+    }
+    let confidence = (value.valid_ratio * (1.0 - value.boundary_contamination)).clamp(0.0, 1.0);
+    let status = if value.boundary_contamination > 0.5 || confidence < 0.5 {
+        FactStatus::Weak
+    } else {
+        FactStatus::Observed
+    };
+    SceneFact::claimed(
+        status,
+        DirectMetricGeometry {
+            centroid_m: value.centroid_m,
+            aabb_min_m: value.aabb_min_m,
+            aabb_max_m: value.aabb_max_m,
+            median_z_m: value.median_z_m,
+            median_absolute_deviation_m: value.median_absolute_deviation_m,
+            sample_count: value.sample_count,
+            valid_ratio: value.valid_ratio,
+            boundary_contamination: value.boundary_contamination,
+            reference_frame: GeometryReferenceFrame::CameraOptical,
+            calibration_revision: value.calibration_revision.clone(),
+            mask_aware: value.mask_aware,
+        },
+        confidence,
+        source_evidence(FactSource::MetricDepth, stamp, entity),
+    )
+    .expect("validated direct metric measurement is canonical")
+}
+
+fn preferred_position(
+    direct: &SceneFact<DirectMetricGeometry>,
+    fallback: &SceneFact<Position3D>,
+) -> SceneFact<Position3D> {
+    direct.value.as_ref().map_or_else(
+        || fallback.clone(),
+        |metric| {
+            SceneFact::claimed(
+                direct.status,
+                Position3D {
+                    x: metric.centroid_m[0],
+                    y: metric.centroid_m[1],
+                    z: metric.centroid_m[2],
+                    confidence: direct.confidence.unwrap_or(0.0),
+                },
+                direct.confidence.unwrap_or(0.0),
+                direct.evidence.clone(),
+            )
+            .expect("direct metric position is canonical")
+        },
+    )
+}
+
 fn person_entity(
     person: &PersonState,
     key: EntityKey,
     source: Option<&SourceStamp>,
+    depth: Option<&SourceStamp>,
+    metric: Option<&MetricGeometryObservation>,
 ) -> SceneEntity {
     let posture = match &person.posture {
         Some((label, confidence)) => {
@@ -709,6 +813,9 @@ fn person_entity(
             )
         },
     );
+    let fallback_position = position_fact(person.position_3d, FactSource::Human, source, &key);
+    let direct_metric = direct_metric_fact(metric, depth, &key);
+    let position_3d = preferred_position(&direct_metric, &fallback_position);
     SceneEntity {
         key: key.clone(),
         display_id: person.track_id,
@@ -724,7 +831,11 @@ fn person_entity(
         }),
         existence: observed(Existence::Present, 1.0, FactSource::Human, source, &key),
         bbox: observed(person.bbox, 1.0, FactSource::Human, source, &key),
-        position_3d: position_fact(person.position_3d, FactSource::Human, source, &key),
+        position_3d,
+        geometry: Box::new(EntityGeometryFacts {
+            direct_metric,
+            fallback_position,
+        }),
         // Legacy `PersonState.velocity` is scalar speed without direction; it
         // cannot honestly populate vector-valued canonical kinematics.
         kinematics: SceneFact::unknown(FactReason::MissingSource),
@@ -900,6 +1011,8 @@ fn object_entity(
     key: EntityKey,
     scene: Option<&SourceStamp>,
     depth: Option<&SourceStamp>,
+    metric_depth: Option<&SourceStamp>,
+    metric: Option<&MetricGeometryObservation>,
 ) -> SceneEntity {
     let status = if object.remembered {
         FactStatus::Remembered
@@ -918,6 +1031,9 @@ fn object_entity(
         )
         .expect("tracked object confidence is valid")
     };
+    let fallback_position = position_fact(object.position_3d, FactSource::Depth, depth, &key);
+    let direct_metric = direct_metric_fact(metric, metric_depth, &key);
+    let position_3d = preferred_position(&direct_metric, &fallback_position);
     SceneEntity {
         key: key.clone(),
         display_id: object.id,
@@ -947,7 +1063,11 @@ fn object_entity(
             scene,
             &key,
         ),
-        position_3d: position_fact(object.position_3d, FactSource::Depth, depth, &key),
+        position_3d,
+        geometry: Box::new(EntityGeometryFacts {
+            direct_metric,
+            fallback_position,
+        }),
         kinematics: SceneFact::unknown(FactReason::MissingSource),
     }
 }
@@ -1001,6 +1121,7 @@ fn animal_entity(
             &key,
         ),
         position_3d: SceneFact::unknown(FactReason::Uncalibrated),
+        geometry: Box::default(),
         kinematics: SceneFact::unknown(FactReason::MissingSource),
     }
 }
@@ -1130,7 +1251,155 @@ mod tests {
             activities: &[],
             ended_activities: &[],
             anomaly_score: 0.0,
+            metric_geometry: &[],
         }
+    }
+
+    fn metric(domain: TrackDomain, track_id: u32) -> MetricGeometryObservation {
+        MetricGeometryObservation {
+            track_domain: domain,
+            track_id,
+            centroid_m: [0.1, -0.2, 1.5],
+            aabb_min_m: [0.0, -0.3, 1.4],
+            aabb_max_m: [0.2, -0.1, 1.6],
+            median_z_m: 1.5,
+            median_absolute_deviation_m: 0.02,
+            sample_count: 128,
+            valid_ratio: 0.9,
+            boundary_contamination: 0.1,
+            calibration_revision: "a".repeat(64),
+            mask_aware: false,
+        }
+    }
+
+    fn metric_sources(frame_id: u64) -> Vec<SourceStamp> {
+        vec![
+            SourceStamp::at_frame(FactSource::Scene, frame_id, 1_001)
+                .relative_to(frame_id, 0, 0)
+                .unwrap(),
+            SourceStamp::at_frame(FactSource::Depth, frame_id, 1_001)
+                .relative_to(frame_id, 0, 0)
+                .unwrap(),
+            SourceStamp::at_frame(FactSource::MetricDepth, frame_id, 1_001)
+                .relative_to(frame_id, 0, 0)
+                .unwrap(),
+        ]
+    }
+
+    #[test]
+    fn object_without_person_uses_direct_metric_position_and_provenance() {
+        let mut fusion = CanonicalFusion::new("run");
+        let object = object(10_000);
+        let geometry = [metric(TrackDomain::Object, object.id)];
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources: metric_sources(1),
+                objects: std::slice::from_ref(&object),
+                metric_geometry: &geometry,
+                ..input(1, &[])
+            })
+            .unwrap();
+        let entity = &frame.entities[0];
+        assert_eq!(entity.position_3d.value.unwrap().z, 1.5);
+        assert_eq!(
+            entity.geometry.direct_metric.evidence[0].source,
+            FactSource::MetricDepth
+        );
+        assert_eq!(
+            entity
+                .geometry
+                .direct_metric
+                .value
+                .as_ref()
+                .unwrap()
+                .reference_frame,
+            GeometryReferenceFrame::CameraOptical
+        );
+    }
+
+    #[test]
+    fn mask_aware_direct_centroid_and_reference_frame_serialize() {
+        let mut fusion = CanonicalFusion::new("run");
+        let object = object(10_000);
+        let mut measured = metric(TrackDomain::Object, object.id);
+        measured.mask_aware = true;
+        measured.centroid_m = [0.3, 0.4, 0.8];
+        let geometry = [measured];
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources: metric_sources(1),
+                objects: std::slice::from_ref(&object),
+                metric_geometry: &geometry,
+                ..input(1, &[])
+            })
+            .unwrap();
+        let json = serde_json::to_value(&frame).unwrap();
+        assert_eq!(
+            json["entities"][0]["geometry"]["direct_metric"]["value"]["mask_aware"],
+            true
+        );
+        assert_eq!(
+            json["entities"][0]["geometry"]["direct_metric"]["value"]["reference_frame"],
+            "camera_optical"
+        );
+    }
+
+    #[test]
+    fn invalid_boundary_coverage_downgrades_direct_measurement_to_weak() {
+        let mut fusion = CanonicalFusion::new("run");
+        let object = object(10_000);
+        let mut measured = metric(TrackDomain::Object, object.id);
+        measured.boundary_contamination = 0.75;
+        let geometry = [measured];
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources: metric_sources(1),
+                objects: std::slice::from_ref(&object),
+                metric_geometry: &geometry,
+                ..input(1, &[])
+            })
+            .unwrap();
+        assert_eq!(
+            frame.entities[0].geometry.direct_metric.status,
+            FactStatus::Weak
+        );
+        assert_eq!(
+            frame.entities[0].geometry.direct_metric.confidence,
+            Some(0.225)
+        );
+    }
+
+    #[test]
+    fn person_direct_geometry_preserves_separately_stamped_fallback() {
+        let mut fusion = CanonicalFusion::new("run");
+        let mut person = person(10);
+        person.position_3d = Some(Position3D {
+            x: 0.0,
+            y: 0.0,
+            z: 2.2,
+            confidence: 0.6,
+        });
+        let geometry = [metric(TrackDomain::Person, person.track_id)];
+        let mut sources = metric_sources(1);
+        sources.push(
+            SourceStamp::at_frame(FactSource::Human, 1, 1_001)
+                .relative_to(1, 0, 0)
+                .unwrap(),
+        );
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources,
+                metric_geometry: &geometry,
+                ..input(1, std::slice::from_ref(&person))
+            })
+            .unwrap();
+        let entity = &frame.entities[0];
+        assert_eq!(entity.position_3d.value.unwrap().z, 1.5);
+        assert_eq!(entity.geometry.fallback_position.value.unwrap().z, 2.2);
+        assert_eq!(
+            entity.geometry.fallback_position.evidence[0].source,
+            FactSource::Human
+        );
     }
 
     #[test]

@@ -8,8 +8,8 @@
 //! exercised live in the `mesh` subcommand, 8.D).
 //!
 //! Decision 8.C.5: depth-anchoring is **not** here — it runs on the fusion step
-//! (8.C.7) where both people and objects are visible. The `DepthAgent` only
-//! publishes the raw `DepthMap` to a shared slot. Keeping that slot in `mvm-cli`
+//! (8.C.7) where both people and objects are visible. The monocular provider only
+//! publishes the raw `RelativeDepthMap` to a shared slot. Keeping that slot in `mvm-cli`
 //! (not `MeshContext`) lets `mvm-mesh` stay detector-agnostic (no `mvm-depth` dep
 //! → no cycle).
 
@@ -32,14 +32,14 @@ mod statefile;
 pub(crate) use capture::CaptureAgent;
 pub(crate) use cortex::CortexAgent;
 pub(crate) use dataset_writer::DatasetWriterAgent;
-pub(crate) use depth::DepthAgent;
+pub(crate) use depth::MonocularDepthProvider;
 pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
 pub(crate) use observations::{
-    AttentionPolicyBus, CortexFrameBus, DepthObservationBus, DepthObservationFrame,
+    AttentionPolicyBus, CortexFrameBus, DepthEvidence, DepthObservationBus, DepthObservationFrame,
     FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
     HumanObservationFrame, ObservationStamp, PolicyOutcomeBus, SceneObservationBus,
-    SceneObservationFrame,
+    SceneObservationFrame, registered_metric_from_frame,
 };
 pub(crate) use policy::{
     DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,

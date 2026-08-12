@@ -18,7 +18,51 @@ use serde::{Deserialize, Serialize};
 /// роутер заполняет `relations` (зоны+рёбра) и `events` (эпизоды) и добавлено
 /// новое поле `activities` (per-frame активности). Все добавления читаются старыми
 /// парсерами (`#[serde(default)]`), так что 16.0.1-строки остаются валидными.
-pub const SCHEMA_VERSION: &str = "16.7.0";
+pub const SCHEMA_VERSION: &str = "16.8.0";
+pub const LEGACY_SCHEMA_VERSION: &str = "16.7.0";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DepthEncoding {
+    RelativeAffineU16,
+    MetricMmU16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DepthUnits {
+    AffineRelative,
+    Millimetres,
+}
+
+/// Self-describing dense-depth artifact metadata. The PNG payload remains at
+/// `depth_path`; this block prevents a relative visualization from ever being
+/// interpreted as millimetres and preserves metric sensor provenance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DepthFrameMetadata {
+    pub encoding: DepthEncoding,
+    pub units: DepthUnits,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub invalid_value: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_ratio: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<mvm_core::DepthGeometry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<mvm_core::SensorSourceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rgb_stamp: Option<mvm_core::SensorStamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth_stamp: Option<mvm_core::SensorStamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rgb_depth_skew_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<mvm_core::CalibrationRef>,
+}
 
 /// Семантическая группа-ветвь роутера (§16.0.3). Кадр маршрутизируется только
 /// в релевантные ветви (selective routing), сущность несёт свою первичную группу.
@@ -204,6 +248,10 @@ pub struct FrameMeta {
     /// Глубина affine-relative (не метры), поэтому диапазон — на кадр.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth_range: Option<[f32; 2]>,
+    /// Typed encoding/units/provenance for newly recorded depth artifacts.
+    /// Absent on pre-16.8 legacy relative-depth sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<DepthFrameMetadata>,
 }
 
 /// Привязка кадра к сессии.
@@ -314,6 +362,7 @@ impl CanonicalObservation {
                 frame_path: None,
                 depth_path: None,
                 depth_range: None,
+                depth: None,
             },
             session: SessionRef { seq_in_session },
             entities: Vec::new(),
@@ -462,6 +511,7 @@ mod tests {
         // Simulate an old line by stripping the activities key entirely.
         let mut v: serde_json::Value = serde_json::from_str(&line).unwrap();
         v.as_object_mut().unwrap().remove("activities");
+        v["schema_version"] = serde_json::json!(LEGACY_SCHEMA_VERSION);
         let old_line = serde_json::to_string(&v).unwrap();
         assert!(!old_line.contains("\"activities\""));
         let back = CanonicalObservation::from_jsonl_line(&old_line).expect("old line parses");
@@ -469,7 +519,7 @@ mod tests {
             back.activities.is_empty(),
             "missing activities defaults to empty"
         );
-        assert_eq!(SCHEMA_VERSION, "16.7.0");
+        assert_eq!(back.schema_version, LEGACY_SCHEMA_VERSION);
     }
 
     #[test]

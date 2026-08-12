@@ -36,6 +36,8 @@ mod state;
 use anyhow::{Context, Result};
 use mvm_core::Detection;
 use mvm_core::Module;
+#[cfg(feature = "kinect-v1")]
+use mvm_pipeline::source::SensorSource;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -99,6 +101,18 @@ mod tests {
             !emotion_wins(&uncertain, Some(0.1)),
             "uncertain prediction should lose"
         );
+    }
+
+    #[test]
+    fn kinect_default_does_not_load_monocular_estimator() {
+        assert!(!should_load_monocular_depth("kinect_v1", false));
+    }
+
+    #[test]
+    fn rgb_only_and_explicit_kinect_fallback_keep_monocular_estimator() {
+        assert!(should_load_monocular_depth("v4l2", false));
+        assert!(should_load_monocular_depth("auto", false));
+        assert!(should_load_monocular_depth("kinect_v1", true));
     }
 
     // ── mesh subcommand (phase 8.D) ─────────────────────────────────────────
@@ -405,7 +419,7 @@ fn parse_args(raw: &[String]) -> Args {
 /// the `PersonTracker` and `StateFile` stay here. Behaviour matches the previous
 /// in-`main` native path exactly: process → track → depth-anchor → dump.
 fn run_native_loop(
-    mut native_camera: Box<dyn mvm_pipeline::source::CameraSource>,
+    mut native_camera: Box<dyn mvm_pipeline::source::SensorSource>,
     mut pipeline: pipeline::BodyPrimaryPipeline,
     mut tracker: mvm_core::PersonTracker,
     state_file: state::StateFile,
@@ -424,7 +438,7 @@ fn run_native_loop(
 
     loop {
         let frame = match native_camera.read() {
-            Ok(f) => f,
+            Ok(f) => f.rgb.as_ref().clone(),
             Err(e) => {
                 eprintln!("  native camera error: {e}");
                 break;
@@ -553,6 +567,8 @@ fn run_native_loop(
 
 /// Args for `mvm-cli mesh [--stub] [--max-frames N] [--dump-json] [--dump-landmarks] [--interval-ms N]`.
 struct MeshArgs {
+    /// Optional CLI override for `[sensor].backend`.
+    sensor_backend: Option<String>,
     /// Build a model-free mesh (StubCapture + FrameCounter + StateFileWriter) —
     /// CI-safe smoke test of the threading + StateFile plumbing.
     stub: bool,
@@ -573,6 +589,7 @@ struct MeshArgs {
 
 fn parse_mesh_args(raw: &[String]) -> MeshArgs {
     let mut a = MeshArgs {
+        sensor_backend: None,
         stub: false,
         max_frames: None,
         dump_landmarks: false,
@@ -587,6 +604,12 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             continue;
         }
         match raw[i].as_str() {
+            "--sensor-backend" => {
+                if i + 1 < raw.len() {
+                    a.sensor_backend = Some(raw[i + 1].clone());
+                    i += 1;
+                }
+            }
             "--stub" => a.stub = true,
             "--dump-landmarks" => a.dump_landmarks = true,
             "--max-frames" => {
@@ -623,6 +646,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
 /// synchronous state pipeline.
 fn parse_native_camera_alias(raw: &[String]) -> Result<MeshArgs> {
     let mut args = MeshArgs {
+        sensor_backend: None,
         stub: false,
         max_frames: None,
         dump_landmarks: false,
@@ -951,9 +975,24 @@ fn build_live_mesh(
     let native_pose = mvm_posture::NativePose::init(&config)?;
     let hands = load_hands(&config);
 
-    // Optional heavy detectors (own agents).
+    // Optional heavy detectors (own agents). A Kinect run without explicit
+    // monocular fallback does not even load Depth-Anything; registered metric
+    // depth is admitted directly from each capture frame.
     let yolo = load_yolo(&config);
-    let depth = load_depth(&config);
+    let requested_sensor_backend = args
+        .sensor_backend
+        .as_deref()
+        .unwrap_or(&product.sensor_backend);
+    let kinect_metric_mode = requested_sensor_backend == "kinect_v1";
+    let depth = if !should_load_monocular_depth(
+        requested_sensor_backend,
+        product.kinect_v1_monocular_fallback,
+    ) {
+        eprintln!("  depth: Kinect registered metric provider primary (Depth-Anything disabled)");
+        None
+    } else {
+        load_depth(&config)
+    };
     // YOLO-seg masks (opt-in --masks) ride the SceneAgent on the production path.
     let seg = if args.common.masks {
         load_seg(&config)
@@ -1009,14 +1048,10 @@ fn build_live_mesh(
 
     // Camera through the platform seam (14.0.3): "auto" scans /dev/video*,
     // an explicit [camera].device is opened literally.
-    let camera = mvm_pipeline::source::open_source(
-        &product.camera_device,
-        product.camera_width,
-        product.camera_height,
-    )?;
+    let camera = open_product_sensor(product, args.sensor_backend.as_deref())?;
     let (cam_w, cam_h) = camera.dimensions();
     eprintln!(
-        "▶ camera {} ({cam_w}×{cam_h} MJPG) · data {} · snapshot {}ms",
+        "▶ sensor {} ({cam_w}×{cam_h}) · data {} · snapshot {}ms",
         camera.device(),
         product.data_dir.display(),
         interval.as_millis()
@@ -1050,23 +1085,28 @@ fn build_live_mesh(
         )));
     }
     if let Some(depth) = depth {
-        mesh.add(Box::new(agents::DepthAgent::new(
+        mesh.add(Box::new(agents::MonocularDepthProvider::new(
             depth,
             depth_observations.clone(),
             config.depth_cadence,
             depth_control.clone(),
             scheduling_metrics.clone(),
+            kinect_metric_mode,
+            product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
         )));
     }
-    mesh.add(Box::new(agents::FusionAgent::new(
-        config.clone(),
-        human_observations,
-        scene_observations.clone(),
-        depth_observations.clone(),
-        fused_frames.clone(),
-        run_id,
-        scheduling_metrics.clone(),
-    )));
+    mesh.add(Box::new(
+        agents::FusionAgent::new(
+            config.clone(),
+            human_observations,
+            scene_observations.clone(),
+            depth_observations.clone(),
+            fused_frames.clone(),
+            run_id,
+            scheduling_metrics.clone(),
+        )
+        .with_max_metric_pair_skew_ns(product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000)),
+    ));
     mesh.add(Box::new(agents::CortexAgent::new(
         fused_frames.clone(),
         cortex_frames.clone(),
@@ -1134,8 +1174,8 @@ fn build_live_mesh(
             cfg.frame_cadence.max(1),
             cfg.privacy,
         );
-        // Wire the stamped depth bus so a pixel dataset can save 16-bit depth PNGs
-        // (empty until DepthAgent warms up → no depth path recorded meanwhile).
+        // Wire typed depth evidence. Block F will add lossless metric persistence;
+        // until then the existing writer only consumes relative maps.
         mesh.add(Box::new(
             agents::DatasetWriterAgent::new(cfg, root, Some(depth_observations.clone()))
                 .with_fused_frames(fused_frames.clone()),
@@ -1143,6 +1183,47 @@ fn build_live_mesh(
     }
 
     Ok(mesh)
+}
+
+fn should_load_monocular_depth(sensor_backend: &str, kinect_fallback: bool) -> bool {
+    sensor_backend != "kinect_v1" || kinect_fallback
+}
+
+fn open_product_sensor(
+    product: &config_file::ProductConfig,
+    backend_override: Option<&str>,
+) -> Result<Box<dyn mvm_pipeline::source::SensorSource>> {
+    let backend = backend_override.unwrap_or(&product.sensor_backend);
+    match backend {
+        "auto" | "v4l2" => mvm_pipeline::source::open_source(
+            &product.camera_device,
+            product.camera_width,
+            product.camera_height,
+        ),
+        "kinect_v1" => {
+            #[cfg(feature = "kinect-v1")]
+            {
+                anyhow::ensure!(
+                    !product.kinect_v1_serial.is_empty(),
+                    "Kinect backend requires [sensor.kinect_v1].serial"
+                );
+                anyhow::ensure!(
+                    !product.sensor_logical_name.is_empty(),
+                    "Kinect backend requires [sensor].logical_name"
+                );
+                Ok(Box::new(mvm_pipeline::kinect_v1::KinectV1Source::open(
+                    product.kinect_v1_config(),
+                )?))
+            }
+            #[cfg(not(feature = "kinect-v1"))]
+            anyhow::bail!(
+                "Kinect backend requested, but this binary was built without --features kinect-v1"
+            )
+        }
+        other => {
+            anyhow::bail!("unsupported sensor backend {other:?}; expected auto, v4l2, or kinect_v1")
+        }
+    }
 }
 
 /// `mvm snapshot [--state <PATH>]` (phase 13.A3) — print the current scene once,
@@ -1205,6 +1286,111 @@ fn run_serve_with_camera(serve_args: mcp::ServeArgs, raw: &[String]) -> Result<(
     serve_result
 }
 
+#[cfg(feature = "kinect-v1")]
+fn run_sensor_smoke(raw: &[String]) -> Result<()> {
+    anyhow::ensure!(
+        raw.get(2).map(String::as_str) == Some("smoke"),
+        "usage: mvm sensor smoke [--frames N]"
+    );
+    let frames = raw
+        .windows(2)
+        .find(|pair| pair[0] == "--frames")
+        .map(|pair| pair[1].parse::<u64>().context("invalid --frames value"))
+        .transpose()?
+        .unwrap_or(90);
+    anyhow::ensure!(frames > 0, "--frames must be positive");
+    let product = config_file::load()?;
+    anyhow::ensure!(
+        product.sensor_backend == "kinect_v1",
+        "sensor smoke currently requires [sensor].backend = kinect_v1"
+    );
+    let mut source = mvm_pipeline::kinect_v1::KinectV1Source::open(product.kinect_v1_config())?;
+    let mut paired = 0_u64;
+    let mut valid_sum = 0.0_f64;
+    let mut max_skew_ns = 0_u64;
+    let mut owner_consistent = 0_u64;
+    let mut owner_missing_for_valid = 0_u64;
+    let mut owner_present_for_invalid = 0_u64;
+    let mut last_health = mvm_core::SensorHealth::default();
+    let started = Instant::now();
+    for _ in 0..frames {
+        let packet = source.read()?;
+        last_health = packet.health.clone();
+        if let Some(depth) = packet.metric_depth {
+            depth
+                .validate()
+                .context("Kinect metric depth packet failed validation")?;
+            let owners = packet
+                .registered_depth_owners
+                .context("paired Kinect packet lacks exact native owner association")?;
+            owners
+                .validate()
+                .context("Kinect registered-depth owner map failed validation")?;
+            anyhow::ensure!(
+                owners.calibration_revision == depth.calibration_revision,
+                "Kinect depth/owner calibration revisions differ"
+            );
+            for (&depth_mm, &owner) in depth.depth_mm.iter().zip(&owners.owner_index) {
+                if depth_mm == depth.invalid_value {
+                    owner_present_for_invalid +=
+                        u64::from(owner != mvm_core::RegisteredDepthOwners::NO_OWNER);
+                } else if owner == mvm_core::RegisteredDepthOwners::NO_OWNER {
+                    owner_missing_for_valid += 1;
+                } else {
+                    owner_consistent += 1;
+                }
+            }
+            paired = paired.saturating_add(1);
+            valid_sum += f64::from(depth.valid_ratio);
+            max_skew_ns = max_skew_ns.max(depth.rgb_depth_skew_ns);
+        }
+        if paired == 1 {
+            let calibration = packet
+                .calibration
+                .context("paired Kinect packet lacks calibration")?;
+            println!(
+                "source={} serial={} calibration_revision={}",
+                packet.source.logical_name,
+                packet.source.serial.as_deref().unwrap_or("unknown"),
+                calibration.revision_sha256
+            );
+        }
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    println!(
+        "frames={frames} elapsed_s={elapsed:.3} delivered_fps={:.3}",
+        frames as f64 / elapsed.max(f64::EPSILON)
+    );
+    println!(
+        "paired={paired} pair_ratio={:.6} max_skew_ms={:.3} valid_depth_mean={:.6}",
+        paired as f64 / frames as f64,
+        max_skew_ns as f64 / 1_000_000.0,
+        if paired == 0 {
+            0.0
+        } else {
+            valid_sum / paired as f64
+        }
+    );
+    println!("health={}", serde_json::to_string(&last_health)?);
+    println!(
+        "owner_consistent={owner_consistent} owner_missing_for_valid={owner_missing_for_valid} owner_present_for_invalid={owner_present_for_invalid}"
+    );
+    anyhow::ensure!(
+        paired > 0,
+        "bounded Kinect smoke produced no admitted RGB-D pairs"
+    );
+    anyhow::ensure!(
+        paired == frames && owner_missing_for_valid == 0 && owner_present_for_invalid == 0,
+        "strict Kinect RGB-D/owner admission invariant failed"
+    );
+    Ok(())
+}
+
+#[cfg(not(feature = "kinect-v1"))]
+fn run_sensor_smoke(_raw: &[String]) -> Result<()> {
+    anyhow::bail!("sensor smoke requires a binary built with --features kinect-v1")
+}
+
 fn main() -> Result<()> {
     let raw: Vec<String> = std::env::args().collect();
     let sub = raw.get(1).map(String::as_str);
@@ -1232,6 +1418,9 @@ fn main() -> Result<()> {
     }
     if matches!(sub, Some("run") | Some("mesh")) {
         return run_mesh(parse_mesh_args(&raw));
+    }
+    if sub == Some("sensor") {
+        return run_sensor_smoke(&raw);
     }
     if sub == Some("snapshot") {
         return run_snapshot(&raw);
@@ -1342,7 +1531,7 @@ fn main() -> Result<()> {
     //   --native-camera → pure-Rust v4l2 (phase 7.4-light, Variant A), ZERO Python.
     //   default         → Python bridge (full pipeline incl. pose).
     let mut camera: Option<mvm_pipeline::Camera> = None;
-    let mut native_camera: Option<Box<dyn mvm_pipeline::source::CameraSource>> = None;
+    let mut native_camera: Option<Box<dyn mvm_pipeline::source::SensorSource>> = None;
     if args.no_camera {
         eprintln!("  camera: disabled (--no-camera)");
     } else if args.native_camera {
@@ -1624,7 +1813,7 @@ fn main() -> Result<()> {
             // below from the person detector (bodies), not from YuNet faces.
             match ncam.read() {
                 Ok(frame) => {
-                    tick_frame = Some(frame);
+                    tick_frame = Some(frame.rgb.as_ref().clone());
                     Vec::new()
                 }
                 Err(e) => {

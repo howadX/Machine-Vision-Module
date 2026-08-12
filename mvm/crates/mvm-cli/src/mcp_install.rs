@@ -252,6 +252,13 @@ mod tests {
     #[test]
     fn server_args_are_data_dir_aware() {
         let mut product = crate::config_file::ProductConfig {
+            sensor_backend: "auto".into(),
+            kinect_v1_monocular_fallback: false,
+            sensor_logical_name: String::new(),
+            kinect_v1_serial: String::new(),
+            kinect_v1_calibration: PathBuf::from("/kinect/calibration.json"),
+            kinect_v1_library_prefix: PathBuf::from("/kinect/lib"),
+            kinect_v1_max_pair_skew_ms: 20,
             camera_device: "auto".into(),
             camera_width: 1280,
             camera_height: 720,

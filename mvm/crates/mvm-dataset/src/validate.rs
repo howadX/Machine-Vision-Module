@@ -12,11 +12,12 @@
 //! Honesty rules it enforces (§16.0.2): a `withheld` posture is counted as a
 //! withheld gap, never as an error and never as a class. Absence is data.
 
-use crate::observation::CanonicalObservation;
-use crate::observation::SCHEMA_VERSION;
+use crate::observation::{
+    CanonicalObservation, DepthEncoding, DepthUnits, LEGACY_SCHEMA_VERSION, SCHEMA_VERSION,
+};
 use crate::session::{list_sessions, read_meta, sessions_root};
 use mvm_core::mask::MASK_RES;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// Attribute keys that must never appear in `labels.jsonl` — raw face descriptors
@@ -143,6 +144,8 @@ pub fn check_dataset(root: &Path) -> anyhow::Result<DatasetReport> {
 pub fn check_session(session_dir: &Path, id: &str) -> SessionReport {
     let mut findings = Vec::new();
     let mut stats = CheckStats::default();
+    let mut depth_encodings = BTreeSet::new();
+    let mut calibration_revisions = BTreeSet::new();
 
     let labels_path = session_dir.join("labels.jsonl");
     let text = match std::fs::read_to_string(&labels_path) {
@@ -180,22 +183,41 @@ pub fn check_session(session_dir: &Path, id: &str) -> SessionReport {
             }
         };
         stats.frames += 1;
+        if let Some(depth) = &obs.frame.depth {
+            depth_encodings.insert(match depth.encoding {
+                DepthEncoding::RelativeAffineU16 => "relative_affine_u16".to_string(),
+                DepthEncoding::MetricMmU16 => "metric_mm_u16".to_string(),
+            });
+            if let Some(calibration) = &depth.calibration {
+                calibration_revisions.insert(calibration.revision_sha256.clone());
+            }
+        }
         check_observation(session_dir, id, &obs, &mut findings, &mut stats);
     }
 
     // Cross-check the closed-session summary against what's actually on disk.
-    if let Ok(Some(meta)) = read_meta(session_dir)
-        && meta.session.saved_frames != stats.frames
-    {
-        findings.push(Finding {
-            severity: Severity::Warn,
-            frame_id: None,
-            code: "frame-count-mismatch",
-            msg: format!(
-                "session.toml saved_frames={} but {} labels on disk",
-                meta.session.saved_frames, stats.frames
-            ),
-        });
+    if let Ok(Some(meta)) = read_meta(session_dir) {
+        if meta.session.saved_frames != stats.frames {
+            findings.push(Finding {
+                severity: Severity::Warn,
+                frame_id: None,
+                code: "frame-count-mismatch",
+                msg: format!(
+                    "session.toml saved_frames={} but {} labels on disk",
+                    meta.session.saved_frames, stats.frames
+                ),
+            });
+        }
+        let meta_encodings: BTreeSet<_> = meta.depth.encodings.into_iter().collect();
+        let meta_revisions: BTreeSet<_> = meta.depth.calibration_revisions.into_iter().collect();
+        if meta_encodings != depth_encodings || meta_revisions != calibration_revisions {
+            findings.push(Finding {
+                severity: Severity::Error,
+                frame_id: None,
+                code: "depth-summary-mismatch",
+                msg: "session.toml depth summary differs from labels.jsonl provenance".into(),
+            });
+        }
     }
 
     SessionReport {
@@ -245,7 +267,7 @@ fn check_observation(
             format!("session_id={:?} but folder is {id:?}", obs.session_id),
         );
     }
-    if obs.schema_version != SCHEMA_VERSION {
+    if obs.schema_version != SCHEMA_VERSION && obs.schema_version != LEGACY_SCHEMA_VERSION {
         warn(
             findings,
             fid,
@@ -269,7 +291,9 @@ fn check_observation(
         );
     }
 
-    // Depth: file must exist and carry a reversible range (§16.2.2).
+    // Depth: file must exist and its typed encoding must agree with units,
+    // range semantics and metric provenance. Missing typed metadata is admitted
+    // only for the legacy relative-depth schema.
     if let Some(rel) = &obs.frame.depth_path {
         stats.with_depth += 1;
         if !session_dir.join(rel).is_file() {
@@ -280,29 +304,29 @@ fn check_observation(
                 format!("depth_path {rel:?} not on disk"),
             );
         }
-        match obs.frame.depth_range {
-            None => err(
-                findings,
-                fid,
-                "bad-depth-range",
-                "depth_path set but depth_range missing".into(),
-            ),
-            Some([lo, hi]) if !(lo.is_finite() && hi.is_finite() && lo <= hi) => {
-                err(
-                    findings,
-                    fid,
-                    "bad-depth-range",
-                    format!("depth_range [{lo}, {hi}] is not a valid [min ≤ max]"),
-                );
-            }
-            Some(_) => {}
+        match &obs.frame.depth {
+            None => check_relative_range(obs, findings),
+            Some(depth) => match depth.encoding {
+                DepthEncoding::RelativeAffineU16 => {
+                    if depth.units != DepthUnits::AffineRelative {
+                        err(
+                            findings,
+                            fid,
+                            "depth-units-mismatch",
+                            "relative depth cannot declare metric units".into(),
+                        );
+                    }
+                    check_relative_range(obs, findings);
+                }
+                DepthEncoding::MetricMmU16 => check_metric_depth(obs, findings),
+            },
         }
-    } else if obs.frame.depth_range.is_some() {
-        warn(
+    } else if obs.frame.depth_range.is_some() || obs.frame.depth.is_some() {
+        err(
             findings,
             fid,
-            "orphan-depth-range",
-            "depth_range present without a depth_path".into(),
+            "orphan-depth-metadata",
+            "depth metadata present without a depth_path".into(),
         );
     }
 
@@ -375,6 +399,87 @@ fn check_observation(
                 "quality.object_count={} but {object_entities} object entities",
                 obs.quality.object_count
             ),
+        );
+    }
+}
+
+fn check_relative_range(obs: &CanonicalObservation, findings: &mut Vec<Finding>) {
+    let fid = obs.frame_id;
+    match obs.frame.depth_range {
+        None => err(
+            findings,
+            fid,
+            "bad-depth-range",
+            "relative depth_path set but depth_range missing".into(),
+        ),
+        Some([lo, hi]) if !(lo.is_finite() && hi.is_finite() && lo <= hi) => err(
+            findings,
+            fid,
+            "bad-depth-range",
+            format!("depth_range [{lo}, {hi}] is not a valid [min ≤ max]"),
+        ),
+        Some(_) => {}
+    }
+}
+
+fn check_metric_depth(obs: &CanonicalObservation, findings: &mut Vec<Finding>) {
+    let fid = obs.frame_id;
+    let Some(depth) = obs.frame.depth.as_ref() else {
+        return;
+    };
+    if depth.units != DepthUnits::Millimetres {
+        err(
+            findings,
+            fid,
+            "depth-units-mismatch",
+            "metric_mm_u16 depth must declare millimetres".into(),
+        );
+    }
+    if obs.frame.depth_range.is_some() {
+        err(
+            findings,
+            fid,
+            "metric-depth-range",
+            "metric millimetres must not carry affine depth_range".into(),
+        );
+    }
+    if depth.width.is_none_or(|value| value == 0)
+        || depth.height.is_none_or(|value| value == 0)
+        || depth.invalid_value.is_none()
+        || depth
+            .valid_ratio
+            .is_none_or(|ratio| !ratio.is_finite() || !(0.0..=1.0).contains(&ratio))
+        || depth.geometry != Some(mvm_core::DepthGeometry::RegisteredToRgb)
+        || depth.source.is_none()
+        || depth.rgb_stamp.is_none()
+        || depth.depth_stamp.is_none()
+        || depth.rgb_depth_skew_ns.is_none()
+        || depth.calibration.is_none()
+    {
+        err(
+            findings,
+            fid,
+            "incomplete-metric-depth",
+            "metric depth requires dimensions, invalid semantics, registered geometry, stamps, skew, source and calibration".into(),
+        );
+        return;
+    }
+    let source = depth.source.as_ref().unwrap();
+    let rgb_stamp = depth.rgb_stamp.as_ref().unwrap();
+    let depth_stamp = depth.depth_stamp.as_ref().unwrap();
+    let calibration = depth.calibration.as_ref().unwrap();
+    let skew = depth.rgb_depth_skew_ns.unwrap();
+    if source.serial.as_deref() != Some(calibration.camera_serial.as_str())
+        || rgb_stamp.validate().is_err()
+        || depth_stamp.validate().is_err()
+        || calibration.validate().is_err()
+        || rgb_stamp.host_skew_ns(depth_stamp) != skew
+    {
+        err(
+            findings,
+            fid,
+            "metric-depth-provenance",
+            "metric depth source/calibration/stamps/skew are inconsistent".into(),
         );
     }
 }
@@ -539,6 +644,45 @@ mod tests {
         serde_json::json!({ "res": MASK_RES, "coverage": 0.0, "rle": [MASK_RES * MASK_RES] })
     }
 
+    fn metric_metadata(revision: char) -> crate::observation::DepthFrameMetadata {
+        let rgb_stamp = mvm_core::SensorStamp {
+            source_sequence: 1,
+            host_monotonic_ns: 1_000_000,
+            wall_clock_unix_ms: 1_700_000_000_000,
+            clock_domain: mvm_core::SensorClockDomain::KinectV1Rgb,
+            device_timestamp_raw: Some(1),
+        };
+        let depth_stamp = mvm_core::SensorStamp {
+            source_sequence: 1,
+            host_monotonic_ns: 11_000_000,
+            wall_clock_unix_ms: 1_700_000_000_000,
+            clock_domain: mvm_core::SensorClockDomain::KinectV1Depth,
+            device_timestamp_raw: Some(1),
+        };
+        crate::observation::DepthFrameMetadata {
+            encoding: DepthEncoding::MetricMmU16,
+            units: DepthUnits::Millimetres,
+            width: Some(640),
+            height: Some(480),
+            invalid_value: Some(0),
+            valid_ratio: Some(0.7),
+            geometry: Some(mvm_core::DepthGeometry::RegisteredToRgb),
+            source: Some(mvm_core::SensorSourceId {
+                backend: "kinect_v1".into(),
+                logical_name: "kinect-v1-main".into(),
+                serial: Some("serial".into()),
+            }),
+            rgb_stamp: Some(rgb_stamp),
+            depth_stamp: Some(depth_stamp),
+            rgb_depth_skew_ns: Some(10_000_000),
+            calibration: Some(mvm_core::CalibrationRef {
+                schema: "kinect-v1-sensor-calibration/1.0".into(),
+                camera_serial: "serial".into(),
+                revision_sha256: revision.to_string().repeat(64),
+            }),
+        }
+    }
+
     #[test]
     fn clean_session_has_no_errors_and_folds_stats() {
         let root = temp_root("clean");
@@ -634,6 +778,75 @@ mod tests {
     }
 
     #[test]
+    fn metric_depth_fixture_passes_without_relative_range() {
+        let root = temp_root("metric");
+        let mut frame = obs("s", 0, vec![]);
+        frame.frame.depth_path = Some("depth/000000.png".into());
+        frame.frame.depth = Some(metric_metadata('a'));
+        let dir = write_session(&root, "s", &[frame]);
+        let report = check_session(&dir, "s");
+        assert_eq!(report.errors(), 0, "{:?}", report.findings);
+        assert_eq!(report.warns(), 0, "{:?}", report.findings);
+    }
+
+    #[test]
+    fn metric_metadata_mismatch_is_rejected() {
+        let root = temp_root("metric_bad");
+        let mut frame = obs("s", 0, vec![]);
+        frame.frame.depth_path = Some("depth/000000.png".into());
+        let mut metadata = metric_metadata('a');
+        metadata.units = DepthUnits::AffineRelative;
+        metadata.rgb_depth_skew_ns = Some(1);
+        frame.frame.depth = Some(metadata);
+        let dir = write_session(&root, "s", &[frame]);
+        let report = check_session(&dir, "s");
+        assert!(report.errors() >= 2, "{:?}", report.findings);
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "depth-units-mismatch")
+        );
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(|f| f.code == "metric-depth-provenance")
+        );
+    }
+
+    #[test]
+    fn calibration_revision_change_is_recorded_per_frame() {
+        let root = temp_root("calibration_change");
+        let mut first = obs("s", 0, vec![]);
+        first.frame.depth_path = Some("depth/000000.png".into());
+        first.frame.depth = Some(metric_metadata('a'));
+        let mut second = obs("s", 1, vec![]);
+        second.frame.depth_path = Some("depth/000001.png".into());
+        second.frame.depth = Some(metric_metadata('b'));
+        let dir = write_session(&root, "s", &[first, second]);
+        let report = check_session(&dir, "s");
+        assert_eq!(report.errors(), 0, "{:?}", report.findings);
+        let lines = std::fs::read_to_string(dir.join("labels.jsonl")).unwrap();
+        assert!(lines.contains(&"a".repeat(64)));
+        assert!(lines.contains(&"b".repeat(64)));
+    }
+
+    #[test]
+    fn legacy_relative_session_remains_valid() {
+        let root = temp_root("legacy_relative");
+        let mut frame = obs("s", 0, vec![]);
+        frame.schema_version = LEGACY_SCHEMA_VERSION.into();
+        frame.frame.depth_path = Some("depth/000000.png".into());
+        frame.frame.depth_range = Some([0.2, 3.5]);
+        frame.frame.depth = None;
+        let dir = write_session(&root, "s", &[frame]);
+        let report = check_session(&dir, "s");
+        assert_eq!(report.errors(), 0, "{:?}", report.findings);
+        assert_eq!(report.warns(), 0, "{:?}", report.findings);
+    }
+
+    #[test]
     fn inverted_depth_range_is_error() {
         let root = temp_root("invrange");
         let mut f = obs("s", 0, vec![]);
@@ -702,6 +915,7 @@ mod tests {
                 mean: 0.0,
             },
             objects: ObjectsBlock { top: vec![] },
+            depth: crate::session::DepthBlock::default(),
         };
         std::fs::write(
             dir.join("session.toml"),

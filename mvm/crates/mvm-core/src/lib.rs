@@ -18,6 +18,7 @@ pub mod module;
 pub mod motion;
 pub mod posture;
 pub mod recap;
+pub mod sensor;
 pub mod space;
 pub mod tracker;
 pub mod types;
@@ -33,6 +34,10 @@ pub use emotion::{
 pub use mask::{InstanceMask, MASK_RES};
 pub use module::{Module, ModuleMetadata};
 pub use motion::{LandmarkHistory, Landmarks33};
+pub use sensor::{
+    CalibrationRef, DepthGeometry, DepthStatus, MetricDepthFrame, RegisteredDepthOwners,
+    SensorClockDomain, SensorHealth, SensorReplayEnvelope, SensorSourceId, SensorStamp,
+};
 pub use space::ScaleCalibrator;
 pub use tracker::PersonTracker;
 pub use types::{BBox, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind, Scene};

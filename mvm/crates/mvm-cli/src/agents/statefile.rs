@@ -257,6 +257,7 @@ mod tests {
                 activities: &[],
                 ended_activities: &[],
                 anomaly_score: 0.0,
+                metric_geometry: &[],
             })
             .unwrap();
         let fused = FusedFrameBus::new();

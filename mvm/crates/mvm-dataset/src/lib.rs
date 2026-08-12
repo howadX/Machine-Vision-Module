@@ -28,13 +28,15 @@ pub mod writer;
 
 pub use config::{DatasetConfig, ExportConfig, ExportFormat, FrameFormat, Privacy};
 pub use observation::{
-    CanonicalObservation, EntityRecord, FrameMeta, Label, LabelStatus, Provenance, QualityBlock,
-    SCHEMA_VERSION, SemanticGroup, SessionRef,
+    CanonicalObservation, DepthEncoding, DepthFrameMetadata, DepthUnits, EntityRecord, FrameMeta,
+    LEGACY_SCHEMA_VERSION, Label, LabelStatus, Provenance, QualityBlock, SCHEMA_VERSION,
+    SemanticGroup, SessionRef,
 };
 pub use privacy::{PrivacyPerson, blur_regions};
 pub use router::{EdgeRel, RouteContext, SceneRelations, ZoneRel, route, route_with_relations};
 pub use session::{
-    DatasetStats, PrunePolicy, SessionInfo, SessionMeta, aggregate, list_sessions, partition_prune,
+    DatasetStats, DepthBlock, PrunePolicy, SessionInfo, SessionMeta, aggregate, list_sessions,
+    partition_prune,
 };
 pub use validate::{
     CheckStats, DatasetReport, Finding, SessionReport, Severity, check_dataset, check_session,

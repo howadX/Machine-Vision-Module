@@ -36,6 +36,8 @@ def _write_sample(tar: tarfile.TarFile, key: str, rec: Record) -> None:
     labels = record_to_labels(rec)
     if rec.depth_range:
         labels["depth_range"] = list(rec.depth_range)
+    if rec.depth_meta:
+        labels["depth"] = rec.depth_meta
     _add(tar, f"{key}.json", json.dumps(labels).encode())
     if rec.frame_path and rec.frame_path.exists():
         _add(tar, f"{key}.jpg", rec.frame_path.read_bytes())

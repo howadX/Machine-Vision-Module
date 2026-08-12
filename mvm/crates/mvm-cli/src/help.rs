@@ -24,6 +24,7 @@ pub fn subcommand(name: &str) -> Option<&'static str> {
         "inspect" => INSPECT,
         "serve" => SERVE,
         "doctor" => DOCTOR,
+        "sensor" => SENSOR,
         "setup" => SETUP,
         "gallery" => GALLERY,
         "mcp" => MCP,
@@ -62,6 +63,7 @@ COMMANDS:
     service    Run the producer as a systemd user service (install/uninstall/status)
     dataset    Inspect & maintain recorded Dataset Factory sessions (list/info/stats/prune)
     doctor     Check the setup: camera, models, data dir, config
+    sensor     Bounded sensor diagnostics (no models, no image files)
 
 READING THE SYSTEM:
     snapshot  → canonical facts now; begin every live-scene question here
@@ -119,6 +121,7 @@ FLAGS:
     --interval-ms <MS>      StateFile snapshot interval, milliseconds
                             (default: [cadence] snapshot_ms in config.toml, 1000)
     --max-frames <N>        Stop after N frames (default: run until Ctrl-C)
+    --sensor-backend <NAME> Override [sensor].backend: auto | v4l2 | kinect_v1
     --stub                  Model-free stub mesh (CI smoke; no camera/models)
     --emotion-debug         Show the emotion A/B table and add emotion_debug to JSON
     --dump-distributions    Include the 8-class emotion_distribution in Scene JSON
@@ -131,6 +134,17 @@ EXAMPLES:
     mvm run --stub --max-frames 100          # CI smoke, no hardware
 
 Camera, paths and cadence come from ~/.config/mvm/config.toml (flags override).
+";
+
+pub const SENSOR: &str = "\
+mvm sensor — bounded sensor-only diagnostics. No ONNX models or image files.
+
+USAGE:
+    mvm sensor smoke [--frames <N>]
+
+The configured [sensor] backend is opened explicitly. For Kinect this reports
+source identity, calibration revision, RGB-D pairing/skew, valid-depth ratio and
+cumulative stream health, then cleanly releases the camera. Default: 90 frames.
 ";
 
 pub const DATASET: &str = "\
@@ -269,10 +283,12 @@ USAGE:
     mvm doctor
 
 CHECKS:
-    camera     opens the configured device ([camera].device, \"auto\" scans /dev/video*)
-    models     required + optional ONNX models present in the models dir
-    data dir   ~/.local/share/mvm (or [output].data_dir) exists and is writable
-    config     which ~/.config/mvm/config.toml was read (or pure defaults)
+    sensor       opens v4l2, or verifies configured Kinect serial and ownership
+    runtime      Kinect only: pinned local libfreenect 0.7.5
+    calibration  Kinect only: schema, serial and exact profile revision
+    models       required + optional ONNX models present in the models dir
+    data dir     ~/.local/share/mvm (or [output].data_dir) exists and is writable
+    config       which ~/.config/mvm/config.toml was read (or pure defaults)
 
 Every path/device shown is the value the other commands will actually use.
 ";

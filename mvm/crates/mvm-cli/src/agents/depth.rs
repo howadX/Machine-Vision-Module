@@ -1,33 +1,38 @@
-//! DepthAgent (phase 8.C.5) — group G₄ (environment). Owns the heavy
+//! MonocularDepthProvider — group G₄ (environment). Owns the heavy
 //! Depth-Anything estimator (~230ms), runs on a sparse cadence (default every
-//! 30th frame), and publishes a stamped immutable depth observation.
+//! 30th frame), and publishes stamped immutable relative-depth evidence.
+//! Registered metric evidence suppresses inference on that RGB tick.
 //!
 //! It does NOT anchor objects — anchoring needs both people and objects and runs
 //! on the fusion step (8.C.7), which reads this same slot. The slot lives in
 //! `mvm-cli` (not `MeshContext`) so `mvm-mesh` need not depend on `mvm-depth`.
 
 use crate::agents::{
-    DepthExecutionControl, DepthObservationBus, DepthObservationFrame, ObservationStamp,
-    cadence_due,
+    DepthEvidence, DepthExecutionControl, DepthObservationBus, DepthObservationFrame,
+    ObservationStamp, cadence_due, registered_metric_from_frame,
 };
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
 
-pub(crate) struct DepthAgent {
+pub(crate) struct MonocularDepthProvider {
     estimator: mvm_depth::DepthEstimator,
     observations: DepthObservationBus,
     cadence: u32,
     control: DepthExecutionControl,
     metrics: super::SchedulingMetrics,
+    suppress_for_metric: bool,
+    max_pair_skew_ns: u64,
 }
 
-impl DepthAgent {
+impl MonocularDepthProvider {
     pub(crate) fn new(
         estimator: mvm_depth::DepthEstimator,
         observations: DepthObservationBus,
         cadence: u32,
         control: DepthExecutionControl,
         metrics: super::SchedulingMetrics,
+        suppress_for_metric: bool,
+        max_pair_skew_ns: u64,
     ) -> Self {
         Self {
             estimator,
@@ -35,11 +40,13 @@ impl DepthAgent {
             cadence,
             control,
             metrics,
+            suppress_for_metric,
+            max_pair_skew_ns,
         }
     }
 }
 
-impl Agent for DepthAgent {
+impl Agent for MonocularDepthProvider {
     fn name(&self) -> String {
         "depth".into()
     }
@@ -53,7 +60,9 @@ impl Agent for DepthAgent {
                 && last_id != Some(frame.id)
             {
                 let permit = self.control.take_for(frame.id);
-                if cadence_due(frame.id, self.cadence) || permit.is_some() {
+                let metric_is_primary = self.suppress_for_metric
+                    && registered_metric_from_frame(&frame, self.max_pair_skew_ns).is_some();
+                if !metric_is_primary && (cadence_due(frame.id, self.cadence) || permit.is_some()) {
                     if permit.is_some() && !cadence_due(frame.id, self.cadence) {
                         self.metrics
                             .record_extra_run(mvm_cortex::ObservationTarget::Depth);
@@ -63,7 +72,7 @@ impl Agent for DepthAgent {
                         Ok(map) => {
                             self.observations.publish(DepthObservationFrame {
                                 stamp: ObservationStamp::from_frame(&frame),
-                                map: Arc::new(map),
+                                evidence: DepthEvidence::Relative(Arc::new(map)),
                             });
                             ticks += 1;
                         }
@@ -94,15 +103,15 @@ mod tests {
         assert!(bus.latest().is_none());
         bus.publish(DepthObservationFrame {
             stamp: ObservationStamp::new(3, std::time::Instant::now(), 1_000),
-            map: Arc::new(mvm_depth::DepthMap {
+            evidence: DepthEvidence::Relative(Arc::new(mvm_depth::RelativeDepthMap {
                 data: vec![0.5; 4],
                 w: 2,
                 h: 2,
-            }),
+            })),
         });
         let got = bus.latest().expect("fusion sees the published map");
         assert_eq!(got.stamp.source_frame_id, 3);
-        assert_eq!(got.map.w, 2);
+        assert_eq!(got.relative_map().unwrap().w, 2);
     }
 
     #[test]

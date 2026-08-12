@@ -54,28 +54,7 @@ pub fn models_tally(dir: &Path) -> (usize, usize, Vec<String>) {
 pub fn run_doctor(product: &ProductConfig) -> Vec<Check> {
     let mut checks = Vec::new();
 
-    // Camera: auto → scan; explicit → open that one.
-    checks.push(
-        match mvm_pipeline::source::open_source(
-            &product.camera_device,
-            product.camera_width,
-            product.camera_height,
-        ) {
-            Ok(cam) => {
-                let (w, h) = cam.dimensions();
-                Check {
-                    name: "camera",
-                    status: Status::Ok,
-                    detail: format!("{} ({w}×{h} MJPG)", cam.device()),
-                }
-            }
-            Err(e) => Check {
-                name: "camera",
-                status: Status::Fail,
-                detail: format!("{e:#}"),
-            },
-        },
-    );
+    checks.extend(sensor_checks(product));
 
     // Models: required missing → warn with the setup pointer.
     let (present, total, missing) = models_tally(&product.models_dir);
@@ -127,6 +106,100 @@ pub fn run_doctor(product: &ProductConfig) -> Vec<Check> {
     });
 
     checks
+}
+
+fn sensor_checks(product: &ProductConfig) -> Vec<Check> {
+    if product.sensor_backend != "kinect_v1" {
+        return vec![match mvm_pipeline::source::open_source(
+            &product.camera_device,
+            product.camera_width,
+            product.camera_height,
+        ) {
+            Ok(cam) => {
+                let (w, h) = cam.dimensions();
+                Check {
+                    name: "sensor",
+                    status: Status::Ok,
+                    detail: format!("v4l2 {} ({w}×{h} MJPG)", cam.device()),
+                }
+            }
+            Err(e) => Check {
+                name: "sensor",
+                status: Status::Fail,
+                detail: format!("v4l2: {e:#}"),
+            },
+        }];
+    }
+
+    #[cfg(not(feature = "kinect-v1"))]
+    return vec![Check {
+        name: "sensor",
+        status: Status::Fail,
+        detail: "kinect_v1 configured but binary lacks feature kinect-v1".into(),
+    }];
+
+    #[cfg(feature = "kinect-v1")]
+    {
+        let config = product.kinect_v1_config();
+        let mut checks = match mvm_pipeline::kinect_v1::probe(&config) {
+            Ok(probe) => vec![
+                Check {
+                    name: "runtime",
+                    status: Status::Ok,
+                    detail: format!("libfreenect 0.7.5 at {}", probe.library_path.display()),
+                },
+                Check {
+                    name: "calibration",
+                    status: Status::Ok,
+                    detail: format!(
+                        "serial {} revision {}",
+                        probe.calibration.camera_serial,
+                        &probe.calibration.revision_sha256[..12]
+                    ),
+                },
+                Check {
+                    name: "usb",
+                    status: if probe.usb_camera_present {
+                        Status::Ok
+                    } else {
+                        Status::Fail
+                    },
+                    detail: if probe.usb_camera_present {
+                        format!("camera serial {} present", config.serial)
+                    } else {
+                        format!("camera serial {} not present", config.serial)
+                    },
+                },
+            ],
+            Err(error) => {
+                return vec![Check {
+                    name: "sensor",
+                    status: Status::Fail,
+                    detail: format!("kinect_v1: {error:#}"),
+                }];
+            }
+        };
+        checks.push(
+            match mvm_pipeline::kinect_v1::KinectV1Source::open(config) {
+                Ok(source) => {
+                    drop(source);
+                    Check {
+                        name: "ownership",
+                        status: Status::Ok,
+                        detail:
+                            "camera opened by serial and cleanly released; motor/audio untouched"
+                                .into(),
+                    }
+                }
+                Err(error) => Check {
+                    name: "ownership",
+                    status: Status::Fail,
+                    detail: format!("camera unavailable or busy: {error:#}"),
+                },
+            },
+        );
+        checks
+    }
 }
 
 fn data_dir_writable(dir: &Path) -> std::io::Result<()> {

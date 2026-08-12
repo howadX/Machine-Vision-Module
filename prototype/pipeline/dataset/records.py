@@ -5,7 +5,7 @@ folder::
 
     sessions/<id>/
       frames/NNNNNN.jpg      # RGB, privacy-blurred per [dataset].privacy
-      depth/NNNNNN.png       # 16-bit relative depth (optional)
+      depth/NNNNNN.png       # typed 16-bit relative or metric depth (optional)
       labels.jsonl           # one CanonicalObservation per saved frame
       session.toml           # closed-session summary
 
@@ -100,6 +100,7 @@ class Record:
     frame_rel: Optional[str]
     depth_rel: Optional[str]
     depth_range: Optional[tuple[float, float]]
+    depth_meta: Optional[dict]
     people: list[Person]
     objects: list[Obj]
     activities: list[str]
@@ -130,15 +131,21 @@ class Record:
             return np.array(im.convert("RGB"), dtype=np.uint8)
 
     def load_depth(self) -> Optional[np.ndarray]:
-        """Relative depth as a ``H×W`` float32 array, de-normalized via
-        ``depth_range`` so values match the recorder's raw affine-relative scale
-        (larger = nearer). ``None`` when the frame has no depth."""
+        """Load typed depth without changing its units.
+
+        Metric ``metric_mm_u16`` returns the exact ``uint16`` millimetre payload,
+        including its declared invalid value. Relative/legacy depth returns the
+        de-normalized affine-relative ``float32`` map.
+        """
         if not self.has_depth:
             return None
         from PIL import Image
 
         with Image.open(self.depth_path) as im:
-            u16 = np.array(im, dtype=np.float32)  # 0..65535 (writable copy)
+            raw = np.array(im, dtype=np.uint16)
+        if self.depth_meta and self.depth_meta.get("encoding") == "metric_mm_u16":
+            return raw
+        u16 = raw.astype(np.float32)
         lo, hi = self.depth_range if self.depth_range else (0.0, 1.0)
         return lo + (u16 / 65535.0) * (hi - lo)
 
@@ -190,6 +197,7 @@ def record_from_obs(obs: dict, session_dir: Path) -> Record:
         frame_rel=frame.get("frame_path"),
         depth_rel=frame.get("depth_path"),
         depth_range=tuple(dr) if dr else None,
+        depth_meta=frame.get("depth"),
         people=people,
         objects=objects,
         activities=_activities(obs),

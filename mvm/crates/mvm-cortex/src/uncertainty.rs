@@ -412,6 +412,7 @@ mod tests {
                     },
                     0.9,
                 ),
+                geometry: Box::default(),
                 kinematics: SceneFact::unknown(FactReason::MissingSource),
             }],
             relations: Vec::new(),

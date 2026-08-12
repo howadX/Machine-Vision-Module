@@ -118,7 +118,7 @@ impl InstanceMask {
     }
 
     /// Normalized centres of the set cells — the sample points for
-    /// `DepthMap::median_at_points` (mask-median depth, phase 10.4).
+    /// `RelativeDepthMap::median_at_points` (mask-median depth, phase 10.4).
     pub fn set_points(&self) -> impl Iterator<Item = [f32; 2]> + '_ {
         (0..MASK_RES * MASK_RES).filter_map(move |i| {
             if self.bits[i] != 0 {

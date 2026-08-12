@@ -1,0 +1,12 @@
+{
+  "schema": "mvm-rgbd-replay/1.0",
+  "max_pair_skew_ns": 20000000,
+  "pairing_clock": "host_monotonic",
+  "device_clocks": ["kinect_v1_rgb", "kinect_v1_depth"],
+  "rules": [
+    "registered fresh metric depth only may bind to RGB",
+    "one depth frame may be consumed by at most one RGB frame",
+    "invalid depth remains unknown and never means free",
+    "raw device timestamps are never subtracted across streams"
+  ]
+}

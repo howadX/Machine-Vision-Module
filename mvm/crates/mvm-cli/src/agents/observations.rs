@@ -1,7 +1,7 @@
 //! Runtime-only stamped expert observations (phase 18.1).
 //!
 //! These packets preserve the camera frame that produced each asynchronous
-//! expert result. Raw depth and masks remain evidence handles rather than
+//! expert result. Metric and relative depth remain distinct evidence handles rather than
 //! serializable canonical scene facts.
 
 use mvm_core::{BBox, ObjectState, PersonState, mask::InstanceMask};
@@ -67,7 +67,62 @@ pub(crate) struct SceneObservationFrame {
 #[derive(Debug, Clone)]
 pub(crate) struct DepthObservationFrame {
     pub stamp: ObservationStamp,
-    pub map: Arc<mvm_depth::DepthMap>,
+    pub evidence: DepthEvidence,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DepthEvidence {
+    Relative(Arc<mvm_depth::RelativeDepthMap>),
+    Metric(MetricDepthEvidence),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct MetricDepthEvidence {
+    pub depth: mvm_depth::RegisteredMetricDepth,
+    pub source: mvm_core::SensorSourceId,
+    pub rgb_stamp: mvm_core::SensorStamp,
+}
+
+impl DepthObservationFrame {
+    pub(crate) fn relative_map(&self) -> Option<&Arc<mvm_depth::RelativeDepthMap>> {
+        match &self.evidence {
+            DepthEvidence::Relative(map) => Some(map),
+            DepthEvidence::Metric(_) => None,
+        }
+    }
+
+    pub(crate) fn metric(&self) -> Option<&mvm_depth::RegisteredMetricDepth> {
+        match &self.evidence {
+            DepthEvidence::Metric(metric) => Some(&metric.depth),
+            DepthEvidence::Relative(_) => None,
+        }
+    }
+}
+
+pub(crate) fn registered_metric_from_frame(
+    frame: &Frame,
+    max_pair_skew_ns: u64,
+) -> Option<DepthObservationFrame> {
+    let metric = frame.sensor.metric_depth.as_ref()?;
+    let calibration = frame.sensor.calibration.as_ref()?;
+    let admitted = mvm_depth::RegisteredMetricDepth::admit(
+        frame.image.width(),
+        frame.image.height(),
+        &frame.sensor.rgb_stamp,
+        &frame.sensor.depth_status,
+        Arc::clone(metric),
+        calibration,
+        max_pair_skew_ns,
+    )
+    .ok()?;
+    Some(DepthObservationFrame {
+        stamp: ObservationStamp::from_frame(frame),
+        evidence: DepthEvidence::Metric(MetricDepthEvidence {
+            depth: admitted,
+            source: frame.sensor.source.clone(),
+            rgb_stamp: frame.sensor.rgb_stamp.clone(),
+        }),
+    })
 }
 
 #[derive(Clone)]
@@ -143,17 +198,17 @@ mod tests {
         let stamp = ObservationStamp::from_frame(&frame);
         bus.publish(DepthObservationFrame {
             stamp,
-            map: Arc::new(mvm_depth::DepthMap {
+            evidence: DepthEvidence::Relative(Arc::new(mvm_depth::RelativeDepthMap {
                 data: vec![0.5; 4],
                 w: 2,
                 h: 2,
-            }),
+            })),
         });
 
         let observed = bus.latest().expect("published depth observation");
         assert_eq!(observed.stamp.source_frame_id, 7);
         assert_eq!(observed.stamp.captured_at_unix_ms, 1_000);
-        assert_eq!(observed.map.w, 2);
+        assert_eq!(observed.relative_map().unwrap().w, 2);
     }
 
     #[test]

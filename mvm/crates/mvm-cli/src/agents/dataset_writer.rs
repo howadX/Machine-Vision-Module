@@ -12,19 +12,18 @@
 //! Depth maps (16-bit PNG) are a 16.2 follow-up — the agent forces `save_depth`
 //! off so labels never reference a depth file that was not written.
 
-use super::{DepthObservationBus, FusedFrameBus, FusedFramePacket};
+use super::{DepthEvidence, DepthObservationBus, FusedFrameBus, FusedFramePacket};
 use crate::state::{object_state_to_entity, person_to_entity, relation_kept};
 use image::{ImageFormat, RgbImage};
 use mvm_core::BBox;
 use mvm_core::types::RelationKind;
 use mvm_dataset::{
-    DatasetConfig, DatasetWriter, EdgeRel, FrameRecord, PrivacyPerson, RecordAnnotations,
-    SceneRelations, ZoneRel, blur_regions,
+    DatasetConfig, DatasetWriter, DepthEncoding, DepthFrameMetadata, DepthUnits, EdgeRel,
+    FrameRecord, PrivacyPerson, RecordAnnotations, SceneRelations, ZoneRel, blur_regions,
 };
 use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
 use std::collections::BTreeMap;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// Logical dataset id (root-of-storage binding key).
@@ -149,7 +148,7 @@ impl DatasetWriterAgent {
                 .as_ref()
                 .and_then(|bus| bus.latest())
                 .filter(|observation| observation.stamp.age_at(frame.id).is_some())
-                .map(|observation| observation.map)
+                .and_then(|observation| observation.relative_map().cloned())
         } else {
             None
         };
@@ -157,7 +156,7 @@ impl DatasetWriterAgent {
 
         // Compatibility input is cloned read-only; DatasetWriter owns session
         // lifecycle in `session_world` and never mutates the shared scene.
-        let (result, privacy_people) = {
+        let result = {
             let mut w = match ctx.world.read() {
                 Ok(world) => world.clone(),
                 Err(_) => return Ok(false),
@@ -176,30 +175,29 @@ impl DatasetWriterAgent {
             // §16.7: compute zones+edges (ticks the persistent tracker) before the
             // record so the label carries the frame's relational scene-graph.
             let relations = self.scene_relations(&w);
-            let r = self
-                .writer
-                .record_frame(&mut w, now, &iso, &stamp, depth_range, &relations)?;
+            let mut rgb = frame.image.to_rgb8();
+            apply_blur(&mut rgb, &blur_regions(&pp, self.cfg.privacy));
+            let depth_artifact = depth_map
+                .as_ref()
+                .zip(depth_range)
+                .map(|(map, range)| DepthArtifact::Relative(map, range));
+            let r = self.writer.record_frame_transactional(
+                &mut w,
+                now,
+                &iso,
+                &stamp,
+                depth_range,
+                &relations,
+                |record| {
+                    persist_artifacts_transactionally(record, Some(&rgb), &self.cfg, depth_artifact)
+                },
+            )?;
             self.session_world = w;
-            (r, pp)
+            r
         };
 
-        let Some(rec) = result.frame else {
+        if result.frame.is_none() {
             return Ok(false);
-        };
-
-        // Outside the lock: encode + blur + persist the RGB pixels. In text-only
-        // mode the writer allocates no frame path → skip the pixel encode entirely.
-        if rec.frame_path.is_some() {
-            let regions = blur_regions(&privacy_people, self.cfg.privacy);
-            self.write_frame_image(&frame.image, &rec, &regions)?;
-        }
-
-        // Depth (§16.2.2): the writer only set a depth path when we passed a range,
-        // so path.is_some() ⇔ depth_map.is_some().
-        if let (Some(path), Some(map), Some(range)) =
-            (rec.depth_path.as_ref(), depth_map.as_ref(), depth_range)
-        {
-            write_depth_png(map, range, path)?;
         }
         Ok(true)
     }
@@ -211,7 +209,7 @@ impl DatasetWriterAgent {
             .format("%Y-%m-%dT%H:%M:%S%.3f%:z")
             .to_string();
 
-        let depth_map = self
+        let depth_evidence = self
             .cfg
             .save_depth
             .then(|| {
@@ -219,10 +217,46 @@ impl DatasetWriterAgent {
                     .evidence
                     .depth
                     .as_ref()
-                    .map(|depth| Arc::clone(&depth.map))
+                    .map(|depth| depth.evidence.clone())
             })
             .flatten();
-        let depth_range = depth_map.as_ref().and_then(|map| depth_minmax(&map.data));
+        let depth_range = match depth_evidence.as_ref() {
+            Some(DepthEvidence::Relative(map)) => depth_minmax(&map.data),
+            _ => None,
+        };
+        let depth_metadata = depth_evidence.as_ref().map(|evidence| match evidence {
+            DepthEvidence::Relative(map) => DepthFrameMetadata {
+                encoding: DepthEncoding::RelativeAffineU16,
+                units: DepthUnits::AffineRelative,
+                width: u32::try_from(map.w).ok(),
+                height: u32::try_from(map.h).ok(),
+                invalid_value: None,
+                valid_ratio: None,
+                geometry: None,
+                source: None,
+                rgb_stamp: None,
+                depth_stamp: None,
+                rgb_depth_skew_ns: None,
+                calibration: None,
+            },
+            DepthEvidence::Metric(metric) => {
+                let frame = metric.depth.frame();
+                DepthFrameMetadata {
+                    encoding: DepthEncoding::MetricMmU16,
+                    units: DepthUnits::Millimetres,
+                    width: Some(frame.width),
+                    height: Some(frame.height),
+                    invalid_value: Some(frame.invalid_value),
+                    valid_ratio: Some(frame.valid_ratio),
+                    geometry: Some(frame.geometry.clone()),
+                    source: Some(metric.source.clone()),
+                    rgb_stamp: Some(metric.rgb_stamp.clone()),
+                    depth_stamp: Some(frame.stamp.clone()),
+                    rgb_depth_skew_ns: Some(frame.rgb_depth_skew_ns),
+                    calibration: Some(metric.depth.calibration().clone()),
+                }
+            }
+        });
 
         let projection = packet.scene.compatibility_world_state(now);
         let mut world = (*projection).clone();
@@ -258,7 +292,19 @@ impl DatasetWriterAgent {
                 }),
             );
         }
-        let result = self.writer.record_frame_with_annotations(
+        let mut rgb = packet.evidence.rgb.to_rgb8();
+        apply_blur(&mut rgb, &blur_regions(&privacy_people, self.cfg.privacy));
+        let depth_artifact = match depth_evidence.as_ref() {
+            Some(DepthEvidence::Relative(map)) => Some(DepthArtifact::Relative(
+                map,
+                depth_range.expect("relative depth has range"),
+            )),
+            Some(DepthEvidence::Metric(metric)) => {
+                Some(DepthArtifact::Metric(metric.depth.frame()))
+            }
+            None => None,
+        };
+        let result = self.writer.record_frame_with_annotations_transactional(
             &mut world,
             now,
             &iso,
@@ -267,28 +313,24 @@ impl DatasetWriterAgent {
             RecordAnnotations {
                 relations: &relations,
                 canonical_events: &events,
+                depth: depth_metadata,
+            },
+            |record| {
+                persist_artifacts_transactionally(record, Some(&rgb), &self.cfg, depth_artifact)
             },
         )?;
         self.session_world = world;
 
-        let Some(record) = result.frame else {
+        if result.frame.is_none() {
             return Ok(false);
-        };
+        }
         self.event_cursor = delta.next_cursor;
-        if record.frame_path.is_some() {
-            let regions = blur_regions(&privacy_people, self.cfg.privacy);
-            self.write_frame_image(&packet.evidence.rgb, &record, &regions)?;
-        }
-        if let (Some(path), Some(map), Some(range)) =
-            (record.depth_path.as_ref(), depth_map.as_ref(), depth_range)
-        {
-            write_depth_png(map, range, path)?;
-        }
         Ok(true)
     }
 
     /// Encode one frame to disk with privacy blur applied. Public-in-crate so the
     /// pixel path is unit-testable without a live camera.
+    #[cfg(test)]
     pub(crate) fn write_frame_image(
         &self,
         img: &image::DynamicImage,
@@ -303,6 +345,74 @@ impl DatasetWriterAgent {
             .expect("write_frame_image called only when a frame path exists");
         save_rgb(&rgb, path, &self.cfg)?;
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DepthArtifact<'a> {
+    Relative(&'a mvm_depth::RelativeDepthMap, [f32; 2]),
+    Metric(&'a mvm_core::MetricDepthFrame),
+}
+
+/// Encode every referenced pixel artifact to a sibling temporary file, then
+/// atomically rename the complete set into place. DatasetWriter appends the
+/// label only after this function returns success.
+fn persist_artifacts_transactionally(
+    record: &FrameRecord,
+    rgb: Option<&RgbImage>,
+    cfg: &DatasetConfig,
+    depth: Option<DepthArtifact<'_>>,
+) -> anyhow::Result<()> {
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let stage_result = (|| -> anyhow::Result<()> {
+        if let (Some(path), Some(rgb)) = (record.frame_path.as_ref(), rgb) {
+            let tmp = artifact_temp_path(path)?;
+            save_rgb(rgb, &tmp, cfg)?;
+            staged.push((tmp, path.clone()));
+        }
+        if let (Some(path), Some(depth)) = (record.depth_path.as_ref(), depth) {
+            let tmp = artifact_temp_path(path)?;
+            match depth {
+                DepthArtifact::Relative(map, range) => write_depth_png(map, range, &tmp)?,
+                DepthArtifact::Metric(frame) => write_metric_depth_png(frame, &tmp)?,
+            }
+            staged.push((tmp, path.clone()));
+        }
+        Ok(())
+    })();
+    if let Err(error) = stage_result {
+        cleanup_staged(&staged);
+        return Err(error);
+    }
+    for (index, (tmp, final_path)) in staged.iter().enumerate() {
+        if let Err(error) = std::fs::rename(tmp, final_path) {
+            cleanup_staged(&staged[index..]);
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
+fn artifact_temp_path(path: &Path) -> anyhow::Result<PathBuf> {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!("artifact path has no UTF-8 filename: {}", path.display())
+        })?;
+    Ok(path.with_file_name(format!(".{name}.tmp")))
+}
+
+fn cleanup_staged(staged: &[(PathBuf, PathBuf)]) {
+    for (tmp, _) in staged {
+        if let Err(error) = std::fs::remove_file(tmp)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!(
+                "  dataset: failed to remove staged artifact {}: {error}",
+                tmp.display()
+            );
+        }
     }
 }
 
@@ -524,7 +634,11 @@ fn depth_minmax(data: &[f32]) -> Option<[f32; 2]> {
 
 /// Encode a relative depth map to a 16-bit grayscale PNG (§16.2.2), min-max
 /// normalized over `range` so the mapping is reversible via `frame.depth_range`.
-fn write_depth_png(map: &mvm_depth::DepthMap, range: [f32; 2], path: &Path) -> anyhow::Result<()> {
+fn write_depth_png(
+    map: &mvm_depth::RelativeDepthMap,
+    range: [f32; 2],
+    path: &Path,
+) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -538,6 +652,29 @@ fn write_depth_png(map: &mvm_depth::DepthMap, range: [f32; 2], path: &Path) -> a
     let img =
         image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(map.w as u32, map.h as u32, buf)
             .ok_or_else(|| anyhow::anyhow!("depth buffer {}×{} mismatch", map.w, map.h))?;
+    img.save_with_format(path, ImageFormat::Png)?;
+    Ok(())
+}
+
+/// Persist metric depth losslessly. Pixel values are millimetres exactly as
+/// delivered by the admitted sensor frame; `invalid_value` remains unchanged.
+fn write_metric_depth_png(depth: &mvm_core::MetricDepthFrame, path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    depth.validate()?;
+    let img = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(
+        depth.width,
+        depth.height,
+        depth.depth_mm.clone(),
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "metric depth buffer {}×{} mismatch",
+            depth.width,
+            depth.height
+        )
+    })?;
     img.save_with_format(path, ImageFormat::Png)?;
     Ok(())
 }
@@ -629,7 +766,7 @@ mod tests {
     #[test]
     fn depth_png_is_16bit_and_reversible() {
         let root = temp_root("depthpng");
-        let map = mvm_depth::DepthMap {
+        let map = mvm_depth::RelativeDepthMap {
             data: vec![0.0, 1.0, 2.0, 4.0],
             w: 2,
             h: 2,
@@ -645,6 +782,83 @@ mod tests {
         assert_eq!(g16.dimensions(), (2, 2));
         assert_eq!(g16.get_pixel(0, 0).0[0], 0, "min → 0");
         assert_eq!(g16.get_pixel(1, 1).0[0], 65535, "max → 65535");
+    }
+
+    #[test]
+    fn metric_depth_png_round_trips_exact_u16_and_invalid_value() {
+        let root = temp_root("metric_depth_png");
+        let path = root.join("depth/000000.png");
+        let expected = vec![0, 1, 999, 1_000, 2_047, u16::MAX];
+        let depth = mvm_core::MetricDepthFrame {
+            width: 3,
+            height: 2,
+            depth_mm: expected.clone(),
+            invalid_value: 0,
+            stamp: mvm_core::SensorStamp {
+                source_sequence: 1,
+                host_monotonic_ns: 1,
+                wall_clock_unix_ms: 1,
+                clock_domain: mvm_core::SensorClockDomain::KinectV1Depth,
+                device_timestamp_raw: Some(1),
+            },
+            geometry: mvm_core::DepthGeometry::RegisteredToRgb,
+            calibration_revision: "a".repeat(64),
+            valid_ratio: 5.0 / 6.0,
+            rgb_depth_skew_ns: 0,
+        };
+        write_metric_depth_png(&depth, &path).unwrap();
+        let decoded = image::open(path).unwrap().to_luma16().into_raw();
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn artifact_transaction_commits_all_files_without_temp_residue() {
+        let root = temp_root("artifact_transaction");
+        let frame_path = root.join("frames/000000.jpg");
+        let depth_path = root.join("depth/000000.png");
+        let record = FrameRecord {
+            session_id: "session".into(),
+            seq: 0,
+            frame_path: Some(frame_path.clone()),
+            depth_path: Some(depth_path.clone()),
+            observation: mvm_dataset::CanonicalObservation::from_jsonl_line(
+                &serde_json::json!({
+                    "dataset_id": "mvm_sessions",
+                    "schema_version": "16.8.0",
+                    "session_id": "session",
+                    "frame_id": 0,
+                    "frame": {"timestamp": "iso"},
+                    "session": {"seq_in_session": 0},
+                    "entities": [],
+                    "relations": [],
+                    "events": [],
+                    "semantic_groups": [],
+                    "derived_targets": null,
+                    "quality": {"frame_ok": true, "people_count": 0, "object_count": 0, "anomaly_score": 0.0},
+                    "provenance": [],
+                    "activities": []
+                })
+                .to_string(),
+            )
+            .unwrap(),
+        };
+        let map = mvm_depth::RelativeDepthMap {
+            data: vec![0.0, 1.0, 2.0, 3.0],
+            w: 2,
+            h: 2,
+        };
+        persist_artifacts_transactionally(
+            &record,
+            Some(&RgbImage::new(2, 2)),
+            &DatasetConfig::default(),
+            Some(DepthArtifact::Relative(&map, [0.0, 3.0])),
+        )
+        .unwrap();
+
+        assert!(frame_path.is_file());
+        assert!(depth_path.is_file());
+        assert!(!artifact_temp_path(&frame_path).unwrap().exists());
+        assert!(!artifact_temp_path(&depth_path).unwrap().exists());
     }
 
     #[test]
@@ -785,6 +999,7 @@ mod tests {
                 activities: &[],
                 ended_activities: &ended,
                 anomaly_score: 0.0,
+                metric_geometry: &[],
             })
             .unwrap();
         let camera = Frame::new_stamped(3, image::DynamicImage::new_rgb8(64, 48), now, 1_000);
@@ -828,6 +1043,134 @@ mod tests {
         assert_eq!(record["events"][0]["event_seq"], 0);
         assert_eq!(record["events"][0]["label"], "working");
         assert_eq!(record["events"][0]["participants"][0], "p1");
+    }
+
+    #[test]
+    fn canonical_metric_packet_writes_lossless_depth_and_provenance() {
+        use crate::agents::DepthObservationFrame;
+        use crate::agents::observations::MetricDepthEvidence;
+        use mvm_core::canonical::{FactSource, FrameStamp, SourceStamp};
+        use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput};
+
+        let root = temp_root("canonical_metric");
+        let cfg = DatasetConfig {
+            frame_cadence: 1,
+            ..Default::default()
+        };
+        let fused = FusedFrameBus::new();
+        let mut agent = DatasetWriterAgent::new(cfg, root.clone(), None)
+            .with_fused_frames(fused.clone())
+            .with_max_records(1);
+        let now = Instant::now();
+        let people = Arc::new(vec![person(1, now, false)]);
+        let scene = CanonicalFusion::new("test-run")
+            .assemble(CanonicalFusionInput {
+                stamp: FrameStamp::new("test-run", 3, 1_000, 1_001).unwrap(),
+                sources: vec![
+                    SourceStamp::at_frame(FactSource::Human, 3, 1_001)
+                        .relative_to(3, 2, 4)
+                        .unwrap(),
+                ],
+                people: &people,
+                objects: &[],
+                animals: &[],
+                activities: &[],
+                ended_activities: &[],
+                anomaly_score: 0.0,
+                metric_geometry: &[],
+            })
+            .unwrap();
+        let rgb_stamp = mvm_core::SensorStamp {
+            source_sequence: 3,
+            host_monotonic_ns: 1_000_000,
+            wall_clock_unix_ms: 1_000,
+            clock_domain: mvm_core::SensorClockDomain::KinectV1Rgb,
+            device_timestamp_raw: Some(3),
+        };
+        let calibration = mvm_core::CalibrationRef {
+            schema: "kinect-v1-sensor-calibration/1.0".into(),
+            camera_serial: "serial".into(),
+            revision_sha256: "a".repeat(64),
+        };
+        let expected = vec![0, 500, 1_000, 2_000];
+        let metric_frame = Arc::new(mvm_core::MetricDepthFrame {
+            width: 2,
+            height: 2,
+            depth_mm: expected.clone(),
+            invalid_value: 0,
+            stamp: mvm_core::SensorStamp {
+                source_sequence: 3,
+                host_monotonic_ns: 11_000_000,
+                wall_clock_unix_ms: 1_000,
+                clock_domain: mvm_core::SensorClockDomain::KinectV1Depth,
+                device_timestamp_raw: Some(3),
+            },
+            geometry: mvm_core::DepthGeometry::RegisteredToRgb,
+            calibration_revision: calibration.revision_sha256.clone(),
+            valid_ratio: 0.75,
+            rgb_depth_skew_ns: 10_000_000,
+        });
+        let admitted = mvm_depth::RegisteredMetricDepth::admit(
+            2,
+            2,
+            &rgb_stamp,
+            &mvm_core::DepthStatus::Paired,
+            metric_frame,
+            &calibration,
+            20_000_000,
+        )
+        .unwrap();
+        fused.publish(FusedFramePacket {
+            scene: Arc::new(scene),
+            evidence: FrameEvidenceHandles {
+                rgb: Arc::new(image::DynamicImage::new_rgb8(2, 2)),
+                depth: Some(DepthObservationFrame {
+                    stamp: ObservationStamp::new(3, now, 1_000),
+                    evidence: DepthEvidence::Metric(MetricDepthEvidence {
+                        depth: admitted,
+                        source: mvm_core::SensorSourceId {
+                            backend: "kinect_v1".into(),
+                            logical_name: "kinect-v1-main".into(),
+                            serial: Some("serial".into()),
+                        },
+                        rgb_stamp,
+                    }),
+                }),
+                human: Some(HumanObservationFrame {
+                    stamp: ObservationStamp::new(3, now, 1_000),
+                    people,
+                }),
+                scene: None,
+            },
+        });
+        let ctx = MeshContext {
+            frames: LatestFrame::new(),
+            world: Arc::new(RwLock::new(WorldState::new(now))),
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        assert_eq!(agent.run(&ctx).ticks, 1);
+        let session = std::fs::read_dir(root.join("sessions"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let labels = std::fs::read_to_string(session.join("labels.jsonl")).unwrap();
+        let record: serde_json::Value = serde_json::from_str(labels.trim()).unwrap();
+        assert_eq!(record["frame"]["depth"]["encoding"], "metric_mm_u16");
+        assert_eq!(record["frame"]["depth"]["units"], "millimetres");
+        assert!(record["frame"].get("depth_range").is_none());
+        let decoded = image::open(session.join("depth/000000.png"))
+            .unwrap()
+            .to_luma16()
+            .into_raw();
+        assert_eq!(decoded, expected);
+        let meta = std::fs::read_to_string(session.join("session.toml")).unwrap();
+        assert!(meta.contains("metric_mm_u16"));
+        assert!(meta.contains(&"a".repeat(64)));
+        let report = mvm_dataset::check_dataset(&root).unwrap();
+        assert_eq!(report.errors(), 0, "{:?}", report.sessions[0].findings);
+        assert_eq!(report.warns(), 0, "{:?}", report.sessions[0].findings);
     }
 
     #[test]

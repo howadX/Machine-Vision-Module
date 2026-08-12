@@ -139,7 +139,7 @@ pub(crate) struct BodyPrimaryPipeline {
     /// body tracks that overlap them as likely-animals (persist between runs).
     latest_animals: Vec<mvm_scene::ObjectDetection>,
     /// Latest relative depth map (persist between cadence runs).
-    latest_depth: Option<mvm_depth::DepthMap>,
+    latest_depth: Option<mvm_depth::RelativeDepthMap>,
 }
 
 impl BodyPrimaryPipeline {
@@ -346,6 +346,10 @@ impl BodyPrimaryPipeline {
 
 /// Depth-anchor tracked objects to metric 3D (phase 8.E.2).
 ///
+/// This synchronous path is the compatibility fallback. It has no paired sensor
+/// packet or exact owner map, so it must never label these estimates as direct
+/// metric RGB-D measurements; canonical Fusion stamps them separately.
+///
 /// Depth-Anything outputs an affine-relative **inverse** depth (larger = nearer),
 /// so for a metric Z and depth value d, `Z·d ≈ k` is roughly constant. People
 /// supply the anchor: each has a metric torso-Z (body-primary) and a depth sample,
@@ -357,7 +361,7 @@ impl BodyPrimaryPipeline {
 /// no fabricated distance.
 fn anchor_objects_depth(
     objects: &mut [mvm_scene::TrackedObject],
-    depth: &mvm_depth::DepthMap,
+    depth: &mvm_depth::RelativeDepthMap,
     tracker: &mvm_core::PersonTracker,
     config: &mvm_core::Config,
     frame: &image::DynamicImage,
@@ -1117,7 +1121,7 @@ mod tests {
     fn anchor_no_people_leaves_objects_depthless() {
         let config = mvm_core::Config::default();
         let tracker = mvm_core::PersonTracker::with_config(&config); // empty → no active tracks
-        let depth = mvm_depth::DepthMap {
+        let depth = mvm_depth::RelativeDepthMap {
             data: vec![0.5; 16],
             w: 4,
             h: 4,
@@ -1215,7 +1219,7 @@ mod tests {
                 };
             }
         }
-        let depth = mvm_depth::DepthMap { data, w: 8, h: 8 };
+        let depth = mvm_depth::RelativeDepthMap { data, w: 8, h: 8 };
         let frame = image::DynamicImage::new_rgb8(64, 64);
 
         // Object box = whole right half (straddles near object + far background).

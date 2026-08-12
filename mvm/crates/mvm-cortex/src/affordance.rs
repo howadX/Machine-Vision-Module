@@ -307,6 +307,7 @@ mod tests {
                         },
                     ),
                     position_3d: SceneFact::unknown(FactReason::Uncalibrated),
+                    geometry: Box::default(),
                     kinematics: SceneFact::unknown(FactReason::MissingSource),
                 },
                 SceneEntity {
@@ -327,6 +328,7 @@ mod tests {
                         },
                     ),
                     position_3d: SceneFact::unknown(FactReason::Uncalibrated),
+                    geometry: Box::default(),
                     kinematics: SceneFact::unknown(FactReason::MissingSource),
                 },
             ],

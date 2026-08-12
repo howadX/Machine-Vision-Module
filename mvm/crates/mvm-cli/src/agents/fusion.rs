@@ -1,6 +1,6 @@
 //! FusionAgent (phase 8.C.7) — the cross-group step. It is the only agent that
-//! sees **both** people and objects plus the shared depth map, so depth-anchoring
-//! lives here (decision 8.C.5): the relative depth map is anchored to people's
+//! sees **both** people and objects plus depth evidence, so legacy depth-anchoring
+//! lives here (decision 8.C.5): only the relative depth map is anchored to people's
 //! metric torso-Z, giving objects a metric position in the same frame → real
 //! person↔object `Near` edges (built later by the StateFileWriter / 8.F).
 //!
@@ -11,13 +11,13 @@
 use crate::agents::{
     DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
     FusedFramePacket, HumanObservationBus, HumanObservationFrame, SceneObservationBus,
-    SceneObservationFrame,
+    SceneObservationFrame, registered_metric_from_frame,
 };
 use mvm_core::{
     Activity, ActivityEvent, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState,
     Position3D, WorldState,
 };
-use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput};
+use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput, MetricGeometryObservation};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
 
@@ -40,6 +40,7 @@ pub(crate) struct FusionAgent {
     epoch: std::time::Instant,
     last_fused_frame: Option<u64>,
     metrics: super::SchedulingMetrics,
+    max_metric_pair_skew_ns: u64,
 }
 
 impl FusionAgent {
@@ -73,7 +74,13 @@ impl FusionAgent {
             epoch: std::time::Instant::now(),
             last_fused_frame: None,
             metrics,
+            max_metric_pair_skew_ns: 20_000_000,
         }
+    }
+
+    pub(crate) fn with_max_metric_pair_skew_ns(mut self, max_pair_skew_ns: u64) -> Self {
+        self.max_metric_pair_skew_ns = max_pair_skew_ns;
+        self
     }
 
     /// Advance the activity journal for this world tick (phase 11.C3): re-derive
@@ -151,11 +158,13 @@ impl Agent for FusionAgent {
                     .scene_observations
                     .latest()
                     .filter(|obs| obs.stamp.age_at(frame.id).is_some());
-                let depth = self.depth_observations.latest().filter(|obs| {
+                let relative_depth = self.depth_observations.latest().filter(|obs| {
                     obs.stamp
                         .age_at(frame.id)
                         .is_some_and(|age| age <= u64::from(self.config.depth_cadence.max(1)) * 2)
                 });
+                let depth =
+                    select_depth_observation(&frame, relative_depth, self.max_metric_pair_skew_ns);
 
                 let mut world = WorldState::new(frame.captured);
                 world.frame_id = frame.id;
@@ -175,17 +184,24 @@ impl Agent for FusionAgent {
                     // Anchor objects to metric 3D when a depth map is available
                     // (the person↔person activities don't need it — people carry
                     // torso-3D directly).
-                    if let Some(d) = depth.as_ref() {
+                    if let Some(d) = depth.as_ref().and_then(DepthObservationFrame::relative_map) {
                         anchor_objects(
                             people.as_slice(),
                             objects.as_mut_slice(),
-                            &d.map,
+                            d,
                             &pinhole,
                             frame.image.width() as f32,
                             frame.image.height() as f32,
                         );
                     }
                 }
+                let metric_geometry = direct_metric_geometry(
+                    &frame,
+                    depth.as_ref(),
+                    &world.people,
+                    &world.objects,
+                    scene.as_ref(),
+                );
                 // Cross-group inference (phase 8.F) through the temporal journal.
                 let ended = self.advance_journal(&mut world);
                 let published_at_unix_ms = unix_ms_now().max(frame.captured_at_unix_ms);
@@ -216,6 +232,7 @@ impl Agent for FusionAgent {
                     activities: &world.activities,
                     ended_activities: &ended,
                     anomaly_score: world.anomaly_score,
+                    metric_geometry: &metric_geometry,
                 }) {
                     Ok(scene_frame) => {
                         let mut compatibility =
@@ -257,6 +274,137 @@ impl Agent for FusionAgent {
     }
 }
 
+fn direct_metric_geometry(
+    frame: &mvm_mesh::Frame,
+    depth: Option<&DepthObservationFrame>,
+    people: &[PersonState],
+    objects: &[ObjectState],
+    scene: Option<&SceneObservationFrame>,
+) -> Vec<MetricGeometryObservation> {
+    use mvm_core::canonical::TrackDomain;
+    use mvm_depth::{CameraIntrinsics, ReferenceFrame, SamplingSpec};
+
+    let Some(depth) = depth.and_then(DepthObservationFrame::metric) else {
+        return Vec::new();
+    };
+    let Some(owners) = frame.sensor.registered_depth_owners.as_deref() else {
+        return Vec::new();
+    };
+    let Ok(intrinsics) = CameraIntrinsics::new(
+        owners.native_width,
+        owners.native_height,
+        owners.native_fx_px,
+        owners.native_fy_px,
+        owners.native_cx_px,
+        owners.native_cy_px,
+        owners.calibration_revision.clone(),
+        ReferenceFrame::CameraOptical,
+    ) else {
+        return Vec::new();
+    };
+    let spec = SamplingSpec {
+        stride: 4,
+        max_samples: mvm_depth::MAX_GEOMETRY_SAMPLES,
+    };
+    let mut result = Vec::with_capacity(people.len() + objects.len());
+    for person in people {
+        let person_mask = scene.and_then(|scene| {
+            scene
+                .person_masks
+                .iter()
+                .filter(|(bbox, _)| bbox.iou(&person.bbox) >= 0.3)
+                .max_by(|(a, _), (b, _)| a.iou(&person.bbox).total_cmp(&b.iou(&person.bbox)))
+                .map(|(_, mask)| mask)
+        });
+        if let Some(measurement) =
+            measure_entity_geometry(depth, owners, &intrinsics, person.bbox, person_mask, spec)
+        {
+            result.push(metric_observation(
+                TrackDomain::Person,
+                person.track_id,
+                measurement,
+                person_mask.is_some(),
+            ));
+        }
+    }
+    for object in objects.iter().filter(|object| !object.remembered) {
+        if let Some(measurement) = measure_entity_geometry(
+            depth,
+            owners,
+            &intrinsics,
+            object.bbox,
+            object.mask.as_ref(),
+            spec,
+        ) {
+            result.push(metric_observation(
+                TrackDomain::Object,
+                object.id,
+                measurement,
+                object.mask.is_some(),
+            ));
+        }
+    }
+    result
+}
+
+fn measure_entity_geometry(
+    depth: &mvm_depth::RegisteredMetricDepth,
+    owners: &mvm_core::RegisteredDepthOwners,
+    intrinsics: &mvm_depth::CameraIntrinsics,
+    bbox: BBox,
+    mask: Option<&mvm_core::InstanceMask>,
+    spec: mvm_depth::SamplingSpec,
+) -> Option<mvm_depth::GeometryMeasurement> {
+    let samples = if let Some(mask) = mask.filter(|mask| !mask.is_empty()) {
+        mvm_depth::sample_registered_owner_mask(depth, owners, intrinsics, mask, spec).ok()?
+    } else {
+        let width = owners.registered_width;
+        let height = owners.registered_height;
+        let x1 = (bbox.x1.clamp(0.0, 1.0) * width as f32).floor() as u32;
+        let y1 = (bbox.y1.clamp(0.0, 1.0) * height as f32).floor() as u32;
+        let x2 = (bbox.x2.clamp(0.0, 1.0) * width as f32).ceil() as u32;
+        let y2 = (bbox.y2.clamp(0.0, 1.0) * height as f32).ceil() as u32;
+        let roi = mvm_depth::MetricRoi::pixels(
+            x1.min(width.saturating_sub(1)),
+            y1.min(height.saturating_sub(1)),
+            x2.saturating_sub(x1).max(1),
+            y2.saturating_sub(y1).max(1),
+        );
+        mvm_depth::sample_registered_owner_roi(depth, owners, intrinsics, roi, spec).ok()?
+    };
+    mvm_depth::measure_roi(&samples, 16).ok()
+}
+
+fn metric_observation(
+    track_domain: mvm_core::canonical::TrackDomain,
+    track_id: u32,
+    value: mvm_depth::GeometryMeasurement,
+    mask_aware: bool,
+) -> MetricGeometryObservation {
+    MetricGeometryObservation {
+        track_domain,
+        track_id,
+        centroid_m: value.centroid_m,
+        aabb_min_m: value.aabb_min_m,
+        aabb_max_m: value.aabb_max_m,
+        median_z_m: value.median_z_m,
+        median_absolute_deviation_m: value.median_absolute_deviation_m,
+        sample_count: u32::try_from(value.sample_count).unwrap_or(u32::MAX),
+        valid_ratio: value.valid_ratio,
+        boundary_contamination: value.boundary_contamination,
+        calibration_revision: value.calibration_revision,
+        mask_aware,
+    }
+}
+
+fn select_depth_observation(
+    frame: &mvm_mesh::Frame,
+    relative: Option<DepthObservationFrame>,
+    max_metric_pair_skew_ns: u64,
+) -> Option<DepthObservationFrame> {
+    registered_metric_from_frame(frame, max_metric_pair_skew_ns).or(relative)
+}
+
 fn unix_ms_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -275,6 +423,22 @@ fn source_stamps(
 ) -> Vec<mvm_core::canonical::SourceStamp> {
     use mvm_core::canonical::{FactSource, SourceStamp};
 
+    let (depth_fresh_through, depth_coasted_through) = depth.map_or(
+        (
+            u64::from(depth_cadence.max(1)),
+            u64::from(depth_cadence.max(1)) * 2,
+        ),
+        |observation| {
+            if observation.metric().is_some() {
+                (0, 0)
+            } else {
+                (
+                    u64::from(depth_cadence.max(1)),
+                    u64::from(depth_cadence.max(1)) * 2,
+                )
+            }
+        },
+    );
     let mut sources = vec![
         SourceStamp::at_frame(FactSource::Capture, fused_frame_id, published_at_unix_ms)
             .relative_to(fused_frame_id, 0, 0)
@@ -297,10 +461,19 @@ fn source_stamps(
             FactSource::Depth,
             depth.map(|observation| &observation.stamp),
             fused_frame_id,
-            u64::from(depth_cadence.max(1)),
-            u64::from(depth_cadence.max(1)) * 2,
+            depth_fresh_through,
+            depth_coasted_through,
         ),
     ];
+    if depth.is_some_and(|observation| observation.metric().is_some()) {
+        sources.push(observation_source(
+            FactSource::MetricDepth,
+            depth.map(|observation| &observation.stamp),
+            fused_frame_id,
+            0,
+            0,
+        ));
+    }
     sources.sort_by_key(|source| source.source);
     sources
 }
@@ -335,7 +508,7 @@ fn observation_source(
 pub(crate) fn anchor_objects(
     people: &[PersonState],
     objects: &mut [ObjectState],
-    depth: &mvm_depth::DepthMap,
+    depth: &mvm_depth::RelativeDepthMap,
     pinhole: &mvm_core::space::Pinhole,
     fw: f32,
     fh: f32,
@@ -662,11 +835,96 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mvm_core::Config;
+    use mvm_core::{
+        CalibrationRef, Config, DepthGeometry, DepthStatus, MetricDepthFrame, SensorClockDomain,
+        SensorHealth, SensorSourceId, SensorStamp,
+    };
+    use mvm_mesh::SensorFrameBundle;
     use std::time::Instant;
 
     fn pinhole() -> mvm_core::space::Pinhole {
         mvm_core::space::Pinhole::from_config(&Config::default())
+    }
+
+    fn sensor_stamp(domain: SensorClockDomain, ns: u64) -> SensorStamp {
+        SensorStamp {
+            source_sequence: 1,
+            host_monotonic_ns: ns,
+            wall_clock_unix_ms: 1_700_000_000_000,
+            clock_domain: domain,
+            device_timestamp_raw: Some(1),
+        }
+    }
+
+    fn metric_frame(skew_ns: u64) -> mvm_mesh::Frame {
+        let calibration = CalibrationRef {
+            schema: "kinect-v1-sensor-calibration/1.0".into(),
+            camera_serial: "serial".into(),
+            revision_sha256: "a".repeat(64),
+        };
+        let rgb_stamp = sensor_stamp(SensorClockDomain::KinectV1Rgb, 1_000_000);
+        let metric_depth = MetricDepthFrame {
+            width: 2,
+            height: 2,
+            depth_mm: vec![1_000; 4],
+            invalid_value: 0,
+            stamp: sensor_stamp(SensorClockDomain::KinectV1Depth, 1_000_000 + skew_ns),
+            geometry: DepthGeometry::RegisteredToRgb,
+            calibration_revision: calibration.revision_sha256.clone(),
+            valid_ratio: 1.0,
+            rgb_depth_skew_ns: skew_ns,
+        };
+        mvm_mesh::Frame::from_sensor(
+            4,
+            Arc::new(image::DynamicImage::new_rgb8(2, 2)),
+            Instant::now(),
+            SensorFrameBundle {
+                source: SensorSourceId {
+                    backend: "kinect_v1".into(),
+                    logical_name: "kinect-v1-main".into(),
+                    serial: Some("serial".into()),
+                },
+                rgb_stamp,
+                depth_status: DepthStatus::Paired,
+                metric_depth: Some(Arc::new(metric_depth)),
+                registered_depth_owners: None,
+                calibration: Some(calibration),
+                health: SensorHealth::default(),
+            },
+        )
+    }
+
+    fn relative_observation(frame: &mvm_mesh::Frame) -> DepthObservationFrame {
+        DepthObservationFrame {
+            stamp: crate::agents::ObservationStamp::from_frame(frame),
+            evidence: crate::agents::DepthEvidence::Relative(Arc::new(
+                mvm_depth::RelativeDepthMap {
+                    data: vec![0.5; 4],
+                    w: 2,
+                    h: 2,
+                },
+            )),
+        }
+    }
+
+    #[test]
+    fn registered_metric_wins_over_relative_evidence() {
+        let frame = metric_frame(10_000_000);
+        let selected =
+            select_depth_observation(&frame, Some(relative_observation(&frame)), 20_000_000)
+                .unwrap();
+        assert!(selected.metric().is_some());
+        assert!(selected.relative_map().is_none());
+    }
+
+    #[test]
+    fn stale_metric_is_rejected_and_relative_fallback_remains_typed() {
+        let frame = metric_frame(20_000_001);
+        let selected =
+            select_depth_observation(&frame, Some(relative_observation(&frame)), 20_000_000)
+                .unwrap();
+        assert!(selected.metric().is_none());
+        assert!(selected.relative_map().is_some());
     }
 
     fn person(z: f32) -> PersonState {
@@ -731,8 +989,8 @@ mod tests {
     }
 
     /// Uniform depth map → every `median_in_bbox` returns the same value.
-    fn uniform_depth(v: f32) -> mvm_depth::DepthMap {
-        mvm_depth::DepthMap {
+    fn uniform_depth(v: f32) -> mvm_depth::RelativeDepthMap {
+        mvm_depth::RelativeDepthMap {
             data: vec![v; 64],
             w: 8,
             h: 8,
@@ -898,7 +1156,7 @@ mod tests {
                 data[gy * 8 + gx] = if gx < 4 { 1.0 } else { 0.25 };
             }
         }
-        let depth = mvm_depth::DepthMap { data, w: 8, h: 8 };
+        let depth = mvm_depth::RelativeDepthMap { data, w: 8, h: 8 };
 
         // Mask cells in the right region (normalized x ≥ 0.5 → depth 0.25).
         let mut bits = vec![0u8; mvm_core::mask::MASK_RES * mvm_core::mask::MASK_RES];

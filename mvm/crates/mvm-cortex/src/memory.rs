@@ -258,6 +258,7 @@ mod tests {
             existence: SceneFact::unknown(mvm_core::canonical::FactReason::MissingSource),
             bbox: SceneFact::unknown(mvm_core::canonical::FactReason::MissingSource),
             position_3d: SceneFact::unknown(mvm_core::canonical::FactReason::MissingSource),
+            geometry: Box::default(),
             kinematics: SceneFact::unknown(mvm_core::canonical::FactReason::MissingSource),
         };
         FusedSceneFrame {

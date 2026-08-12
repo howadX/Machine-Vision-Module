@@ -33,6 +33,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 from records import MASK_RES, Record, decode_rle, iter_session
 
 
@@ -102,13 +104,16 @@ def _check_frame_pixels(rec: Record, rep: SessionReport) -> None:
 
 
 def _check_depth_pixels(rec: Record, rep: SessionReport) -> None:
-    """Depth (when present) must carry a reversible range and open as a 2-D map."""
+    """Typed depth must preserve its encoding and open as a 2-D map."""
     if not rec.has_depth:
         return
     rep.stats.with_depth += 1
-    if rec.depth_range is None:
-        rep.issues.append(Issue("ERROR", "depth-range-missing", rec.seq, "depth_path set but no depth_range"))
-    else:
+    metric = bool(rec.depth_meta and rec.depth_meta.get("encoding") == "metric_mm_u16")
+    if metric and rec.depth_range is not None:
+        rep.issues.append(Issue("ERROR", "metric-depth-range", rec.seq, "metric depth must not have depth_range"))
+    elif not metric and rec.depth_range is None:
+        rep.issues.append(Issue("ERROR", "depth-range-missing", rec.seq, "relative depth_path set but no depth_range"))
+    elif rec.depth_range is not None:
         lo, hi = rec.depth_range
         if not (lo <= hi):
             rep.issues.append(Issue("ERROR", "depth-range-bad", rec.seq, f"depth_range [{lo}, {hi}] not [min ≤ max]"))
@@ -124,6 +129,13 @@ def _check_depth_pixels(rec: Record, rep: SessionReport) -> None:
         rep.issues.append(
             Issue("ERROR", "depth-shape", rec.seq, f"{rec.depth_rel}: expected 2-D map, got {None if d is None else d.shape}")
         )
+    elif metric:
+        meta = rec.depth_meta or {}
+        expected = (meta.get("height"), meta.get("width"))
+        if d.dtype != np.uint16:
+            rep.issues.append(Issue("ERROR", "metric-depth-dtype", rec.seq, f"expected uint16 mm, got {d.dtype}"))
+        if None in expected or d.shape != expected:
+            rep.issues.append(Issue("ERROR", "metric-depth-shape", rec.seq, f"expected {expected}, got {d.shape}"))
 
 
 def _check_person(rec: Record, rep: SessionReport) -> None:
