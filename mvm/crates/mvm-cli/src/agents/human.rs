@@ -6,7 +6,7 @@
 
 use crate::agents::{
     AssociationMeasurementContext, HumanObservationBus, HumanObservationFrame, ObservationStamp,
-    SceneObservationBus, collect_people,
+    SceneObservationBus, collect_occluded_people, collect_people,
 };
 use crate::pipeline::BodyPrimaryPipeline;
 use mvm_core::{BBox, Detection, mask::InstanceMask};
@@ -209,14 +209,26 @@ impl Agent for HumanAgent {
                     continue;
                 }
                 let stamp = ObservationStamp::from_frame(&frame);
+                let people = collect_people(&self.tracker, &result.bodies, stamp.produced_at);
+                let published_ids: std::collections::HashSet<u32> =
+                    people.iter().map(|person| person.track_id).collect();
                 self.observations.publish(HumanObservationFrame {
                     stamp,
-                    people: Arc::new(collect_people(
+                    people: Arc::new(people),
+                    occluded_people: Arc::new(collect_occluded_people(
                         &self.tracker,
-                        &result.bodies,
                         stamp.produced_at,
                     )),
-                    metric_geometry: Arc::new(self.tracker.association_geometry().to_vec()),
+                    retained_track_ids: Arc::new(self.tracker.retained_ids()),
+                    retirements: Arc::new(self.tracker.retirements().to_vec()),
+                    metric_geometry: Arc::new(
+                        self.tracker
+                            .association_geometry()
+                            .iter()
+                            .filter(|value| published_ids.contains(&value.track_id))
+                            .cloned()
+                            .collect(),
+                    ),
                 });
                 self.metrics
                     .record_duration(super::MetricAgent::Human, started.elapsed());
@@ -244,7 +256,9 @@ mod tests {
     fn anonymous_body_has_no_identity() {
         let config = Config::default();
         let mut tracker = mvm_core::PersonTracker::with_config(&config);
-        tracker.tick(&[Detection::bare(0.2, 0.2, 0.4, 0.6)]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[Detection::bare(0.2, 0.2, 0.4, 0.6)]);
+        }
 
         let people = collect_people(&tracker, &[], Instant::now());
 
@@ -260,10 +274,12 @@ mod tests {
     fn two_bodies_project_two_people() {
         let config = Config::default();
         let mut tracker = mvm_core::PersonTracker::with_config(&config);
-        tracker.tick(&[
-            Detection::bare(0.05, 0.2, 0.25, 0.7),
-            Detection::bare(0.65, 0.2, 0.85, 0.7),
-        ]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[
+                Detection::bare(0.05, 0.2, 0.25, 0.7),
+                Detection::bare(0.65, 0.2, 0.85, 0.7),
+            ]);
+        }
 
         let people = collect_people(&tracker, &[], Instant::now());
 

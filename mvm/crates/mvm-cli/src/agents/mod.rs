@@ -68,7 +68,7 @@ pub(crate) fn collect_people(
     now: Instant,
 ) -> Vec<PersonState> {
     tracker
-        .active()
+        .published()
         .map(|t| {
             let mut p = PersonState::from_track(t, now);
             if let Some(b) = best_body_for_bbox(&p.bbox, bodies) {
@@ -78,6 +78,13 @@ pub(crate) fn collect_people(
             }
             p
         })
+        .collect()
+}
+
+pub(crate) fn collect_occluded_people(tracker: &PersonTracker, now: Instant) -> Vec<PersonState> {
+    tracker
+        .occluded()
+        .map(|track| PersonState::from_track(track, now))
         .collect()
 }
 
@@ -145,6 +152,17 @@ mod tests {
     }
 
     #[test]
+    fn tentative_person_is_not_projected_downstream() {
+        let mut tracker = PersonTracker::new();
+        tracker.tick(&[Detection::bare(0.2, 0.1, 0.5, 0.9)]);
+        assert_eq!(tracker.active().count(), 1, "tracker keeps its hypothesis");
+        assert!(
+            collect_people(&tracker, &[], Instant::now()).is_empty(),
+            "one-frame tentative detection must not become a PersonState"
+        );
+    }
+
+    #[test]
     fn cadence_due_every_nth() {
         assert!(cadence_due(0, 3));
         assert!(!cadence_due(1, 3));
@@ -157,15 +175,17 @@ mod tests {
     fn project_people_writes_active_tracks() {
         let config = Config::default();
         let mut tracker = PersonTracker::with_config(&config);
-        // One body detection → one active track after a tick.
+        // Publication is bounded by the explicit confirmation window.
         let mut det = Detection::bare(0.2, 0.2, 0.4, 0.6);
         det.position_z = Some(1.5);
-        tracker.tick(&[det]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[det.clone()]);
+        }
 
         let now = Instant::now();
         let people = collect_people(&tracker, &[], now);
 
-        assert_eq!(people.len(), 1, "one active track → one PersonState");
+        assert_eq!(people.len(), 1, "one confirmed track → one PersonState");
     }
 
     #[test]
@@ -184,6 +204,7 @@ mod tests {
                 score: 0.8,
                 age: 3,
                 missed: 0,
+                lifecycle: mvm_core::types::LifecycleState::Confirmed,
                 pos_3d: Some([0.5, 0.1, 0.7]),
                 pos_conf: 0.4,
                 mask: None,
@@ -200,6 +221,7 @@ mod tests {
                 score: 0.6,
                 age: 1,
                 missed: 0,
+                lifecycle: mvm_core::types::LifecycleState::Tentative,
                 pos_3d: None,
                 pos_conf: 0.0,
                 mask: None,

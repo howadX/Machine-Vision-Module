@@ -85,6 +85,20 @@ tracker and Fusion geometry would violate T2.
 T1 begins only from this inventory and may not call a simplified tracker model
 the production baseline.
 
+## T3 resolution
+
+- `PersonTracker::active()` remains tracker-local for enrichment. `published()` is the only current
+  downstream person projection and requires an established lifecycle after three Human ticks.
+- `ObjectTracker::update*()` publishes only current `Confirmed` tracks after two Scene ticks;
+  occluded tracks are available only through the explicit lifecycle handoff.
+- Human/Scene observations carry four disjoint meanings: current, occluded evidence, retained IDs,
+  and tick-local retirements. Metric geometry is filtered to current published IDs.
+- `CanonicalFusion` reserves existing incarnations for retained IDs without publishing presence.
+  Exit/disappear and zone-free transitions wait for retirement; a retained return keeps the same key.
+- Compatibility StateFile/Scene JSON and relative-depth anchoring filter person and object
+  hypotheses through the same publication boundary. AgentMesh WorldState, activities, zones,
+  DatasetWriter, MCP, and Cortex continue to consume only immutable canonical current facts.
+
 ## T1 resolution
 
 - `HumanAgent` now calls `PersonTracker::tick_motion_bound`; `SceneAgent` calls

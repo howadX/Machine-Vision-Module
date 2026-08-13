@@ -76,6 +76,7 @@ struct ObjectSummary {
     class_name: &'static str,
     age: u32,
     missed: u32,
+    lifecycle: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -347,6 +348,7 @@ fn main() -> Result<()> {
             class_name: track.class_name,
             age: track.age,
             missed: track.missed,
+            lifecycle: track.lifecycle.as_str(),
         })
         .collect();
     objects.sort_by_key(|track| track.id);

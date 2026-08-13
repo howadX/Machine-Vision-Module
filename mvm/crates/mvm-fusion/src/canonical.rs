@@ -39,6 +39,12 @@ pub struct CanonicalFusionInput<'a> {
     pub ended_activities: &'a [ActivityEvent],
     pub anomaly_score: f32,
     pub metric_geometry: &'a [MetricGeometryObservation],
+    /// Established local ids that remain alive even without a current
+    /// observation. They reserve incarnation only and never create entities.
+    pub retained_people: &'a [u32],
+    pub retired_people: &'a [u32],
+    pub retained_objects: &'a [u32],
+    pub retired_objects: &'a [u32],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -139,18 +145,33 @@ impl CanonicalFusion {
 
     pub fn assemble(&mut self, input: CanonicalFusionInput<'_>) -> anyhow::Result<FusedSceneFrame> {
         validate_metric_geometry_input(&input)?;
-        self.sync_domain(
+        self.sync_tracked_domain(
             TrackDomain::Person,
             input.people.iter().map(|person| person.track_id),
-        );
-        self.sync_domain(
+            input.retained_people,
+            input.retired_people,
+        )?;
+        self.sync_tracked_domain(
             TrackDomain::Object,
             input.objects.iter().map(|object| object.id),
-        );
+            input.retained_objects,
+            input.retired_objects,
+        )?;
         self.sync_domain(
             TrackDomain::Animal,
             input.animals.iter().map(|animal| animal.track_id),
         );
+        let retained_entity_keys: BTreeSet<EntityKey> = input
+            .retained_people
+            .iter()
+            .filter_map(|id| self.active.get(&(TrackDomain::Person, *id)).cloned())
+            .chain(
+                input
+                    .retained_objects
+                    .iter()
+                    .filter_map(|id| self.active.get(&(TrackDomain::Object, *id)).cloned()),
+            )
+            .collect();
 
         let human_source = source(&input.sources, FactSource::Human);
         let scene_source = source(&input.sources, FactSource::Scene);
@@ -198,7 +219,7 @@ impl CanonicalFusion {
             &activities,
             &zones,
             input.anomaly_score,
-            &input.stamp,
+            (&input.stamp, &retained_entity_keys),
         )?;
 
         let anomaly = if input.anomaly_score.is_finite() {
@@ -260,6 +281,50 @@ impl CanonicalFusion {
                 .entry((domain, id))
                 .or_insert_with(|| self.registry.activate(domain, id));
         }
+    }
+
+    fn sync_tracked_domain(
+        &mut self,
+        domain: TrackDomain,
+        current_ids: impl Iterator<Item = u32>,
+        retained_ids: &[u32],
+        retirements: &[u32],
+    ) -> anyhow::Result<()> {
+        let current: BTreeSet<u32> = current_ids.collect();
+        let retained: BTreeSet<u32> = retained_ids.iter().copied().collect();
+        let retired: BTreeSet<u32> = retirements.iter().copied().collect();
+        anyhow::ensure!(
+            current.is_disjoint(&retired) && retained.is_disjoint(&retired),
+            "{domain:?} tracker handoff retains and retires the same id"
+        );
+
+        for id in &retired {
+            if let Some(key) = self.active.remove(&(domain, *id)) {
+                self.registry.retire(&key);
+            }
+        }
+
+        let desired: BTreeSet<u32> = current.union(&retained).copied().collect();
+        let implicitly_retired: Vec<(TrackDomain, u32)> = self
+            .active
+            .keys()
+            .filter(|(active_domain, id)| *active_domain == domain && !desired.contains(id))
+            .copied()
+            .collect();
+        for slot in implicitly_retired {
+            if let Some(key) = self.active.remove(&slot) {
+                self.registry.retire(&key);
+            }
+        }
+
+        // A retained-only id never creates a canonical identity out of thin air;
+        // it can only keep an already-active incarnation reserved.
+        for id in current {
+            self.active
+                .entry((domain, id))
+                .or_insert_with(|| self.registry.activate(domain, id));
+        }
+        Ok(())
     }
 
     fn key(&self, domain: TrackDomain, id: u32) -> EntityKey {
@@ -339,15 +404,18 @@ impl CanonicalFusion {
             .zones
             .update(&scene.zones, &scene.entities)
             .iter()
-            .map(|zone| SceneZone {
-                id: u64::from(zone.id),
-                label: zone.label.map(str::to_owned),
-                members: zone
+            .filter_map(|zone| {
+                let members: Vec<_> = zone
                     .members
                     .iter()
                     .filter_map(|id| keys.get(id).cloned())
-                    .collect(),
-                age_frames: u64::from(zone.age),
+                    .collect();
+                (!members.is_empty()).then(|| SceneZone {
+                    id: u64::from(zone.id),
+                    label: zone.label.map(str::to_owned),
+                    members,
+                    age_frames: u64::from(zone.age),
+                })
             })
             .collect();
         Ok((relations, zones))
@@ -360,15 +428,16 @@ impl CanonicalFusion {
         activities: &[SceneActivity],
         zones: &[SceneZone],
         anomaly_score: f32,
-        stamp: &FrameStamp,
+        context: (&FrameStamp, &BTreeSet<EntityKey>),
     ) -> anyhow::Result<()> {
+        let (stamp, retained_entity_keys) = context;
         // Snapshot before emitting: publication mutates the event tail, never
         // the previous-tick evidence used to classify this transition.
         let previous_entities = self.previous_entities.clone();
         let previous_activities = self.previous_activities.clone();
         let previous_zones = self.previous_zones.clone();
         let have_previous_tick = self.has_previous_tick;
-        let current: BTreeMap<EntityKey, PreviousEntity> = entities
+        let mut current: BTreeMap<EntityKey, PreviousEntity> = entities
             .iter()
             .map(|entity| {
                 (
@@ -401,7 +470,10 @@ impl CanonicalFusion {
             }
         }
         for (key, entity) in &previous_entities {
-            if have_previous_tick && !current.contains_key(key) {
+            if have_previous_tick
+                && !current.contains_key(key)
+                && !retained_entity_keys.contains(key)
+            {
                 self.push_event(
                     SceneEventKind::EntityDisappeared,
                     vec![key.clone()],
@@ -499,7 +571,7 @@ impl CanonicalFusion {
                 }
             }
         }
-        let current_zones: BTreeMap<u64, Vec<EntityKey>> = zones
+        let mut current_zones: BTreeMap<u64, Vec<EntityKey>> = zones
             .iter()
             .filter(|zone| !zone.members.is_empty())
             .map(|zone| (zone.id, zone.members.clone()))
@@ -520,7 +592,12 @@ impl CanonicalFusion {
             }
         }
         for (id, members) in &previous_zones {
-            if have_previous_tick && !current_zones.contains_key(id) {
+            if have_previous_tick
+                && !current_zones.contains_key(id)
+                && !members
+                    .iter()
+                    .any(|member| retained_entity_keys.contains(member))
+            {
                 self.push_event(SceneEventKind::ZoneFreed, members.clone(), 1.0, stamp, None)?;
             }
         }
@@ -562,6 +639,27 @@ impl CanonicalFusion {
                     stamp,
                     None,
                 )?;
+            }
+        }
+        // Retention reserves identity and transition history, not presence. This
+        // prevents a short accepted occlusion from fabricating exit/enter and
+        // zone-free/occupied event pairs while the current frame stays empty.
+        for key in retained_entity_keys {
+            if !current.contains_key(key)
+                && let Some(previous) = previous_entities.get(key)
+            {
+                current.insert(key.clone(), previous.clone());
+            }
+        }
+        for (id, members) in previous_zones {
+            if let std::collections::btree_map::Entry::Vacant(entry) = current_zones.entry(id) {
+                let retained_members: Vec<_> = members
+                    .into_iter()
+                    .filter(|member| retained_entity_keys.contains(member))
+                    .collect();
+                if !retained_members.is_empty() {
+                    entry.insert(retained_members);
+                }
             }
         }
         self.previous_entities = current;
@@ -1279,6 +1377,10 @@ mod tests {
             ended_activities: &[],
             anomaly_score: 0.0,
             metric_geometry: &[],
+            retained_people: &[],
+            retired_people: &[],
+            retained_objects: &[],
+            retired_objects: &[],
         }
     }
 
@@ -1380,6 +1482,76 @@ mod tests {
                 .to_string()
                 .contains("duplicate metric geometry")
         );
+    }
+
+    #[test]
+    fn retained_gap_keeps_incarnation_until_explicit_retirement() {
+        let mut fusion = CanonicalFusion::new("run");
+        let observed = person(10);
+        let retained = [10];
+        let first = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(1, std::slice::from_ref(&observed))
+            })
+            .unwrap();
+        let first_key = first.entities[0].key.clone();
+
+        let gap = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(2, &[])
+            })
+            .unwrap();
+        assert!(gap.entities.is_empty());
+        assert!(gap.activities.is_empty());
+        assert!(gap.relations.is_empty());
+        assert!(gap.zones.is_empty());
+        assert!(
+            gap.events.events.iter().all(|event| !matches!(
+                event.kind,
+                SceneEventKind::EntityDisappeared | SceneEventKind::PersonExited
+            )),
+            "retained absence is not a canonical disappearance"
+        );
+
+        let returned = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(3, std::slice::from_ref(&observed))
+            })
+            .unwrap();
+        assert_eq!(returned.entities[0].key, first_key);
+        assert!(
+            returned.events.events.iter().all(|event| !matches!(
+                event.kind,
+                SceneEventKind::EntityAppeared | SceneEventKind::PersonEntered
+            )),
+            "return inside retention must not fabricate a new arrival"
+        );
+
+        let retired = [10];
+        let expiry = fusion
+            .assemble(CanonicalFusionInput {
+                retired_people: &retired,
+                ..input(4, &[])
+            })
+            .unwrap();
+        assert!(expiry.events.events.iter().any(|event| {
+            event.kind == SceneEventKind::EntityDisappeared
+                && event.entity_keys == [first_key.clone()]
+        }));
+        assert!(expiry.events.events.iter().any(|event| {
+            event.kind == SceneEventKind::PersonExited && event.entity_keys == [first_key.clone()]
+        }));
+        let reincarnated = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(5, std::slice::from_ref(&observed))
+            })
+            .unwrap();
+        assert_ne!(reincarnated.entities[0].key, first_key);
+        assert_eq!(reincarnated.entities[0].key.incarnation, 1);
     }
 
     #[test]

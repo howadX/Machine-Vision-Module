@@ -214,13 +214,28 @@ impl Agent for SceneAgent {
                             }
 
                             let stamp = ObservationStamp::from_frame(&frame);
+                            let objects = collect_objects(&tracked, stamp.produced_at);
+                            let published_ids: std::collections::HashSet<u32> =
+                                objects.iter().map(|object| object.id).collect();
+                            let occluded: Vec<_> = self.tracker.occluded().cloned().collect();
                             self.observations.publish(SceneObservationFrame {
                                 stamp,
-                                objects: Arc::new(collect_objects(&tracked, stamp.produced_at)),
+                                objects: Arc::new(objects),
+                                occluded_objects: Arc::new(collect_objects(
+                                    &occluded,
+                                    stamp.produced_at,
+                                )),
+                                retained_track_ids: Arc::new(self.tracker.retained_ids()),
+                                retirements: Arc::new(self.tracker.retirements().to_vec()),
                                 animals: Arc::new(animals),
                                 person_masks: Arc::new(person_masks),
                                 metric_geometry: Arc::new(
-                                    self.tracker.association_geometry().to_vec(),
+                                    self.tracker
+                                        .association_geometry()
+                                        .iter()
+                                        .filter(|value| published_ids.contains(&value.track_id))
+                                        .cloned()
+                                        .collect(),
                                 ),
                             });
                             ticks += 1;
@@ -272,6 +287,9 @@ mod tests {
         bus.publish(SceneObservationFrame {
             stamp: ObservationStamp::new(9, std::time::Instant::now(), 1_000),
             objects: Arc::new(Vec::new()),
+            occluded_objects: Arc::new(Vec::new()),
+            retained_track_ids: Arc::new(Vec::new()),
+            retirements: Arc::new(Vec::new()),
             animals: Arc::new(Vec::new()),
             person_masks: Arc::new(vec![(
                 mvm_core::BBox {

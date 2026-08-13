@@ -201,6 +201,23 @@ impl Agent for FusionAgent {
                     scene.as_ref(),
                     self.config.object_cadence,
                 );
+                let retained_people = human.as_ref().map_or_else(Vec::new, |observation| {
+                    lifecycle_retention(
+                        &observation.retained_track_ids,
+                        observation.people.iter().map(|person| person.track_id),
+                        observation
+                            .occluded_people
+                            .iter()
+                            .map(|person| person.track_id),
+                    )
+                });
+                let retained_objects = scene.as_ref().map_or_else(Vec::new, |observation| {
+                    lifecycle_retention(
+                        &observation.retained_track_ids,
+                        observation.objects.iter().map(|object| object.id),
+                        observation.occluded_objects.iter().map(|object| object.id),
+                    )
+                });
                 // Cross-group inference (phase 8.F) through the temporal journal.
                 let ended = self.advance_journal(&mut world);
                 let published_at_unix_ms = unix_ms_now().max(frame.captured_at_unix_ms);
@@ -233,6 +250,14 @@ impl Agent for FusionAgent {
                     ended_activities: &ended,
                     anomaly_score: world.anomaly_score,
                     metric_geometry: &metric_geometry,
+                    retained_people: &retained_people,
+                    retired_people: human
+                        .as_ref()
+                        .map_or(&[][..], |observation| observation.retirements.as_slice()),
+                    retained_objects: &retained_objects,
+                    retired_objects: scene
+                        .as_ref()
+                        .map_or(&[][..], |observation| observation.retirements.as_slice()),
                 }) {
                     Ok(scene_frame) => {
                         let mut compatibility =
@@ -272,6 +297,17 @@ impl Agent for FusionAgent {
             errors: 0,
         }
     }
+}
+
+fn lifecycle_retention(
+    explicit: &[u32],
+    current: impl Iterator<Item = u32>,
+    occluded: impl Iterator<Item = u32>,
+) -> Vec<u32> {
+    let mut ids: std::collections::BTreeSet<u32> = explicit.iter().copied().collect();
+    ids.extend(current);
+    ids.extend(occluded);
+    ids.into_iter().collect()
 }
 
 fn carried_metric_geometry(
@@ -921,11 +957,17 @@ mod tests {
         let human = HumanObservationFrame {
             stamp: ObservationStamp::new(40, now, 4_000),
             people: Arc::new(Vec::new()),
+            occluded_people: Arc::new(Vec::new()),
+            retained_track_ids: Arc::new(Vec::new()),
+            retirements: Arc::new(Vec::new()),
             metric_geometry: Arc::new(vec![tracked_metric(10, 40)]),
         };
         let scene = SceneObservationFrame {
             stamp: ObservationStamp::new(37, now, 3_700),
             objects: Arc::new(Vec::new()),
+            occluded_objects: Arc::new(Vec::new()),
+            retained_track_ids: Arc::new(Vec::new()),
+            retirements: Arc::new(Vec::new()),
             animals: Arc::new(Vec::new()),
             person_masks: Arc::new(Vec::new()),
             metric_geometry: Arc::new(vec![tracked_metric(10_000, 37)]),

@@ -51,3 +51,18 @@ The replay calls the same bound tracker methods as AgentMesh. Each decision even
 RGB stamp and, for paired packets, the exact depth stamp, skew and calibration revision. The output
 contains no wall-time field, so repeated executions are byte-comparable. This development replay
 refuses the held-out split.
+
+## T3 lifecycle and publication
+
+```bash
+cargo test --workspace --all-targets --no-fail-fast
+cargo test -p mvm-cli --example tracker_replay
+cargo run -q -p mvm-cli --example tracker_replay -- \
+  benchmark/tracker-reliability/replay/production-baseline.json \
+  --expected-sha256 b99dfab66f9615b7b3119ee06ae7f95f25924a7cc0f96e20b976e9e571fca8b8
+```
+
+Person hypotheses require three accepted Human ticks and object hypotheses require two accepted
+Scene ticks. Only confirmed current observations enter canonical presence. Observation packets carry
+occluded evidence, retained IDs, and tick-local retirements separately; retention preserves an
+existing `EntityKey` but cannot mint or publish an entity. See `reports/T3-lifecycle-publication.md`.

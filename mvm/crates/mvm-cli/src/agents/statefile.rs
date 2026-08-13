@@ -258,6 +258,10 @@ mod tests {
                 ended_activities: &[],
                 anomaly_score: 0.0,
                 metric_geometry: &[],
+                retained_people: &[],
+                retired_people: &[],
+                retained_objects: &[],
+                retired_objects: &[],
             })
             .unwrap();
         let fused = FusedFrameBus::new();

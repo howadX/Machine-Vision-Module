@@ -87,6 +87,7 @@ pub struct PersonTracker {
     compatibility_frame_id: u64,
     association_geometry: Vec<TrackedAssociationGeometry>,
     low_recovery_matches: Vec<(usize, u32)>,
+    retirements: Vec<u32>,
 }
 
 /// Cosine similarity of two L2-normalised embeddings (== dot product).
@@ -136,7 +137,9 @@ fn ocm_consistency(vel: [f32; 2], delta: [f32; 2]) -> f32 {
 
 /// Matched frames a track must accrue before it is `Confirmed` (phase 9.3).
 /// `age` increments only on a match, so this is "seen this many times".
-const CONFIRM_AGE: u64 = 3;
+/// Consecutive accepted Human ticks required before a person hypothesis may be
+/// published outside the tracker.
+pub const PERSON_CONFIRM_AGE: u64 = 3;
 /// Consecutive missed frames after which an established track is declared `Lost`
 /// (a soft pre-expiry marker — actual removal still happens at `timeout_frames`).
 const LOST_AFTER_MISSED: u64 = 30;
@@ -147,7 +150,7 @@ const LOST_AFTER_MISSED: u64 = 30;
 /// transition boundaries.
 ///
 /// - matched this frame (`missed == 0`): climb the trust ladder —
-///   `Tentative` until `age ≥ CONFIRM_AGE`, then `IdLocked` if locked else
+///   `Tentative` until `age ≥ PERSON_CONFIRM_AGE`, then `IdLocked` if locked else
 ///   `Confirmed` (this also recovers an `Occluded`/`Lost` track on re-match).
 /// - missed this frame: an unconfirmed (`Tentative`) track drops straight to
 ///   `Lost`; an established/occluded track goes `Occluded`, then `Lost` once the
@@ -176,7 +179,7 @@ fn record_obs(t: &mut PersonTrack, obs_c: [f32; 2]) {
 fn next_lifecycle(prev: LifecycleState, age: u64, missed: u64, locked: bool) -> LifecycleState {
     use LifecycleState::*;
     if missed == 0 {
-        if age < CONFIRM_AGE {
+        if age < PERSON_CONFIRM_AGE {
             Tentative
         } else if locked {
             IdLocked
@@ -222,6 +225,7 @@ impl PersonTracker {
             compatibility_frame_id: 0,
             association_geometry: Vec::new(),
             low_recovery_matches: Vec::new(),
+            retirements: Vec::new(),
         }
     }
 
@@ -437,6 +441,7 @@ impl PersonTracker {
     /// one skips them and relies on geometry.
     fn associate_core(&mut self, high: &[Detection], low: &[BBox]) -> Vec<u32> {
         self.low_recovery_matches.clear();
+        self.retirements.clear();
         // ── Step 1: predict all tracks (State-Gating) ──────────────────────
         // KF is now in predicted state; predicted[id] = bbox to use for IoU.
         let predicted: HashMap<u32, BBox> = self
@@ -941,7 +946,8 @@ impl PersonTracker {
             .map(|(&id, _)| id)
             .collect();
         for id in expired {
-            self.tracks.remove(&id);
+            let retired = self.tracks.remove(&id).expect("expired track exists");
+            self.retirements.push(retired.display_id);
             self.free_ids.push(Reverse(id));
             let mut event = TrackerDecision::new(
                 &self.frame_binding,
@@ -1170,8 +1176,12 @@ impl PersonTracker {
                 &self.frame_binding,
                 TrackerDomain::Person,
                 TrackerDecisionKind::Publication,
-                if t.missed == 0 {
-                    "current_baseline"
+                if t.missed == 0 && t.lifecycle.is_established() {
+                    "observed"
+                } else if t.lifecycle == LifecycleState::Tentative {
+                    "tentative_suppressed"
+                } else if t.lifecycle == LifecycleState::Occluded {
+                    "occluded_handoff"
                 } else {
                     "not_current"
                 },
@@ -1204,7 +1214,17 @@ impl PersonTracker {
                         .partial_cmp(&b.identity_confidence.unwrap_or(0.0))
                         .unwrap()
                 })
-                .map(|t| t.id);
+                .map(|t| t.id)
+                .or_else(|| {
+                    self.tracks
+                        .values()
+                        .filter(|t| {
+                            t.age >= PERSON_CONFIRM_AGE
+                                && t.identity.as_deref() == Some(name.as_str())
+                        })
+                        .max_by_key(|t| t.age)
+                        .map(|t| t.id)
+                });
             if let Some(bid) = best
                 && let Some(t) = self.tracks.get_mut(&bid)
             {
@@ -1215,6 +1235,42 @@ impl PersonTracker {
 
     pub fn active(&self) -> impl Iterator<Item = &PersonTrack> {
         self.tracks.values().filter(|t| t.missed == 0)
+    }
+
+    /// Current observations trusted for downstream publication. Tentative
+    /// hypotheses remain available through [`Self::active`] only to tracker-local
+    /// enrichment and diagnostics.
+    pub fn published(&self) -> impl Iterator<Item = &PersonTrack> {
+        self.tracks
+            .values()
+            .filter(|t| t.missed == 0 && t.lifecycle.is_established())
+    }
+
+    /// Established tracks currently coasting through an accepted short gap.
+    pub fn occluded(&self) -> impl Iterator<Item = &PersonTrack> {
+        self.tracks
+            .values()
+            .filter(|t| t.lifecycle == LifecycleState::Occluded)
+    }
+
+    /// Outward ids whose canonical incarnation must remain reserved even when
+    /// they are not a current observation.
+    pub fn retained_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self
+            .tracks
+            .values()
+            .filter(|t| t.age >= PERSON_CONFIRM_AGE && t.lifecycle != LifecycleState::Tentative)
+            .map(|t| t.display_id)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    /// Ids retired on the current tracker tick. Runtime-only handoff; callers
+    /// must not persist this as a second semantic history.
+    pub fn retirements(&self) -> &[u32] {
+        &self.retirements
     }
 
     #[allow(dead_code)]
@@ -2447,6 +2503,32 @@ mod tests {
     }
 
     #[test]
+    fn publication_handoff_confirms_coasts_and_retires_explicitly() {
+        let mut tracker = PersonTracker::new();
+        tracker.timeout_frames = 2;
+        let detection = Detection::bare(0.2, 0.1, 0.5, 0.9);
+
+        tracker.tick(std::slice::from_ref(&detection));
+        assert_eq!(tracker.published().count(), 0);
+        assert!(tracker.retained_ids().is_empty());
+        tracker.tick(std::slice::from_ref(&detection));
+        assert_eq!(tracker.published().count(), 0);
+        tracker.tick(std::slice::from_ref(&detection));
+        let id = tracker.published().next().unwrap().display_id;
+        assert_eq!(tracker.retained_ids(), vec![id]);
+
+        tracker.tick(&[]);
+        assert_eq!(tracker.published().count(), 0);
+        assert_eq!(tracker.occluded().count(), 1);
+        assert_eq!(tracker.retained_ids(), vec![id]);
+        assert!(tracker.retirements().is_empty());
+
+        tracker.tick(&[]);
+        assert!(tracker.retained_ids().is_empty());
+        assert_eq!(tracker.retirements(), &[id]);
+    }
+
+    #[test]
     fn born_track_is_tentative() {
         let mut t = PersonTracker::new();
         t.tick(&det(0.3, 0.3, 0.5, 0.5));
@@ -2459,14 +2541,14 @@ mod tests {
     #[test]
     fn track_confirms_after_enough_matches() {
         let mut t = PersonTracker::new();
-        for _ in 0..(CONFIRM_AGE - 1) {
+        for _ in 0..(PERSON_CONFIRM_AGE - 1) {
             t.tick(&det(0.3, 0.3, 0.5, 0.5));
             assert_eq!(
                 t.active().next().unwrap().lifecycle,
                 LifecycleState::Tentative
             );
         }
-        t.tick(&det(0.3, 0.3, 0.5, 0.5)); // age now == CONFIRM_AGE
+        t.tick(&det(0.3, 0.3, 0.5, 0.5)); // age now == PERSON_CONFIRM_AGE
         assert_eq!(
             t.active().next().unwrap().lifecycle,
             LifecycleState::Confirmed
@@ -2477,7 +2559,7 @@ mod tests {
     fn recognised_user_becomes_id_locked() {
         let mut t = PersonTracker::new();
         t.register_user("Вадим");
-        for _ in 0..CONFIRM_AGE {
+        for _ in 0..PERSON_CONFIRM_AGE {
             t.tick(&det_id(0.3, 0.3, 0.7, 0.7, "Вадим", 0.9));
         }
         let a = t.active().next().unwrap();
@@ -2489,7 +2571,7 @@ mod tests {
     #[test]
     fn confirmed_track_occludes_then_lost() {
         let mut t = PersonTracker::new();
-        for _ in 0..CONFIRM_AGE {
+        for _ in 0..PERSON_CONFIRM_AGE {
             t.tick(&det(0.3, 0.3, 0.5, 0.5));
         }
         assert_eq!(
@@ -2748,7 +2830,7 @@ mod tests {
         // ByteTrack's headline: a Confirmed body the detector only half-saw stays
         // Confirmed via the low box, instead of slipping to Occluded.
         let mut t = PersonTracker::new();
-        for _ in 0..CONFIRM_AGE {
+        for _ in 0..PERSON_CONFIRM_AGE {
             t.tick(&det(0.30, 0.30, 0.50, 0.50));
         }
         assert_eq!(

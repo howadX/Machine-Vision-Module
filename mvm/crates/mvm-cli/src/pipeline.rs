@@ -381,7 +381,7 @@ fn anchor_objects_depth(
     const Z_MAX: f32 = 8.0;
 
     let mut ks: Vec<f32> = Vec::new();
-    for t in tracker.active() {
+    for t in tracker.published() {
         if let (Some(z), Some(d)) = (t.position_z, depth.median_in_bbox(&t.bbox))
             && d > 1e-3
             && z > 0.0
@@ -1153,6 +1153,7 @@ mod tests {
             score: 0.9,
             age: 1,
             missed: 0,
+            lifecycle: mvm_core::types::LifecycleState::Tentative,
             pos_3d: Some([1.0, 1.0, 1.0]),
             pos_conf: 0.4,
             mask: None,
@@ -1217,7 +1218,9 @@ mod tests {
         let mut pdet = Detection::bare(0.0, 0.0, 0.5, 1.0);
         pdet.distance = Some(2.0); // gates the body-primary 3D passthrough
         pdet.position_z = Some(2.0);
-        tracker.tick(&[pdet]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[pdet.clone()]);
+        }
 
         // 8×8 inverse-depth grid (larger = nearer). Left half = person (d=1.0).
         // Right half: top (y<0.5) is the object silhouette d=2.0 (near), bottom
@@ -1251,6 +1254,7 @@ mod tests {
             score: 0.9,
             age: 1,
             missed: 0,
+            lifecycle: mvm_core::types::LifecycleState::Tentative,
             pos_3d: None,
             pos_conf: 0.0,
             mask,

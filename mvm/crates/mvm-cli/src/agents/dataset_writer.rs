@@ -1000,6 +1000,10 @@ mod tests {
                 ended_activities: &ended,
                 anomaly_score: 0.0,
                 metric_geometry: &[],
+                retained_people: &[],
+                retired_people: &[],
+                retained_objects: &[],
+                retired_objects: &[],
             })
             .unwrap();
         let camera = Frame::new_stamped(3, image::DynamicImage::new_rgb8(64, 48), now, 1_000);
@@ -1011,6 +1015,9 @@ mod tests {
                 human: Some(HumanObservationFrame {
                     stamp: ObservationStamp::from_frame(&camera),
                     people,
+                    occluded_people: Arc::new(Vec::new()),
+                    retained_track_ids: Arc::new(Vec::new()),
+                    retirements: Arc::new(Vec::new()),
                     metric_geometry: Arc::new(Vec::new()),
                 }),
                 scene: None,
@@ -1079,6 +1086,10 @@ mod tests {
                 ended_activities: &[],
                 anomaly_score: 0.0,
                 metric_geometry: &[],
+                retained_people: &[],
+                retired_people: &[],
+                retained_objects: &[],
+                retired_objects: &[],
             })
             .unwrap();
         let rgb_stamp = mvm_core::SensorStamp {
@@ -1140,6 +1151,9 @@ mod tests {
                 human: Some(HumanObservationFrame {
                     stamp: ObservationStamp::new(3, now, 1_000),
                     people,
+                    occluded_people: Arc::new(Vec::new()),
+                    retained_track_ids: Arc::new(Vec::new()),
+                    retirements: Arc::new(Vec::new()),
                     metric_geometry: Arc::new(Vec::new()),
                 }),
                 scene: None,

@@ -53,14 +53,24 @@ fn unix_ms_now() -> i64 {
 #[derive(Debug, Clone)]
 pub(crate) struct HumanObservationFrame {
     pub stamp: ObservationStamp,
+    /// Confirmed/IdLocked observations from this Human tick.
     pub people: Arc<Vec<PersonState>>,
+    /// Established tracks currently coasting; never current-presence evidence.
+    pub occluded_people: Arc<Vec<PersonState>>,
+    pub retained_track_ids: Arc<Vec<u32>>,
+    pub retirements: Arc<Vec<u32>>,
     pub metric_geometry: Arc<Vec<mvm_core::TrackedAssociationGeometry>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct SceneObservationFrame {
     pub stamp: ObservationStamp,
+    /// Confirmed objects observed on this Scene tick.
     pub objects: Arc<Vec<ObjectState>>,
+    /// Established object projections without a current detection.
+    pub occluded_objects: Arc<Vec<ObjectState>>,
+    pub retained_track_ids: Arc<Vec<u32>>,
+    pub retirements: Arc<Vec<u32>>,
     pub animals: Arc<Vec<AnimalObservation>>,
     pub person_masks: Arc<Vec<(BBox, InstanceMask)>>,
     pub metric_geometry: Arc<Vec<mvm_core::TrackedAssociationGeometry>>,

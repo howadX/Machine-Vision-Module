@@ -290,6 +290,7 @@ mod tests {
             score: 0.9,
             age: 3,
             missed: 0,
+            lifecycle: mvm_core::types::LifecycleState::Confirmed,
             pos_3d: None,
             pos_conf: 0.0,
             mask: None,
