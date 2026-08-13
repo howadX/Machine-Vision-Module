@@ -5,7 +5,7 @@
 
 use crate::agents::{
     ObservationStamp, SceneExecutionControl, SceneObservationBus, SceneObservationFrame,
-    cadence_due, collect_objects,
+    cadence_due, collect_objects, tracker_binding_from_frame,
 };
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
@@ -28,6 +28,7 @@ pub(crate) struct SceneAgent {
     cadence: u32,
     control: SceneExecutionControl,
     metrics: super::SchedulingMetrics,
+    max_pair_skew_ns: u64,
 }
 
 impl SceneAgent {
@@ -45,6 +46,7 @@ impl SceneAgent {
         cadence: u32,
         control: SceneExecutionControl,
         metrics: super::SchedulingMetrics,
+        max_pair_skew_ns: u64,
     ) -> Self {
         Self {
             detector,
@@ -57,6 +59,7 @@ impl SceneAgent {
             cadence,
             control,
             metrics,
+            max_pair_skew_ns,
         }
     }
 }
@@ -121,7 +124,16 @@ impl Agent for SceneAgent {
                                     area >= self.min_area
                                 })
                                 .collect();
-                            let mut tracked = self.tracker.update(&filtered);
+                            let binding =
+                                match tracker_binding_from_frame(&frame, self.max_pair_skew_ns) {
+                                    Ok(binding) => binding,
+                                    Err(error) => {
+                                        eprintln!("  scene: rejected sensor binding: {error}");
+                                        errors += 1;
+                                        continue;
+                                    }
+                                };
+                            let mut tracked = self.tracker.update_bound(&binding, &filtered);
                             let mut person_masks = Vec::new();
 
                             // Phase 10.4/11: the YOLO-seg expert (opt-in `--masks`)

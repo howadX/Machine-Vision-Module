@@ -84,3 +84,19 @@ tracker and Fusion geometry would violate T2.
 
 T1 begins only from this inventory and may not call a simplified tracker model
 the production baseline.
+
+## T1 resolution
+
+- `HumanAgent` now calls `PersonTracker::tick_motion_bound`; `SceneAgent` calls
+  `ObjectTracker::update_bound`. Both bindings are built from the exact immutable
+  `Frame.sensor` packet consumed by their detector tick.
+- `TrackerFrameBinding` retains RGB stamp/source/dimensions and, only for admitted paired RGB-D,
+  the exact depth stamp, measured skew and calibration revision. Invalid pairing fails before a
+  tracker mutation.
+- The Rust replay example calls those same bound entrypoints. It replaces the historical Python
+  adapter as the production-parity execution seam, while the old A/B/C result remains historical.
+- Person and object traces have separate counters and bounded event buffers. Trace snapshots are
+  deterministically ordered and never enter `labels.jsonl`.
+- The T2 tail is explicit: binding is exact, but metric measurement still happens post-tracking in
+  Fusion. T2 must compute and attach Human/Scene measurements on this same packet before association,
+  then pass that one admitted measurement forward without duplicate geometry math.

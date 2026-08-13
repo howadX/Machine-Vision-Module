@@ -19,7 +19,10 @@
 use anyhow::Context;
 use image::DynamicImage;
 use image::GenericImageView;
-use mvm_core::BBox;
+use mvm_core::{
+    BBox, TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
+    TrackerDomain, TrackerFrameBinding,
+};
 use ort::{session::Session, value::Tensor};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -297,6 +300,9 @@ pub struct ObjectTracker {
     /// object doesn't walk away, so holding its last box is safe and keeps
     /// hand-on-keyboard `typing` attributable.
     static_hold: u32,
+    diagnostics: TrackerDiagnostics,
+    frame_binding: TrackerFrameBinding,
+    compatibility_frame_id: u64,
 }
 
 /// Confirmations (matched detection-frames) a static object needs before the
@@ -329,6 +335,9 @@ impl ObjectTracker {
             timeout,
             ema_alpha,
             static_hold: DEFAULT_STATIC_HOLD,
+            diagnostics: TrackerDiagnostics::default(),
+            frame_binding: TrackerFrameBinding::rgb_only(0),
+            compatibility_frame_id: 0,
         }
     }
 
@@ -362,6 +371,53 @@ impl ObjectTracker {
     /// Update with this frame's detections; return the currently-visible tracks
     /// (those matched or created this frame). Call once per detection (cadence) frame.
     pub fn update(&mut self, dets: &[ObjectDetection]) -> Vec<TrackedObject> {
+        self.compatibility_frame_id = self.compatibility_frame_id.saturating_add(1);
+        self.frame_binding = TrackerFrameBinding::rgb_only(self.compatibility_frame_id);
+        self.update_current(dets)
+    }
+
+    /// Update from one exact live/replay RGB or paired RGB-D packet.
+    pub fn update_bound(
+        &mut self,
+        binding: &TrackerFrameBinding,
+        dets: &[ObjectDetection],
+    ) -> Vec<TrackedObject> {
+        self.frame_binding = binding.clone();
+        self.update_current(dets)
+    }
+
+    pub fn set_diagnostic_capacity(&mut self, capacity: usize) {
+        self.diagnostics.set_capacity(capacity);
+    }
+
+    pub fn diagnostics(&self) -> TrackerDiagnosticsSnapshot {
+        self.diagnostics.snapshot()
+    }
+
+    /// Current internal track table for image-free replay/reporting.
+    pub fn all(&self) -> &[TrackedObject] {
+        &self.tracks
+    }
+
+    fn update_current(&mut self, dets: &[ObjectDetection]) -> Vec<TrackedObject> {
+        self.diagnostics.record(TrackerDecision::new(
+            &self.frame_binding,
+            TrackerDomain::Object,
+            TrackerDecisionKind::Admission,
+            "accepted",
+        ));
+        if self.diagnostics.is_tracing() {
+            for track in &self.tracks {
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Object,
+                    TrackerDecisionKind::Prediction,
+                    "not_supported_greedy_baseline",
+                );
+                event.track_id = Some(track.id);
+                self.diagnostics.record(event);
+            }
+        }
         let mut track_used = vec![false; self.tracks.len()];
         let mut det_used = vec![false; dets.len()];
 
@@ -374,10 +430,45 @@ impl ObjectTracker {
             let mut best = self.iou_thresh;
             let mut best_t = None;
             for (ti, t) in self.tracks.iter().enumerate() {
-                if track_used[ti] || t.class_name != d.class_name {
+                if track_used[ti] {
+                    continue;
+                }
+                if t.class_name != d.class_name {
+                    if self.diagnostics.is_tracing() {
+                        let mut event = TrackerDecision::new(
+                            &self.frame_binding,
+                            TrackerDomain::Object,
+                            TrackerDecisionKind::Candidate,
+                            "vetoed",
+                        );
+                        event.detection_index = Some(di);
+                        event.track_id = Some(t.id);
+                        event.reason = Some("class_mismatch".into());
+                        event.cue = Some("class_iou".into());
+                        self.diagnostics.record(event);
+                    }
                     continue;
                 }
                 let iou = t.bbox.iou(&d.bbox);
+                if self.diagnostics.is_tracing() {
+                    let mut event = TrackerDecision::new(
+                        &self.frame_binding,
+                        TrackerDomain::Object,
+                        TrackerDecisionKind::Candidate,
+                        if iou >= self.iou_thresh {
+                            "eligible"
+                        } else {
+                            "vetoed"
+                        },
+                    );
+                    event.detection_index = Some(di);
+                    event.track_id = Some(t.id);
+                    event.iou = Some(iou);
+                    event.score = (iou >= self.iou_thresh).then_some(iou);
+                    event.cue = Some("class_iou".into());
+                    event.reason = (iou < self.iou_thresh).then(|| "iou_gate".into());
+                    self.diagnostics.record(event);
+                }
                 if iou >= best {
                     best = iou;
                     best_t = Some(ti);
@@ -392,6 +483,16 @@ impl ObjectTracker {
                 t.score = d.score;
                 t.age += 1;
                 t.missed = 0;
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Object,
+                    TrackerDecisionKind::Assignment,
+                    "matched_greedy_baseline",
+                );
+                event.detection_index = Some(di);
+                event.track_id = Some(t.id);
+                event.iou = Some(best);
+                self.diagnostics.record(event);
             }
         }
 
@@ -412,12 +513,29 @@ impl ObjectTracker {
                 pos_conf: 0.0,
                 mask: None,
             });
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Object,
+                TrackerDecisionKind::Birth,
+                "born",
+            );
+            event.detection_index = Some(di);
+            event.track_id = Some(id);
+            self.diagnostics.record(event);
         }
 
         // Unmatched tracks age out; expired ids return to the free-list.
         for (ti, used) in track_used.iter().enumerate() {
             if !used {
                 self.tracks[ti].missed += 1;
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Object,
+                    TrackerDecisionKind::Miss,
+                    "remembered_or_aging",
+                );
+                event.track_id = Some(self.tracks[ti].id);
+                self.diagnostics.record(event);
             }
         }
         // Expiry: a confirmed static fixture rides the long permanence hold
@@ -435,17 +553,41 @@ impl ObjectTracker {
         });
         for id in freed {
             self.free_ids.push(Reverse(id));
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Object,
+                TrackerDecisionKind::Expire,
+                "expired",
+            );
+            event.track_id = Some(id);
+            self.diagnostics.record(event);
         }
 
         // Emit currently-seen tracks plus *remembered* static fixtures — a
         // keyboard held under the operating hands still anchors `typing`
         // (phase 11 object-permanence). `TrackedObject.missed > 0` marks the
         // remembered ones so consumers can tell "held" from "seen".
-        self.tracks
+        let emitted: Vec<TrackedObject> = self
+            .tracks
             .iter()
             .filter(|t| t.missed == 0 || self.hold_limit(t) > self.timeout)
             .cloned()
-            .collect()
+            .collect();
+        for track in &emitted {
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Object,
+                TrackerDecisionKind::Publication,
+                if track.missed == 0 {
+                    "observed"
+                } else {
+                    "remembered"
+                },
+            );
+            event.track_id = Some(track.id);
+            self.diagnostics.record(event);
+        }
+        emitted
     }
 }
 

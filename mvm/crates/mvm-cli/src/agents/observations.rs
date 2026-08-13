@@ -125,6 +125,23 @@ pub(crate) fn registered_metric_from_frame(
     })
 }
 
+pub(crate) fn tracker_binding_from_frame(
+    frame: &Frame,
+    max_pair_skew_ns: u64,
+) -> Result<mvm_core::TrackerFrameBinding, mvm_core::sensor::SensorContractError> {
+    mvm_core::TrackerFrameBinding::from_sensor_parts(
+        frame.id,
+        &frame.sensor.source,
+        frame.image.width(),
+        frame.image.height(),
+        &frame.sensor.rgb_stamp,
+        &frame.sensor.depth_status,
+        frame.sensor.metric_depth.as_deref(),
+        frame.sensor.calibration.as_ref(),
+        max_pair_skew_ns,
+    )
+}
+
 #[derive(Clone)]
 pub(crate) struct FrameEvidenceHandles {
     pub rgb: Arc<image::DynamicImage>,

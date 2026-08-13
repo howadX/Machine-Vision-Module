@@ -21,6 +21,8 @@ remain explicitly unavailable until qualifying captured sessions are recorded.
 - `inventory.md`: T0 caller, configuration, and downstream integration map.
 - `capture-protocol.md`: requirements for future qualifying captures.
 - `test_contract.py`: verifies schemas, split state, paths, and SHA-256 pins.
+- `replay/`: frozen image-free inputs for the real Rust tracker entrypoints.
+- `reports/`: reproducibility records and separate person/object aggregates.
 
 Historical Block I inputs remain under `benchmark/tracker-depth/` until T1
 replaces the adapter with production Rust replay. They are referenced by hash,
@@ -35,3 +37,17 @@ git diff --check
 ```
 
 T0 changes no tracker runtime behavior.
+
+## T1 production replay
+
+```bash
+cargo run -p mvm-cli --example tracker_replay -- \
+  benchmark/tracker-reliability/replay/production-baseline.json \
+  --expected-sha256 b99dfab66f9615b7b3119ee06ae7f95f25924a7cc0f96e20b976e9e571fca8b8
+cargo test -p mvm-cli --example tracker_replay
+```
+
+The replay calls the same bound tracker methods as AgentMesh. Each decision event carries its exact
+RGB stamp and, for paired packets, the exact depth stamp, skew and calibration revision. The output
+contains no wall-time field, so repeated executions are byte-comparable. This development replay
+refuses the held-out split.

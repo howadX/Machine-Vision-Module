@@ -52,6 +52,18 @@
       "sha256": "0fad36975416c0d66168b79a9177e55889787d482ca9f32331de29dc71cf7c5a",
       "role": "historical_block_i_decision",
       "evidence_class": "decision_record"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/replay/production-baseline.json",
+      "sha256": "b99dfab66f9615b7b3119ee06ae7f95f25924a7cc0f96e20b976e9e571fca8b8",
+      "role": "production_rust_replay_input",
+      "evidence_class": "production_parity_synthetic"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/reports/T1-production-replay.md",
+      "sha256": "dfa59f1271d66fdd6b16c23d1cd4838efefb5763a203be06dd24aa6a9f59aa16",
+      "role": "production_rust_replay_record",
+      "evidence_class": "production_parity_synthetic"
     }
   ]
 }

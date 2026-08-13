@@ -35,6 +35,10 @@ class TrackerReliabilityContractTests(unittest.TestCase):
         self.assertEqual(promotion["false_merges_allowed"], 0)
         self.assertEqual(promotion["false_relinks_allowed"], 0)
         self.assertEqual(promotion["honesty_violations_allowed"], 0)
+        replay = self.contract["production_replay"]
+        self.assertTrue(replay["exact_frame_binding_required"])
+        self.assertFalse(replay["held_out_execution_by_development_runner"])
+        self.assertFalse(replay["durable_trace_allowed"])
 
     def test_required_split_manifests_are_distinct_and_not_promotable_at_t0(self):
         self.assertEqual(set(self.manifests), {"development", "calibration", "held-out"})
@@ -66,6 +70,7 @@ class TrackerReliabilityContractTests(unittest.TestCase):
         classes = {artifact["evidence_class"] for artifact in development["artifacts"]}
         self.assertIn("synthetic_adapter", classes)
         self.assertIn("captured_exploratory", classes)
+        self.assertIn("production_parity_synthetic", classes)
         self.assertFalse(self.manifests["calibration"]["artifacts"])
         self.assertFalse(self.manifests["held-out"]["artifacts"])
 

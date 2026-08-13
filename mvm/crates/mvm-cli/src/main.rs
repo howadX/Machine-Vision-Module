@@ -1070,6 +1070,7 @@ fn build_live_mesh(
         human_observations.clone(),
         config.object_cadence,
         scheduling_metrics.clone(),
+        product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
     )));
     if let Some(yolo) = yolo {
         mesh.add(Box::new(agents::SceneAgent::new(
@@ -1082,6 +1083,7 @@ fn build_live_mesh(
             config.object_cadence,
             scene_control.clone(),
             scheduling_metrics.clone(),
+            product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
         )));
     }
     if let Some(depth) = depth {

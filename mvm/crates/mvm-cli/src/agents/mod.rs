@@ -39,7 +39,7 @@ pub(crate) use observations::{
     AttentionPolicyBus, CortexFrameBus, DepthEvidence, DepthObservationBus, DepthObservationFrame,
     FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
     HumanObservationFrame, ObservationStamp, PolicyOutcomeBus, SceneObservationBus,
-    SceneObservationFrame, registered_metric_from_frame,
+    SceneObservationFrame, registered_metric_from_frame, tracker_binding_from_frame,
 };
 pub(crate) use policy::{
     DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,

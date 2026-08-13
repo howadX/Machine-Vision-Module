@@ -6,7 +6,7 @@
 
 use crate::agents::{
     HumanObservationBus, HumanObservationFrame, ObservationStamp, SceneObservationBus,
-    collect_people,
+    collect_people, tracker_binding_from_frame,
 };
 use crate::pipeline::BodyPrimaryPipeline;
 use mvm_core::{BBox, Detection, mask::InstanceMask};
@@ -54,6 +54,7 @@ pub(crate) struct HumanAgent {
     observations: HumanObservationBus,
     max_mask_age_frames: u64,
     metrics: super::SchedulingMetrics,
+    max_pair_skew_ns: u64,
 }
 
 impl HumanAgent {
@@ -64,6 +65,7 @@ impl HumanAgent {
         observations: HumanObservationBus,
         object_cadence: u32,
         metrics: super::SchedulingMetrics,
+        max_pair_skew_ns: u64,
     ) -> Self {
         Self {
             pipeline,
@@ -72,6 +74,7 @@ impl HumanAgent {
             observations,
             max_mask_age_frames: u64::from(object_cadence.max(1)) * 2,
             metrics,
+            max_pair_skew_ns,
         }
     }
 }
@@ -83,6 +86,7 @@ impl Agent for HumanAgent {
 
     fn run(&mut self, ctx: &MeshContext) -> AgentHealth {
         let mut ticks = 0u64;
+        let mut errors = 0u64;
         let mut last_id: Option<u64> = None;
         let mut epoch: Option<std::time::Instant> = None; // motion timestamp origin (9.8)
         while ctx.running() {
@@ -147,7 +151,17 @@ impl Agent for HumanAgent {
                     .captured
                     .duration_since(*epoch.get_or_insert(frame.captured))
                     .as_secs_f64();
-                self.tracker.tick_motion(
+                let binding = match tracker_binding_from_frame(&frame, self.max_pair_skew_ns) {
+                    Ok(binding) => binding,
+                    Err(error) => {
+                        eprintln!("  human: rejected sensor binding: {error}");
+                        errors += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        continue;
+                    }
+                };
+                self.tracker.tick_motion_bound(
+                    &binding,
                     &result.detections,
                     &result.low_conf,
                     &result.landmarks,
@@ -171,7 +185,7 @@ impl Agent for HumanAgent {
         AgentHealth {
             name: self.name(),
             ticks,
-            errors: 0,
+            errors,
         }
     }
 }

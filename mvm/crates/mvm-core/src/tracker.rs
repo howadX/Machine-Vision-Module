@@ -14,6 +14,10 @@
 //! now move rather than stagnate, so IoU with re-appearing detections stays high.
 
 use crate::space::{DepthEma, Pinhole, face_bbox_to_3d};
+use crate::tracking::{
+    TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
+    TrackerDomain, TrackerFrameBinding,
+};
 use crate::types::{
     BBox, BodyObservation, Detection, FIRST_EPHEMERAL_ID, LifecycleState, PersonTrack,
 };
@@ -56,6 +60,9 @@ pub struct PersonTracker {
     /// Max normalized bbox-center distance for the geometric re-link fallback
     /// (A2-lite, phase 8) — keeps a moving anonymous body's ephemeral id stable.
     pub relink_center_dist: f32,
+    diagnostics: TrackerDiagnostics,
+    frame_binding: TrackerFrameBinding,
+    compatibility_frame_id: u64,
 }
 
 /// Cosine similarity of two L2-normalised embeddings (== dot product).
@@ -186,6 +193,9 @@ impl PersonTracker {
             relink_min_conf: 0.5,
             relink_cos_thresh: 0.5,
             relink_center_dist: 0.15,
+            diagnostics: TrackerDiagnostics::default(),
+            frame_binding: TrackerFrameBinding::rgb_only(0),
+            compatibility_frame_id: 0,
         }
     }
 
@@ -262,6 +272,38 @@ impl PersonTracker {
         landmarks: &[Option<crate::motion::Landmarks33>],
         t_secs: f64,
     ) {
+        self.compatibility_frame_id = self.compatibility_frame_id.saturating_add(1);
+        self.frame_binding = TrackerFrameBinding::rgb_only(self.compatibility_frame_id);
+        self.tick_motion_current(high, low, landmarks, t_secs);
+    }
+
+    /// Process the exact RGB/RGB-D packet represented by `binding` through the
+    /// same association/lifecycle path used by the compatibility entrypoint.
+    pub fn tick_motion_bound(
+        &mut self,
+        binding: &TrackerFrameBinding,
+        high: &[Detection],
+        low: &[BBox],
+        landmarks: &[Option<crate::motion::Landmarks33>],
+        t_secs: f64,
+    ) {
+        self.frame_binding = binding.clone();
+        self.tick_motion_current(high, low, landmarks, t_secs);
+    }
+
+    fn tick_motion_current(
+        &mut self,
+        high: &[Detection],
+        low: &[BBox],
+        landmarks: &[Option<crate::motion::Landmarks33>],
+        t_secs: f64,
+    ) {
+        self.diagnostics.record(TrackerDecision::new(
+            &self.frame_binding,
+            TrackerDomain::Person,
+            TrackerDecisionKind::Admission,
+            "accepted",
+        ));
         let ids = self.associate_core(high, low);
         for (i, det) in high.iter().enumerate() {
             let id = ids[i];
@@ -273,6 +315,14 @@ impl PersonTracker {
             }
         }
         self.finalize();
+    }
+
+    pub fn set_diagnostic_capacity(&mut self, capacity: usize) {
+        self.diagnostics.set_capacity(capacity);
+    }
+
+    pub fn diagnostics(&self) -> TrackerDiagnosticsSnapshot {
+        self.diagnostics.snapshot()
     }
 
     /// Lean, enrichment-free association (phase 9.5 — the inverted contract).
@@ -311,6 +361,20 @@ impl PersonTracker {
             .iter_mut()
             .map(|(&id, t)| (id, t.kalman.predict()))
             .collect();
+        if self.diagnostics.is_tracing() {
+            let mut ids: Vec<u32> = predicted.keys().copied().collect();
+            ids.sort_unstable();
+            for id in ids {
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Person,
+                    TrackerDecisionKind::Prediction,
+                    "coast_candidate",
+                );
+                event.track_id = Some(id);
+                self.diagnostics.record(event);
+            }
+        }
 
         // ── Step 2: missed-frame bookkeeping + emotion decay ───────────────
         for t in self.tracks.values_mut() {
@@ -411,6 +475,44 @@ impl PersonTracker {
                 .map(|c| c.map(|j| cand_ids[j]))
                 .collect()
         };
+        if self.diagnostics.is_tracing() {
+            for (di, det) in high.iter().enumerate() {
+                let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
+                let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
+                for &id in &cand_ids {
+                    let iou = det.bbox.iou(&predicted[&id]);
+                    let t = &self.tracks[&id];
+                    let momentum = match (t.obs_velocity, t.last_obs_center) {
+                        (Some(v), Some(c)) => ocm_consistency(v, [det_cx - c[0], det_cy - c[1]]),
+                        _ => 0.0,
+                    };
+                    let mask_iou = if mask_cue_on {
+                        match (&det.mask, &t.last_obs_mask) {
+                            (Some(dm), Some(tm)) => dm.iou(tm),
+                            _ => 0.0,
+                        }
+                    } else {
+                        0.0
+                    };
+                    let mut event = TrackerDecision::new(
+                        &self.frame_binding,
+                        TrackerDomain::Person,
+                        TrackerDecisionKind::Candidate,
+                        if iou > IOU_GATE { "eligible" } else { "vetoed" },
+                    );
+                    event.detection_index = Some(di);
+                    event.track_id = Some(id);
+                    event.iou = Some(iou);
+                    event.momentum = Some(momentum);
+                    event.mask_iou = Some(mask_iou);
+                    event.score =
+                        (iou > IOU_GATE).then_some(iou + W_OCM * momentum + W_MASK * mask_iou);
+                    event.cue = Some("iou_ocm_mask".into());
+                    event.reason = (iou <= IOU_GATE).then(|| "iou_gate".into());
+                    self.diagnostics.record(event);
+                }
+            }
+        }
         // Reserve every primary-matched track up front so the re-link cascade for
         // an UNMATCHED detection cannot steal a track the global solver already
         // assigned to a different detection (the cascade skips `matched_ids`).
@@ -432,6 +534,7 @@ impl PersonTracker {
 
         for (d, det) in high.iter().enumerate() {
             let mut best_id = primary_track[d];
+            let primary_id = best_id;
 
             // Identity re-link (fixes #6): if IoU found nothing, try to re-attach
             // to a recently-missed track instead of spawning a new id.
@@ -454,6 +557,25 @@ impl PersonTracker {
                     }
                     if let Some(track_emb) = &t.embedding {
                         let cos = cosine(det_emb, track_emb);
+                        if self.diagnostics.is_tracing() {
+                            let mut event = TrackerDecision::new(
+                                &self.frame_binding,
+                                TrackerDomain::Person,
+                                TrackerDecisionKind::Candidate,
+                                if cos > self.relink_cos_thresh {
+                                    "eligible"
+                                } else {
+                                    "vetoed"
+                                },
+                            );
+                            event.detection_index = Some(d);
+                            event.track_id = Some(id);
+                            event.score = Some(cos);
+                            event.cue = Some("relink_cosine".into());
+                            event.reason =
+                                (cos <= self.relink_cos_thresh).then(|| "cosine_gate".into());
+                            self.diagnostics.record(event);
+                        }
                         if cos > best_cos {
                             best_cos = cos;
                             best_id = Some(id);
@@ -476,7 +598,22 @@ impl PersonTracker {
                     if t.missed == 0 || t.missed > self.relink_window_frames {
                         continue;
                     }
-                    if t.identity.as_deref() == Some(name.as_str()) && t.missed < best_missed {
+                    let label_matches = t.identity.as_deref() == Some(name.as_str());
+                    if self.diagnostics.is_tracing() {
+                        let mut event = TrackerDecision::new(
+                            &self.frame_binding,
+                            TrackerDomain::Person,
+                            TrackerDecisionKind::Candidate,
+                            if label_matches { "eligible" } else { "vetoed" },
+                        );
+                        event.detection_index = Some(d);
+                        event.track_id = Some(id);
+                        event.score = Some(-(t.missed as f32));
+                        event.cue = Some("relink_identity_label".into());
+                        event.reason = (!label_matches).then(|| "identity_mismatch".into());
+                        self.diagnostics.record(event);
+                    }
+                    if label_matches && t.missed < best_missed {
                         best_missed = t.missed;
                         best_id = Some(id);
                     }
@@ -533,9 +670,28 @@ impl PersonTracker {
                         (Some(c), None) => (c[0], c[1]),
                         (None, _) => ((t.bbox.x1 + t.bbox.x2) * 0.5, (t.bbox.y1 + t.bbox.y2) * 0.5),
                     };
-                    let d = ((dcx - vcx).powi(2) + (dcy - vcy).powi(2)).sqrt();
-                    if d < best_dist {
-                        best_dist = d;
+                    let distance = ((dcx - vcx).powi(2) + (dcy - vcy).powi(2)).sqrt();
+                    if self.diagnostics.is_tracing() {
+                        let mut event = TrackerDecision::new(
+                            &self.frame_binding,
+                            TrackerDomain::Person,
+                            TrackerDecisionKind::Candidate,
+                            if distance < self.relink_center_dist {
+                                "eligible"
+                            } else {
+                                "vetoed"
+                            },
+                        );
+                        event.detection_index = Some(d);
+                        event.track_id = Some(id);
+                        event.score = Some(-distance);
+                        event.cue = Some("relink_center_distance".into());
+                        event.reason = (distance >= self.relink_center_dist)
+                            .then(|| "center_distance_gate".into());
+                        self.diagnostics.record(event);
+                    }
+                    if distance < best_dist {
+                        best_dist = distance;
                         best_id = Some(id);
                     }
                 }
@@ -564,6 +720,23 @@ impl PersonTracker {
                     if !matched_ids.contains(&id) {
                         matched_ids.push(id);
                     }
+                    let mut event = TrackerDecision::new(
+                        &self.frame_binding,
+                        TrackerDomain::Person,
+                        if primary_id == Some(id) {
+                            TrackerDecisionKind::Assignment
+                        } else {
+                            TrackerDecisionKind::Relink
+                        },
+                        if primary_id == Some(id) {
+                            "matched"
+                        } else {
+                            "relinked"
+                        },
+                    );
+                    event.detection_index = Some(d);
+                    event.track_id = Some(id);
+                    self.diagnostics.record(event);
                     id
                 }
                 None => {
@@ -573,6 +746,15 @@ impl PersonTracker {
                     // prediction entry, so the inertia step leaves it untouched.
                     let id = self.alloc_id();
                     self.tracks.insert(id, PersonTrack::new(id, det.bbox));
+                    let mut event = TrackerDecision::new(
+                        &self.frame_binding,
+                        TrackerDomain::Person,
+                        TrackerDecisionKind::Birth,
+                        "born",
+                    );
+                    event.detection_index = Some(d);
+                    event.track_id = Some(id);
+                    self.diagnostics.record(event);
                     id
                 }
             };
@@ -585,7 +767,7 @@ impl PersonTracker {
         // excludes both stage-1 matches and tracks just spawned this tick (those
         // sit at `missed == 0`). Match by IoU + OCM on the predicted bbox; on a
         // hit, advance the filter + observation velocity but inject no metadata.
-        for low_bbox in low {
+        for (low_index, low_bbox) in low.iter().enumerate() {
             let lcx = (low_bbox.x1 + low_bbox.x2) * 0.5;
             let lcy = (low_bbox.y1 + low_bbox.y2) * 0.5;
             let mut best_score = f32::NEG_INFINITY;
@@ -598,14 +780,30 @@ impl PersonTracker {
                     continue;
                 };
                 let iou = low_bbox.iou(&pred_bbox);
-                if iou <= IOU_GATE {
-                    continue;
-                }
                 let momentum = match (t.obs_velocity, t.last_obs_center) {
                     (Some(v), Some(c)) => ocm_consistency(v, [lcx - c[0], lcy - c[1]]),
                     _ => 0.0,
                 };
                 let score = iou + W_OCM * momentum;
+                if self.diagnostics.is_tracing() {
+                    let mut event = TrackerDecision::new(
+                        &self.frame_binding,
+                        TrackerDomain::Person,
+                        TrackerDecisionKind::Candidate,
+                        if iou > IOU_GATE { "eligible" } else { "vetoed" },
+                    );
+                    event.detection_index = Some(high.len() + low_index);
+                    event.track_id = Some(id);
+                    event.iou = Some(iou);
+                    event.momentum = Some(momentum);
+                    event.score = (iou > IOU_GATE).then_some(score);
+                    event.cue = Some("low_iou_ocm".into());
+                    event.reason = (iou <= IOU_GATE).then(|| "iou_gate".into());
+                    self.diagnostics.record(event);
+                }
+                if iou <= IOU_GATE {
+                    continue;
+                }
                 if score > best_score {
                     best_score = score;
                     best_id = Some(id);
@@ -620,6 +818,15 @@ impl PersonTracker {
                 t.missed = 0;
                 // No enrichment: a low-conf box has no trustworthy attributes.
                 matched_ids.push(id);
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Person,
+                    TrackerDecisionKind::LowRecovery,
+                    "recovered",
+                );
+                event.track_id = Some(id);
+                event.score = Some(best_score);
+                self.diagnostics.record(event);
             }
         }
 
@@ -630,6 +837,14 @@ impl PersonTracker {
                 && let Some(&pred) = predicted.get(&id)
             {
                 t.bbox = pred;
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Person,
+                    TrackerDecisionKind::Miss,
+                    "predicted_not_observed",
+                );
+                event.track_id = Some(id);
+                self.diagnostics.record(event);
             }
         }
 
@@ -644,6 +859,14 @@ impl PersonTracker {
         for id in expired {
             self.tracks.remove(&id);
             self.free_ids.push(Reverse(id));
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Person,
+                TrackerDecisionKind::Expire,
+                "expired",
+            );
+            event.track_id = Some(id);
+            self.diagnostics.record(event);
         }
 
         ids
@@ -845,7 +1068,33 @@ impl PersonTracker {
         for t in self.tracks.values_mut() {
             // IdLocked (phase 9.6): a reserved gallery user OR a cosine-stable face.
             let locked = t.is_id_locked();
+            let before = t.lifecycle;
             t.lifecycle = next_lifecycle(t.lifecycle, t.age, t.missed, locked);
+            if before != t.lifecycle {
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Person,
+                    TrackerDecisionKind::Lifecycle,
+                    "transition",
+                );
+                event.track_id = Some(t.id);
+                event.lifecycle_before = Some(before.as_str().into());
+                event.lifecycle_after = Some(t.lifecycle.as_str().into());
+                self.diagnostics.record(event);
+            }
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Person,
+                TrackerDecisionKind::Publication,
+                if t.missed == 0 {
+                    "current_baseline"
+                } else {
+                    "not_current"
+                },
+            );
+            event.track_id = Some(t.id);
+            event.lifecycle_after = Some(t.lifecycle.as_str().into());
+            self.diagnostics.record(event);
         }
     }
 
