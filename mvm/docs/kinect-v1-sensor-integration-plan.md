@@ -1063,7 +1063,7 @@ ignored); strict `cargo clippy --workspace --all-targets --features kinect-v1 --
 owner on invalid `0`. Calibration revision осталась
 `0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c`.
 
-### Блок I — depth-assisted tracker comparison
+### Блок I — depth-assisted tracker comparison ✅ (production cues rejected)
 
 **Цель:** определить минимальный полезный набор 3D cues.
 
@@ -1072,6 +1072,29 @@ owner on invalid `0`. Calibration revision осталась
 **Scenarios:** crossing, fast motion, enter/exit, short/long occlusion, partial body, sitting/lying, false detection, animal, object churn, depth holes, skew и packet loss.
 
 **Exit gate:** выбран A/B/C по tracker metrics и runtime budget; rejection также является допустимым результатом.
+
+**Evaluation evidence (2026-08-13):** создан frozen `synthetic_replay` corpus и stdlib-only evaluator
+adapter в `benchmark/tracker-depth/`. Corpus SHA-256:
+`16de552ebe25532502cb4a9196a0e2b5c009dd20acd33fe0bbdad2d77bbbc959`; manifest и tests fail-closed
+проверяют schema/status и покрытие всех 13 обязательных scenarios. Сравнены A (current 2D association
+adapter), B (A + metric-Z impossible-jump gate) и C (B + bounded XYZ constant-velocity score).
+Person/object aggregates разделены; `IDF1/AssA/HOTA` в compact evaluator честно названы `*_proxy`, а не
+TrackEval-equivalent metrics.
+
+Measured synthetic result: A/B/C дали одинаковые IDF1 proxy `0.750`, ID switches `9`, fragmentation
+`1`, false births `2`. A имел `4` synthetic false merges; B/C — `0`, но B не улучшил ни одну из
+обязательных target metrics, C не добавил пользы поверх B. Python adapter microbenchmark при 5000 loops:
+B `+8.51%`, C `+18.10%` к A, оба выше bounded `5%` comparison gate (это evaluator cost, не MVM
+end-to-end latency). Object-churn slice был одинаковым для всех вариантов.
+
+Verdict: **выбран A; production depth cues rejected**. Synthetic corpus не дал улучшения
+ID switches/fragmentation/false births; `PersonTracker`, object association, activities, zones и Cortex
+не изменялись. После этого baseline появился exploratory captured one-person replay (39 paired RGB-D
+samples): он подтвердил сильную production fragmentation/phantom проблему, но не разрешил depth cues —
+нет multi-person crossing/object/mask coverage, tracker-cadence sampling и production-parity evaluator;
+A/B остались одинаковыми, C стал хуже. Дальнейший доказательный и implementation путь полностью владеет
+`docs/tracker-reliability-rgbd-plan.md`; Block I остаётся immutable historical rejection. Исходный отчёт:
+`benchmark/baselines/kinect-v1-tracker-depth-I-2026-08-13.md`.
 
 ### Блок J — surfaces, visibility и fixed-camera change measurements
 

@@ -1,0 +1,19 @@
+{
+  "schema": "mvm-depth-tracker-replay/1.0",
+  "status": "synthetic_replay",
+  "variants": {
+    "A": "current bbox IoU plus 2D motion",
+    "B": "A plus metric-Z impossible-jump gate",
+    "C": "B plus bounded XYZ constant-velocity score"
+  },
+  "acceptance": {
+    "max_runtime_regression_percent": 5.0,
+    "require_no_false_merge_growth": true,
+    "require_captured_replay_before_production": true
+  },
+  "scenarios": [
+    "crossing", "fast_motion", "enter_exit", "short_occlusion",
+    "long_occlusion", "partial_body", "sitting_lying", "false_detection",
+    "animal", "object_churn", "depth_holes", "skew", "packet_loss"
+  ]
+}

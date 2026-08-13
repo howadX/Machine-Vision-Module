@@ -1,0 +1,4140 @@
+{
+  "capture": {
+    "annotations_sha256": "f65b4a262e75fe6e7004a54fdf2f5cbbde0fb229c8a0e369f250003f83e69568",
+    "calibration_revision": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+    "labels_sha256": "5fcaec72fc1313254875b223037c70b5483b7b18176cd1e270d5e5d456691d4f",
+    "limitations": [
+      "single physical person; no captured multi-person crossing",
+      "manual truth bboxes are approximate visible extents",
+      "xyz is selected MVM direct metric output, not independent surveyed ground truth",
+      "YOLO object and segmentation models unavailable; no captured object/mask slice"
+    ],
+    "run_log_sha256": "6c16ade3c3a0d114189e40709991f7d2ab4b1f9f96d0477101062c92d90b6b67",
+    "scene_json_sha256": "09c0376cc6500ed5e09c726d278524d56da064e8cdda62e9f09ea0c3904aaaef",
+    "sensor": "kinect_v1:A00364911518102A",
+    "session_id": "2026-08-13_115555",
+    "session_toml_sha256": "0293fda0fd6ace5073b9f3478b2656cdf014f1c02227bd6522f7b3211d338fcd"
+  },
+  "production_observations": [
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1544475455,
+          "host_monotonic_ns": 3535197268,
+          "source_sequence": 105,
+          "wall_clock_unix_ms": 1786611353738
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18119988,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1543618582,
+          "host_monotonic_ns": 3517077280,
+          "source_sequence": 101,
+          "wall_clock_unix_ms": 1786611353720
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6971517,
+        "width": 640
+      },
+      "depth_path": "depth/000000.png",
+      "depth_sha256": "324c5f05495deaf57c70d9b193c532bb1fc936cf11ed9e88fe37e0c5cb30ae0d",
+      "depth_size_bytes": 116895,
+      "frame_id": 101,
+      "frame_path": "frames/000000.jpg",
+      "frame_sha256": "348ebe3e65b3eee73f215e75c438449238bbab94d9f4688a8ec25e4e26ab77fb",
+      "frame_size_bytes": 190284,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "left_gesture": "reaching",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.49518030881881714,
+              "x": 0.6787651181221008,
+              "y": -0.02743522822856903,
+              "z": 1.663013219833374
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "inclined",
+            "torso_flexion": 51.69829177856445,
+            "velocity": 0.0
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.6787651181221008,
+        -0.02743522822856903,
+        1.663013219833374
+      ],
+      "selected_track_id": 10,
+      "seq": 0,
+      "timestamp": "2026-08-13T11:55:55.127+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.575,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1632570275,
+          "host_monotonic_ns": 5003195907,
+          "source_sequence": 149,
+          "wall_clock_unix_ms": 1786611355206
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 17048499,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1631631232,
+          "host_monotonic_ns": 4986147408,
+          "source_sequence": 145,
+          "wall_clock_unix_ms": 1786611355189
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.64938474,
+        "width": 640
+      },
+      "depth_path": "depth/000001.png",
+      "depth_sha256": "b5b30f93a549a17232c3d19b3255457b2b65f943f6b44614b5050f8d9efe97af",
+      "depth_size_bytes": 114765,
+      "frame_id": 145,
+      "frame_path": "frames/000001.jpg",
+      "frame_sha256": "ba309ffa24115f1171ba76b24e8f99ced81d74bfea1a6796cae4d63bf2693c36",
+      "frame_size_bytes": 195744,
+      "predicted_human_entities": [],
+      "predicted_track_ids": [],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 1,
+      "timestamp": "2026-08-13T11:55:55.257+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.775,
+        0.075,
+        1.0,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1638576740,
+          "host_monotonic_ns": 5103181528,
+          "source_sequence": 152,
+          "wall_clock_unix_ms": 1786611355306
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 16581072,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1637632094,
+          "host_monotonic_ns": 5086600456,
+          "source_sequence": 148,
+          "wall_clock_unix_ms": 1786611355289
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.65351236,
+        "width": 640
+      },
+      "depth_path": "depth/000002.png",
+      "depth_sha256": "e30f88419a56bdc15c7843dda798c57e492acb2cee6816ea48f2d19aa8cca5db",
+      "depth_size_bytes": 114612,
+      "frame_id": 148,
+      "frame_path": "frames/000002.jpg",
+      "frame_sha256": "7bfeab3cf74bdbc92a0e9982313a0e1307b3d9254c4d7a0128c7215f92a1c17f",
+      "frame_size_bytes": 199669,
+      "predicted_human_entities": [],
+      "predicted_track_ids": [],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 2,
+      "timestamp": "2026-08-13T11:55:55.385+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.775,
+        0.075,
+        1.0,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1640578895,
+          "host_monotonic_ns": 5137224895,
+          "source_sequence": 153,
+          "wall_clock_unix_ms": 1786611355340
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18746978,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1639632382,
+          "host_monotonic_ns": 5118477917,
+          "source_sequence": 149,
+          "wall_clock_unix_ms": 1786611355321
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.65345705,
+        "width": 640
+      },
+      "depth_path": "depth/000003.png",
+      "depth_sha256": "d80861d27dfa2e38eb69b253ac89b52fba54b05d655b6499ea9b5fb4aaf576b9",
+      "depth_size_bytes": 113461,
+      "frame_id": 149,
+      "frame_path": "frames/000003.jpg",
+      "frame_sha256": "dbbc8b493051daf19ce196746ee6e24c0568637f812e0e91fcc7b2dfda25fe43",
+      "frame_size_bytes": 200369,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "left_gesture": "reaching",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.49518030881881714,
+              "x": 0.6787651181221008,
+              "y": -0.02743522822856903,
+              "z": 1.663013219833374
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "inclined",
+            "torso_flexion": 51.69829177856445,
+            "velocity": 0.0
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.6787651181221008,
+        -0.02743522822856903,
+        1.663013219833374
+      ],
+      "selected_track_id": 10,
+      "seq": 3,
+      "timestamp": "2026-08-13T11:55:56.705+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.75,
+        0.0,
+        1.0,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1720665095,
+          "host_monotonic_ns": 6471231585,
+          "source_sequence": 193,
+          "wall_clock_unix_ms": 1786611356674
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 15944088,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1719643882,
+          "host_monotonic_ns": 6455287497,
+          "source_sequence": 189,
+          "wall_clock_unix_ms": 1786611356658
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.7346875,
+        "width": 640
+      },
+      "depth_path": "depth/000004.png",
+      "depth_sha256": "1ba0595e996f68cfdb33bafd842ba63b765c3951d69d34523ae3847fecb1b737",
+      "depth_size_bytes": 122006,
+      "frame_id": 189,
+      "frame_path": "frames/000004.jpg",
+      "frame_sha256": "b409badbfbe9f2828e4b5cb8fe4dffbeac1c40776685e5b6378a733fa4d8d16d",
+      "frame_size_bytes": 200362,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "left_gesture": "reaching",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.49518030881881714,
+              "x": 0.6787651181221008,
+              "y": -0.02743522822856903,
+              "z": 1.663013219833374
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "inclined",
+            "torso_flexion": 51.69829177856445,
+            "velocity": 0.0
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        },
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.43773436546325684,
+              "x": 0.6663028001785278,
+              "y": 0.6549288034439087,
+              "z": 1.8181171417236328
+            },
+            "posture": {
+              "confidence": 0.990196168422699,
+              "label": "lying"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "horizontal",
+            "torso_flexion": 100.40430450439453,
+            "velocity": 0.0
+          },
+          "entity_id": "p11",
+          "group": "human",
+          "kind": "person",
+          "track_id": 11
+        }
+      ],
+      "predicted_track_ids": [
+        10,
+        11
+      ],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 4,
+      "timestamp": "2026-08-13T11:55:59.508+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.075,
+        0.0,
+        0.725,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1894852580,
+          "host_monotonic_ns": 9375192533,
+          "source_sequence": 280,
+          "wall_clock_unix_ms": 1786611359578
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18767473,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1893668894,
+          "host_monotonic_ns": 9356425060,
+          "source_sequence": 276,
+          "wall_clock_unix_ms": 1786611359559
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.702334,
+        "width": 640
+      },
+      "depth_path": "depth/000005.png",
+      "depth_sha256": "f6685b98f6f5d7567032b8ba82717f2e216ac7722455ff3eb2bb494e3057e1f6",
+      "depth_size_bytes": 122400,
+      "frame_id": 276,
+      "frame_path": "frames/000005.jpg",
+      "frame_sha256": "e369a9d9f4fe54d9ce4e4fa20b06c8880c127d0a8f96b842472d68e8a193d5eb",
+      "frame_size_bytes": 199789,
+      "predicted_human_entities": [],
+      "predicted_track_ids": [],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 5,
+      "timestamp": "2026-08-13T11:55:59.640+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.05,
+        0.15,
+        0.825,
+        0.975
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1896854735,
+          "host_monotonic_ns": 9409181969,
+          "source_sequence": 281,
+          "wall_clock_unix_ms": 1786611359612
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18792713,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1895669182,
+          "host_monotonic_ns": 9390389256,
+          "source_sequence": 277,
+          "wall_clock_unix_ms": 1786611359593
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.70369464,
+        "width": 640
+      },
+      "depth_path": "depth/000006.png",
+      "depth_sha256": "ae8e0e380441236cae7da0368d0b70847a6a6c13fc6242db3650365aeb96df27",
+      "depth_size_bytes": 123181,
+      "frame_id": 277,
+      "frame_path": "frames/000006.jpg",
+      "frame_sha256": "9ad582a64db9be72d382d39b0b7a6db3eaf9188d73ab095eb621af895c6355c3",
+      "frame_size_bytes": 199643,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5463464260101318,
+              "x": 0.5363278388977051,
+              "y": -0.0696023553609848,
+              "z": 1.6215686798095703
+            },
+            "posture": {
+              "confidence": 0.5654083490371704,
+              "label": "lying"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "inclined",
+            "torso_flexion": 30.56149673461914,
+            "velocity": 0.12832032144069672
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.5363278388977051,
+        -0.0696023553609848,
+        1.6215686798095703
+      ],
+      "selected_track_id": 10,
+      "seq": 6,
+      "timestamp": "2026-08-13T11:56:01.007+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.05,
+        0.15,
+        0.825,
+        0.975
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 1978943090,
+          "host_monotonic_ns": 10777183607,
+          "source_sequence": 322,
+          "wall_clock_unix_ms": 1786611360980
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18228359,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 1977680969,
+          "host_monotonic_ns": 10758955248,
+          "source_sequence": 318,
+          "wall_clock_unix_ms": 1786611360962
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.7010091,
+        "width": 640
+      },
+      "depth_path": "depth/000007.png",
+      "depth_sha256": "48d2952b2ea0530256cec8a1ed8202ea1fce8c26ed12b7aa7aede01ee4f30038",
+      "depth_size_bytes": 124600,
+      "frame_id": 318,
+      "frame_path": "frames/000007.jpg",
+      "frame_sha256": "9404bfb3b84112efbc931fcd4ae70394e76a6baf6c95dc58c7038df5f45cfb97",
+      "frame_size_bytes": 186156,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5098096132278442,
+              "x": 0.6024281978607178,
+              "y": -0.027436159551143646,
+              "z": 1.622152328491211
+            },
+            "posture": {
+              "confidence": 0.5654083490371704,
+              "label": "lying"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 10.844695091247559,
+            "velocity": 0.10333658754825592
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.6024281978607178,
+        -0.027436159551143646,
+        1.622152328491211
+      ],
+      "selected_track_id": 10,
+      "seq": 7,
+      "timestamp": "2026-08-13T11:56:02.386+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.35,
+        0.0,
+        0.725,
+        1.0
+      ],
+      "visibility": "visible"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2061031445,
+          "host_monotonic_ns": 12145216446,
+          "source_sequence": 363,
+          "wall_clock_unix_ms": 1786611362348
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18741273,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2059692757,
+          "host_monotonic_ns": 12126475173,
+          "source_sequence": 359,
+          "wall_clock_unix_ms": 1786611362329
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.66392577,
+        "width": 640
+      },
+      "depth_path": "depth/000008.png",
+      "depth_sha256": "8fc78a09c33978638ed5f9a452120aef95ecb487d92e2177197a59e5a4f05680",
+      "depth_size_bytes": 119431,
+      "frame_id": 359,
+      "frame_path": "frames/000008.jpg",
+      "frame_sha256": "7a98e5279a723621c2489550e5f15a0ef92b13e2ecb191159c46f67addd3a3ac",
+      "frame_size_bytes": 207992,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.2552754878997803,
+              "label": "Surprise"
+            },
+            "emotion_entropy": 0.8934450149536133,
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.6576505899429321,
+              "x": 0.28405070304870605,
+              "y": 0.05202774703502655,
+              "z": 1.3482643365859985
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "upright",
+            "torso_flexion": 3.723574161529541,
+            "velocity": 0.9622265100479126
+          },
+          "entity_id": "p15",
+          "group": "human",
+          "kind": "person",
+          "track_id": 15
+        }
+      ],
+      "predicted_track_ids": [
+        15
+      ],
+      "selected_metric_xyz_m": [
+        0.28405070304870605,
+        0.05202774703502655,
+        1.3482643365859985
+      ],
+      "selected_track_id": 15,
+      "seq": 8,
+      "timestamp": "2026-08-13T11:56:03.726+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.475,
+        0.075,
+        0.9,
+        1.0
+      ],
+      "visibility": "visible"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2143119800,
+          "host_monotonic_ns": 13513172690,
+          "source_sequence": 404,
+          "wall_clock_unix_ms": 1786611363716
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 19049032,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2141704544,
+          "host_monotonic_ns": 13494123658,
+          "source_sequence": 400,
+          "wall_clock_unix_ms": 1786611363697
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.670127,
+        "width": 640
+      },
+      "depth_path": "depth/000009.png",
+      "depth_sha256": "78f5907a5a3f2ced7e2fa02cc83dc2b8945c404ba9a31f9bac691fac56421756",
+      "depth_size_bytes": 120628,
+      "frame_id": 400,
+      "frame_path": "frames/000009.jpg",
+      "frame_sha256": "1de47a665e0346d7c70ea441a8eda8d9e0f61d2f0cec4d91e94ad08d105085a2",
+      "frame_size_bytes": 218384,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5591363310813904,
+              "x": 0.4311414957046509,
+              "y": 0.06838437914848328,
+              "z": 1.584468126296997
+            },
+            "posture": {
+              "confidence": 0.7073116898536682,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 10.352540969848633,
+            "velocity": 0.05303984507918358
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.4311414957046509,
+        0.06838437914848328,
+        1.584468126296997
+      ],
+      "selected_track_id": 10,
+      "seq": 9,
+      "timestamp": "2026-08-13T11:56:05.079+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.1,
+        0.875,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2221203845,
+          "host_monotonic_ns": 14815139829,
+          "source_sequence": 443,
+          "wall_clock_unix_ms": 1786611365018
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 1100891,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2221716044,
+          "host_monotonic_ns": 14814038938,
+          "source_sequence": 440,
+          "wall_clock_unix_ms": 1786611365017
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.66382486,
+        "width": 640
+      },
+      "depth_path": "depth/000010.png",
+      "depth_sha256": "208374e40b6b12b1867e6c11d2428dbe7880536bd83a77ba95a60a81a05e9452",
+      "depth_size_bytes": 119935,
+      "frame_id": 439,
+      "frame_path": "frames/000010.jpg",
+      "frame_sha256": "7e4e917dbe6702cee3fbb688f663731a1947c74a169ea24e8aa3f8d2a242965f",
+      "frame_size_bytes": 217441,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5767604112625122,
+              "x": 0.41048264503479004,
+              "y": 0.13124540448188782,
+              "z": 1.5008347034454346
+            },
+            "posture": {
+              "confidence": 0.6926465630531311,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 14.006972312927246,
+            "velocity": 0.1319413036108017
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.41048264503479004,
+        0.13124540448188782,
+        1.5008347034454346
+      ],
+      "selected_track_id": 10,
+      "seq": 10,
+      "timestamp": "2026-08-13T11:56:06.426+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.1,
+        0.875,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2303292200,
+          "host_monotonic_ns": 16183140603,
+          "source_sequence": 484,
+          "wall_clock_unix_ms": 1786611366386
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 1106559,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2303727832,
+          "host_monotonic_ns": 16182034044,
+          "source_sequence": 481,
+          "wall_clock_unix_ms": 1786611366385
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.68236655,
+        "width": 640
+      },
+      "depth_path": "depth/000011.png",
+      "depth_sha256": "23d1e6323d6b5d323dff69b3a0514ea00e37ca56d1c3ab2f621f4f20f6958b0c",
+      "depth_size_bytes": 118007,
+      "frame_id": 480,
+      "frame_path": "frames/000011.jpg",
+      "frame_sha256": "4a23ca3e646114f73dc6e31858aabc6b1e1e879c6f2000d12ef82055d305237b",
+      "frame_size_bytes": 202472,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5587131977081299,
+              "x": 0.37794989347457886,
+              "y": 0.15303324162960052,
+              "z": 1.5325725078582764
+            },
+            "posture": {
+              "confidence": 0.7532913088798523,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 8.5283203125,
+            "velocity": 0.08379220217466354
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.37794989347457886,
+        0.15303324162960052,
+        1.5325725078582764
+      ],
+      "selected_track_id": 10,
+      "seq": 11,
+      "timestamp": "2026-08-13T11:56:07.789+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.25,
+        0.1,
+        0.875,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2385380555,
+          "host_monotonic_ns": 17551154063,
+          "source_sequence": 525,
+          "wall_clock_unix_ms": 1786611367754
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 3122315,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2385739619,
+          "host_monotonic_ns": 17548031748,
+          "source_sequence": 522,
+          "wall_clock_unix_ms": 1786611367751
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6712858,
+        "width": 640
+      },
+      "depth_path": "depth/000012.png",
+      "depth_sha256": "87198b30dc953a679b3067fd1ef06ceef379ba2ae6b5e850158ab0de166a0418",
+      "depth_size_bytes": 116050,
+      "frame_id": 521,
+      "frame_path": "frames/000012.jpg",
+      "frame_sha256": "0bb4fc3ea114e8d87c492bb4346e3cf9e7ebbcae032ab92af6f7e84e97735a77",
+      "frame_size_bytes": 210504,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5155701041221619,
+              "x": 0.315402090549469,
+              "y": 0.21600723266601562,
+              "z": 1.5904291868209839
+            },
+            "posture": {
+              "confidence": 0.5115618109703064,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 9.530752182006836,
+            "velocity": 0.08764686435461044
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.315402090549469,
+        0.21600723266601562,
+        1.5904291868209839
+      ],
+      "selected_track_id": 10,
+      "seq": 12,
+      "timestamp": "2026-08-13T11:56:09.154+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.15,
+        0.075,
+        0.825,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2467468910,
+          "host_monotonic_ns": 18919135352,
+          "source_sequence": 566,
+          "wall_clock_unix_ms": 1786611369122
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 3098917,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2467751407,
+          "host_monotonic_ns": 18916036435,
+          "source_sequence": 563,
+          "wall_clock_unix_ms": 1786611369119
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.685638,
+        "width": 640
+      },
+      "depth_path": "depth/000013.png",
+      "depth_sha256": "f2a4b7f176ef64a1930d3abe19d3ff19101515e05027b5592e102bdf65ae6332",
+      "depth_size_bytes": 119393,
+      "frame_id": 562,
+      "frame_path": "frames/000013.jpg",
+      "frame_sha256": "5ea652b783d11d0f5238f13853a32bd108c04da131db4c79f7d75da16bd31696",
+      "frame_size_bytes": 194481,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5903735160827637,
+              "x": 0.2591506242752075,
+              "y": 0.07646998763084412,
+              "z": 1.4116309881210327
+            },
+            "posture_status": "unknown",
+            "right_gesture": "waving",
+            "torso_attitude": "upright",
+            "torso_flexion": 3.311152458190918,
+            "velocity": 0.06386858224868774
+          },
+          "entity_id": "p13",
+          "group": "human",
+          "kind": "person",
+          "track_id": 13
+        }
+      ],
+      "predicted_track_ids": [
+        13
+      ],
+      "selected_metric_xyz_m": [
+        0.2591506242752075,
+        0.07646998763084412,
+        1.4116309881210327
+      ],
+      "selected_track_id": 13,
+      "seq": 13,
+      "timestamp": "2026-08-13T11:56:10.524+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.1,
+        0.825,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2549557265,
+          "host_monotonic_ns": 20287134243,
+          "source_sequence": 607,
+          "wall_clock_unix_ms": 1786611370490
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 5104841,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2549763194,
+          "host_monotonic_ns": 20282029402,
+          "source_sequence": 604,
+          "wall_clock_unix_ms": 1786611370485
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6966797,
+        "width": 640
+      },
+      "depth_path": "depth/000014.png",
+      "depth_sha256": "41f3252a57b1cef30f36f2321ad9999daa92dbd76f990568c1db38713a5ca75e",
+      "depth_size_bytes": 120518,
+      "frame_id": 603,
+      "frame_path": "frames/000014.jpg",
+      "frame_sha256": "a9b2288f4de1bf886aec602c1d5c83c5e23b45724d83c3f6c48538d37a8ad506",
+      "frame_size_bytes": 199987,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.7080831527709961,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.4267818033695221,
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.10952544212341309,
+              "x": 0.008765794336795807,
+              "y": 0.17595641314983368,
+              "z": 1.8308663368225098
+            },
+            "posture": {
+              "confidence": 0.9349822998046875,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 7.3850908279418945,
+            "velocity": 0.6070770025253296
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.008765794336795807,
+        0.17595641314983368,
+        1.8308663368225098
+      ],
+      "selected_track_id": 10,
+      "seq": 14,
+      "timestamp": "2026-08-13T11:56:11.898+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.125,
+        0.825,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2633647775,
+          "host_monotonic_ns": 21689274402,
+          "source_sequence": 649,
+          "wall_clock_unix_ms": 1786611371892
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 7246517,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2633775269,
+          "host_monotonic_ns": 21682027885,
+          "source_sequence": 646,
+          "wall_clock_unix_ms": 1786611371885
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.69720376,
+        "width": 640
+      },
+      "depth_path": "depth/000015.png",
+      "depth_sha256": "62d7a48cf033b1adb0d347c0651b832eb515de7893549cb654007b0adeff1ba2",
+      "depth_size_bytes": 120147,
+      "frame_id": 645,
+      "frame_path": "frames/000015.jpg",
+      "frame_sha256": "a8750355f4e3a67343a363fc3d5de903b1764f187c0db18f10b3f6b0fe6d14b3",
+      "frame_size_bytes": 197353,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.7080831527709961,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.4267818033695221,
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.6256529092788696,
+              "x": -0.359147846698761,
+              "y": 0.15129563212394714,
+              "z": 1.4500532150268555
+            },
+            "posture": {
+              "confidence": 0.5161008834838867,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 8.706104278564453,
+            "velocity": 0.222279891371727
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        -0.359147846698761,
+        0.15129563212394714,
+        1.4500532150268555
+      ],
+      "selected_track_id": 10,
+      "seq": 15,
+      "timestamp": "2026-08-13T11:56:13.279+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.2,
+        0.1,
+        0.875,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2715736130,
+          "host_monotonic_ns": 23057181682,
+          "source_sequence": 690,
+          "wall_clock_unix_ms": 1786611373260
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 7100579,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2715787057,
+          "host_monotonic_ns": 23050081103,
+          "source_sequence": 687,
+          "wall_clock_unix_ms": 1786611373253
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.69931316,
+        "width": 640
+      },
+      "depth_path": "depth/000016.png",
+      "depth_sha256": "c351505470a1353c27a7908c072cd79a51ce552ee6f4acf69e8ad0df038c9820",
+      "depth_size_bytes": 121819,
+      "frame_id": 686,
+      "frame_path": "frames/000016.jpg",
+      "frame_sha256": "b422669459083ce0734905de634ed21cb4b2e1315eae2f7d0ecdf3bf2aa94eac",
+      "frame_size_bytes": 206649,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.5887771248817444,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.5833021402359009,
+            "head_facing": "right",
+            "head_yaw": 34.33649444580078,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5387136936187744,
+              "x": -0.21025997400283813,
+              "y": 0.17516475915908813,
+              "z": 1.45951509475708
+            },
+            "posture": {
+              "confidence": 0.5023698210716248,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 0.766938328742981,
+            "velocity": 0.1651218682527542
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        -0.21025997400283813,
+        0.17516475915908813,
+        1.45951509475708
+      ],
+      "selected_track_id": 10,
+      "seq": 16,
+      "timestamp": "2026-08-13T11:56:14.658+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.225,
+        0.075,
+        0.85,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2797824485,
+          "host_monotonic_ns": 24425136809,
+          "source_sequence": 731,
+          "wall_clock_unix_ms": 1786611374628
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 9111635,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2797798844,
+          "host_monotonic_ns": 24416025174,
+          "source_sequence": 728,
+          "wall_clock_unix_ms": 1786611374619
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.69763345,
+        "width": 640
+      },
+      "depth_path": "depth/000017.png",
+      "depth_sha256": "e8b5163c1134d263afae19286ad6bdef308da4abba0c4d82e04f6017a9eb1066",
+      "depth_size_bytes": 122376,
+      "frame_id": 727,
+      "frame_path": "frames/000017.jpg",
+      "frame_sha256": "9d96e336b67ad70d9ed20cbd1be178d378ba541b3506e9526131e4b92c279a3b",
+      "frame_size_bytes": 190840,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.6618069410324097,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.5126556754112244,
+            "face_bbox": [
+              0.47781312465667725,
+              0.287688285112381,
+              0.5681959390640259,
+              0.44013288617134094
+            ],
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5343878269195557,
+              "x": 0.05632790923118591,
+              "y": 0.18453465402126312,
+              "z": 1.585557222366333
+            },
+            "posture": {
+              "confidence": 0.6029170155525208,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 1.6844662427902222,
+            "velocity": 0.34886136651039124
+          },
+          "entity_id": "p10",
+          "group": "human",
+          "kind": "person",
+          "track_id": 10
+        }
+      ],
+      "predicted_track_ids": [
+        10
+      ],
+      "selected_metric_xyz_m": [
+        0.05632790923118591,
+        0.18453465402126312,
+        1.585557222366333
+      ],
+      "selected_track_id": 10,
+      "seq": 17,
+      "timestamp": "2026-08-13T11:56:16.048+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.375,
+        0.075,
+        0.875,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2881914995,
+          "host_monotonic_ns": 25827368058,
+          "source_sequence": 773,
+          "wall_clock_unix_ms": 1786611376030
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 11348401,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2881810919,
+          "host_monotonic_ns": 25816019657,
+          "source_sequence": 770,
+          "wall_clock_unix_ms": 1786611376019
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.68746746,
+        "width": 640
+      },
+      "depth_path": "depth/000018.png",
+      "depth_sha256": "5ce224517cb5c5dc9299a0817583a12fbb06a461fd623e7a6c3e78a118611be6",
+      "depth_size_bytes": 116721,
+      "frame_id": 769,
+      "frame_path": "frames/000018.jpg",
+      "frame_sha256": "f032c1c1194d491517d9b9ce5a293089af6d0b985d4a0bb432140f69db04f762",
+      "frame_size_bytes": 202720,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.6683564782142639,
+              "x": -0.20163309574127197,
+              "y": 0.27591946721076965,
+              "z": 1.817922592163086
+            },
+            "posture": {
+              "confidence": 0.6535199880599976,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 9.232780456542969,
+            "velocity": 0.48593640327453613
+          },
+          "entity_id": "p18",
+          "group": "human",
+          "kind": "person",
+          "track_id": 18
+        }
+      ],
+      "predicted_track_ids": [
+        18
+      ],
+      "selected_metric_xyz_m": [
+        -0.20163309574127197,
+        0.27591946721076965,
+        1.817922592163086
+      ],
+      "selected_track_id": 18,
+      "seq": 18,
+      "timestamp": "2026-08-13T11:56:17.416+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.225,
+        0.075,
+        0.85,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2970009815,
+          "host_monotonic_ns": 27295154319,
+          "source_sequence": 817,
+          "wall_clock_unix_ms": 1786611377498
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 11086592,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2969823569,
+          "host_monotonic_ns": 27284067727,
+          "source_sequence": 814,
+          "wall_clock_unix_ms": 1786611377487
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.69649416,
+        "width": 640
+      },
+      "depth_path": "depth/000019.png",
+      "depth_sha256": "89246205853ff0e0a358a5853eb3557b6c39ccbf219d53eebddfd788ccb9e14e",
+      "depth_size_bytes": 119545,
+      "frame_id": 813,
+      "frame_path": "frames/000019.jpg",
+      "frame_sha256": "c807537dd4e902f99dd25a5effa769cc05c2bcec4703452b2b5506d1290ca85e",
+      "frame_size_bytes": 198412,
+      "predicted_human_entities": [],
+      "predicted_track_ids": [],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 19,
+      "timestamp": "2026-08-13T11:56:17.548+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.075,
+        0.85,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2972011970,
+          "host_monotonic_ns": 27327166486,
+          "source_sequence": 818,
+          "wall_clock_unix_ms": 1786611377530
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 11095407,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2971823857,
+          "host_monotonic_ns": 27316071079,
+          "source_sequence": 815,
+          "wall_clock_unix_ms": 1786611377519
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6943001,
+        "width": 640
+      },
+      "depth_path": "depth/000020.png",
+      "depth_sha256": "efb4a866cd2711ed9181939ee7759a6252de3c1b7541d34562cab2327826a1bc",
+      "depth_size_bytes": 118889,
+      "frame_id": 814,
+      "frame_path": "frames/000020.jpg",
+      "frame_sha256": "521befaa197450143812d56265999666ab88c2070b0c753f0a3c91062178df0a",
+      "frame_size_bytes": 197655,
+      "predicted_human_entities": [],
+      "predicted_track_ids": [],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 20,
+      "timestamp": "2026-08-13T11:56:17.680+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.075,
+        0.85,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 2974014125,
+          "host_monotonic_ns": 27361168604,
+          "source_sequence": 819,
+          "wall_clock_unix_ms": 1786611377564
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 11006122,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 2973824144,
+          "host_monotonic_ns": 27350162482,
+          "source_sequence": 816,
+          "wall_clock_unix_ms": 1786611377553
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.69157225,
+        "width": 640
+      },
+      "depth_path": "depth/000021.png",
+      "depth_sha256": "6f846f6257012c401b702f93f0bed8cb16c9b4e5509bd0c39f28eaa84ee36140",
+      "depth_size_bytes": 118121,
+      "frame_id": 815,
+      "frame_path": "frames/000021.jpg",
+      "frame_sha256": "0931240dfee439c8dbeced31c292e4c6ab87bcbec01fee73532f96470d2ecc04",
+      "frame_size_bytes": 197050,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "emotion": {
+              "confidence": 0.6318239569664001,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.5893645286560059,
+            "head_facing": "camera",
+            "head_yaw": -12.981791496276855,
+            "position_3d": {
+              "confidence": 0.3492125868797302,
+              "x": -0.27628305554389954,
+              "y": 0.051694028079509735,
+              "z": 2.057126045227051
+            },
+            "posture_status": "unknown"
+          },
+          "entity_id": "p17",
+          "group": "human",
+          "kind": "person",
+          "track_id": 17
+        },
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.5599060654640198,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6279844641685486,
+            "face_bbox": [
+              0.48133233189582825,
+              0.24765679240226746,
+              0.5850617289543152,
+              0.42004290223121643
+            ],
+            "head_facing": "left",
+            "head_yaw": -80.39032745361328,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5792487859725952,
+              "x": 0.11596762388944626,
+              "y": 0.1946522444486618,
+              "z": 1.4360283613204956
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "upright",
+            "torso_flexion": 1.2483515739440918,
+            "velocity": 0.0
+          },
+          "entity_id": "p19",
+          "group": "human",
+          "kind": "person",
+          "track_id": 19
+        }
+      ],
+      "predicted_track_ids": [
+        17,
+        19
+      ],
+      "selected_metric_xyz_m": [
+        0.11596762388944626,
+        0.1946522444486618,
+        1.4360283613204956
+      ],
+      "selected_track_id": 19,
+      "seq": 21,
+      "timestamp": "2026-08-13T11:56:19.309+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.075,
+        0.85,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3078126185,
+          "host_monotonic_ns": 29097165136,
+          "source_sequence": 871,
+          "wall_clock_unix_ms": 1786611379300
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 13018438,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3077839094,
+          "host_monotonic_ns": 29084146698,
+          "source_sequence": 868,
+          "wall_clock_unix_ms": 1786611379287
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.7012858,
+        "width": 640
+      },
+      "depth_path": "depth/000022.png",
+      "depth_sha256": "8be3420f910b0ab2038e27dae746560ec2c5129efe1c4723aa3541222a813cc0",
+      "depth_size_bytes": 121993,
+      "frame_id": 867,
+      "frame_path": "frames/000022.jpg",
+      "frame_sha256": "5188c905f7c89ee59253577d808febfe265bea6dda1f467a78d497be5011ff19",
+      "frame_size_bytes": 198931,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.6318239569664001,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.5893645286560059,
+            "head_facing": "camera",
+            "head_yaw": -12.981791496276855,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.6479371786117554,
+              "x": -0.30490806698799133,
+              "y": 0.16149772703647614,
+              "z": 1.4297807216644287
+            },
+            "posture": {
+              "confidence": 0.5456176400184631,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 9.449286460876465,
+            "velocity": 0.20626471936702728
+          },
+          "entity_id": "p17",
+          "group": "human",
+          "kind": "person",
+          "track_id": 17
+        }
+      ],
+      "predicted_track_ids": [
+        17
+      ],
+      "selected_metric_xyz_m": [
+        -0.30490806698799133,
+        0.16149772703647614,
+        1.4297807216644287
+      ],
+      "selected_track_id": 17,
+      "seq": 22,
+      "timestamp": "2026-08-13T11:56:20.766+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.2,
+        0.075,
+        0.9,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3164218850,
+          "host_monotonic_ns": 30531214993,
+          "source_sequence": 914,
+          "wall_clock_unix_ms": 1786611380734
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 13138959,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3163851457,
+          "host_monotonic_ns": 30518076034,
+          "source_sequence": 911,
+          "wall_clock_unix_ms": 1786611380721
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6764974,
+        "width": 640
+      },
+      "depth_path": "depth/000023.png",
+      "depth_sha256": "383f17c956e4f73073688d5b477a4475c56e2d4a6f998b2f9c5ce5f2b95dbee7",
+      "depth_size_bytes": 115280,
+      "frame_id": 910,
+      "frame_path": "frames/000023.jpg",
+      "frame_sha256": "63204933ffa28fa3bd4cb52b6d08ad3ddac54f7ffe326e6037d1f27cc2179ac9",
+      "frame_size_bytes": 190474,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.4902612268924713,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.7387948036193848,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5245192050933838,
+              "x": -0.13901174068450928,
+              "y": 0.17504312098026276,
+              "z": 1.5547691583633423
+            },
+            "posture": {
+              "confidence": 0.6158724427223206,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 26.826862335205078,
+            "velocity": 0.489006370306015
+          },
+          "entity_id": "p17",
+          "group": "human",
+          "kind": "person",
+          "track_id": 17
+        }
+      ],
+      "predicted_track_ids": [
+        17
+      ],
+      "selected_metric_xyz_m": [
+        -0.13901174068450928,
+        0.17504312098026276,
+        1.5547691583633423
+      ],
+      "selected_track_id": 17,
+      "seq": 23,
+      "timestamp": "2026-08-13T11:56:22.205+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.125,
+        0.15,
+        0.775,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3252313670,
+          "host_monotonic_ns": 31999151885,
+          "source_sequence": 958,
+          "wall_clock_unix_ms": 1786611382202
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 15081144,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3251864107,
+          "host_monotonic_ns": 31984070741,
+          "source_sequence": 955,
+          "wall_clock_unix_ms": 1786611382187
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6905892,
+        "width": 640
+      },
+      "depth_path": "depth/000024.png",
+      "depth_sha256": "ee105db936475b44fdbf72d77ef1459e56d434aac548a7062b7fa9987950f98f",
+      "depth_size_bytes": 119623,
+      "frame_id": 954,
+      "frame_path": "frames/000024.jpg",
+      "frame_sha256": "2086e0bae16a06966313d6863aff4f6015a2c9cf10291621631f904040a0ab9e",
+      "frame_size_bytes": 188833,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.4902612268924713,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.7387948036193848,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "left_gesture": "reaching",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.48332327604293823,
+              "x": -0.2267666608095169,
+              "y": 0.13969266414642334,
+              "z": 1.5426888465881348
+            },
+            "posture": {
+              "confidence": 0.7640712261199951,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 3.349189519882202,
+            "velocity": 0.20893260836601257
+          },
+          "entity_id": "p17",
+          "group": "human",
+          "kind": "person",
+          "track_id": 17
+        }
+      ],
+      "predicted_track_ids": [
+        17
+      ],
+      "selected_metric_xyz_m": [
+        -0.2267666608095169,
+        0.13969266414642334,
+        1.5426888465881348
+      ],
+      "selected_track_id": 17,
+      "seq": 24,
+      "timestamp": "2026-08-13T11:56:23.570+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.275,
+        0.075,
+        0.85,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3332399870,
+          "host_monotonic_ns": 33335165378,
+          "source_sequence": 998,
+          "wall_clock_unix_ms": 1786611383538
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 16433740,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3331875607,
+          "host_monotonic_ns": 33318731638,
+          "source_sequence": 995,
+          "wall_clock_unix_ms": 1786611383521
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.68891275,
+        "width": 640
+      },
+      "depth_path": "depth/000025.png",
+      "depth_sha256": "ea2f12b012785ef50c9d2e634a80ddaa8ca0406d9c049132bbc171be4a492281",
+      "depth_size_bytes": 120605,
+      "frame_id": 994,
+      "frame_path": "frames/000025.jpg",
+      "frame_sha256": "db3b91eb59ec3f42a48491112614ae1c04f375f485c7ce5b72f4d2fa6401f092",
+      "frame_size_bytes": 199479,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.4902612268924713,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.7387948036193848,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.3761528730392456,
+              "x": 0.25376638770103455,
+              "y": -0.009355451911687851,
+              "z": 1.770817518234253
+            },
+            "posture_status": "unknown",
+            "torso_attitude": "upright",
+            "torso_flexion": 16.770660400390625,
+            "velocity": 0.5213825106620789
+          },
+          "entity_id": "p17",
+          "group": "human",
+          "kind": "person",
+          "track_id": 17
+        }
+      ],
+      "predicted_track_ids": [
+        17
+      ],
+      "selected_metric_xyz_m": [
+        0.25376638770103455,
+        -0.009355451911687851,
+        1.770817518234253
+      ],
+      "selected_track_id": 17,
+      "seq": 25,
+      "timestamp": "2026-08-13T11:56:24.944+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.325,
+        0.075,
+        0.775,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3414488225,
+          "host_monotonic_ns": 34703155606,
+          "source_sequence": 1039,
+          "wall_clock_unix_ms": 1786611384906
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18175445,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3413887394,
+          "host_monotonic_ns": 34684980161,
+          "source_sequence": 1036,
+          "wall_clock_unix_ms": 1786611384888
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6893457,
+        "width": 640
+      },
+      "depth_path": "depth/000026.png",
+      "depth_sha256": "fc9e660ce463cf8f3831329e2f8e9c4f4e33347d111561f09be14735168a24b6",
+      "depth_size_bytes": 121055,
+      "frame_id": 1035,
+      "frame_path": "frames/000026.jpg",
+      "frame_sha256": "e265ef35d6df21ef55594e05c03f54b537e465501a355d806a5a504da1949d21",
+      "frame_size_bytes": 202011,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.45772743225097656,
+              "x": -0.04377792030572891,
+              "y": 0.25984829664230347,
+              "z": 1.7641359567642212
+            },
+            "posture_status": "withheld",
+            "right_gesture": "reaching",
+            "torso_attitude": "upright",
+            "torso_flexion": 28.71944236755371,
+            "velocity": 0.0
+          },
+          "entity_id": "p22",
+          "group": "human",
+          "kind": "person",
+          "track_id": 22
+        }
+      ],
+      "predicted_track_ids": [
+        22
+      ],
+      "selected_metric_xyz_m": [
+        -0.04377792030572891,
+        0.25984829664230347,
+        1.7641359567642212
+      ],
+      "selected_track_id": 22,
+      "seq": 26,
+      "timestamp": "2026-08-13T11:56:26.314+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.175,
+        0.05,
+        0.725,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3498578735,
+          "host_monotonic_ns": 36105143625,
+          "source_sequence": 1081,
+          "wall_clock_unix_ms": 1786611386308
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18545240,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3497899469,
+          "host_monotonic_ns": 36086598385,
+          "source_sequence": 1078,
+          "wall_clock_unix_ms": 1786611386289
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6667285,
+        "width": 640
+      },
+      "depth_path": "depth/000027.png",
+      "depth_sha256": "00665590faa6730e6bc516d14a79aa210096c41e88176871c988ee359bc70061",
+      "depth_size_bytes": 117784,
+      "frame_id": 1077,
+      "frame_path": "frames/000027.jpg",
+      "frame_sha256": "e129beaa4c5a27c70d86d871d69ef2112ad19051335403fc2854d9d2e733dc28",
+      "frame_size_bytes": 202345,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.53844153881073,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6573289036750793,
+            "head_facing": "left",
+            "head_yaw": -20.9180850982666,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.37789732217788696,
+              "x": 0.3338290750980377,
+              "y": 0.03891000151634216,
+              "z": 1.8919901847839355
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "upright",
+            "torso_flexion": 14.603017807006836,
+            "velocity": 0.5835532546043396
+          },
+          "entity_id": "p23",
+          "group": "human",
+          "kind": "person",
+          "track_id": 23
+        }
+      ],
+      "predicted_track_ids": [
+        23
+      ],
+      "selected_metric_xyz_m": [
+        0.3338290750980377,
+        0.03891000151634216,
+        1.8919901847839355
+      ],
+      "selected_track_id": 23,
+      "seq": 27,
+      "timestamp": "2026-08-13T11:56:27.671+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.175,
+        0.2,
+        0.75,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3578664935,
+          "host_monotonic_ns": 37439155802,
+          "source_sequence": 1121,
+          "wall_clock_unix_ms": 1786611387642
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18012489,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3577910969,
+          "host_monotonic_ns": 37421143313,
+          "source_sequence": 1118,
+          "wall_clock_unix_ms": 1786611387624
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6851725,
+        "width": 640
+      },
+      "depth_path": "depth/000028.png",
+      "depth_sha256": "c22acae230e58585f98c1d6b34c7e05920c94c2da7edaf308674717edd2919a0",
+      "depth_size_bytes": 119772,
+      "frame_id": 1117,
+      "frame_path": "frames/000028.jpg",
+      "frame_sha256": "728f9b1fd12a7e1f23737fd9a8b60cb0818c70c3f29909c5d1e318b21a0f5f89",
+      "frame_size_bytes": 205198,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.2756820619106293,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6573289036750793,
+            "head_facing": "left",
+            "head_yaw": -20.9180850982666,
+            "left_gesture": "reaching",
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5196096301078796,
+              "x": 0.29965150356292725,
+              "y": 0.03652241826057434,
+              "z": 1.8035094738006592
+            },
+            "posture_status": "withheld",
+            "right_gesture": "reaching",
+            "torso_attitude": "inclined",
+            "torso_flexion": 30.419757843017578,
+            "velocity": 0.1924847513437271
+          },
+          "entity_id": "p23",
+          "group": "human",
+          "kind": "person",
+          "track_id": 23
+        }
+      ],
+      "predicted_track_ids": [
+        23
+      ],
+      "selected_metric_xyz_m": [
+        0.29965150356292725,
+        0.03652241826057434,
+        1.8035094738006592
+      ],
+      "selected_track_id": 23,
+      "seq": 28,
+      "timestamp": "2026-08-13T11:56:29.036+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.35,
+        0.075,
+        0.825,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3660753290,
+          "host_monotonic_ns": 38807119906,
+          "source_sequence": 1162,
+          "wall_clock_unix_ms": 1786611389010
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 17498648,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3659922757,
+          "host_monotonic_ns": 38789621258,
+          "source_sequence": 1159,
+          "wall_clock_unix_ms": 1786611388992
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.67561525,
+        "width": 640
+      },
+      "depth_path": "depth/000029.png",
+      "depth_sha256": "fa8cf9438e0565bc34bb4f82a777639f5ae350237bb876d7ef65a6f5a1aba472",
+      "depth_size_bytes": 116619,
+      "frame_id": 1158,
+      "frame_path": "frames/000029.jpg",
+      "frame_sha256": "fe7693beea954adb97132e76f098a18eb5ff2a997e17ad7b21cf4079922517b0",
+      "frame_size_bytes": 197720,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.33398130536079407,
+              "label": "Surprise"
+            },
+            "emotion_entropy": 0.7743623852729797,
+            "head_facing": "left",
+            "head_yaw": -90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.6022936105728149,
+              "x": 0.12274065613746643,
+              "y": 0.15854856371879578,
+              "z": 1.524989128112793
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "upright",
+            "torso_flexion": 27.90275764465332,
+            "velocity": 0.09887263178825378
+          },
+          "entity_id": "p22",
+          "group": "human",
+          "kind": "person",
+          "track_id": 22
+        }
+      ],
+      "predicted_track_ids": [
+        22
+      ],
+      "selected_metric_xyz_m": [
+        0.12274065613746643,
+        0.15854856371879578,
+        1.524989128112793
+      ],
+      "selected_track_id": 22,
+      "seq": 29,
+      "timestamp": "2026-08-13T11:56:30.390+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.175,
+        0.175,
+        0.75,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3742841645,
+          "host_monotonic_ns": 40175108000,
+          "source_sequence": 1203,
+          "wall_clock_unix_ms": 1786611390378
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18484408,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3741934544,
+          "host_monotonic_ns": 40156623592,
+          "source_sequence": 1200,
+          "wall_clock_unix_ms": 1786611390359
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.6835189,
+        "width": 640
+      },
+      "depth_path": "depth/000030.png",
+      "depth_sha256": "0922affdec8c7ada131af73e6b4bbacfd75da5054a8081153b1048dfd61b39e6",
+      "depth_size_bytes": 124202,
+      "frame_id": 1199,
+      "frame_path": "frames/000030.jpg",
+      "frame_sha256": "50add96b2731c97d47f29a8279a3976cf33e600b052dab70c6bc0b695dea8509",
+      "frame_size_bytes": 207113,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.279692143201828,
+              "label": "Surprise"
+            },
+            "emotion_entropy": 0.8891913890838623,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.4059942364692688,
+              "x": -0.2467624545097351,
+              "y": -0.12937144935131073,
+              "z": 1.5915216207504272
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "inclined",
+            "torso_flexion": 35.23711013793945,
+            "velocity": 0.06457526236772537
+          },
+          "entity_id": "p22",
+          "group": "human",
+          "kind": "person",
+          "track_id": 22
+        },
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.22054564952850342,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6573289036750793,
+            "head_facing": "left",
+            "head_yaw": -20.9180850982666,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.43370336294174194,
+              "x": 0.3963307738304138,
+              "y": 0.09956380724906921,
+              "z": 1.6792608499526978
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "upright",
+            "torso_flexion": 9.174147605895996,
+            "velocity": 0.1721022129058838
+          },
+          "entity_id": "p23",
+          "group": "human",
+          "kind": "person",
+          "track_id": 23
+        }
+      ],
+      "predicted_track_ids": [
+        22,
+        23
+      ],
+      "selected_metric_xyz_m": [
+        -0.2467624545097351,
+        -0.12937144935131073,
+        1.5915216207504272
+      ],
+      "selected_track_id": 22,
+      "seq": 30,
+      "timestamp": "2026-08-13T11:56:32.708+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.0,
+        0.0,
+        0.35,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 3880990340,
+          "host_monotonic_ns": 42477130867,
+          "source_sequence": 1272,
+          "wall_clock_unix_ms": 1786611392680
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 17636757,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 3879954382,
+          "host_monotonic_ns": 42459494110,
+          "source_sequence": 1269,
+          "wall_clock_unix_ms": 1786611392662
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.65601885,
+        "width": 640
+      },
+      "depth_path": "depth/000031.png",
+      "depth_sha256": "4b29e13fc4e61f4826a9ba3b0a3e2c54417849b5936d4d506e466b3008b0957c",
+      "depth_size_bytes": 122354,
+      "frame_id": 1268,
+      "frame_path": "frames/000031.jpg",
+      "frame_sha256": "bdb79ab5fc8e7e6644a496a81818ca4d1bbce44ecd379b90822f116c2a96be79",
+      "frame_size_bytes": 213335,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion_entropy": 0.9301624894142151,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.32439476251602173,
+              "x": 0.0199125949293375,
+              "y": 0.6593354344367981,
+              "z": 1.8321359157562256
+            },
+            "posture": {
+              "confidence": 0.9971065521240234,
+              "label": "lying"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "horizontal",
+            "torso_flexion": 87.07234191894531,
+            "velocity": 0.10509338974952698
+          },
+          "entity_id": "p20",
+          "group": "human",
+          "kind": "person",
+          "track_id": 20
+        },
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.22054564952850342,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6573289036750793,
+            "head_facing": "left",
+            "head_yaw": -20.9180850982666,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.43370336294174194,
+              "x": 0.3963307738304138,
+              "y": 0.09956380724906921,
+              "z": 1.6792608499526978
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "upright",
+            "torso_flexion": 9.174147605895996,
+            "velocity": 0.1721022129058838
+          },
+          "entity_id": "p23",
+          "group": "human",
+          "kind": "person",
+          "track_id": 23
+        }
+      ],
+      "predicted_track_ids": [
+        20,
+        23
+      ],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 31,
+      "timestamp": "2026-08-13T11:56:35.372+03:00",
+      "truth": null,
+      "truth_bbox": null,
+      "visibility": "absent"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 4041162740,
+          "host_monotonic_ns": 45147135010,
+          "source_sequence": 1352,
+          "wall_clock_unix_ms": 1786611395350
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18954356,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 4039977382,
+          "host_monotonic_ns": 45128180654,
+          "source_sequence": 1349,
+          "wall_clock_unix_ms": 1786611395331
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.65282226,
+        "width": 640
+      },
+      "depth_path": "depth/000032.png",
+      "depth_sha256": "88ea80aaf20c676629f78074f36b2011cf9f0a875f5747b04bb603a73b03310b",
+      "depth_size_bytes": 123058,
+      "frame_id": 1348,
+      "frame_path": "frames/000032.jpg",
+      "frame_sha256": "fad6d4370cad670ee3ce670009763004bd5b849daa362d01c1f127a74db853ac",
+      "frame_size_bytes": 213848,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion_entropy": 0.9301624894142151,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.32439476251602173,
+              "x": 0.0199125949293375,
+              "y": 0.6593354344367981,
+              "z": 1.8321359157562256
+            },
+            "posture": {
+              "confidence": 0.9971065521240234,
+              "label": "lying"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "horizontal",
+            "torso_flexion": 87.07234191894531,
+            "velocity": 0.10509338974952698
+          },
+          "entity_id": "p20",
+          "group": "human",
+          "kind": "person",
+          "track_id": 20
+        },
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion": {
+              "confidence": 0.22054564952850342,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6573289036750793,
+            "head_facing": "left",
+            "head_yaw": -20.9180850982666,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.43370336294174194,
+              "x": 0.3963307738304138,
+              "y": 0.09956380724906921,
+              "z": 1.6792608499526978
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "upright",
+            "torso_flexion": 9.174147605895996,
+            "velocity": 0.1721022129058838
+          },
+          "entity_id": "p23",
+          "group": "human",
+          "kind": "person",
+          "track_id": 23
+        }
+      ],
+      "predicted_track_ids": [
+        20,
+        23
+      ],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 32,
+      "timestamp": "2026-08-13T11:56:38.062+03:00",
+      "truth": null,
+      "truth_bbox": null,
+      "visibility": "absent"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 4203337295,
+          "host_monotonic_ns": 47851138881,
+          "source_sequence": 1433,
+          "wall_clock_unix_ms": 1786611398054
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18219620,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 4202000669,
+          "host_monotonic_ns": 47832919261,
+          "source_sequence": 1430,
+          "wall_clock_unix_ms": 1786611398036
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.71638995,
+        "width": 640
+      },
+      "depth_path": "depth/000033.png",
+      "depth_sha256": "bb209154a398bf2585b7181a9609630a908b29fcf1b31db94d53bdcbac11ecc3",
+      "depth_size_bytes": 114094,
+      "frame_id": 1429,
+      "frame_path": "frames/000033.jpg",
+      "frame_sha256": "68afb33574fa62710974e688550b3c44bccd7ce421a697531c3b9e4f23142455",
+      "frame_size_bytes": 210975,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.112919382750988,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6573289036750793,
+            "head_facing": "left",
+            "head_yaw": -20.9180850982666,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5411864519119263,
+              "x": 0.2946506440639496,
+              "y": 0.08383016288280487,
+              "z": 1.6371216773986816
+            },
+            "posture_status": "unknown",
+            "torso_attitude": "horizontal",
+            "torso_flexion": 81.29642486572266,
+            "velocity": 0.06477662920951843
+          },
+          "entity_id": "p23",
+          "group": "human",
+          "kind": "person",
+          "track_id": 23
+        }
+      ],
+      "predicted_track_ids": [
+        23
+      ],
+      "selected_metric_xyz_m": [
+        0.2946506440639496,
+        0.08383016288280487,
+        1.6371216773986816
+      ],
+      "selected_track_id": 23,
+      "seq": 33,
+      "timestamp": "2026-08-13T11:56:39.452+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.15,
+        0.0,
+        0.925,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 4285425650,
+          "host_monotonic_ns": 49219105856,
+          "source_sequence": 1474,
+          "wall_clock_unix_ms": 1786611399422
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 18354862,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 4284012457,
+          "host_monotonic_ns": 49200750994,
+          "source_sequence": 1471,
+          "wall_clock_unix_ms": 1786611399403
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.7117513,
+        "width": 640
+      },
+      "depth_path": "depth/000034.png",
+      "depth_sha256": "c769951c91304ad01d00ac7a42eff3bbf7c91b6c3d23ab59adc99cef5a00e921",
+      "depth_size_bytes": 116294,
+      "frame_id": 1470,
+      "frame_path": "frames/000034.jpg",
+      "frame_sha256": "d74c7610bf436531ee467e5abbb1c787ffe42ab15958142f5588bff2d8bb8dd8",
+      "frame_size_bytes": 209461,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion_entropy": 0.9390616416931152,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.6460438966751099,
+              "x": -0.16171273589134216,
+              "y": 0.013078257441520691,
+              "z": 1.490769624710083
+            },
+            "posture_status": "withheld",
+            "torso_attitude": "inclined",
+            "torso_flexion": 35.23711013793945,
+            "velocity": 0.06457526236772537
+          },
+          "entity_id": "p22",
+          "group": "human",
+          "kind": "person",
+          "track_id": 22
+        },
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "emotion": {
+              "confidence": 0.112919382750988,
+              "label": "Neutral"
+            },
+            "emotion_entropy": 0.6573289036750793,
+            "head_facing": "left",
+            "head_yaw": -20.9180850982666,
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.5411864519119263,
+              "x": 0.2946506440639496,
+              "y": 0.08383016288280487,
+              "z": 1.6371216773986816
+            },
+            "posture_status": "unknown",
+            "torso_attitude": "horizontal",
+            "torso_flexion": 81.29642486572266,
+            "velocity": 0.06477662920951843
+          },
+          "entity_id": "p23",
+          "group": "human",
+          "kind": "person",
+          "track_id": 23
+        }
+      ],
+      "predicted_track_ids": [
+        22,
+        23
+      ],
+      "selected_metric_xyz_m": [
+        0.2946506440639496,
+        0.08383016288280487,
+        1.6371216773986816
+      ],
+      "selected_track_id": 23,
+      "seq": 34,
+      "timestamp": "2026-08-13T11:56:42.142+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.15,
+        0.0,
+        0.925,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 152632909,
+          "host_monotonic_ns": 51921095334,
+          "source_sequence": 1555,
+          "wall_clock_unix_ms": 1786611402124
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 1106116,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 153068736,
+          "host_monotonic_ns": 51919989218,
+          "source_sequence": 1553,
+          "wall_clock_unix_ms": 1786611402123
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.7136133,
+        "width": 640
+      },
+      "depth_path": "depth/000035.png",
+      "depth_sha256": "f240520c01e34e6f8106153519c3ad99e10cd50555f7b3031c945d3e6a5e0779",
+      "depth_size_bytes": 121045,
+      "frame_id": 1549,
+      "frame_path": "frames/000035.jpg",
+      "frame_sha256": "dc64e548a8545e942f74980119c0899526fa035c20a9c2decc75ce48a79bbf47",
+      "frame_size_bytes": 208069,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion_entropy": 0.9838034510612488,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "motion_state": "idle",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.2066582441329956,
+              "x": -0.35516154766082764,
+              "y": 0.13974529504776,
+              "z": 2.0591964721679688
+            },
+            "posture": {
+              "confidence": 0.7400667667388916,
+              "label": "lying"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 3.3292551040649414,
+            "velocity": 0.0964319184422493
+          },
+          "entity_id": "p22",
+          "group": "human",
+          "kind": "person",
+          "track_id": 22
+        },
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.4974273443222046,
+              "x": 0.12387730181217194,
+              "y": -0.3558780550956726,
+              "z": 2.0550239086151123
+            },
+            "posture": {
+              "confidence": 0.7882868051528931,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "right_gesture": "waving",
+            "torso_attitude": "upright",
+            "torso_flexion": 2.45566987991333,
+            "velocity": 0.6098704934120178
+          },
+          "entity_id": "p26",
+          "group": "human",
+          "kind": "person",
+          "track_id": 26
+        }
+      ],
+      "predicted_track_ids": [
+        22,
+        26
+      ],
+      "selected_metric_xyz_m": [
+        0.12387730181217194,
+        -0.3558780550956726,
+        2.0550239086151123
+      ],
+      "selected_track_id": 26,
+      "seq": 35,
+      "timestamp": "2026-08-13T11:56:44.870+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.25,
+        0.0,
+        0.825,
+        1.0
+      ],
+      "visibility": "visible"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 316809619,
+          "host_monotonic_ns": 54657092097,
+          "source_sequence": 1637,
+          "wall_clock_unix_ms": 1786611404860
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 3103957,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 317092311,
+          "host_monotonic_ns": 54653988140,
+          "source_sequence": 1635,
+          "wall_clock_unix_ms": 1786611404857
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.7254362,
+        "width": 640
+      },
+      "depth_path": "depth/000036.png",
+      "depth_sha256": "3589606458e8370a141e3e24134f896340afbd5a5b121f875d3352e7029482bb",
+      "depth_size_bytes": 123981,
+      "frame_id": 1631,
+      "frame_path": "frames/000036.jpg",
+      "frame_sha256": "bb691c2d90fef64ff0d5eb19230c70017019d032dc4135b5d09328fe62169438",
+      "frame_size_bytes": 202217,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "emotion_entropy": 0.9838034510612488,
+            "head_facing": "right",
+            "head_yaw": 90.0,
+            "motion_state": "idle",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.3914026618003845,
+              "x": -0.5080920457839966,
+              "y": -0.07010902464389801,
+              "z": 2.004133701324463
+            },
+            "posture": {
+              "confidence": 0.8953565955162048,
+              "label": "lying"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "horizontal",
+            "torso_flexion": 63.19380569458008,
+            "velocity": 0.3196929395198822
+          },
+          "entity_id": "p22",
+          "group": "human",
+          "kind": "person",
+          "track_id": 22
+        },
+        {
+          "attributes": {
+            "body_coverage": "upper",
+            "motion_state": "moving",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.29566532373428345,
+              "x": -0.04299565404653549,
+              "y": -0.2723453640937805,
+              "z": 2.0990278720855713
+            },
+            "posture": {
+              "confidence": 0.7882868051528931,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "inclined",
+            "torso_flexion": 57.96125793457031,
+            "velocity": 0.3088163733482361
+          },
+          "entity_id": "p26",
+          "group": "human",
+          "kind": "person",
+          "track_id": 26
+        }
+      ],
+      "predicted_track_ids": [
+        22,
+        26
+      ],
+      "selected_metric_xyz_m": [
+        -0.5080920457839966,
+        -0.07010902464389801,
+        2.004133701324463
+      ],
+      "selected_track_id": 22,
+      "seq": 36,
+      "timestamp": "2026-08-13T11:56:47.657+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.0,
+        0.0,
+        0.425,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 484990639,
+          "host_monotonic_ns": 57461119676,
+          "source_sequence": 1721,
+          "wall_clock_unix_ms": 1786611407664
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 7099853,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 485116461,
+          "host_monotonic_ns": 57454019823,
+          "source_sequence": 1719,
+          "wall_clock_unix_ms": 1786611407657
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.70963216,
+        "width": 640
+      },
+      "depth_path": "depth/000037.png",
+      "depth_sha256": "19977e32ebf83ed961d95c56d6f007a140c6a75101d5208befb7e5bccbb0658b",
+      "depth_size_bytes": 119890,
+      "frame_id": 1715,
+      "frame_path": "frames/000037.jpg",
+      "frame_sha256": "ac9f8512226604b2956bca84c19dd4b2b0b94389058416cc456ade63e7ed588c",
+      "frame_size_bytes": 210524,
+      "predicted_human_entities": [],
+      "predicted_track_ids": [],
+      "selected_metric_xyz_m": null,
+      "selected_track_id": null,
+      "seq": 37,
+      "timestamp": "2026-08-13T11:56:47.788+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.3,
+        0.0,
+        0.775,
+        1.0
+      ],
+      "visibility": "partial"
+    },
+    {
+      "depth_metadata": {
+        "calibration": {
+          "camera_serial": "A00364911518102A",
+          "revision_sha256": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c",
+          "schema": "kinect-v1-sensor-calibration/1.0"
+        },
+        "depth_stamp": {
+          "clock_domain": "kinect_v1_depth",
+          "device_timestamp_raw": 486992794,
+          "host_monotonic_ns": 57493131655,
+          "source_sequence": 1722,
+          "wall_clock_unix_ms": 1786611407696
+        },
+        "encoding": "metric_mm_u16",
+        "geometry": "registered_to_rgb",
+        "height": 480,
+        "invalid_value": 0,
+        "rgb_depth_skew_ns": 5147812,
+        "rgb_stamp": {
+          "clock_domain": "kinect_v1_rgb",
+          "device_timestamp_raw": 487116748,
+          "host_monotonic_ns": 57487983843,
+          "source_sequence": 1720,
+          "wall_clock_unix_ms": 1786611407691
+        },
+        "source": {
+          "backend": "kinect_v1",
+          "logical_name": "kinect-v1-main",
+          "serial": "A00364911518102A"
+        },
+        "units": "millimetres",
+        "valid_ratio": 0.71044594,
+        "width": 640
+      },
+      "depth_path": "depth/000038.png",
+      "depth_sha256": "9c2bb6f5a402c851e5da68509b9844ca60595c4e8e458d4a2eb6889bbb04f052",
+      "depth_size_bytes": 120245,
+      "frame_id": 1716,
+      "frame_path": "frames/000038.jpg",
+      "frame_sha256": "c3004d07274c27f9a5328eb88d9898887a434aecbf0edf397784f91fecd48c1b",
+      "frame_size_bytes": 208475,
+      "predicted_human_entities": [
+        {
+          "attributes": {
+            "body_coverage": "full",
+            "plausibility": "ok",
+            "position_3d": {
+              "confidence": 0.2851654887199402,
+              "x": 0.7397677898406982,
+              "y": 0.17799922823905945,
+              "z": 2.230053186416626
+            },
+            "posture": {
+              "confidence": 0.7462015748023987,
+              "label": "sitting"
+            },
+            "posture_status": "observed",
+            "torso_attitude": "upright",
+            "torso_flexion": 15.166935920715332,
+            "velocity": 0.0
+          },
+          "entity_id": "p28",
+          "group": "human",
+          "kind": "person",
+          "track_id": 28
+        }
+      ],
+      "predicted_track_ids": [
+        28
+      ],
+      "selected_metric_xyz_m": [
+        0.7397677898406982,
+        0.17799922823905945,
+        2.230053186416626
+      ],
+      "selected_track_id": 28,
+      "seq": 38,
+      "timestamp": "2026-08-13T11:56:49.094+03:00",
+      "truth": "person_1",
+      "truth_bbox": [
+        0.3,
+        0.0,
+        0.775,
+        1.0
+      ],
+      "visibility": "partial"
+    }
+  ],
+  "scenarios": [
+    {
+      "domain": "person",
+      "frames": [
+        [
+          {
+            "bbox": [
+              0.575,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.6787651181221008,
+              -0.02743522822856903,
+              1.663013219833374
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.775,
+              0.075,
+              1.0,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": null
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.775,
+              0.075,
+              1.0,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": null
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.75,
+              0.0,
+              1.0,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.6787651181221008,
+              -0.02743522822856903,
+              1.663013219833374
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.075,
+              0.0,
+              0.725,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": null
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.05,
+              0.15,
+              0.825,
+              0.975
+            ],
+            "truth": "person_1",
+            "xyz": null
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.05,
+              0.15,
+              0.825,
+              0.975
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.5363278388977051,
+              -0.0696023553609848,
+              1.6215686798095703
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.35,
+              0.0,
+              0.725,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.6024281978607178,
+              -0.027436159551143646,
+              1.622152328491211
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.475,
+              0.075,
+              0.9,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.28405070304870605,
+              0.05202774703502655,
+              1.3482643365859985
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.1,
+              0.875,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.4311414957046509,
+              0.06838437914848328,
+              1.584468126296997
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.1,
+              0.875,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.41048264503479004,
+              0.13124540448188782,
+              1.5008347034454346
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.25,
+              0.1,
+              0.875,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.37794989347457886,
+              0.15303324162960052,
+              1.5325725078582764
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.15,
+              0.075,
+              0.825,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.315402090549469,
+              0.21600723266601562,
+              1.5904291868209839
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.1,
+              0.825,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.2591506242752075,
+              0.07646998763084412,
+              1.4116309881210327
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.125,
+              0.825,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.008765794336795807,
+              0.17595641314983368,
+              1.8308663368225098
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.2,
+              0.1,
+              0.875,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.359147846698761,
+              0.15129563212394714,
+              1.4500532150268555
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.225,
+              0.075,
+              0.85,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.21025997400283813,
+              0.17516475915908813,
+              1.45951509475708
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.375,
+              0.075,
+              0.875,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.05632790923118591,
+              0.18453465402126312,
+              1.585557222366333
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.225,
+              0.075,
+              0.85,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.20163309574127197,
+              0.27591946721076965,
+              1.817922592163086
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.075,
+              0.85,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": null
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.075,
+              0.85,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": null
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.075,
+              0.85,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.11596762388944626,
+              0.1946522444486618,
+              1.4360283613204956
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.2,
+              0.075,
+              0.9,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.30490806698799133,
+              0.16149772703647614,
+              1.4297807216644287
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.125,
+              0.15,
+              0.775,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.13901174068450928,
+              0.17504312098026276,
+              1.5547691583633423
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.275,
+              0.075,
+              0.85,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.2267666608095169,
+              0.13969266414642334,
+              1.5426888465881348
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.325,
+              0.075,
+              0.775,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.25376638770103455,
+              -0.009355451911687851,
+              1.770817518234253
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.175,
+              0.05,
+              0.725,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.04377792030572891,
+              0.25984829664230347,
+              1.7641359567642212
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.175,
+              0.2,
+              0.75,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.3338290750980377,
+              0.03891000151634216,
+              1.8919901847839355
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.35,
+              0.075,
+              0.825,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.29965150356292725,
+              0.03652241826057434,
+              1.8035094738006592
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.175,
+              0.175,
+              0.75,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.12274065613746643,
+              0.15854856371879578,
+              1.524989128112793
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.0,
+              0.0,
+              0.35,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.2467624545097351,
+              -0.12937144935131073,
+              1.5915216207504272
+            ]
+          }
+        ],
+        [],
+        [],
+        [
+          {
+            "bbox": [
+              0.15,
+              0.0,
+              0.925,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.2946506440639496,
+              0.08383016288280487,
+              1.6371216773986816
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.15,
+              0.0,
+              0.925,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.2946506440639496,
+              0.08383016288280487,
+              1.6371216773986816
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.25,
+              0.0,
+              0.825,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.12387730181217194,
+              -0.3558780550956726,
+              2.0550239086151123
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.0,
+              0.0,
+              0.425,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              -0.5080920457839966,
+              -0.07010902464389801,
+              2.004133701324463
+            ]
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.3,
+              0.0,
+              0.775,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": null
+          }
+        ],
+        [
+          {
+            "bbox": [
+              0.3,
+              0.0,
+              0.775,
+              1.0
+            ],
+            "truth": "person_1",
+            "xyz": [
+              0.7397677898406982,
+              0.17799922823905945,
+              2.230053186416626
+            ]
+          }
+        ]
+      ],
+      "id": "captured_one_person_motion"
+    }
+  ],
+  "schema": "mvm-depth-tracker-replay/1.0",
+  "status": "captured_replay"
+}
