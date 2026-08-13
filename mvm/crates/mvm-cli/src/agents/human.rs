@@ -5,8 +5,8 @@
 //! body-primary chain; objects/depth come from `SceneAgent`/typed depth providers.
 
 use crate::agents::{
-    HumanObservationBus, HumanObservationFrame, ObservationStamp, SceneObservationBus,
-    collect_people, tracker_binding_from_frame,
+    AssociationMeasurementContext, HumanObservationBus, HumanObservationFrame, ObservationStamp,
+    SceneObservationBus, collect_people,
 };
 use crate::pipeline::BodyPrimaryPipeline;
 use mvm_core::{BBox, Detection, mask::InstanceMask};
@@ -134,12 +134,14 @@ impl Agent for HumanAgent {
                 // can use them. Lagged (seg cadence) and cross-thread — a race
                 // that misses just leaves detections maskless (term degrades to
                 // zero). The ≥2-people gate lives in the tracker.
+                let mut current_mask_frame = false;
                 if let Some(scene) = self.scene_observations.latest()
                     && scene
                         .stamp
                         .age_at(frame.id)
                         .is_some_and(|age| age <= self.max_mask_age_frames)
                 {
+                    current_mask_frame = scene.stamp.source_frame_id == frame.id;
                     attach_person_masks(
                         &mut result.detections,
                         &scene.person_masks,
@@ -151,8 +153,11 @@ impl Agent for HumanAgent {
                     .captured
                     .duration_since(*epoch.get_or_insert(frame.captured))
                     .as_secs_f64();
-                let binding = match tracker_binding_from_frame(&frame, self.max_pair_skew_ns) {
-                    Ok(binding) => binding,
+                let measurement = match AssociationMeasurementContext::from_frame(
+                    &frame,
+                    self.max_pair_skew_ns,
+                ) {
+                    Ok(measurement) => measurement,
                     Err(error) => {
                         eprintln!("  human: rejected sensor binding: {error}");
                         errors += 1;
@@ -160,13 +165,49 @@ impl Agent for HumanAgent {
                         continue;
                     }
                 };
-                self.tracker.tick_motion_bound(
-                    &binding,
+                let high_observations: Vec<_> = result
+                    .detections
+                    .iter()
+                    .zip(&result.detection_scores)
+                    .enumerate()
+                    .map(|(index, (detection, score))| {
+                        measurement.observation(
+                            u32::try_from(index).unwrap_or(u32::MAX),
+                            detection.bbox,
+                            *score,
+                            current_mask_frame
+                                .then_some(detection.mask.as_ref())
+                                .flatten(),
+                        )
+                    })
+                    .collect();
+                let low_observations: Vec<_> = result
+                    .low_conf
+                    .iter()
+                    .zip(&result.low_conf_scores)
+                    .enumerate()
+                    .map(|(index, (bbox, score))| {
+                        measurement.observation(
+                            u32::try_from(result.detections.len() + index).unwrap_or(u32::MAX),
+                            *bbox,
+                            *score,
+                            None,
+                        )
+                    })
+                    .collect();
+                if let Err(error) = self.tracker.tick_motion_observed_bound(
+                    measurement.binding(),
+                    &high_observations,
+                    &low_observations,
                     &result.detections,
                     &result.low_conf,
                     &result.landmarks,
                     t_secs,
-                );
+                ) {
+                    eprintln!("  human: rejected association observations: {error}");
+                    errors += 1;
+                    continue;
+                }
                 let stamp = ObservationStamp::from_frame(&frame);
                 self.observations.publish(HumanObservationFrame {
                     stamp,
@@ -175,6 +216,7 @@ impl Agent for HumanAgent {
                         &result.bodies,
                         stamp.produced_at,
                     )),
+                    metric_geometry: Arc::new(self.tracker.association_geometry().to_vec()),
                 });
                 self.metrics
                     .record_duration(super::MetricAgent::Human, started.elapsed());

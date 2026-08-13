@@ -36,10 +36,10 @@ pub(crate) use depth::MonocularDepthProvider;
 pub(crate) use fusion::{FusionAgent, infer_activities};
 pub(crate) use human::HumanAgent;
 pub(crate) use observations::{
-    AttentionPolicyBus, CortexFrameBus, DepthEvidence, DepthObservationBus, DepthObservationFrame,
-    FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
-    HumanObservationFrame, ObservationStamp, PolicyOutcomeBus, SceneObservationBus,
-    SceneObservationFrame, registered_metric_from_frame, tracker_binding_from_frame,
+    AssociationMeasurementContext, AttentionPolicyBus, CortexFrameBus, DepthEvidence,
+    DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
+    FusedFramePacket, HumanObservationBus, HumanObservationFrame, ObservationStamp,
+    PolicyOutcomeBus, SceneObservationBus, SceneObservationFrame, registered_metric_from_frame,
 };
 pub(crate) use policy::{
     DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,

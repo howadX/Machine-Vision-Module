@@ -20,12 +20,14 @@ use mvm_core::{BBox, CalibrationRef, DepthGeometry, DepthStatus, MetricDepthFram
 use ort::{session::Session, value::Tensor};
 use std::sync::Arc;
 
+mod association;
 mod metric;
 mod plane;
 mod roi;
 mod unproject;
 mod visibility;
 
+pub use association::measure_association_geometry;
 pub use metric::{
     GeometryError, GeometryMeasurement, GeometryStatus, MAX_GEOMETRY_SAMPLES, MetricPoint,
     ReferenceFrame,

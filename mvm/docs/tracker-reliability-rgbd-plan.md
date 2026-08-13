@@ -49,7 +49,7 @@ Rejection отдельной гипотезы допустим, но тольк�
 |---|---|---|
 | T0 — baseline, manifests, inventory | ✅ complete | active fail-closed registry under `benchmark/tracker-reliability/`; 7 artifacts SHA-256 pinned; 4 contract + 5 historical evaluator tests pass |
 | T1 — production Rust replay/telemetry | ✅ complete | exact RGB-D `TrackerFrameBinding`; AgentMesh and frozen replay share bound tracker entrypoints; deterministic bounded typed traces and fail-closed Rust replay |
-| T2 — pre-association measurement | pending | blocked on T1 production-parity envelope |
+| T2 — pre-association measurement | ✅ complete | Human/Scene create exact-tick `AssociationObservation`; one bounded `mvm-depth` primitive feeds tracker and Fusion; typed negative/parity/replay gates pass |
 | T3 — lifecycle/publication | pending | blocked on T1/T2 evidence seam |
 | T4 — metric association/abstention | pending | blocked on captured calibration split |
 | T5 — entity-local occlusion | pending | blocked on T2/T3 contracts |

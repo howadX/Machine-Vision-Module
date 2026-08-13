@@ -473,6 +473,7 @@ fn run_native_loop(
             bodies,
             overlay,
             emotion_debug_entries,
+            ..
         } = pipeline.process(
             &frame,
             frame_count,

@@ -4,7 +4,10 @@
 //! `cargo run -p mvm-cli --example tracker_replay -- INPUT --expected-sha256 HEX`
 
 use anyhow::{Context, Result, bail};
-use mvm_core::{BBox, Detection, PersonTracker, SensorReplayEnvelope, TrackerFrameBinding};
+use mvm_core::{
+    AssociationObservation, BBox, Detection, PersonTracker, SensorReplayEnvelope,
+    TrackedAssociationGeometry, TrackerFrameBinding,
+};
 use mvm_scene::{COCO_CLASSES, ObjectDetection, ObjectTracker};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -38,10 +41,16 @@ struct ReplayFrame {
 #[serde(deny_unknown_fields)]
 struct ReplayPerson {
     bbox: [f32; 4],
+    #[serde(default = "one")]
+    score: f32,
     #[serde(default)]
     identity: Option<String>,
     #[serde(default)]
     identity_confidence: Option<f32>,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +91,7 @@ struct ReplayOutput {
 #[derive(Debug, Serialize)]
 struct DomainOutput<T> {
     final_tracks: Vec<T>,
+    measurements: Vec<TrackedAssociationGeometry>,
     diagnostics: mvm_core::TrackerDiagnosticsSnapshot,
 }
 
@@ -169,6 +179,8 @@ fn main() -> Result<()> {
     let mut object = ObjectTracker::new();
     object.set_diagnostic_capacity(TRACE_CAPACITY);
     let mut last_frame_id = None;
+    let mut person_measurements = Vec::new();
+    let mut object_measurements = Vec::new();
 
     for frame in &input.frames {
         frame
@@ -191,6 +203,24 @@ fn main() -> Result<()> {
             frame.sensor.calibration.as_ref(),
             input.max_pair_skew_ns,
         )?;
+        let admitted_depth = match (
+            frame.sensor.metric_depth.as_ref(),
+            frame.sensor.calibration.as_ref(),
+        ) {
+            (Some(depth), Some(calibration)) => Some(
+                mvm_depth::RegisteredMetricDepth::admit(
+                    frame.sensor.rgb_width,
+                    frame.sensor.rgb_height,
+                    &frame.sensor.rgb_stamp,
+                    &frame.sensor.depth_status,
+                    std::sync::Arc::new(depth.clone()),
+                    calibration,
+                    input.max_pair_skew_ns,
+                )
+                .map_err(|error| anyhow::anyhow!("metric depth admission failed: {error:?}"))?,
+            ),
+            _ => None,
+        };
 
         let high: Vec<Detection> = frame
             .people_high
@@ -209,7 +239,54 @@ fn main() -> Result<()> {
             .copied()
             .map(bbox)
             .collect::<Result<_>>()?;
-        person.tick_motion_bound(&binding, &high, &low, &[], frame_id as f64 / 30.0);
+        let high_observations: Vec<_> = frame
+            .people_high
+            .iter()
+            .zip(&high)
+            .enumerate()
+            .map(|(index, (raw, detection))| AssociationObservation {
+                detection_key: u32::try_from(index).unwrap_or(u32::MAX),
+                source: binding.clone(),
+                bbox: detection.bbox,
+                detector_score: raw.score,
+                geometry: mvm_depth::measure_association_geometry(
+                    &binding,
+                    admitted_depth.as_ref(),
+                    None,
+                    detection.bbox,
+                    None,
+                ),
+            })
+            .collect();
+        let low_observations: Vec<_> = low
+            .iter()
+            .enumerate()
+            .map(|(index, bbox)| AssociationObservation {
+                detection_key: u32::try_from(high.len() + index).unwrap_or(u32::MAX),
+                source: binding.clone(),
+                bbox: *bbox,
+                detector_score: 0.25,
+                geometry: mvm_depth::measure_association_geometry(
+                    &binding,
+                    admitted_depth.as_ref(),
+                    None,
+                    *bbox,
+                    None,
+                ),
+            })
+            .collect();
+        person
+            .tick_motion_observed_bound(
+                &binding,
+                &high_observations,
+                &low_observations,
+                &high,
+                &low,
+                &[],
+                frame_id as f64 / 30.0,
+            )
+            .map_err(|error| anyhow::anyhow!(error))?;
+        person_measurements.extend_from_slice(person.association_geometry());
 
         let objects: Vec<ObjectDetection> = frame
             .objects
@@ -227,7 +304,27 @@ fn main() -> Result<()> {
                 })
             })
             .collect::<Result<_>>()?;
-        object.update_bound(&binding, &objects);
+        let object_observations: Vec<_> = objects
+            .iter()
+            .enumerate()
+            .map(|(index, detection)| AssociationObservation {
+                detection_key: u32::try_from(index).unwrap_or(u32::MAX),
+                source: binding.clone(),
+                bbox: detection.bbox,
+                detector_score: detection.score,
+                geometry: mvm_depth::measure_association_geometry(
+                    &binding,
+                    admitted_depth.as_ref(),
+                    None,
+                    detection.bbox,
+                    None,
+                ),
+            })
+            .collect();
+        object
+            .update_observed_bound(&binding, &object_observations, &objects)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        object_measurements.extend_from_slice(object.association_geometry());
     }
 
     let mut people: Vec<PersonSummary> = person
@@ -261,10 +358,12 @@ fn main() -> Result<()> {
         frames: input.frames.len(),
         person: DomainOutput {
             final_tracks: people,
+            measurements: person_measurements,
             diagnostics: person.diagnostics(),
         },
         object: DomainOutput {
             final_tracks: objects,
+            measurements: object_measurements,
             diagnostics: object.diagnostics(),
         },
     };

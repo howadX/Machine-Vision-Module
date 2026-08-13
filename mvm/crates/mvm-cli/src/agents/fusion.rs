@@ -14,8 +14,8 @@ use crate::agents::{
     SceneObservationFrame, registered_metric_from_frame,
 };
 use mvm_core::{
-    Activity, ActivityEvent, ActivityJournal, AnomalyScorer, BBox, ObjectState, PersonState,
-    Position3D, WorldState,
+    Activity, ActivityEvent, ActivityJournal, AnomalyScorer, AssociationGeometryStatus, BBox,
+    GeometrySampling, ObjectState, PersonState, Position3D, WorldState,
 };
 use mvm_fusion::canonical::{CanonicalFusion, CanonicalFusionInput, MetricGeometryObservation};
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
@@ -195,12 +195,11 @@ impl Agent for FusionAgent {
                         );
                     }
                 }
-                let metric_geometry = direct_metric_geometry(
-                    &frame,
-                    depth.as_ref(),
-                    &world.people,
-                    &world.objects,
+                let metric_geometry = carried_metric_geometry(
+                    frame.id,
+                    human.as_ref(),
                     scene.as_ref(),
+                    self.config.object_cadence,
                 );
                 // Cross-group inference (phase 8.F) through the temporal journal.
                 let ended = self.advance_journal(&mut world);
@@ -218,6 +217,7 @@ impl Agent for FusionAgent {
                     human.as_ref(),
                     scene.as_ref(),
                     depth.as_ref(),
+                    &metric_geometry,
                     self.config.object_cadence,
                     self.config.depth_cadence,
                 );
@@ -274,127 +274,96 @@ impl Agent for FusionAgent {
     }
 }
 
-fn direct_metric_geometry(
-    frame: &mvm_mesh::Frame,
-    depth: Option<&DepthObservationFrame>,
-    people: &[PersonState],
-    objects: &[ObjectState],
+fn carried_metric_geometry(
+    fused_frame_id: u64,
+    human: Option<&HumanObservationFrame>,
     scene: Option<&SceneObservationFrame>,
+    object_cadence: u32,
 ) -> Vec<MetricGeometryObservation> {
     use mvm_core::canonical::TrackDomain;
-    use mvm_depth::{CameraIntrinsics, ReferenceFrame, SamplingSpec};
-
-    let Some(depth) = depth.and_then(DepthObservationFrame::metric) else {
-        return Vec::new();
-    };
-    let Some(owners) = frame.sensor.registered_depth_owners.as_deref() else {
-        return Vec::new();
-    };
-    let Ok(intrinsics) = CameraIntrinsics::new(
-        owners.native_width,
-        owners.native_height,
-        owners.native_fx_px,
-        owners.native_fy_px,
-        owners.native_cx_px,
-        owners.native_cy_px,
-        owners.calibration_revision.clone(),
-        ReferenceFrame::CameraOptical,
-    ) else {
-        return Vec::new();
-    };
-    let spec = SamplingSpec {
-        stride: 4,
-        max_samples: mvm_depth::MAX_GEOMETRY_SAMPLES,
-    };
-    let mut result = Vec::with_capacity(people.len() + objects.len());
-    for person in people {
-        let person_mask = scene.and_then(|scene| {
-            scene
-                .person_masks
+    let mut result = Vec::new();
+    if let Some(human) = human {
+        let freshness = source_freshness(human.stamp.source_frame_id, fused_frame_id, 2, 4);
+        result.extend(
+            human
+                .metric_geometry
                 .iter()
-                .filter(|(bbox, _)| bbox.iou(&person.bbox) >= 0.3)
-                .max_by(|(a, _), (b, _)| a.iou(&person.bbox).total_cmp(&b.iou(&person.bbox)))
-                .map(|(_, mask)| mask)
-        });
-        if let Some(measurement) =
-            measure_entity_geometry(depth, owners, &intrinsics, person.bbox, person_mask, spec)
-        {
-            result.push(metric_observation(
-                TrackDomain::Person,
-                person.track_id,
-                measurement,
-                person_mask.is_some(),
-            ));
-        }
+                .filter_map(|tracked| metric_observation(TrackDomain::Person, tracked, freshness)),
+        );
     }
-    for object in objects.iter().filter(|object| !object.remembered) {
-        if let Some(measurement) = measure_entity_geometry(
-            depth,
-            owners,
-            &intrinsics,
-            object.bbox,
-            object.mask.as_ref(),
-            spec,
-        ) {
-            result.push(metric_observation(
-                TrackDomain::Object,
-                object.id,
-                measurement,
-                object.mask.is_some(),
-            ));
-        }
+    if let Some(scene) = scene {
+        let cadence = u64::from(object_cadence.max(1));
+        let freshness = source_freshness(
+            scene.stamp.source_frame_id,
+            fused_frame_id,
+            cadence,
+            cadence * 2,
+        );
+        result.extend(
+            scene
+                .metric_geometry
+                .iter()
+                .filter_map(|tracked| metric_observation(TrackDomain::Object, tracked, freshness)),
+        );
     }
+    result.sort_by_key(|value| (value.track_domain, value.track_id));
     result
 }
 
-fn measure_entity_geometry(
-    depth: &mvm_depth::RegisteredMetricDepth,
-    owners: &mvm_core::RegisteredDepthOwners,
-    intrinsics: &mvm_depth::CameraIntrinsics,
-    bbox: BBox,
-    mask: Option<&mvm_core::InstanceMask>,
-    spec: mvm_depth::SamplingSpec,
-) -> Option<mvm_depth::GeometryMeasurement> {
-    let samples = if let Some(mask) = mask.filter(|mask| !mask.is_empty()) {
-        mvm_depth::sample_registered_owner_mask(depth, owners, intrinsics, mask, spec).ok()?
-    } else {
-        let width = owners.registered_width;
-        let height = owners.registered_height;
-        let x1 = (bbox.x1.clamp(0.0, 1.0) * width as f32).floor() as u32;
-        let y1 = (bbox.y1.clamp(0.0, 1.0) * height as f32).floor() as u32;
-        let x2 = (bbox.x2.clamp(0.0, 1.0) * width as f32).ceil() as u32;
-        let y2 = (bbox.y2.clamp(0.0, 1.0) * height as f32).ceil() as u32;
-        let roi = mvm_depth::MetricRoi::pixels(
-            x1.min(width.saturating_sub(1)),
-            y1.min(height.saturating_sub(1)),
-            x2.saturating_sub(x1).max(1),
-            y2.saturating_sub(y1).max(1),
-        );
-        mvm_depth::sample_registered_owner_roi(depth, owners, intrinsics, roi, spec).ok()?
+fn source_freshness(
+    source_frame_id: u64,
+    fused_frame_id: u64,
+    fresh_through: u64,
+    coasted_through: u64,
+) -> mvm_core::canonical::SourceFreshness {
+    use mvm_core::canonical::SourceFreshness;
+    let Some(age) = fused_frame_id.checked_sub(source_frame_id) else {
+        return SourceFreshness::Unavailable;
     };
-    mvm_depth::measure_roi(&samples, 16).ok()
+    if age <= fresh_through {
+        SourceFreshness::Fresh
+    } else if age <= coasted_through {
+        SourceFreshness::Coasted
+    } else {
+        SourceFreshness::Stale
+    }
 }
 
 fn metric_observation(
     track_domain: mvm_core::canonical::TrackDomain,
-    track_id: u32,
-    value: mvm_depth::GeometryMeasurement,
-    mask_aware: bool,
-) -> MetricGeometryObservation {
-    MetricGeometryObservation {
+    tracked: &mvm_core::TrackedAssociationGeometry,
+    source_freshness: mvm_core::canonical::SourceFreshness,
+) -> Option<MetricGeometryObservation> {
+    let value = &tracked.geometry;
+    if !matches!(
+        value.status,
+        AssociationGeometryStatus::Observed | AssociationGeometryStatus::Weak
+    ) {
+        return None;
+    }
+    let extent = value.extent_m?;
+    let calibration = value.calibration.as_ref()?;
+    Some(MetricGeometryObservation {
         track_domain,
-        track_id,
-        centroid_m: value.centroid_m,
-        aabb_min_m: value.aabb_min_m,
-        aabb_max_m: value.aabb_max_m,
-        median_z_m: value.median_z_m,
-        median_absolute_deviation_m: value.median_absolute_deviation_m,
-        sample_count: u32::try_from(value.sample_count).unwrap_or(u32::MAX),
+        track_id: tracked.track_id,
+        source_frame_id: tracked.source_frame_id,
+        produced_at_unix_ms: value.rgb_stamp.wall_clock_unix_ms,
+        source_freshness,
+        centroid_m: value.centroid_xyz_m?,
+        aabb_min_m: extent.min_m,
+        aabb_max_m: extent.max_m,
+        median_z_m: value.median_z_m?,
+        median_absolute_deviation_m: value.depth_mad_m?,
+        sample_count: value.sample_count,
         valid_ratio: value.valid_ratio,
         boundary_contamination: value.boundary_contamination,
-        calibration_revision: value.calibration_revision,
-        mask_aware,
-    }
+        calibration_revision: calibration.revision_sha256.clone(),
+        mask_aware: matches!(
+            value.sampling,
+            GeometrySampling::Mask | GeometrySampling::ErodedMask
+        ),
+        weak: value.status == AssociationGeometryStatus::Weak,
+    })
 }
 
 fn select_depth_observation(
@@ -412,12 +381,16 @@ fn unix_ms_now() -> i64 {
         .unwrap_or(0)
 }
 
+// Sources deliberately remain separate typed inputs: Human, Scene and metric
+// geometry may originate on different ticks and must not share one inferred stamp.
+#[allow(clippy::too_many_arguments)]
 fn source_stamps(
     fused_frame_id: u64,
     published_at_unix_ms: i64,
     human: Option<&HumanObservationFrame>,
     scene: Option<&SceneObservationFrame>,
     depth: Option<&DepthObservationFrame>,
+    metric_geometry: &[MetricGeometryObservation],
     object_cadence: u32,
     depth_cadence: u32,
 ) -> Vec<mvm_core::canonical::SourceStamp> {
@@ -465,14 +438,17 @@ fn source_stamps(
             depth_coasted_through,
         ),
     ];
-    if depth.is_some_and(|observation| observation.metric().is_some()) {
-        sources.push(observation_source(
-            FactSource::MetricDepth,
-            depth.map(|observation| &observation.stamp),
-            fused_frame_id,
-            0,
-            0,
-        ));
+    if let Some(metric) = metric_geometry
+        .iter()
+        .max_by_key(|value| value.source_frame_id)
+    {
+        sources.push(mvm_core::canonical::SourceStamp {
+            source: FactSource::MetricDepth,
+            source_frame_id: metric.source_frame_id,
+            produced_at_unix_ms: metric.produced_at_unix_ms,
+            age_frames: fused_frame_id.saturating_sub(metric.source_frame_id),
+            freshness: metric.source_freshness,
+        });
     }
     sources.sort_by_key(|source| source.source);
     sources
@@ -835,6 +811,7 @@ pub(crate) fn infer_activities(people: &[PersonState], objects: &[ObjectState]) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::ObservationStamp;
     use mvm_core::{
         CalibrationRef, Config, DepthGeometry, DepthStatus, MetricDepthFrame, SensorClockDomain,
         SensorHealth, SensorSourceId, SensorStamp,
@@ -905,6 +882,70 @@ mod tests {
                 },
             )),
         }
+    }
+
+    fn tracked_metric(track_id: u32, source_frame_id: u64) -> mvm_core::TrackedAssociationGeometry {
+        mvm_core::TrackedAssociationGeometry {
+            track_id,
+            detection_key: 0,
+            source_frame_id,
+            geometry: mvm_core::AssociationGeometry {
+                centroid_xyz_m: Some([0.1, 0.2, 2.0]),
+                median_z_m: Some(2.0),
+                extent_m: Some(mvm_core::AxisAlignedExtent {
+                    min_m: [0.0, 0.1, 1.9],
+                    max_m: [0.2, 0.3, 2.1],
+                }),
+                valid_ratio: 0.9,
+                depth_mad_m: Some(0.02),
+                boundary_contamination: 0.1,
+                sample_count: 64,
+                rgb_stamp: sensor_stamp(SensorClockDomain::KinectV1Rgb, 1_000_000),
+                depth_stamp: Some(sensor_stamp(SensorClockDomain::KinectV1Depth, 1_001_000)),
+                pairing_skew_ns: Some(1_000),
+                calibration: Some(CalibrationRef {
+                    schema: "test/1".into(),
+                    camera_serial: "serial".into(),
+                    revision_sha256: "a".repeat(64),
+                }),
+                sampling: GeometrySampling::InnerBbox,
+                status: AssociationGeometryStatus::Observed,
+                reason: None,
+            },
+        }
+    }
+
+    #[test]
+    fn carried_metric_geometry_keeps_independent_human_and_scene_tick_binding() {
+        let now = Instant::now();
+        let human = HumanObservationFrame {
+            stamp: ObservationStamp::new(40, now, 4_000),
+            people: Arc::new(Vec::new()),
+            metric_geometry: Arc::new(vec![tracked_metric(10, 40)]),
+        };
+        let scene = SceneObservationFrame {
+            stamp: ObservationStamp::new(37, now, 3_700),
+            objects: Arc::new(Vec::new()),
+            animals: Arc::new(Vec::new()),
+            person_masks: Arc::new(Vec::new()),
+            metric_geometry: Arc::new(vec![tracked_metric(10_000, 37)]),
+        };
+        let carried = carried_metric_geometry(41, Some(&human), Some(&scene), 3);
+        assert_eq!(carried.len(), 2);
+        assert_eq!(carried[0].source_frame_id, 40);
+        assert_eq!(
+            carried[0].track_domain,
+            mvm_core::canonical::TrackDomain::Person
+        );
+        assert_eq!(carried[1].source_frame_id, 37);
+        assert_eq!(
+            carried[1].track_domain,
+            mvm_core::canonical::TrackDomain::Object
+        );
+        assert_eq!(
+            carried[1].source_freshness,
+            mvm_core::canonical::SourceFreshness::Coasted
+        );
     }
 
     #[test]

@@ -4,8 +4,8 @@
 //! happens on the fusion step (8.C.7) where both people and objects are visible.
 
 use crate::agents::{
-    ObservationStamp, SceneExecutionControl, SceneObservationBus, SceneObservationFrame,
-    cadence_due, collect_objects, tracker_binding_from_frame,
+    AssociationMeasurementContext, ObservationStamp, SceneExecutionControl, SceneObservationBus,
+    SceneObservationFrame, cadence_due, collect_objects,
 };
 use mvm_mesh::{Agent, AgentHealth, MeshContext};
 use std::sync::Arc;
@@ -13,6 +13,19 @@ use std::sync::Arc;
 /// Mask-IoU floor for greedily attaching a YOLO-seg mask onto a tracked object
 /// (mirrors `pipeline::SEG_ATTACH_IOU` on the sync path).
 const SEG_ATTACH_IOU: f32 = 0.5;
+
+fn current_object_mask<'a>(
+    detection: &mvm_scene::ObjectDetection,
+    segments: &'a [mvm_scene::SegDetection],
+) -> Option<&'a mvm_core::InstanceMask> {
+    segments
+        .iter()
+        .filter(|segment| segment.det.class_name == detection.class_name)
+        .map(|segment| (segment, segment.det.bbox.iou(&detection.bbox)))
+        .filter(|(_, iou)| *iou >= SEG_ATTACH_IOU)
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(segment, _)| &segment.mask)
+}
 
 pub(crate) struct SceneAgent {
     detector: mvm_scene::YoloDetector,
@@ -124,17 +137,19 @@ impl Agent for SceneAgent {
                                     area >= self.min_area
                                 })
                                 .collect();
-                            let binding =
-                                match tracker_binding_from_frame(&frame, self.max_pair_skew_ns) {
-                                    Ok(binding) => binding,
-                                    Err(error) => {
-                                        eprintln!("  scene: rejected sensor binding: {error}");
-                                        errors += 1;
-                                        continue;
-                                    }
-                                };
-                            let mut tracked = self.tracker.update_bound(&binding, &filtered);
+                            let measurement = match AssociationMeasurementContext::from_frame(
+                                &frame,
+                                self.max_pair_skew_ns,
+                            ) {
+                                Ok(measurement) => measurement,
+                                Err(error) => {
+                                    eprintln!("  scene: rejected sensor binding: {error}");
+                                    errors += 1;
+                                    continue;
+                                }
+                            };
                             let mut person_masks = Vec::new();
+                            let mut obj_segs = Vec::new();
 
                             // Phase 10.4/11: the YOLO-seg expert (opt-in `--masks`)
                             // runs over the same frame; its object masks are attached
@@ -148,7 +163,6 @@ impl Agent for SceneAgent {
                                         // Split the single seg forward: object masks
                                         // attach to tracked objects; person masks are
                                         // published for the body tracker (11.A3).
-                                        let mut obj_segs = Vec::new();
                                         for s in segs {
                                             if s.det.class_name == "person" {
                                                 person_masks.push((s.det.bbox, s.mask));
@@ -156,25 +170,47 @@ impl Agent for SceneAgent {
                                                 obj_segs.push(s);
                                             }
                                         }
-                                        mvm_scene::attach_masks(
-                                            &mut tracked,
-                                            &obj_segs,
-                                            SEG_ATTACH_IOU,
-                                        );
-                                        if std::env::var("MVM_SEG_DEBUG").is_ok() {
-                                            let attached =
-                                                tracked.iter().filter(|o| o.mask.is_some()).count();
-                                            eprintln!(
-                                                "  seg-dbg: {} obj-seg → {}/{} objects masked; {} person masks published",
-                                                obj_segs.len(),
-                                                attached,
-                                                tracked.len(),
-                                                person_masks.len()
-                                            );
-                                        }
                                     }
                                     Err(e) => eprintln!("  seg: detect error: {e}"),
                                 }
+                            }
+
+                            let association_observations: Vec<_> = filtered
+                                .iter()
+                                .enumerate()
+                                .map(|(index, detection)| {
+                                    measurement.observation(
+                                        u32::try_from(index).unwrap_or(u32::MAX),
+                                        detection.bbox,
+                                        detection.score,
+                                        current_object_mask(detection, &obj_segs),
+                                    )
+                                })
+                                .collect();
+                            let mut tracked = match self.tracker.update_observed_bound(
+                                measurement.binding(),
+                                &association_observations,
+                                &filtered,
+                            ) {
+                                Ok(tracked) => tracked,
+                                Err(error) => {
+                                    eprintln!(
+                                        "  scene: rejected association observations: {error}"
+                                    );
+                                    errors += 1;
+                                    continue;
+                                }
+                            };
+                            mvm_scene::attach_masks(&mut tracked, &obj_segs, SEG_ATTACH_IOU);
+                            if std::env::var("MVM_SEG_DEBUG").is_ok() {
+                                let attached = tracked.iter().filter(|o| o.mask.is_some()).count();
+                                eprintln!(
+                                    "  seg-dbg: {} obj-seg → {}/{} objects masked; {} person masks published",
+                                    obj_segs.len(),
+                                    attached,
+                                    tracked.len(),
+                                    person_masks.len()
+                                );
                             }
 
                             let stamp = ObservationStamp::from_frame(&frame);
@@ -183,6 +219,9 @@ impl Agent for SceneAgent {
                                 objects: Arc::new(collect_objects(&tracked, stamp.produced_at)),
                                 animals: Arc::new(animals),
                                 person_masks: Arc::new(person_masks),
+                                metric_geometry: Arc::new(
+                                    self.tracker.association_geometry().to_vec(),
+                                ),
                             });
                             ticks += 1;
                         }
@@ -243,6 +282,7 @@ mod tests {
                 },
                 mask,
             )]),
+            metric_geometry: Arc::new(Vec::new()),
         });
         let got = bus.latest().expect("published scene observation");
         assert_eq!(got.stamp.source_frame_id, 9);

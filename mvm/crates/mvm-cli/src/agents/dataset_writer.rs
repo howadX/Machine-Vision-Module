@@ -1011,6 +1011,7 @@ mod tests {
                 human: Some(HumanObservationFrame {
                     stamp: ObservationStamp::from_frame(&camera),
                     people,
+                    metric_geometry: Arc::new(Vec::new()),
                 }),
                 scene: None,
             },
@@ -1139,6 +1140,7 @@ mod tests {
                 human: Some(HumanObservationFrame {
                     stamp: ObservationStamp::new(3, now, 1_000),
                     people,
+                    metric_geometry: Arc::new(Vec::new()),
                 }),
                 scene: None,
             },

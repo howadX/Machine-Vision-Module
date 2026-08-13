@@ -101,9 +101,13 @@ pub(crate) struct FrameResult {
     /// Bodies (+ fallback faces), fully enriched — feed to the tracker as the
     /// ByteTrack high-confidence stage.
     pub detections: Vec<Detection>,
+    /// Detector confidence aligned 1:1 with `detections`.
+    pub detection_scores: Vec<f32>,
     /// Weak, bbox-only body boxes (phase 9.4) — the ByteTrack low-confidence
     /// recovery stage (`tick_byte`'s `low`). Never enriched, never spawn tracks.
     pub low_conf: Vec<mvm_core::BBox>,
+    /// Detector confidence aligned 1:1 with `low_conf`.
+    pub low_conf_scores: Vec<f32>,
     /// Per-detection pixel landmarks (phase 9.8), aligned 1:1 with `detections`:
     /// `Some` for a body, `None` for a fallback face. Fed to `tick_motion`.
     pub landmarks: Vec<Option<mvm_core::motion::Landmarks33>>,
@@ -193,6 +197,8 @@ impl BodyPrimaryPipeline {
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         let mut bodies: Vec<BodyData> = Vec::new();
         let mut low_conf: Vec<mvm_core::BBox> = Vec::new();
+        let mut detection_scores: Vec<f32> = Vec::new();
+        let mut low_conf_scores: Vec<f32> = Vec::new();
         let mut landmarks: Vec<Option<mvm_core::motion::Landmarks33>> = Vec::new();
 
         // SFace re-check cadence (phase 9.6): every Nth frame re-identify all bodies
@@ -210,6 +216,8 @@ impl BodyPrimaryPipeline {
             &mut overlay,
             &mut bodies,
             &mut low_conf,
+            &mut detection_scores,
+            &mut low_conf_scores,
             &mut landmarks,
             &self.config,
             self.emotion_debug,
@@ -306,7 +314,9 @@ impl BodyPrimaryPipeline {
 
         FrameResult {
             detections,
+            detection_scores,
             low_conf,
+            low_conf_scores,
             landmarks,
             bodies,
             overlay,
@@ -635,6 +645,8 @@ fn build_body_primary(
     overlay: &mut scene_debug::DetectorOverlay,
     bodies_out: &mut Vec<BodyData>,
     low_conf_out: &mut Vec<mvm_core::BBox>,
+    detection_scores_out: &mut Vec<f32>,
+    low_conf_scores_out: &mut Vec<f32>,
     landmarks_out: &mut Vec<Option<mvm_core::motion::Landmarks33>>,
     config: &mvm_core::Config,
     emotion_debug: bool,
@@ -658,6 +670,7 @@ fn build_body_primary(
     // Weak boxes ride straight through to the tracker's recovery stage (9.4) —
     // never posed, enriched, or turned into a BodyData.
     low_conf_out.extend(body_dets.low_conf.iter().map(|l| l.bbox));
+    low_conf_scores_out.extend(body_dets.low_conf.iter().map(|l| l.score));
     // RGB frame for hand ROIs (only materialised when the hand model is loaded).
     let hand_rgb = hand_landmarker.as_ref().map(|_| frame.to_rgb8());
     let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();
@@ -786,6 +799,7 @@ fn build_body_primary(
             );
         }
         dets.push(det);
+        detection_scores_out.push(body.score);
         // Pixel landmarks travel alongside the detection (phase 9.8) → the tracker
         // folds them into this body's track motion ring. Aligned 1:1 with `dets`.
         landmarks_out.push(Some(*lm));
@@ -859,6 +873,7 @@ fn build_body_primary(
             face_lm = Some(lm);
         }
         dets.push(det);
+        detection_scores_out.push(f.score);
         landmarks_out.push(face_lm); // Some when posture recovered from the face ROI
     }
 

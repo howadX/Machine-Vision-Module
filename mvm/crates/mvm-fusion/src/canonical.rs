@@ -45,6 +45,9 @@ pub struct CanonicalFusionInput<'a> {
 pub struct MetricGeometryObservation {
     pub track_domain: TrackDomain,
     pub track_id: u32,
+    pub source_frame_id: u64,
+    pub produced_at_unix_ms: i64,
+    pub source_freshness: SourceFreshness,
     pub centroid_m: [f32; 3],
     pub aabb_min_m: [f32; 3],
     pub aabb_max_m: [f32; 3],
@@ -55,6 +58,7 @@ pub struct MetricGeometryObservation {
     pub boundary_contamination: f32,
     pub calibration_revision: String,
     pub mask_aware: bool,
+    pub weak: bool,
 }
 
 pub struct CanonicalFusion {
@@ -92,6 +96,27 @@ struct ActivityKey {
     participants: Vec<EntityKey>,
 }
 
+fn validate_metric_geometry_input(input: &CanonicalFusionInput<'_>) -> anyhow::Result<()> {
+    let mut seen = BTreeSet::new();
+    for value in input.metric_geometry {
+        anyhow::ensure!(
+            value.source_frame_id <= input.stamp.frame_id,
+            "metric geometry for {:?}/{} comes from future frame {} > {}",
+            value.track_domain,
+            value.track_id,
+            value.source_frame_id,
+            input.stamp.frame_id
+        );
+        anyhow::ensure!(
+            seen.insert((value.track_domain, value.track_id)),
+            "duplicate metric geometry for {:?}/{}",
+            value.track_domain,
+            value.track_id
+        );
+    }
+    Ok(())
+}
+
 impl CanonicalFusion {
     pub fn new(run_id: impl Into<String>) -> Self {
         let run_id = run_id.into();
@@ -113,6 +138,7 @@ impl CanonicalFusion {
     }
 
     pub fn assemble(&mut self, input: CanonicalFusionInput<'_>) -> anyhow::Result<FusedSceneFrame> {
+        validate_metric_geometry_input(&input)?;
         self.sync_domain(
             TrackDomain::Person,
             input.people.iter().map(|person| person.track_id),
@@ -129,7 +155,6 @@ impl CanonicalFusion {
         let human_source = source(&input.sources, FactSource::Human);
         let scene_source = source(&input.sources, FactSource::Scene);
         let depth_source = source(&input.sources, FactSource::Depth);
-        let metric_depth_source = source(&input.sources, FactSource::MetricDepth);
 
         let mut entities = Vec::new();
         for person in input.people {
@@ -138,7 +163,6 @@ impl CanonicalFusion {
                 person,
                 key,
                 human_source,
-                metric_depth_source,
                 metric_geometry(input.metric_geometry, TrackDomain::Person, person.track_id),
             ));
         }
@@ -149,7 +173,6 @@ impl CanonicalFusion {
                 key,
                 scene_source,
                 depth_source,
-                metric_depth_source,
                 metric_geometry(input.metric_geometry, TrackDomain::Object, object.id),
             ));
         }
@@ -718,17 +741,19 @@ fn metric_geometry(
 
 fn direct_metric_fact(
     measurement: Option<&MetricGeometryObservation>,
-    stamp: Option<&SourceStamp>,
     entity: &EntityKey,
 ) -> SceneFact<DirectMetricGeometry> {
     let Some(value) = measurement else {
         return SceneFact::unknown(FactReason::MissingSource);
     };
-    if stamp.is_none_or(|stamp| stamp.freshness == SourceFreshness::Stale) {
+    if matches!(
+        value.source_freshness,
+        SourceFreshness::Stale | SourceFreshness::Unavailable
+    ) {
         return SceneFact::unknown(FactReason::StaleSource);
     }
     let confidence = (value.valid_ratio * (1.0 - value.boundary_contamination)).clamp(0.0, 1.0);
-    let status = if value.boundary_contamination > 0.5 || confidence < 0.5 {
+    let status = if value.weak || value.boundary_contamination > 0.5 || confidence < 0.5 {
         FactStatus::Weak
     } else {
         FactStatus::Observed
@@ -749,7 +774,11 @@ fn direct_metric_fact(
             mask_aware: value.mask_aware,
         },
         confidence,
-        source_evidence(FactSource::MetricDepth, stamp, entity),
+        vec![evidence(
+            FactSource::MetricDepth,
+            value.source_frame_id,
+            Some(entity.clone()),
+        )],
     )
     .expect("validated direct metric measurement is canonical")
 }
@@ -781,7 +810,6 @@ fn person_entity(
     person: &PersonState,
     key: EntityKey,
     source: Option<&SourceStamp>,
-    depth: Option<&SourceStamp>,
     metric: Option<&MetricGeometryObservation>,
 ) -> SceneEntity {
     let posture = match &person.posture {
@@ -814,7 +842,7 @@ fn person_entity(
         },
     );
     let fallback_position = position_fact(person.position_3d, FactSource::Human, source, &key);
-    let direct_metric = direct_metric_fact(metric, depth, &key);
+    let direct_metric = direct_metric_fact(metric, &key);
     let position_3d = preferred_position(&direct_metric, &fallback_position);
     SceneEntity {
         key: key.clone(),
@@ -1011,7 +1039,6 @@ fn object_entity(
     key: EntityKey,
     scene: Option<&SourceStamp>,
     depth: Option<&SourceStamp>,
-    metric_depth: Option<&SourceStamp>,
     metric: Option<&MetricGeometryObservation>,
 ) -> SceneEntity {
     let status = if object.remembered {
@@ -1032,7 +1059,7 @@ fn object_entity(
         .expect("tracked object confidence is valid")
     };
     let fallback_position = position_fact(object.position_3d, FactSource::Depth, depth, &key);
-    let direct_metric = direct_metric_fact(metric, metric_depth, &key);
+    let direct_metric = direct_metric_fact(metric, &key);
     let position_3d = preferred_position(&direct_metric, &fallback_position);
     SceneEntity {
         key: key.clone(),
@@ -1259,6 +1286,9 @@ mod tests {
         MetricGeometryObservation {
             track_domain: domain,
             track_id,
+            source_frame_id: 1,
+            produced_at_unix_ms: 1_001,
+            source_freshness: SourceFreshness::Fresh,
             centroid_m: [0.1, -0.2, 1.5],
             aabb_min_m: [0.0, -0.3, 1.4],
             aabb_max_m: [0.2, -0.1, 1.6],
@@ -1269,6 +1299,7 @@ mod tests {
             boundary_contamination: 0.1,
             calibration_revision: "a".repeat(64),
             mask_aware: false,
+            weak: false,
         }
     }
 
@@ -1305,6 +1336,7 @@ mod tests {
             entity.geometry.direct_metric.evidence[0].source,
             FactSource::MetricDepth
         );
+        assert_eq!(entity.geometry.direct_metric.evidence[0].source_frame_id, 1);
         assert_eq!(
             entity
                 .geometry
@@ -1314,6 +1346,39 @@ mod tests {
                 .unwrap()
                 .reference_frame,
             GeometryReferenceFrame::CameraOptical
+        );
+    }
+
+    #[test]
+    fn future_or_duplicate_metric_geometry_is_rejected_before_fusion() {
+        let object = object(10_000);
+        let mut future = metric(TrackDomain::Object, object.id);
+        future.source_frame_id = 2;
+        let mut fusion = CanonicalFusion::new("run");
+        assert!(
+            fusion
+                .assemble(CanonicalFusionInput {
+                    objects: std::slice::from_ref(&object),
+                    metric_geometry: std::slice::from_ref(&future),
+                    ..input(1, &[])
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("future frame")
+        );
+
+        let duplicate = metric(TrackDomain::Object, object.id);
+        let geometry = [duplicate.clone(), duplicate];
+        assert!(
+            fusion
+                .assemble(CanonicalFusionInput {
+                    objects: std::slice::from_ref(&object),
+                    metric_geometry: &geometry,
+                    ..input(1, &[])
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate metric geometry")
         );
     }
 

@@ -64,6 +64,12 @@
       "sha256": "dfa59f1271d66fdd6b16c23d1cd4838efefb5763a203be06dd24aa6a9f59aa16",
       "role": "production_rust_replay_record",
       "evidence_class": "production_parity_synthetic"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/reports/T2-pre-association-measurement.md",
+      "sha256": "84adf5f42fe87fd930bf12aff768da72a92fd857d0965ddf9901bd6f6e7a4b10",
+      "role": "pre_association_measurement_record",
+      "evidence_class": "production_parity_synthetic"
     }
   ]
 }

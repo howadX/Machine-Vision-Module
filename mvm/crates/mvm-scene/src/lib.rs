@@ -20,8 +20,8 @@ use anyhow::Context;
 use image::DynamicImage;
 use image::GenericImageView;
 use mvm_core::{
-    BBox, TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
-    TrackerDomain, TrackerFrameBinding,
+    AssociationObservation, BBox, TrackedAssociationGeometry, TrackerDecision, TrackerDecisionKind,
+    TrackerDiagnostics, TrackerDiagnosticsSnapshot, TrackerDomain, TrackerFrameBinding,
 };
 use ort::{session::Session, value::Tensor};
 use std::cmp::Reverse;
@@ -303,6 +303,7 @@ pub struct ObjectTracker {
     diagnostics: TrackerDiagnostics,
     frame_binding: TrackerFrameBinding,
     compatibility_frame_id: u64,
+    association_geometry: Vec<TrackedAssociationGeometry>,
 }
 
 /// Confirmations (matched detection-frames) a static object needs before the
@@ -338,6 +339,7 @@ impl ObjectTracker {
             diagnostics: TrackerDiagnostics::default(),
             frame_binding: TrackerFrameBinding::rgb_only(0),
             compatibility_frame_id: 0,
+            association_geometry: Vec::new(),
         }
     }
 
@@ -373,7 +375,7 @@ impl ObjectTracker {
     pub fn update(&mut self, dets: &[ObjectDetection]) -> Vec<TrackedObject> {
         self.compatibility_frame_id = self.compatibility_frame_id.saturating_add(1);
         self.frame_binding = TrackerFrameBinding::rgb_only(self.compatibility_frame_id);
-        self.update_current(dets)
+        self.update_current(dets, None)
     }
 
     /// Update from one exact live/replay RGB or paired RGB-D packet.
@@ -383,7 +385,33 @@ impl ObjectTracker {
         dets: &[ObjectDetection],
     ) -> Vec<TrackedObject> {
         self.frame_binding = binding.clone();
-        self.update_current(dets)
+        self.update_current(dets, None)
+    }
+
+    pub fn update_observed_bound(
+        &mut self,
+        binding: &TrackerFrameBinding,
+        observations: &[AssociationObservation],
+        dets: &[ObjectDetection],
+    ) -> Result<Vec<TrackedObject>, &'static str> {
+        if observations.len() != dets.len() {
+            return Err("association observation count differs from object detections");
+        }
+        let mut keys = std::collections::HashSet::with_capacity(observations.len());
+        for (observation, detection) in observations.iter().zip(dets) {
+            observation.validate()?;
+            if &observation.source != binding
+                || observation.bbox != detection.bbox
+                || observation.detector_score != detection.score
+            {
+                return Err("association observation differs from object detection");
+            }
+            if !keys.insert(observation.detection_key) {
+                return Err("duplicate object detection key");
+            }
+        }
+        self.frame_binding = binding.clone();
+        Ok(self.update_current(dets, Some(observations)))
     }
 
     pub fn set_diagnostic_capacity(&mut self, capacity: usize) {
@@ -399,7 +427,15 @@ impl ObjectTracker {
         &self.tracks
     }
 
-    fn update_current(&mut self, dets: &[ObjectDetection]) -> Vec<TrackedObject> {
+    pub fn association_geometry(&self) -> &[TrackedAssociationGeometry] {
+        &self.association_geometry
+    }
+
+    fn update_current(
+        &mut self,
+        dets: &[ObjectDetection],
+        observations: Option<&[AssociationObservation]>,
+    ) -> Vec<TrackedObject> {
         self.diagnostics.record(TrackerDecision::new(
             &self.frame_binding,
             TrackerDomain::Object,
@@ -420,6 +456,7 @@ impl ObjectTracker {
         }
         let mut track_used = vec![false; self.tracks.len()];
         let mut det_used = vec![false; dets.len()];
+        let mut det_track_ids = vec![None; dets.len()];
 
         // Process detections high-score first for stable greedy matching.
         let mut order: Vec<usize> = (0..dets.len()).collect();
@@ -483,6 +520,7 @@ impl ObjectTracker {
                 t.score = d.score;
                 t.age += 1;
                 t.missed = 0;
+                det_track_ids[di] = Some(t.id);
                 let mut event = TrackerDecision::new(
                     &self.frame_binding,
                     TrackerDomain::Object,
@@ -513,6 +551,7 @@ impl ObjectTracker {
                 pos_conf: 0.0,
                 mask: None,
             });
+            det_track_ids[di] = Some(id);
             let mut event = TrackerDecision::new(
                 &self.frame_binding,
                 TrackerDomain::Object,
@@ -587,6 +626,20 @@ impl ObjectTracker {
             event.track_id = Some(track.id);
             self.diagnostics.record(event);
         }
+        self.association_geometry = observations.map_or_else(Vec::new, |observations| {
+            observations
+                .iter()
+                .zip(det_track_ids)
+                .filter_map(|(observation, track_id)| {
+                    track_id.map(|track_id| TrackedAssociationGeometry {
+                        track_id,
+                        detection_key: observation.detection_key,
+                        source_frame_id: observation.source.source_frame_id,
+                        geometry: observation.geometry.clone(),
+                    })
+                })
+                .collect()
+        });
         emitted
     }
 }
@@ -1495,6 +1548,21 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].id, OBJECT_ID_BASE);
         assert_eq!(out[0].age, 1);
+    }
+
+    #[test]
+    fn observed_object_step_maps_same_packet_geometry_to_track() {
+        let binding = TrackerFrameBinding::rgb_only(12);
+        let detection = od("cup", 0.4, 0.4, 0.5, 0.55, 0.8);
+        let observation =
+            AssociationObservation::unavailable(3, &binding, detection.bbox, detection.score);
+        let mut tracker = ObjectTracker::new();
+        let out = tracker
+            .update_observed_bound(&binding, &[observation], &[detection])
+            .unwrap();
+        assert_eq!(out[0].id, OBJECT_ID_BASE);
+        assert_eq!(tracker.association_geometry()[0].track_id, OBJECT_ID_BASE);
+        assert_eq!(tracker.association_geometry()[0].source_frame_id, 12);
     }
 
     #[test]

@@ -42,8 +42,10 @@ pub use sensor::{
 pub use space::ScaleCalibrator;
 pub use tracker::PersonTracker;
 pub use tracking::{
-    TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
-    TrackerDomain, TrackerFrameBinding,
+    AssociationGeometry, AssociationGeometryStatus, AssociationObservation, AxisAlignedExtent,
+    GeometryReason, GeometrySampling, TrackedAssociationGeometry, TrackerDecision,
+    TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot, TrackerDomain,
+    TrackerFrameBinding,
 };
 pub use types::{BBox, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind, Scene};
 pub use world::{

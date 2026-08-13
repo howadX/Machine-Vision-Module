@@ -3,6 +3,7 @@
 //! The binding is shared by live AgentMesh ticks and production-parity replay.
 //! It deliberately carries no pixels, masks, embeddings or durable semantic state.
 
+use crate::BBox;
 use crate::sensor::{
     CalibrationRef, DepthGeometry, DepthStatus, MetricDepthFrame, SensorContractError,
     SensorSourceId, SensorStamp,
@@ -28,6 +29,9 @@ pub struct TrackerFrameBinding {
 }
 
 impl TrackerFrameBinding {
+    // Sensor fields stay explicit so callers cannot accidentally erase one half
+    // of the exact RGB-D binding behind a loosely typed aggregate.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_sensor_parts(
         source_frame_id: u64,
         source: &SensorSourceId,
@@ -109,6 +113,209 @@ impl TrackerFrameBinding {
             calibration_revision: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometrySampling {
+    Mask,
+    ErodedMask,
+    InnerBbox,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssociationGeometryStatus {
+    Observed,
+    Weak,
+    Withheld,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryReason {
+    DepthUnavailable,
+    DepthStale,
+    DepthUnregistered,
+    CalibrationMismatch,
+    MissingOwnerAssociation,
+    InvalidOwnerAssociation,
+    EmptyMask,
+    InvalidBbox,
+    InsufficientSamples,
+    LowValidRatio,
+    HighBoundaryContamination,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AxisAlignedExtent {
+    pub min_m: [f32; 3],
+    pub max_m: [f32; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssociationGeometry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub centroid_xyz_m: Option<[f32; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub median_z_m: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extent_m: Option<AxisAlignedExtent>,
+    pub valid_ratio: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth_mad_m: Option<f32>,
+    pub boundary_contamination: f32,
+    pub sample_count: u32,
+    pub rgb_stamp: SensorStamp,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth_stamp: Option<SensorStamp>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pairing_skew_ns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calibration: Option<CalibrationRef>,
+    pub sampling: GeometrySampling,
+    pub status: AssociationGeometryStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<GeometryReason>,
+}
+
+impl AssociationGeometry {
+    pub fn unavailable(binding: &TrackerFrameBinding, reason: GeometryReason) -> Self {
+        Self {
+            centroid_xyz_m: None,
+            median_z_m: None,
+            extent_m: None,
+            valid_ratio: 0.0,
+            depth_mad_m: None,
+            boundary_contamination: 0.0,
+            sample_count: 0,
+            rgb_stamp: binding.rgb_stamp.clone(),
+            depth_stamp: binding.depth_stamp.clone(),
+            pairing_skew_ns: binding.rgb_depth_skew_ns,
+            calibration: None,
+            sampling: GeometrySampling::None,
+            status: AssociationGeometryStatus::Unknown,
+            reason: Some(reason),
+        }
+    }
+
+    pub fn validate_for(&self, binding: &TrackerFrameBinding) -> Result<(), &'static str> {
+        if self.rgb_stamp != binding.rgb_stamp
+            || self.depth_stamp != binding.depth_stamp
+            || self.pairing_skew_ns != binding.rgb_depth_skew_ns
+        {
+            return Err("association geometry stamp differs from tracker frame binding");
+        }
+        let measured = matches!(
+            self.status,
+            AssociationGeometryStatus::Observed | AssociationGeometryStatus::Weak
+        );
+        if measured
+            != (self.centroid_xyz_m.is_some()
+                && self.median_z_m.is_some()
+                && self.extent_m.is_some()
+                && self.depth_mad_m.is_some()
+                && self.sample_count > 0
+                && self.calibration.is_some())
+        {
+            return Err("association geometry value/status mismatch");
+        }
+        if !self.valid_ratio.is_finite()
+            || !self.boundary_contamination.is_finite()
+            || !(0.0..=1.0).contains(&self.valid_ratio)
+            || !(0.0..=1.0).contains(&self.boundary_contamination)
+        {
+            return Err("association geometry quality is invalid");
+        }
+        if measured {
+            let centroid = self.centroid_xyz_m.unwrap();
+            let extent = self.extent_m.unwrap();
+            let median_z = self.median_z_m.unwrap();
+            let mad = self.depth_mad_m.unwrap();
+            if !centroid.iter().all(|v| v.is_finite())
+                || !extent
+                    .min_m
+                    .iter()
+                    .chain(extent.max_m.iter())
+                    .all(|v| v.is_finite())
+                || !median_z.is_finite()
+                || median_z <= 0.0
+                || !mad.is_finite()
+                || mad < 0.0
+                || (0..3).any(|axis| extent.min_m[axis] > extent.max_m[axis])
+            {
+                return Err("association geometry measurement is invalid");
+            }
+            self.calibration
+                .as_ref()
+                .unwrap()
+                .validate()
+                .map_err(|_| "association geometry calibration is invalid")?;
+            if self
+                .calibration
+                .as_ref()
+                .map(|value| value.revision_sha256.as_str())
+                != binding.calibration_revision.as_deref()
+            {
+                return Err("association geometry calibration differs from frame binding");
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssociationObservation {
+    pub detection_key: u32,
+    pub source: TrackerFrameBinding,
+    pub bbox: BBox,
+    pub detector_score: f32,
+    pub geometry: AssociationGeometry,
+}
+
+impl AssociationObservation {
+    pub fn unavailable(
+        detection_key: u32,
+        source: &TrackerFrameBinding,
+        bbox: BBox,
+        detector_score: f32,
+    ) -> Self {
+        Self {
+            detection_key,
+            source: source.clone(),
+            bbox,
+            detector_score,
+            geometry: AssociationGeometry::unavailable(source, GeometryReason::DepthUnavailable),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !self.detector_score.is_finite()
+            || !(0.0..=1.0).contains(&self.detector_score)
+            || ![self.bbox.x1, self.bbox.y1, self.bbox.x2, self.bbox.y2]
+                .iter()
+                .all(|value| value.is_finite())
+            || self.bbox.x2 <= self.bbox.x1
+            || self.bbox.y2 <= self.bbox.y1
+        {
+            return Err("invalid association observation");
+        }
+        self.geometry.validate_for(&self.source)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrackedAssociationGeometry {
+    pub track_id: u32,
+    pub detection_key: u32,
+    pub source_frame_id: u64,
+    pub geometry: AssociationGeometry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -303,5 +510,14 @@ mod tests {
         assert_eq!(snapshot.events.len(), 1);
         assert_eq!(snapshot.dropped_events, 1);
         assert_eq!(snapshot.counters.values().sum::<u64>(), 2);
+    }
+
+    #[test]
+    fn geometry_from_another_rgb_tick_is_rejected() {
+        let binding = TrackerFrameBinding::rgb_only(7);
+        let mut geometry =
+            AssociationGeometry::unavailable(&binding, GeometryReason::DepthUnavailable);
+        geometry.rgb_stamp.source_sequence = 8;
+        assert!(geometry.validate_for(&binding).is_err());
     }
 }

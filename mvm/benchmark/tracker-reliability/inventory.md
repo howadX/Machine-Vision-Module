@@ -100,3 +100,23 @@ the production baseline.
 - The T2 tail is explicit: binding is exact, but metric measurement still happens post-tracking in
   Fusion. T2 must compute and attach Human/Scene measurements on this same packet before association,
   then pass that one admitted measurement forward without duplicate geometry math.
+
+## T2 resolution
+
+- Human and Scene construct `AssociationObservation` on their own detector tick from the exact
+  immutable RGB-D packet. Detection keys are local to that tick; measurement has no track or
+  canonical entity ID.
+- `mvm-depth::measure_association_geometry` is the single bounded production primitive. It samples
+  a current mask when available, otherwise a 20%-inset bbox, and records RGB/depth stamps, measured
+  skew, calibration, sampling method, quality and a typed honesty status/reason.
+- PersonTracker and ObjectTracker perform their existing RGB association, then map the already-made
+  measurement from detection key to track ID. The same value is carried in Human/Scene observation
+  packets to Fusion; Fusion no longer resamples a later capture frame through stale track boxes.
+- Human and Scene geometry retain independent source ticks and timestamps. Fusion rejects future or
+  duplicate per-track geometry before mutating canonical state and uses measurement-local provenance
+  for `DirectMetricGeometry` evidence.
+- Missing depth is `Unknown`; stale/skew, missing owner, empty mask and calibration mismatch are typed
+  `Unknown`/`Withheld`. Live RGB detection continues, while malformed frozen replay input remains
+  fail-closed before tracker mutation.
+- Geometry sampling exists only in `mvm-depth`; tracker trace and measurements remain runtime/replay
+  evidence and do not create a second durable semantic history beside `labels.jsonl`.

@@ -15,14 +15,36 @@
 
 use crate::space::{DepthEma, Pinhole, face_bbox_to_3d};
 use crate::tracking::{
-    TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
-    TrackerDomain, TrackerFrameBinding,
+    AssociationObservation, TrackedAssociationGeometry, TrackerDecision, TrackerDecisionKind,
+    TrackerDiagnostics, TrackerDiagnosticsSnapshot, TrackerDomain, TrackerFrameBinding,
 };
 use crate::types::{
     BBox, BodyObservation, Detection, FIRST_EPHEMERAL_ID, LifecycleState, PersonTrack,
 };
 use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
+fn validate_observations(
+    binding: &TrackerFrameBinding,
+    observations: &[AssociationObservation],
+    bboxes: impl Iterator<Item = BBox>,
+) -> Result<(), &'static str> {
+    let bboxes: Vec<BBox> = bboxes.collect();
+    if observations.len() != bboxes.len() {
+        return Err("association observation count differs from detections");
+    }
+    let mut keys = HashSet::with_capacity(observations.len());
+    for (observation, bbox) in observations.iter().zip(bboxes) {
+        observation.validate()?;
+        if &observation.source != binding || observation.bbox != bbox {
+            return Err("association observation differs from detection frame or bbox");
+        }
+        if !keys.insert(observation.detection_key) {
+            return Err("duplicate detection key");
+        }
+    }
+    Ok(())
+}
 
 /// Multi-person tracker — the temporal fusion layer of MVM.
 pub struct PersonTracker {
@@ -63,6 +85,8 @@ pub struct PersonTracker {
     diagnostics: TrackerDiagnostics,
     frame_binding: TrackerFrameBinding,
     compatibility_frame_id: u64,
+    association_geometry: Vec<TrackedAssociationGeometry>,
+    low_recovery_matches: Vec<(usize, u32)>,
 }
 
 /// Cosine similarity of two L2-normalised embeddings (== dot product).
@@ -196,6 +220,8 @@ impl PersonTracker {
             diagnostics: TrackerDiagnostics::default(),
             frame_binding: TrackerFrameBinding::rgb_only(0),
             compatibility_frame_id: 0,
+            association_geometry: Vec::new(),
+            low_recovery_matches: Vec::new(),
         }
     }
 
@@ -274,7 +300,7 @@ impl PersonTracker {
     ) {
         self.compatibility_frame_id = self.compatibility_frame_id.saturating_add(1);
         self.frame_binding = TrackerFrameBinding::rgb_only(self.compatibility_frame_id);
-        self.tick_motion_current(high, low, landmarks, t_secs);
+        self.tick_motion_current(high, low, landmarks, t_secs, None);
     }
 
     /// Process the exact RGB/RGB-D packet represented by `binding` through the
@@ -288,7 +314,34 @@ impl PersonTracker {
         t_secs: f64,
     ) {
         self.frame_binding = binding.clone();
-        self.tick_motion_current(high, low, landmarks, t_secs);
+        self.tick_motion_current(high, low, landmarks, t_secs, None);
+    }
+
+    /// Production frame step with pre-association, same-packet measurements.
+    // Detection payloads and their measurements are parallel validated inputs;
+    // keeping both explicit preserves the compatibility entrypoint and exact seam.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tick_motion_observed_bound(
+        &mut self,
+        binding: &TrackerFrameBinding,
+        high_observations: &[AssociationObservation],
+        low_observations: &[AssociationObservation],
+        high: &[Detection],
+        low: &[BBox],
+        landmarks: &[Option<crate::motion::Landmarks33>],
+        t_secs: f64,
+    ) -> Result<(), &'static str> {
+        validate_observations(binding, high_observations, high.iter().map(|d| d.bbox))?;
+        validate_observations(binding, low_observations, low.iter().copied())?;
+        self.frame_binding = binding.clone();
+        self.tick_motion_current(
+            high,
+            low,
+            landmarks,
+            t_secs,
+            Some((high_observations, low_observations)),
+        );
+        Ok(())
     }
 
     fn tick_motion_current(
@@ -297,6 +350,7 @@ impl PersonTracker {
         low: &[BBox],
         landmarks: &[Option<crate::motion::Landmarks33>],
         t_secs: f64,
+        observations: Option<(&[AssociationObservation], &[AssociationObservation])>,
     ) {
         self.diagnostics.record(TrackerDecision::new(
             &self.frame_binding,
@@ -315,6 +369,30 @@ impl PersonTracker {
             }
         }
         self.finalize();
+        self.association_geometry =
+            observations.map_or_else(Vec::new, |(high_observations, low_observations)| {
+                let high = high_observations.iter().zip(ids.iter().copied());
+                let low =
+                    self.low_recovery_matches
+                        .iter()
+                        .filter_map(|(low_index, internal_id)| {
+                            low_observations
+                                .get(*low_index)
+                                .map(|observation| (observation, *internal_id))
+                        });
+                high.chain(low)
+                    .filter_map(|(observation, internal_id)| {
+                        self.tracks
+                            .get(&internal_id)
+                            .map(|track| TrackedAssociationGeometry {
+                                track_id: track.display_id,
+                                detection_key: observation.detection_key,
+                                source_frame_id: observation.source.source_frame_id,
+                                geometry: observation.geometry.clone(),
+                            })
+                    })
+                    .collect()
+            });
     }
 
     pub fn set_diagnostic_capacity(&mut self, capacity: usize) {
@@ -323,6 +401,10 @@ impl PersonTracker {
 
     pub fn diagnostics(&self) -> TrackerDiagnosticsSnapshot {
         self.diagnostics.snapshot()
+    }
+
+    pub fn association_geometry(&self) -> &[TrackedAssociationGeometry] {
+        &self.association_geometry
     }
 
     /// Lean, enrichment-free association (phase 9.5 — the inverted contract).
@@ -354,6 +436,7 @@ impl PersonTracker {
     /// `identity`/`embedding` engages the cosine/label re-link tiers; a bbox-only
     /// one skips them and relies on geometry.
     fn associate_core(&mut self, high: &[Detection], low: &[BBox]) -> Vec<u32> {
+        self.low_recovery_matches.clear();
         // ── Step 1: predict all tracks (State-Gating) ──────────────────────
         // KF is now in predicted state; predicted[id] = bbox to use for IoU.
         let predicted: HashMap<u32, BBox> = self
@@ -818,6 +901,7 @@ impl PersonTracker {
                 t.missed = 0;
                 // No enrichment: a low-conf box has no trustworthy attributes.
                 matched_ids.push(id);
+                self.low_recovery_matches.push((low_index, id));
                 let mut event = TrackerDecision::new(
                     &self.frame_binding,
                     TrackerDomain::Person,
@@ -1178,6 +1262,84 @@ mod tests {
             head_facing: None,
             mask: None,
         }]
+    }
+
+    #[test]
+    fn observed_frame_step_preserves_rgb_association_and_maps_geometry_to_display_id() {
+        let binding = TrackerFrameBinding::rgb_only(7);
+        let mut detection = Detection::bare(0.1, 0.1, 0.4, 0.9);
+        detection.identity = Some("alice".into());
+        detection.identity_confidence = Some(0.9);
+        let observation = AssociationObservation::unavailable(0, &binding, detection.bbox, 1.0);
+        let mut observed = PersonTracker::new();
+        observed.register_user("alice");
+        observed
+            .tick_motion_observed_bound(
+                &binding,
+                &[observation],
+                &[],
+                &[detection.clone()],
+                &[],
+                &[],
+                0.0,
+            )
+            .unwrap();
+
+        let mut compatibility = PersonTracker::new();
+        compatibility.register_user("alice");
+        compatibility.tick_motion_bound(&binding, &[detection], &[], &[], 0.0);
+
+        assert_eq!(observed.track_count(), compatibility.track_count());
+        assert_eq!(
+            observed.active().next().unwrap().bbox,
+            compatibility.active().next().unwrap().bbox
+        );
+        assert_eq!(observed.association_geometry()[0].track_id, 0);
+        assert_eq!(observed.association_geometry()[0].source_frame_id, 7);
+    }
+
+    #[test]
+    fn low_recovery_retains_its_own_same_tick_measurement() {
+        let first_binding = TrackerFrameBinding::rgb_only(7);
+        let first = Detection::bare(0.1, 0.1, 0.4, 0.9);
+        let first_observation =
+            AssociationObservation::unavailable(0, &first_binding, first.bbox, 0.9);
+        let mut tracker = PersonTracker::new();
+        tracker
+            .tick_motion_observed_bound(
+                &first_binding,
+                &[first_observation],
+                &[],
+                &[first],
+                &[],
+                &[],
+                0.0,
+            )
+            .unwrap();
+
+        let second_binding = TrackerFrameBinding::rgb_only(8);
+        let weak = BBox {
+            x1: 0.11,
+            y1: 0.11,
+            x2: 0.41,
+            y2: 0.91,
+        };
+        let weak_observation = AssociationObservation::unavailable(1, &second_binding, weak, 0.25);
+        tracker
+            .tick_motion_observed_bound(
+                &second_binding,
+                &[],
+                &[weak_observation],
+                &[],
+                &[weak],
+                &[],
+                1.0 / 30.0,
+            )
+            .unwrap();
+
+        assert_eq!(tracker.association_geometry().len(), 1);
+        assert_eq!(tracker.association_geometry()[0].detection_key, 1);
+        assert_eq!(tracker.association_geometry()[0].source_frame_id, 8);
     }
 
     /// Detection carrying an SFace embedding (and matching identity label).
