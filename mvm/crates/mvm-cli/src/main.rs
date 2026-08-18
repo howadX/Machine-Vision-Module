@@ -584,6 +584,9 @@ struct MeshArgs {
     /// Experimental 18.8b.1 diagnostic selector. It only gates one-shot
     /// permits; fixed expert cadence remains unchanged.
     scheduling_mode: agents::SchedulingMode,
+    /// Opt-in per-expert-tick association capture for an explicitly consented
+    /// calibration take. This is replay evidence, never semantic history.
+    tracker_capture: Option<PathBuf>,
     /// Flags shared with the legacy sync root path (phase 13.A1).
     common: CommonFlags,
 }
@@ -596,6 +599,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         dump_landmarks: false,
         interval_ms: None,
         scheduling_mode: agents::SchedulingMode::SceneAndDepth,
+        tracker_capture: None,
         common: CommonFlags::default(),
     };
     let mut i = 2; // skip program name + subcommand (`mesh` / `run`)
@@ -622,6 +626,12 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
             "--interval-ms" => {
                 if i + 1 < raw.len() {
                     a.interval_ms = raw[i + 1].parse().ok();
+                    i += 1;
+                }
+            }
+            "--tracker-capture" => {
+                if i + 1 < raw.len() {
+                    a.tracker_capture = Some(PathBuf::from(&raw[i + 1]));
                     i += 1;
                 }
             }
@@ -653,6 +663,7 @@ fn parse_native_camera_alias(raw: &[String]) -> Result<MeshArgs> {
         dump_landmarks: false,
         interval_ms: None,
         scheduling_mode: agents::SchedulingMode::SceneAndDepth,
+        tracker_capture: None,
         common: CommonFlags::default(),
     };
     let mut i = 1;
@@ -903,6 +914,16 @@ fn build_live_mesh(
     product: &config_file::ProductConfig,
     args: &MeshArgs,
 ) -> Result<mvm_mesh::AgentMesh> {
+    if args.tracker_capture.is_some() {
+        anyhow::ensure!(
+            args.common.record,
+            "--tracker-capture requires --record so consented RGB/depth artifacts stay in Dataset Factory"
+        );
+        anyhow::ensure!(
+            args.common.privacy.is_some(),
+            "--tracker-capture requires an explicit --privacy mode"
+        );
+    }
     // One private (0700) data dir holds state + logs + journal (phase 14.0.4) —
     // `serve`/`snapshot`/`recap` read the same place `run` writes by default.
     paths::ensure_dir_private(&product.data_dir)?;
@@ -1039,6 +1060,56 @@ fn build_live_mesh(
     let scene_control = agents::SceneExecutionControl::default();
     let depth_control = agents::DepthExecutionControl::default();
     let scheduling_metrics = agents::SchedulingMetrics::new(args.scheduling_mode);
+    let tracker_capture = if let Some(root) = args.tracker_capture.clone() {
+        let binary = std::env::current_exe().context("resolve tracker capture binary")?;
+        let binary_sha256 = setup::sha256_file(&binary)
+            .with_context(|| format!("hash tracker capture binary {}", binary.display()))?;
+        let model_digests = manifest::MODELS
+            .iter()
+            .filter_map(|model| {
+                let path = config.models_path.join(model.file);
+                path.exists().then(|| {
+                    setup::sha256_file(&path)
+                        .map(|sha256| agents::ModelDigest::new(model.file, sha256))
+                        .with_context(|| format!("hash tracker capture model {}", path.display()))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let metadata = agents::TrackerCaptureMetadata::new(
+            chrono::Utc::now().to_rfc3339(),
+            binary_sha256,
+            args.common.privacy.clone().expect("validated above"),
+            args.common.masks,
+            product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
+            names.clone(),
+            serde_json::json!({
+                "revision": "tracker-t3-pre-t4",
+                "person": {
+                    "iou_gate": 0.3,
+                    "confirmation_age": mvm_core::tracker::PERSON_CONFIRM_AGE,
+                    "timeout_frames": person_tracker.timeout_frames,
+                    "relink_window_frames": person_tracker.relink_window_frames,
+                    "relink_center_dist": person_tracker.relink_center_dist,
+                },
+                "object": {
+                    "iou_gate": 0.3,
+                    "confirmation_age": mvm_scene::OBJECT_CONFIRM_AGE,
+                    "timeout_frames": config.object_track_timeout,
+                },
+                "object_cadence": config.object_cadence,
+            }),
+            model_digests,
+        );
+        Some(agents::TrackerCalibrationCapture::create(root, &metadata)?)
+    } else {
+        None
+    };
+    if let Some(capture) = &tracker_capture {
+        eprintln!(
+            "  tracker calibration capture → {} (separate from labels.jsonl)",
+            capture.root().display()
+        );
+    }
     let scene_available = yolo.is_some();
     let depth_available = depth.is_some();
     let run_id = format!(
@@ -1064,28 +1135,34 @@ fn build_live_mesh(
         Box::new(camera),
         args.max_frames,
     )));
-    mesh.add(Box::new(agents::HumanAgent::new(
-        pipeline,
-        person_tracker,
-        scene_observations.clone(),
-        human_observations.clone(),
-        config.object_cadence,
-        scheduling_metrics.clone(),
-        product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
-    )));
-    if let Some(yolo) = yolo {
-        mesh.add(Box::new(agents::SceneAgent::new(
-            yolo,
-            seg,
+    mesh.add(Box::new(
+        agents::HumanAgent::new(
+            pipeline,
+            person_tracker,
             scene_observations.clone(),
-            mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
-            config.object_score_thresh,
-            config.object_min_area,
+            human_observations.clone(),
             config.object_cadence,
-            scene_control.clone(),
             scheduling_metrics.clone(),
             product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
-        )));
+        )
+        .with_calibration_capture(tracker_capture.clone()),
+    ));
+    if let Some(yolo) = yolo {
+        mesh.add(Box::new(
+            agents::SceneAgent::new(
+                yolo,
+                seg,
+                scene_observations.clone(),
+                mvm_scene::ObjectTracker::with_params(0.3, config.object_track_timeout, 0.5),
+                config.object_score_thresh,
+                config.object_min_area,
+                config.object_cadence,
+                scene_control.clone(),
+                scheduling_metrics.clone(),
+                product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
+            )
+            .with_calibration_capture(tracker_capture.clone()),
+        ));
     }
     if let Some(depth) = depth {
         mesh.add(Box::new(agents::MonocularDepthProvider::new(
@@ -1181,7 +1258,8 @@ fn build_live_mesh(
         // until then the existing writer only consumes relative maps.
         mesh.add(Box::new(
             agents::DatasetWriterAgent::new(cfg, root, Some(depth_observations.clone()))
-                .with_fused_frames(fused_frames.clone()),
+                .with_fused_frames(fused_frames.clone())
+                .with_empty_calibration_frames(tracker_capture.is_some()),
         ));
     }
 

@@ -199,7 +199,7 @@ fn report(spec: &ModelSpec, outcome: &Outcome) {
 }
 
 /// Streaming SHA-256 of a file as lowercase hex.
-fn sha256_file(path: &Path) -> Result<String> {
+pub(crate) fn sha256_file(path: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
     let mut f = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();

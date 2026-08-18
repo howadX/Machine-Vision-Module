@@ -28,6 +28,7 @@ mod observations;
 mod policy;
 mod scene;
 mod statefile;
+mod tracker_capture;
 
 pub(crate) use capture::CaptureAgent;
 pub(crate) use cortex::CortexAgent;
@@ -47,6 +48,9 @@ pub(crate) use policy::{
 };
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
+pub(crate) use tracker_capture::{
+    ModelDigest, TrackerCalibrationCapture, TrackerCaptureMetadata,
+};
 
 use crate::pipeline::BodyData;
 use mvm_core::{BBox, ObjectState, PersonState, PersonTracker, Position3D};

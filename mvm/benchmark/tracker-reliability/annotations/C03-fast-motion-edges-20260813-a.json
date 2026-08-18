@@ -1,0 +1,69 @@
+{
+  "schema": "mvm-tracker-truth-annotation/1.0",
+  "capture_id": "C03-fast-motion-edges-20260813-a",
+  "split": "calibration",
+  "status": "provisional_requires_operator_signoff",
+  "truth_source": "manual visual review of consented RGB; tracker and detector outputs were not used as truth",
+  "review": {
+    "reviewer": "codex_visual_review",
+    "reviewed_at": "2026-08-13T19:20:00+03:00",
+    "operator_signoff": null
+  },
+  "frame_binding": {
+    "dataset_session_id": "2026-08-13_190554",
+    "dataset_seq_matches_capture_source_frame_with_offset": 0,
+    "limitations": [
+      "dataset contains 1347 frames while capture produced 1350; truth intervals stop before the missing tail",
+      "dense boxes are piecewise-linear manual keyframes and remain provisional until operator signoff"
+    ]
+  },
+  "truth_entities": [
+    {
+      "truth_id": "P1",
+      "kind": "person",
+      "identity": "same consenting operator throughout; identity label is not an association cue",
+      "intervals": [
+        {"start_frame": 0, "end_frame": 154, "state": "absent"},
+        {"start_frame": 155, "end_frame": 178, "state": "partial", "marker": "entry_left"},
+        {"start_frame": 179, "end_frame": 378, "state": "visible", "marker": "fast_entry_to_center"},
+        {"start_frame": 379, "end_frame": 553, "state": "partial", "marker": "left_edge_and_bent_body"},
+        {"start_frame": 554, "end_frame": 724, "state": "visible", "marker": "right_wall_and_return"},
+        {"start_frame": 725, "end_frame": 779, "state": "partial", "marker": "exit_left"},
+        {"start_frame": 780, "end_frame": 1346, "state": "absent"}
+      ],
+      "bbox_keyframes_normalized": [
+        {"frame": 160, "bbox": [0.00, 0.12, 0.12, 1.00]},
+        {"frame": 180, "bbox": [0.00, 0.00, 0.45, 1.00]},
+        {"frame": 200, "bbox": [0.43, 0.00, 0.70, 1.00]},
+        {"frame": 250, "bbox": [0.38, 0.00, 0.66, 1.00]},
+        {"frame": 300, "bbox": [0.39, 0.00, 0.65, 1.00]},
+        {"frame": 350, "bbox": [0.00, 0.00, 0.31, 1.00]},
+        {"frame": 400, "bbox": [0.00, 0.28, 0.38, 1.00]},
+        {"frame": 450, "bbox": [0.00, 0.26, 0.39, 1.00]},
+        {"frame": 500, "bbox": [0.00, 0.21, 0.42, 1.00]},
+        {"frame": 550, "bbox": [0.00, 0.05, 0.39, 1.00]},
+        {"frame": 600, "bbox": [0.54, 0.00, 0.76, 1.00]},
+        {"frame": 650, "bbox": [0.53, 0.00, 0.76, 1.00]},
+        {"frame": 700, "bbox": [0.45, 0.00, 0.70, 1.00]},
+        {"frame": 750, "bbox": [0.00, 0.00, 0.36, 1.00]},
+        {"frame": 779, "bbox": [0.00, 0.10, 0.08, 1.00]}
+      ]
+    }
+  ],
+  "known_false_positive_regions": [
+    {
+      "label": "desk_monitor_background_as_person",
+      "state": "absent_truth",
+      "approx_bbox_normalized": [0.40, 0.22, 0.72, 0.62],
+      "review_basis": "published person remains after frame 780 while RGB is empty"
+    }
+  ],
+  "ambiguity_intervals": [],
+  "scenario_labels": [
+    "person_fast_motion",
+    "person_frame_edge",
+    "empty_tail",
+    "persistent_detector_false_positive",
+    "rgbd_metric"
+  ]
+}

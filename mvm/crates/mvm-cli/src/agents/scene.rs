@@ -42,6 +42,7 @@ pub(crate) struct SceneAgent {
     control: SceneExecutionControl,
     metrics: super::SchedulingMetrics,
     max_pair_skew_ns: u64,
+    calibration_capture: Option<super::TrackerCalibrationCapture>,
 }
 
 impl SceneAgent {
@@ -73,7 +74,20 @@ impl SceneAgent {
             control,
             metrics,
             max_pair_skew_ns,
+            calibration_capture: None,
         }
+    }
+
+    pub(crate) fn with_calibration_capture(
+        mut self,
+        capture: Option<super::TrackerCalibrationCapture>,
+    ) -> Self {
+        if capture.is_some() {
+            self.tracker
+                .set_diagnostic_capacity(super::tracker_capture::TRACE_CAPACITY);
+        }
+        self.calibration_capture = capture;
+        self
     }
 }
 
@@ -187,6 +201,10 @@ impl Agent for SceneAgent {
                                     )
                                 })
                                 .collect();
+                            let association_masks: Vec<_> = filtered
+                                .iter()
+                                .map(|detection| current_object_mask(detection, &obj_segs))
+                                .collect();
                             let mut tracked = match self.tracker.update_observed_bound(
                                 measurement.binding(),
                                 &association_observations,
@@ -218,6 +236,31 @@ impl Agent for SceneAgent {
                             let published_ids: std::collections::HashSet<u32> =
                                 objects.iter().map(|object| object.id).collect();
                             let occluded: Vec<_> = self.tracker.occluded().cloned().collect();
+                            let current_ids: Vec<u32> =
+                                objects.iter().map(|object| object.id).collect();
+                            let occluded_ids: Vec<u32> =
+                                occluded.iter().map(|object| object.id).collect();
+                            let retained_ids = self.tracker.retained_ids();
+                            let retirements = self.tracker.retirements().to_vec();
+                            if let Some(capture) = &self.calibration_capture
+                                && let Err(error) = capture.write_scene(
+                                    measurement.binding(),
+                                    &frame.sensor.health,
+                                    &association_observations,
+                                    &filtered,
+                                    &association_masks,
+                                    &self.tracker.diagnostics(),
+                                    &current_ids,
+                                    &occluded_ids,
+                                    &retained_ids,
+                                    &retirements,
+                                )
+                            {
+                                eprintln!("  scene: calibration capture failed: {error:#}");
+                                errors += 1;
+                                ctx.request_stop();
+                                continue;
+                            }
                             self.observations.publish(SceneObservationFrame {
                                 stamp,
                                 objects: Arc::new(objects),
@@ -225,8 +268,8 @@ impl Agent for SceneAgent {
                                     &occluded,
                                     stamp.produced_at,
                                 )),
-                                retained_track_ids: Arc::new(self.tracker.retained_ids()),
-                                retirements: Arc::new(self.tracker.retirements().to_vec()),
+                                retained_track_ids: Arc::new(retained_ids),
+                                retirements: Arc::new(retirements),
                                 animals: Arc::new(animals),
                                 person_masks: Arc::new(person_masks),
                                 metric_geometry: Arc::new(

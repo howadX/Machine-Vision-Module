@@ -49,7 +49,9 @@ class TrackerReliabilityContractTests(unittest.TestCase):
                 manifest["status"], self.contract["allowed_manifest_statuses"]
             )
             self.assertFalse(manifest["production_promotion_eligible"])
-        self.assertEqual(self.manifests["calibration"]["status"], "not_collected")
+        self.assertEqual(
+            self.manifests["calibration"]["status"], "insufficient_evidence"
+        )
         self.assertEqual(self.manifests["held-out"]["status"], "not_collected")
 
     def test_every_registered_artifact_exists_and_matches_sha256(self):
@@ -71,7 +73,12 @@ class TrackerReliabilityContractTests(unittest.TestCase):
         self.assertIn("synthetic_adapter", classes)
         self.assertIn("captured_exploratory", classes)
         self.assertIn("production_parity_synthetic", classes)
-        self.assertFalse(self.manifests["calibration"]["artifacts"])
+        calibration_classes = {
+            artifact["evidence_class"]
+            for artifact in self.manifests["calibration"]["artifacts"]
+        }
+        self.assertEqual(calibration_classes, {"captured_calibration_provisional"})
+        self.assertFalse(self.manifests["calibration"]["production_promotion_eligible"])
         self.assertFalse(self.manifests["held-out"]["artifacts"])
 
 

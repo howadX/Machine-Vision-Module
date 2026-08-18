@@ -278,6 +278,73 @@ pub struct AssociationObservation {
     pub geometry: AssociationGeometry,
 }
 
+/// Calibrated scalar-only interpretation of one pre-association metric sample.
+/// `WeakOrMissing` is deliberately neutral: it is never a zero-distance cue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetricEvidenceQuality {
+    WeakOrMissing,
+    Corroborating,
+}
+
+/// Candidate geometry comparison. The residual is bounded and dimensionless;
+/// it is a tie-breaker, not a physical covariance estimate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MetricCandidateCue {
+    pub residual: Option<f32>,
+    pub impossible: bool,
+}
+
+/// T4 calibration candidate, selected only on the calibration split. These are
+/// internal versioned constants, not operator knobs.
+pub const METRIC_MIN_VALID_RATIO: f32 = 0.75;
+pub const METRIC_MAX_DEPTH_MAD_M: f32 = 0.12;
+pub const METRIC_MAX_BOUNDARY_CONTAMINATION: f32 = 0.35;
+pub const METRIC_MIN_SAMPLES: u32 = 120;
+pub const METRIC_IMPOSSIBLE_Z_JUMP_M: f32 = 1.5;
+pub const METRIC_IMPOSSIBLE_XYZ_JUMP_M: f32 = 2.0;
+
+pub fn metric_evidence_quality(geometry: &AssociationGeometry) -> MetricEvidenceQuality {
+    if geometry.status == AssociationGeometryStatus::Observed
+        && geometry.valid_ratio >= METRIC_MIN_VALID_RATIO
+        && geometry.depth_mad_m.is_some_and(|mad| mad <= METRIC_MAX_DEPTH_MAD_M)
+        && geometry.boundary_contamination <= METRIC_MAX_BOUNDARY_CONTAMINATION
+        && geometry.sample_count >= METRIC_MIN_SAMPLES
+    {
+        MetricEvidenceQuality::Corroborating
+    } else {
+        MetricEvidenceQuality::WeakOrMissing
+    }
+}
+
+pub fn metric_candidate_cue(
+    previous: Option<&AssociationGeometry>,
+    current: &AssociationGeometry,
+) -> MetricCandidateCue {
+    let Some(previous) = previous else {
+        return MetricCandidateCue { residual: None, impossible: false };
+    };
+    if metric_evidence_quality(previous) != MetricEvidenceQuality::Corroborating
+        || metric_evidence_quality(current) != MetricEvidenceQuality::Corroborating
+    {
+        return MetricCandidateCue { residual: None, impossible: false };
+    }
+    let previous_xyz = previous.centroid_xyz_m.expect("corroborating geometry has centroid");
+    let current_xyz = current.centroid_xyz_m.expect("corroborating geometry has centroid");
+    let dz = (current_xyz[2] - previous_xyz[2]).abs();
+    let dxyz = previous_xyz
+        .iter()
+        .zip(current_xyz)
+        .map(|(a, b)| (a - b).powi(2))
+        .sum::<f32>()
+        .sqrt();
+    let impossible = dz > METRIC_IMPOSSIBLE_Z_JUMP_M || dxyz > METRIC_IMPOSSIBLE_XYZ_JUMP_M;
+    let scale = (0.25 + 0.25 * (previous_xyz[2] + current_xyz[2]) * 0.5).max(0.25);
+    MetricCandidateCue {
+        residual: Some((dxyz / scale).clamp(0.0, 1.0)),
+        impossible,
+    }
+}
+
 impl AssociationObservation {
     pub fn unavailable(
         detection_key: u32,
@@ -357,6 +424,8 @@ pub struct TrackerDecision {
     pub momentum: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mask_iou: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_residual: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -386,6 +455,7 @@ impl TrackerDecision {
             iou: None,
             momentum: None,
             mask_iou: None,
+            geometry_residual: None,
             score: None,
             cue: None,
             outcome: outcome.into(),
@@ -490,6 +560,33 @@ impl TrackerDiagnostics {
 mod tests {
     use super::*;
 
+    fn observed_geometry(xyz: [f32; 3], mad: f32) -> AssociationGeometry {
+        let binding = TrackerFrameBinding::rgb_only(7);
+        AssociationGeometry {
+            centroid_xyz_m: Some(xyz),
+            median_z_m: Some(xyz[2]),
+            extent_m: Some(AxisAlignedExtent {
+                min_m: [xyz[0] - 0.1, xyz[1] - 0.1, xyz[2] - 0.1],
+                max_m: [xyz[0] + 0.1, xyz[1] + 0.1, xyz[2] + 0.1],
+            }),
+            valid_ratio: 0.9,
+            depth_mad_m: Some(mad),
+            boundary_contamination: 0.1,
+            sample_count: 300,
+            rgb_stamp: binding.rgb_stamp.clone(),
+            depth_stamp: None,
+            pairing_skew_ns: None,
+            calibration: Some(CalibrationRef {
+                schema: "test".into(),
+                camera_serial: "camera".into(),
+                revision_sha256: "0".repeat(64),
+            }),
+            sampling: GeometrySampling::InnerBbox,
+            status: AssociationGeometryStatus::Observed,
+            reason: None,
+        }
+    }
+
     #[test]
     fn bounded_trace_counts_without_creating_a_durable_store() {
         let binding = TrackerFrameBinding::rgb_only(7);
@@ -519,5 +616,39 @@ mod tests {
             AssociationGeometry::unavailable(&binding, GeometryReason::DepthUnavailable);
         geometry.rgb_stamp.source_sequence = 8;
         assert!(geometry.validate_for(&binding).is_err());
+    }
+
+    #[test]
+    fn metric_quality_is_unknown_neutral_and_quality_bounded() {
+        let binding = TrackerFrameBinding::rgb_only(7);
+        let unknown = AssociationGeometry::unavailable(&binding, GeometryReason::DepthUnavailable);
+        assert_eq!(
+            metric_evidence_quality(&unknown),
+            MetricEvidenceQuality::WeakOrMissing
+        );
+        let good = observed_geometry([0.0, 0.0, 2.0], 0.05);
+        assert_eq!(
+            metric_evidence_quality(&good),
+            MetricEvidenceQuality::Corroborating
+        );
+        let noisy = observed_geometry([0.0, 0.0, 2.0], METRIC_MAX_DEPTH_MAD_M + 0.01);
+        assert_eq!(
+            metric_evidence_quality(&noisy),
+            MetricEvidenceQuality::WeakOrMissing
+        );
+        assert_eq!(metric_candidate_cue(Some(&good), &unknown).residual, None);
+    }
+
+    #[test]
+    fn metric_residual_is_bounded_and_impossible_jump_vetoes() {
+        let previous = observed_geometry([0.0, 0.0, 1.0], 0.02);
+        let nearby = observed_geometry([0.1, 0.0, 1.1], 0.02);
+        let cue = metric_candidate_cue(Some(&previous), &nearby);
+        assert!(!cue.impossible);
+        assert!(cue.residual.is_some_and(|value| value > 0.0 && value <= 1.0));
+        let impossible = observed_geometry([0.0, 0.0, 3.1], 0.02);
+        let cue = metric_candidate_cue(Some(&previous), &impossible);
+        assert!(cue.impossible);
+        assert_eq!(cue.residual, Some(1.0));
     }
 }

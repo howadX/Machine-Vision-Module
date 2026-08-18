@@ -15,8 +15,9 @@
 
 use crate::space::{DepthEma, Pinhole, face_bbox_to_3d};
 use crate::tracking::{
-    AssociationObservation, TrackedAssociationGeometry, TrackerDecision, TrackerDecisionKind,
-    TrackerDiagnostics, TrackerDiagnosticsSnapshot, TrackerDomain, TrackerFrameBinding,
+    AssociationGeometry, AssociationObservation, MetricEvidenceQuality, TrackedAssociationGeometry,
+    TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
+    TrackerDomain, TrackerFrameBinding, metric_candidate_cue, metric_evidence_quality,
 };
 use crate::types::{
     BBox, BodyObservation, Detection, FIRST_EPHEMERAL_ID, LifecycleState, PersonTrack,
@@ -86,6 +87,8 @@ pub struct PersonTracker {
     frame_binding: TrackerFrameBinding,
     compatibility_frame_id: u64,
     association_geometry: Vec<TrackedAssociationGeometry>,
+    metric_geometry: HashMap<u32, AssociationGeometry>,
+    metric_corroborated: HashSet<u32>,
     low_recovery_matches: Vec<(usize, u32)>,
     retirements: Vec<u32>,
 }
@@ -114,6 +117,11 @@ const W_OCM: f32 = 0.05;
 /// geometry still leads. Absent masks → the term is zero → the <2-person /
 /// no-seg path is byte-identical to pre-A3.
 const W_MASK: f32 = 0.10;
+/// Metric geometry is a bounded tie-breaker only; it cannot override the RGB
+/// gate or turn metres into an unnormalised additive score.
+const W_METRIC: f32 = 0.05;
+/// Two established-track candidates closer than this score remain unmatched.
+const ASSOCIATION_AMBIGUITY_MARGIN: f32 = 0.04;
 /// EMA factor for the observation-centric velocity (phase 9.2). Responsive
 /// enough to follow real motion, smoothed enough to reject single-frame jitter.
 const OBS_VEL_EMA: f32 = 0.5;
@@ -176,10 +184,16 @@ fn record_obs(t: &mut PersonTrack, obs_c: [f32; 2]) {
     t.last_obs_center = Some(obs_c);
 }
 
-fn next_lifecycle(prev: LifecycleState, age: u64, missed: u64, locked: bool) -> LifecycleState {
+fn next_lifecycle(
+    prev: LifecycleState,
+    age: u64,
+    missed: u64,
+    locked: bool,
+    birth_corroborated: bool,
+) -> LifecycleState {
     use LifecycleState::*;
     if missed == 0 {
-        if age < PERSON_CONFIRM_AGE {
+        if age < PERSON_CONFIRM_AGE || !birth_corroborated {
             Tentative
         } else if locked {
             IdLocked
@@ -224,6 +238,8 @@ impl PersonTracker {
             frame_binding: TrackerFrameBinding::rgb_only(0),
             compatibility_frame_id: 0,
             association_geometry: Vec::new(),
+            metric_geometry: HashMap::new(),
+            metric_corroborated: HashSet::new(),
             low_recovery_matches: Vec::new(),
             retirements: Vec::new(),
         }
@@ -362,9 +378,32 @@ impl PersonTracker {
             TrackerDecisionKind::Admission,
             "accepted",
         ));
-        let ids = self.associate_core(high, low);
+        let ids = self.associate_core(high, low, observations);
+        if self.frame_binding.depth_status != crate::DepthStatus::Paired {
+            self.metric_corroborated.extend(ids.iter().flatten().copied());
+        }
+        if let Some((high_observations, low_observations)) = observations {
+            for (observation, id) in high_observations.iter().zip(&ids) {
+                let Some(id) = id else { continue };
+                if metric_evidence_quality(&observation.geometry)
+                    == MetricEvidenceQuality::Corroborating
+                {
+                    self.metric_corroborated.insert(*id);
+                    self.metric_geometry.insert(*id, observation.geometry.clone());
+                }
+            }
+            for (low_index, id) in &self.low_recovery_matches {
+                if let Some(observation) = low_observations.get(*low_index)
+                    && metric_evidence_quality(&observation.geometry)
+                        == MetricEvidenceQuality::Corroborating
+                {
+                    self.metric_corroborated.insert(*id);
+                    self.metric_geometry.insert(*id, observation.geometry.clone());
+                }
+            }
+        }
         for (i, det) in high.iter().enumerate() {
-            let id = ids[i];
+            let Some(id) = ids[i] else { continue };
             self.apply_detection(id, det);
             if let Some(Some(lm)) = landmarks.get(i)
                 && let Some(t) = self.tracks.get_mut(&id)
@@ -375,7 +414,10 @@ impl PersonTracker {
         self.finalize();
         self.association_geometry =
             observations.map_or_else(Vec::new, |(high_observations, low_observations)| {
-                let high = high_observations.iter().zip(ids.iter().copied());
+                let high = high_observations
+                    .iter()
+                    .zip(ids.iter().copied())
+                    .filter_map(|(observation, id)| id.map(|id| (observation, id)));
                 let low =
                     self.low_recovery_matches
                         .iter()
@@ -428,7 +470,10 @@ impl PersonTracker {
                 d
             })
             .collect();
-        self.associate_core(&dets, low)
+        self.associate_core(&dets, low, None)
+            .into_iter()
+            .map(|id| id.expect("RGB compatibility association does not abstain"))
+            .collect()
     }
 
     /// Association core shared by [`Self::tick_byte`] and [`Self::associate`]:
@@ -439,7 +484,12 @@ impl PersonTracker {
     /// track id for each `high` detection, in order. A detection bearing
     /// `identity`/`embedding` engages the cosine/label re-link tiers; a bbox-only
     /// one skips them and relies on geometry.
-    fn associate_core(&mut self, high: &[Detection], low: &[BBox]) -> Vec<u32> {
+    fn associate_core(
+        &mut self,
+        high: &[Detection],
+        low: &[BBox],
+        observations: Option<(&[AssociationObservation], &[AssociationObservation])>,
+    ) -> Vec<Option<u32>> {
         self.low_recovery_matches.clear();
         self.retirements.clear();
         // ── Step 1: predict all tracks (State-Gating) ──────────────────────
@@ -483,7 +533,7 @@ impl PersonTracker {
 
         // ── Step 3: match detections to predicted bboxes ───────────────────
         let mut matched_ids: Vec<u32> = Vec::new();
-        let mut ids: Vec<u32> = Vec::with_capacity(high.len());
+        let mut ids: Vec<Option<u32>> = Vec::with_capacity(high.len());
 
         // ── Step 3a: GLOBAL primary assignment (Hungarian, phase 9.10) ─────
         // Formerly a per-detection greedy IoU pick: each detection independently
@@ -514,12 +564,13 @@ impl PersonTracker {
             .filter(|t| t.lifecycle.is_established())
             .count()
             >= 2;
-        let primary_track: Vec<Option<u32>> = if high.is_empty() || cand_ids.is_empty() {
+        let mut primary_track: Vec<Option<u32>> = if high.is_empty() || cand_ids.is_empty() {
             vec![None; high.len()]
         } else {
             let cost: Vec<Vec<f32>> = high
                 .iter()
-                .map(|det| {
+                .enumerate()
+                .map(|(detection_index, det)| {
                     let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
                     let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
                     cand_ids
@@ -529,6 +580,23 @@ impl PersonTracker {
                             let iou = det.bbox.iou(&pred_bbox);
                             if iou <= IOU_GATE {
                                 return f32::INFINITY; // gate → forbidden pair
+                            }
+                            let metric = observations
+                                .and_then(|values| values.0.get(detection_index))
+                                .map_or(
+                                    crate::tracking::MetricCandidateCue {
+                                        residual: None,
+                                        impossible: false,
+                                    },
+                                    |observation| {
+                                        metric_candidate_cue(
+                                            self.metric_geometry.get(id),
+                                            &observation.geometry,
+                                        )
+                                    },
+                                );
+                            if metric.impossible {
+                                return f32::INFINITY;
                             }
                             // OCM (phase 9.2): the momentum term re-orders matches
                             // above the gate toward the track whose motion points
@@ -553,7 +621,8 @@ impl PersonTracker {
                             } else {
                                 0.0
                             };
-                            -(iou + W_OCM * momentum + W_MASK * mask_iou) // minimise cost = maximise score
+                            -(iou + W_OCM * momentum + W_MASK * mask_iou
+                                - W_METRIC * metric.residual.unwrap_or(0.0))
                         })
                         .collect()
                 })
@@ -569,6 +638,20 @@ impl PersonTracker {
                 let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
                 for &id in &cand_ids {
                     let iou = det.bbox.iou(&predicted[&id]);
+                    let metric = observations
+                        .and_then(|values| values.0.get(di))
+                        .map_or(
+                            crate::tracking::MetricCandidateCue {
+                                residual: None,
+                                impossible: false,
+                            },
+                            |observation| {
+                                metric_candidate_cue(
+                                    self.metric_geometry.get(&id),
+                                    &observation.geometry,
+                                )
+                            },
+                        );
                     let t = &self.tracks[&id];
                     let momentum = match (t.obs_velocity, t.last_obs_center) {
                         (Some(v), Some(c)) => ocm_consistency(v, [det_cx - c[0], det_cy - c[1]]),
@@ -586,19 +669,102 @@ impl PersonTracker {
                         &self.frame_binding,
                         TrackerDomain::Person,
                         TrackerDecisionKind::Candidate,
-                        if iou > IOU_GATE { "eligible" } else { "vetoed" },
+                        if iou > IOU_GATE && !metric.impossible {
+                            "eligible"
+                        } else {
+                            "vetoed"
+                        },
                     );
                     event.detection_index = Some(di);
                     event.track_id = Some(id);
                     event.iou = Some(iou);
                     event.momentum = Some(momentum);
                     event.mask_iou = Some(mask_iou);
-                    event.score =
-                        (iou > IOU_GATE).then_some(iou + W_OCM * momentum + W_MASK * mask_iou);
-                    event.cue = Some("iou_ocm_mask".into());
-                    event.reason = (iou <= IOU_GATE).then(|| "iou_gate".into());
+                    event.geometry_residual = metric.residual;
+                    event.score = (iou > IOU_GATE && !metric.impossible).then_some(
+                        iou + W_OCM * momentum + W_MASK * mask_iou
+                            - W_METRIC * metric.residual.unwrap_or(0.0),
+                    );
+                    event.cue = Some("iou_ocm_mask_metric".into());
+                    event.reason = if iou <= IOU_GATE {
+                        Some("iou_gate".into())
+                    } else if metric.impossible {
+                        Some("metric_impossible_jump".into())
+                    } else {
+                        None
+                    };
                     self.diagnostics.record(event);
                 }
+            }
+        }
+        let mut ambiguity_abstained = vec![false; high.len()];
+        for (di, det) in high.iter().enumerate() {
+            if primary_track[di].is_none() {
+                continue;
+            }
+            let det_cx = (det.bbox.x1 + det.bbox.x2) * 0.5;
+            let det_cy = (det.bbox.y1 + det.bbox.y2) * 0.5;
+            let mut scores = Vec::new();
+            for id in &cand_ids {
+                let track = &self.tracks[id];
+                if !track.lifecycle.is_established() {
+                    continue;
+                }
+                let iou = det.bbox.iou(&predicted[id]);
+                if iou <= IOU_GATE {
+                    continue;
+                }
+                let metric = observations
+                    .and_then(|values| values.0.get(di))
+                    .map_or(
+                        crate::tracking::MetricCandidateCue {
+                            residual: None,
+                            impossible: false,
+                        },
+                        |observation| {
+                            metric_candidate_cue(
+                                self.metric_geometry.get(id),
+                                &observation.geometry,
+                            )
+                        },
+                    );
+                if metric.impossible {
+                    continue;
+                }
+                let momentum = match (track.obs_velocity, track.last_obs_center) {
+                    (Some(v), Some(c)) => {
+                        ocm_consistency(v, [det_cx - c[0], det_cy - c[1]])
+                    }
+                    _ => 0.0,
+                };
+                let mask_iou = if mask_cue_on {
+                    match (&det.mask, &track.last_obs_mask) {
+                        (Some(detection), Some(previous)) => detection.iou(previous),
+                        _ => 0.0,
+                    }
+                } else {
+                    0.0
+                };
+                scores.push(
+                    iou + W_OCM * momentum + W_MASK * mask_iou
+                        - W_METRIC * metric.residual.unwrap_or(0.0),
+                );
+            }
+            scores.sort_by(|a, b| b.total_cmp(a));
+            if scores.len() >= 2 && scores[0] - scores[1] < ASSOCIATION_AMBIGUITY_MARGIN {
+                primary_track[di] = None;
+                ambiguity_abstained[di] = true;
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Person,
+                    TrackerDecisionKind::Assignment,
+                    "abstained",
+                );
+                event.detection_index = Some(di);
+                event.score = Some(scores[0] - scores[1]);
+                event.cue = Some("ambiguity_margin".into());
+                event.reason = Some("competing_established_tracks".into());
+                self.diagnostics.record(event);
             }
         }
         // Reserve every primary-matched track up front so the re-link cascade for
@@ -621,8 +787,15 @@ impl PersonTracker {
             .collect();
 
         for (d, det) in high.iter().enumerate() {
+            if ambiguity_abstained[d] {
+                ids.push(None);
+                continue;
+            }
             let mut best_id = primary_track[d];
             let primary_id = best_id;
+            let current_geometry = observations
+                .and_then(|values| values.0.get(d))
+                .map(|observation| &observation.geometry);
 
             // Identity re-link (fixes #6): if IoU found nothing, try to re-attach
             // to a recently-missed track instead of spawning a new id.
@@ -641,6 +814,11 @@ impl PersonTracker {
                         continue;
                     }
                     if t.missed == 0 || t.missed > self.relink_window_frames {
+                        continue;
+                    }
+                    if current_geometry.is_some_and(|geometry| {
+                        metric_candidate_cue(self.metric_geometry.get(&id), geometry).impossible
+                    }) {
                         continue;
                     }
                     if let Some(track_emb) = &t.embedding {
@@ -684,6 +862,11 @@ impl PersonTracker {
                     }
                     // Only recently-missed tracks (a gap), not active ones.
                     if t.missed == 0 || t.missed > self.relink_window_frames {
+                        continue;
+                    }
+                    if current_geometry.is_some_and(|geometry| {
+                        metric_candidate_cue(self.metric_geometry.get(&id), geometry).impossible
+                    }) {
                         continue;
                     }
                     let label_matches = t.identity.as_deref() == Some(name.as_str());
@@ -730,6 +913,11 @@ impl PersonTracker {
                         continue;
                     }
                     if t.missed == 0 || t.missed > self.relink_window_frames {
+                        continue;
+                    }
+                    if current_geometry.is_some_and(|geometry| {
+                        metric_candidate_cue(self.metric_geometry.get(&id), geometry).impossible
+                    }) {
                         continue;
                     }
                     // LJ3 stale-identity fix: an identified track is STILL eligible for
@@ -846,7 +1034,7 @@ impl PersonTracker {
                     id
                 }
             };
-            ids.push(id);
+            ids.push(Some(id));
         }
 
         // ── Step 3b: ByteTrack low-confidence recovery (phase 9.4) ─────────
@@ -872,24 +1060,50 @@ impl PersonTracker {
                     (Some(v), Some(c)) => ocm_consistency(v, [lcx - c[0], lcy - c[1]]),
                     _ => 0.0,
                 };
-                let score = iou + W_OCM * momentum;
+                let metric = observations
+                    .and_then(|values| values.1.get(low_index))
+                    .map_or(
+                        crate::tracking::MetricCandidateCue {
+                            residual: None,
+                            impossible: false,
+                        },
+                        |observation| {
+                            metric_candidate_cue(
+                                self.metric_geometry.get(&id),
+                                &observation.geometry,
+                            )
+                        },
+                    );
+                let score = iou + W_OCM * momentum
+                    - W_METRIC * metric.residual.unwrap_or(0.0);
                 if self.diagnostics.is_tracing() {
                     let mut event = TrackerDecision::new(
                         &self.frame_binding,
                         TrackerDomain::Person,
                         TrackerDecisionKind::Candidate,
-                        if iou > IOU_GATE { "eligible" } else { "vetoed" },
+                        if iou > IOU_GATE && !metric.impossible {
+                            "eligible"
+                        } else {
+                            "vetoed"
+                        },
                     );
                     event.detection_index = Some(high.len() + low_index);
                     event.track_id = Some(id);
                     event.iou = Some(iou);
                     event.momentum = Some(momentum);
-                    event.score = (iou > IOU_GATE).then_some(score);
-                    event.cue = Some("low_iou_ocm".into());
-                    event.reason = (iou <= IOU_GATE).then(|| "iou_gate".into());
+                    event.geometry_residual = metric.residual;
+                    event.score = (iou > IOU_GATE && !metric.impossible).then_some(score);
+                    event.cue = Some("low_iou_ocm_metric".into());
+                    event.reason = if iou <= IOU_GATE {
+                        Some("iou_gate".into())
+                    } else if metric.impossible {
+                        Some("metric_impossible_jump".into())
+                    } else {
+                        None
+                    };
                     self.diagnostics.record(event);
                 }
-                if iou <= IOU_GATE {
+                if iou <= IOU_GATE || metric.impossible {
                     continue;
                 }
                 if score > best_score {
@@ -947,6 +1161,8 @@ impl PersonTracker {
             .collect();
         for id in expired {
             let retired = self.tracks.remove(&id).expect("expired track exists");
+            self.metric_geometry.remove(&id);
+            self.metric_corroborated.remove(&id);
             self.retirements.push(retired.display_id);
             self.free_ids.push(Reverse(id));
             let mut event = TrackerDecision::new(
@@ -1155,11 +1371,19 @@ impl PersonTracker {
     /// churn is identical to the pre-inversion tracker.
     pub fn finalize(&mut self) {
         self.resolve_display_ids();
+        let metric_corroborated = &self.metric_corroborated;
         for t in self.tracks.values_mut() {
             // IdLocked (phase 9.6): a reserved gallery user OR a cosine-stable face.
             let locked = t.is_id_locked();
             let before = t.lifecycle;
-            t.lifecycle = next_lifecycle(t.lifecycle, t.age, t.missed, locked);
+            let birth_corroborated = metric_corroborated.contains(&t.id);
+            t.lifecycle = next_lifecycle(
+                t.lifecycle,
+                t.age,
+                t.missed,
+                locked,
+                birth_corroborated,
+            );
             if before != t.lifecycle {
                 let mut event = TrackerDecision::new(
                     &self.frame_binding,
@@ -1179,7 +1403,11 @@ impl PersonTracker {
                 if t.missed == 0 && t.lifecycle.is_established() {
                     "observed"
                 } else if t.lifecycle == LifecycleState::Tentative {
-                    "tentative_suppressed"
+                    if birth_corroborated {
+                        "tentative_suppressed"
+                    } else {
+                        "metric_uncorroborated_suppressed"
+                    }
                 } else if t.lifecycle == LifecycleState::Occluded {
                     "occluded_handoff"
                 } else {
@@ -1243,14 +1471,21 @@ impl PersonTracker {
     pub fn published(&self) -> impl Iterator<Item = &PersonTrack> {
         self.tracks
             .values()
-            .filter(|t| t.missed == 0 && t.lifecycle.is_established())
+            .filter(|t| {
+                t.missed == 0
+                    && t.lifecycle.is_established()
+                    && self.metric_corroborated.contains(&t.id)
+            })
     }
 
     /// Established tracks currently coasting through an accepted short gap.
     pub fn occluded(&self) -> impl Iterator<Item = &PersonTrack> {
         self.tracks
             .values()
-            .filter(|t| t.lifecycle == LifecycleState::Occluded)
+            .filter(|t| {
+                t.lifecycle == LifecycleState::Occluded
+                    && self.metric_corroborated.contains(&t.id)
+            })
     }
 
     /// Outward ids whose canonical incarnation must remain reserved even when
@@ -1260,6 +1495,7 @@ impl PersonTracker {
             .tracks
             .values()
             .filter(|t| t.age >= PERSON_CONFIRM_AGE && t.lifecycle != LifecycleState::Tentative)
+            .filter(|t| self.metric_corroborated.contains(&t.id))
             .map(|t| t.display_id)
             .collect();
         ids.sort_unstable();
@@ -1320,6 +1556,49 @@ mod tests {
         }]
     }
 
+    fn paired_observation(
+        frame: u64,
+        bbox: BBox,
+        mad: f32,
+    ) -> (TrackerFrameBinding, AssociationObservation) {
+        let mut binding = TrackerFrameBinding::rgb_only(frame);
+        binding.depth_status = crate::DepthStatus::Paired;
+        binding.depth_stamp = Some(binding.rgb_stamp.clone());
+        binding.rgb_depth_skew_ns = Some(0);
+        binding.calibration_revision = Some("0".repeat(64));
+        let geometry = AssociationGeometry {
+            centroid_xyz_m: Some([0.0, 0.0, 1.5]),
+            median_z_m: Some(1.5),
+            extent_m: Some(crate::AxisAlignedExtent {
+                min_m: [-0.2, -0.5, 1.4],
+                max_m: [0.2, 0.5, 1.6],
+            }),
+            valid_ratio: 0.9,
+            depth_mad_m: Some(mad),
+            boundary_contamination: 0.1,
+            sample_count: 300,
+            rgb_stamp: binding.rgb_stamp.clone(),
+            depth_stamp: binding.depth_stamp.clone(),
+            pairing_skew_ns: Some(0),
+            calibration: Some(crate::CalibrationRef {
+                schema: "test".into(),
+                camera_serial: "camera".into(),
+                revision_sha256: "0".repeat(64),
+            }),
+            sampling: crate::GeometrySampling::InnerBbox,
+            status: crate::AssociationGeometryStatus::Observed,
+            reason: None,
+        };
+        let observation = AssociationObservation {
+            detection_key: 0,
+            source: binding.clone(),
+            bbox,
+            detector_score: 0.9,
+            geometry,
+        };
+        (binding, observation)
+    }
+
     #[test]
     fn observed_frame_step_preserves_rgb_association_and_maps_geometry_to_display_id() {
         let binding = TrackerFrameBinding::rgb_only(7);
@@ -1352,6 +1631,90 @@ mod tests {
         );
         assert_eq!(observed.association_geometry()[0].track_id, 0);
         assert_eq!(observed.association_geometry()[0].source_frame_id, 7);
+    }
+
+    #[test]
+    fn paired_birth_requires_quality_but_missing_depth_keeps_rgb_parity() {
+        let detection = Detection::bare(0.1, 0.1, 0.4, 0.9);
+        let mut weak = PersonTracker::new();
+        for frame in 1..=PERSON_CONFIRM_AGE {
+            let (binding, observation) = paired_observation(
+                frame,
+                detection.bbox,
+                crate::tracking::METRIC_MAX_DEPTH_MAD_M + 0.01,
+            );
+            weak.tick_motion_observed_bound(
+                &binding,
+                &[observation],
+                &[],
+                std::slice::from_ref(&detection),
+                &[],
+                &[],
+                frame as f64,
+            )
+            .unwrap();
+        }
+        assert_eq!(weak.track_count(), 1);
+        assert_eq!(weak.published().count(), 0, "weak metric birth stays local");
+
+        let (binding, observation) = paired_observation(4, detection.bbox, 0.02);
+        weak.tick_motion_observed_bound(
+            &binding,
+            &[observation],
+            &[],
+            std::slice::from_ref(&detection),
+            &[],
+            &[],
+            4.0,
+        )
+        .unwrap();
+        assert_eq!(weak.published().count(), 1, "fresh quality depth corroborates");
+
+        let mut rgb = PersonTracker::new();
+        for frame in 1..=PERSON_CONFIRM_AGE {
+            rgb.tick_motion_bound(
+                &TrackerFrameBinding::rgb_only(frame),
+                std::slice::from_ref(&detection),
+                &[],
+                &[],
+                frame as f64,
+            );
+        }
+        assert_eq!(rgb.published().count(), 1, "missing depth is neutral RGB fallback");
+    }
+
+    #[test]
+    fn ambiguous_detection_between_established_tracks_abstains_and_coasts() {
+        let left = Detection::bare(0.2, 0.1, 0.4, 0.9);
+        let right = Detection::bare(0.4, 0.1, 0.6, 0.9);
+        let mut tracker = PersonTracker::new();
+        tracker.set_diagnostic_capacity(256);
+        for frame in 1..=PERSON_CONFIRM_AGE {
+            tracker.tick_motion_bound(
+                &TrackerFrameBinding::rgb_only(frame),
+                &[left.clone(), right.clone()],
+                &[],
+                &[],
+                frame as f64,
+            );
+        }
+        assert_eq!(tracker.published().count(), 2);
+        let ambiguous = Detection::bare(0.3, 0.1, 0.5, 0.9);
+        tracker.tick_motion_bound(
+            &TrackerFrameBinding::rgb_only(10),
+            &[ambiguous],
+            &[],
+            &[],
+            10.0,
+        );
+        assert_eq!(tracker.track_count(), 2, "abstention must not mint a fragment");
+        assert_eq!(tracker.published().count(), 0);
+        assert_eq!(tracker.occluded().count(), 2);
+        assert!(tracker.diagnostics().events.iter().any(|event| {
+            event.kind == TrackerDecisionKind::Assignment
+                && event.outcome == "abstained"
+                && event.reason.as_deref() == Some("competing_established_tracks")
+        }));
     }
 
     #[test]
@@ -2445,60 +2808,65 @@ mod tests {
         use LifecycleState::*;
         // Climbing the trust ladder on matches (missed == 0).
         assert_eq!(
-            next_lifecycle(Tentative, 2, 0, false),
+            next_lifecycle(Tentative, 2, 0, false, true),
             Tentative,
             "below confirm age"
         );
         assert_eq!(
-            next_lifecycle(Tentative, 3, 0, false),
+            next_lifecycle(Tentative, 3, 0, false, true),
             Confirmed,
             "reaches confirm age"
         );
         assert_eq!(
-            next_lifecycle(Confirmed, 5, 0, true),
+            next_lifecycle(Confirmed, 5, 0, true, true),
             IdLocked,
             "locked + confirmed"
         );
         assert_eq!(
-            next_lifecycle(Tentative, 2, 0, true),
+            next_lifecycle(Tentative, 2, 0, true, true),
             Tentative,
             "lock waits for confirm"
         );
         assert_eq!(
-            next_lifecycle(Occluded, 6, 0, false),
+            next_lifecycle(Occluded, 6, 0, false, true),
             Confirmed,
             "re-match recovers"
         );
         assert_eq!(
-            next_lifecycle(Lost, 6, 0, true),
+            next_lifecycle(Lost, 6, 0, true, true),
             IdLocked,
             "even a Lost track recovers on match"
         );
         // Losing the track on misses (missed >= 1).
         assert_eq!(
-            next_lifecycle(Tentative, 1, 1, false),
+            next_lifecycle(Tentative, 1, 1, false, true),
             Lost,
             "unconfirmed miss → Lost"
         );
         assert_eq!(
-            next_lifecycle(Confirmed, 5, 1, false),
+            next_lifecycle(Confirmed, 5, 1, false, true),
             Occluded,
             "established miss → Occluded"
         );
         assert_eq!(
-            next_lifecycle(IdLocked, 5, 1, true),
+            next_lifecycle(IdLocked, 5, 1, true, true),
             Occluded,
             "locked miss → Occluded too"
         );
         assert_eq!(
-            next_lifecycle(Occluded, 5, LOST_AFTER_MISSED, false),
+            next_lifecycle(Occluded, 5, LOST_AFTER_MISSED, false, true),
             Lost,
             "long gap → Lost"
         );
         assert_eq!(
-            next_lifecycle(Lost, 5, 40, false),
+            next_lifecycle(Lost, 5, 40, false, true),
             Lost,
             "Lost stays Lost while missing"
+        );
+        assert_eq!(
+            next_lifecycle(Tentative, PERSON_CONFIRM_AGE, 0, false, false),
+            Tentative,
+            "paired RGB-D birth waits for corroborating metric evidence"
         );
     }
 

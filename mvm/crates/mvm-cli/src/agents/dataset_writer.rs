@@ -48,6 +48,7 @@ pub(crate) struct DatasetWriterAgent {
     fused_frames: Option<FusedFrameBus>,
     session_world: mvm_core::WorldState,
     event_cursor: Option<u64>,
+    force_empty_calibration: bool,
 }
 
 impl DatasetWriterAgent {
@@ -69,11 +70,17 @@ impl DatasetWriterAgent {
             fused_frames: None,
             session_world: mvm_core::WorldState::new(Instant::now()),
             event_cursor: None,
+            force_empty_calibration: false,
         }
     }
 
     pub(crate) fn with_fused_frames(mut self, fused_frames: FusedFrameBus) -> Self {
         self.fused_frames = Some(fused_frames);
+        self
+    }
+
+    pub(crate) fn with_empty_calibration_frames(mut self, enabled: bool) -> Self {
+        self.force_empty_calibration = enabled;
         self
     }
 
@@ -304,21 +311,36 @@ impl DatasetWriterAgent {
             }
             None => None,
         };
-        let result = self.writer.record_frame_with_annotations_transactional(
-            &mut world,
-            now,
-            &iso,
-            &file_stamp,
-            depth_range,
-            RecordAnnotations {
-                relations: &relations,
-                canonical_events: &events,
-                depth: depth_metadata,
-            },
-            |record| {
-                persist_artifacts_transactionally(record, Some(&rgb), &self.cfg, depth_artifact)
-            },
-        )?;
+        let annotations = RecordAnnotations {
+            relations: &relations,
+            canonical_events: &events,
+            depth: depth_metadata,
+        };
+        let persist = |record: &FrameRecord| {
+            persist_artifacts_transactionally(record, Some(&rgb), &self.cfg, depth_artifact)
+        };
+        let result = if self.force_empty_calibration {
+            self.writer
+                .record_calibration_frame_with_annotations_transactional(
+                    &mut world,
+                    now,
+                    &iso,
+                    &file_stamp,
+                    depth_range,
+                    annotations,
+                    persist,
+                )?
+        } else {
+            self.writer.record_frame_with_annotations_transactional(
+                &mut world,
+                now,
+                &iso,
+                &file_stamp,
+                depth_range,
+                annotations,
+                persist,
+            )?
+        };
         self.session_world = world;
 
         if result.frame.is_none() {

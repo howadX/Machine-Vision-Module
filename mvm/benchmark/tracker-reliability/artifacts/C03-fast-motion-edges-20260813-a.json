@@ -1,0 +1,47 @@
+{
+  "schema": "mvm-tracker-capture-artifact/1.0",
+  "capture_id": "C03-fast-motion-edges-20260813-a",
+  "split": "calibration",
+  "admission_status": "provisional_requires_operator_signoff",
+  "privacy": "full",
+  "consent": "operator explicitly authorized unblurred RGB capture",
+  "source": {
+    "backend": "kinect_v1",
+    "logical_name": "kinect-v1-main",
+    "serial": "A00364911518102A",
+    "calibration_revision": "0571de941380b9e9c593abc4509d02e1a7f7085501399bf19e37ce66bc91ce1c"
+  },
+  "local_artifacts": [
+    {
+      "path": "/home/dawoh/.local/share/mvm/tracker-calibration-captures/C03-fast-motion-edges-20260813-a/capture.json",
+      "sha256": "79480ecdde77eec84136a5c3c91484d89cca15a0b5a3f6a1c339e73821ece89c"
+    },
+    {
+      "path": "/home/dawoh/.local/share/mvm/tracker-calibration-captures/C03-fast-motion-edges-20260813-a/human-ticks.jsonl",
+      "sha256": "befe69491bb45f9dacf68455c1c5f76ea0191bbf6403418611f278f1eb10209c"
+    },
+    {
+      "path": "/home/dawoh/.local/share/mvm/tracker-calibration-captures/C03-fast-motion-edges-20260813-a/scene-ticks.jsonl",
+      "sha256": "2255d6aef923eb540d2d541721b8454e97359275e906b11589ca09e23d591acd"
+    }
+  ],
+  "dataset": {
+    "root": "/home/dawoh/.local/share/mvm/tracker-calibration/sessions/2026-08-13_190554",
+    "frames": 1347,
+    "strict_check": {"errors": 0, "warnings": 0},
+    "tree_checksums": {
+      "path": "mvm/benchmark/tracker-reliability/artifacts/C03-fast-motion-edges-20260813-a-SHA256SUMS",
+      "sha256": "eb3c885e1939f31f86aa18bd847caa0fda117fb9f8e134daab53f6115e851b80",
+      "entries": 2696
+    }
+  },
+  "production_replay": {
+    "runner": "cargo run -p mvm-cli --example tracker_capture_replay",
+    "human_ticks": 259,
+    "scene_ticks": 604,
+    "human_output_mismatch_ticks": 0,
+    "human_decision_mismatch_ticks": 0,
+    "scene_output_mismatch_ticks": 0,
+    "scene_decision_mismatch_ticks": 0
+  }
+}

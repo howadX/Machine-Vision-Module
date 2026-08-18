@@ -43,9 +43,10 @@ pub use space::ScaleCalibrator;
 pub use tracker::PersonTracker;
 pub use tracking::{
     AssociationGeometry, AssociationGeometryStatus, AssociationObservation, AxisAlignedExtent,
-    GeometryReason, GeometrySampling, TrackedAssociationGeometry, TrackerDecision,
-    TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot, TrackerDomain,
-    TrackerFrameBinding,
+    GeometryReason, GeometrySampling, MetricCandidateCue, MetricEvidenceQuality,
+    TrackedAssociationGeometry, TrackerDecision, TrackerDecisionKind, TrackerDiagnostics,
+    TrackerDiagnosticsSnapshot, TrackerDomain, TrackerFrameBinding, metric_candidate_cue,
+    metric_evidence_quality,
 };
 pub use types::{BBox, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind, Scene};
 pub use world::{

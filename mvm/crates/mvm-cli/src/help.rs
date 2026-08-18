@@ -121,6 +121,8 @@ FLAGS:
     --interval-ms <MS>      StateFile snapshot interval, milliseconds
                             (default: [cadence] snapshot_ms in config.toml, 1000)
     --max-frames <N>        Stop after N frames (default: run until Ctrl-C)
+    --tracker-capture <DIR> Write exact Human/Scene tracker-tick calibration evidence
+                            to a fresh DIR (requires --record and explicit --privacy)
     --sensor-backend <NAME> Override [sensor].backend: auto | v4l2 | kinect_v1
     --stub                  Model-free stub mesh (CI smoke; no camera/models)
     --emotion-debug         Show the emotion A/B table and add emotion_debug to JSON

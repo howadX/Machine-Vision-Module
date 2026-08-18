@@ -315,11 +315,67 @@ impl DatasetWriter {
     where
         F: FnOnce(&FrameRecord) -> anyhow::Result<()>,
     {
+        self.record_frame_with_annotations_mode_transactional(
+            world,
+            now,
+            wallclock_iso,
+            new_session_stamp,
+            depth_range,
+            annotations,
+            false,
+            persist_artifacts,
+        )
+    }
+
+    /// Calibration-only variant: opens and keeps a session even while the scene
+    /// is empty, so false-birth evaluation retains its consented RGB-D evidence.
+    /// Normal Dataset Factory grouping remains presence-driven.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_calibration_frame_with_annotations_transactional<F>(
+        &mut self,
+        world: &mut WorldState,
+        now: Instant,
+        wallclock_iso: &str,
+        new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
+        annotations: RecordAnnotations<'_>,
+        persist_artifacts: F,
+    ) -> anyhow::Result<RecordResult>
+    where
+        F: FnOnce(&FrameRecord) -> anyhow::Result<()>,
+    {
+        self.record_frame_with_annotations_mode_transactional(
+            world,
+            now,
+            wallclock_iso,
+            new_session_stamp,
+            depth_range,
+            annotations,
+            true,
+            persist_artifacts,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_frame_with_annotations_mode_transactional<F>(
+        &mut self,
+        world: &mut WorldState,
+        now: Instant,
+        wallclock_iso: &str,
+        new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
+        annotations: RecordAnnotations<'_>,
+        force_empty_calibration: bool,
+        persist_artifacts: F,
+    ) -> anyhow::Result<RecordResult>
+    where
+        F: FnOnce(&FrameRecord) -> anyhow::Result<()>,
+    {
         let mut res = RecordResult::default();
         let has_people = !world.people.is_empty();
 
         // 1. Presence + open.
-        if has_people {
+        if has_people || force_empty_calibration {
             world.mark_people_seen(now);
             if !world.session_active() {
                 let sid = new_session_stamp.to_string();

@@ -55,6 +55,7 @@ pub(crate) struct HumanAgent {
     max_mask_age_frames: u64,
     metrics: super::SchedulingMetrics,
     max_pair_skew_ns: u64,
+    calibration_capture: Option<super::TrackerCalibrationCapture>,
 }
 
 impl HumanAgent {
@@ -75,7 +76,20 @@ impl HumanAgent {
             max_mask_age_frames: u64::from(object_cadence.max(1)) * 2,
             metrics,
             max_pair_skew_ns,
+            calibration_capture: None,
         }
+    }
+
+    pub(crate) fn with_calibration_capture(
+        mut self,
+        capture: Option<super::TrackerCalibrationCapture>,
+    ) -> Self {
+        if capture.is_some() {
+            self.tracker
+                .set_diagnostic_capacity(super::tracker_capture::TRACE_CAPACITY);
+        }
+        self.calibration_capture = capture;
+        self
     }
 }
 
@@ -212,15 +226,41 @@ impl Agent for HumanAgent {
                 let people = collect_people(&self.tracker, &result.bodies, stamp.produced_at);
                 let published_ids: std::collections::HashSet<u32> =
                     people.iter().map(|person| person.track_id).collect();
+                let current_ids: Vec<u32> = people.iter().map(|person| person.track_id).collect();
+                let occluded_people = collect_occluded_people(&self.tracker, stamp.produced_at);
+                let occluded_ids: Vec<u32> = occluded_people
+                    .iter()
+                    .map(|person| person.track_id)
+                    .collect();
+                let retained_ids = self.tracker.retained_ids();
+                let retirements = self.tracker.retirements().to_vec();
+                if let Some(capture) = &self.calibration_capture
+                    && let Err(error) = capture.write_human(
+                        measurement.binding(),
+                        &frame.sensor.health,
+                        &high_observations,
+                        &low_observations,
+                        &result.detections,
+                        &result.low_conf,
+                        &result.landmarks,
+                        &self.tracker.diagnostics(),
+                        &current_ids,
+                        &occluded_ids,
+                        &retained_ids,
+                        &retirements,
+                    )
+                {
+                    eprintln!("  human: calibration capture failed: {error:#}");
+                    errors += 1;
+                    ctx.request_stop();
+                    continue;
+                }
                 self.observations.publish(HumanObservationFrame {
                     stamp,
                     people: Arc::new(people),
-                    occluded_people: Arc::new(collect_occluded_people(
-                        &self.tracker,
-                        stamp.produced_at,
-                    )),
-                    retained_track_ids: Arc::new(self.tracker.retained_ids()),
-                    retirements: Arc::new(self.tracker.retirements().to_vec()),
+                    occluded_people: Arc::new(occluded_people),
+                    retained_track_ids: Arc::new(retained_ids),
+                    retirements: Arc::new(retirements),
                     metric_geometry: Arc::new(
                         self.tracker
                             .association_geometry()
