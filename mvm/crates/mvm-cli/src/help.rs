@@ -123,6 +123,9 @@ FLAGS:
     --max-frames <N>        Stop after N frames (default: run until Ctrl-C)
     --tracker-capture <DIR> Write exact Human/Scene tracker-tick calibration evidence
                             to a fresh DIR (requires --record and explicit --privacy)
+    --person-tracking-mode <MODE>
+                            PersonTracker rollout: legacy | shadow | candidate
+                            (default: legacy; shadow is diagnostics-only)
     --sensor-backend <NAME> Override [sensor].backend: auto | v4l2 | kinect_v1
     --stub                  Model-free stub mesh (CI smoke; no camera/models)
     --emotion-debug         Show the emotion A/B table and add emotion_debug to JSON

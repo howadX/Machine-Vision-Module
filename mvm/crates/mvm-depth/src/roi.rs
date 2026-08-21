@@ -109,6 +109,16 @@ pub fn sample_registered_owner_roi(
     spec: SamplingSpec,
 ) -> Result<MetricSamples, GeometryError> {
     validate_owner_spec(depth, owners, native_intrinsics, spec)?;
+    sample_registered_owner_roi_validated(depth, owners, native_intrinsics, roi, spec)
+}
+
+pub(crate) fn sample_registered_owner_roi_validated(
+    depth: &RegisteredMetricDepth,
+    owners: &RegisteredDepthOwners,
+    native_intrinsics: &CameraIntrinsics,
+    roi: MetricRoi,
+    spec: SamplingSpec,
+) -> Result<MetricSamples, GeometryError> {
     if roi.width == 0 || roi.height == 0 {
         return Err(GeometryError::InvalidConfig);
     }
@@ -147,6 +157,16 @@ pub fn sample_registered_owner_mask(
     spec: SamplingSpec,
 ) -> Result<MetricSamples, GeometryError> {
     validate_owner_spec(depth, owners, native_intrinsics, spec)?;
+    sample_registered_owner_mask_validated(depth, owners, native_intrinsics, mask, spec)
+}
+
+pub(crate) fn sample_registered_owner_mask_validated(
+    depth: &RegisteredMetricDepth,
+    owners: &RegisteredDepthOwners,
+    native_intrinsics: &CameraIntrinsics,
+    mask: &InstanceMask,
+    spec: SamplingSpec,
+) -> Result<MetricSamples, GeometryError> {
     let delta = 1.0 / MASK_RES as f32;
     let coordinates = mask.set_points().enumerate().filter_map(|(ordinal, p)| {
         if !ordinal.is_multiple_of(spec.stride as usize) {
@@ -166,7 +186,7 @@ pub fn sample_registered_owner_mask(
     sample_owner_coordinates(depth, owners, native_intrinsics, spec, coordinates)
 }
 
-fn validate_owner_spec(
+pub(crate) fn validate_owner_spec(
     depth: &RegisteredMetricDepth,
     owners: &RegisteredDepthOwners,
     intrinsics: &CameraIntrinsics,
@@ -209,7 +229,7 @@ fn sample_owner_coordinates(
     for (x, y, boundary) in coordinates.take(spec.max_samples) {
         considered += 1;
         boundary_considered += usize::from(boundary);
-        match depth.unproject_registered_owner(x, y, owners, intrinsics)? {
+        match depth.unproject_registered_owner_validated(x, y, owners, intrinsics)? {
             Some(point) => {
                 boundary_valid += usize::from(boundary);
                 points.push(point);

@@ -85,6 +85,7 @@ fn attach_posture(det: &mut Detection, pose: &mvm_posture::classifier::PoseResul
 /// Per-body landmark data, kept grouped by body (not flattened) so the mesh can
 /// attach each person's wrists + hands to their track (phase 8.F interaction by
 /// landmarks). All coordinates normalised [0,1].
+#[derive(Clone)]
 pub(crate) struct BodyData {
     pub bbox: mvm_core::BBox,
     /// Visible wrist points (BlazePose 15/16, visibility-gated).
@@ -193,6 +194,50 @@ impl BodyPrimaryPipeline {
         emotion_fresh_tracks: &[mvm_core::BBox],
         predicted_rois: &[mvm_core::BBox],
     ) -> FrameResult {
+        self.process_inner(
+            frame,
+            frame_id,
+            prev_tracks,
+            locked_tracks,
+            emotion_fresh_tracks,
+            predicted_rois,
+            None,
+        )
+    }
+
+    /// Human enrichment over the exact detections already admitted by the
+    /// TrackingAgent. The split NativePose owns no detector session here.
+    pub(crate) fn process_pretracked(
+        &mut self,
+        frame: &image::DynamicImage,
+        frame_id: u64,
+        prev_tracks: &[mvm_core::BBox],
+        locked_tracks: &[mvm_core::BBox],
+        emotion_fresh_tracks: &[mvm_core::BBox],
+        persons: &[mvm_posture::detector::Person],
+    ) -> FrameResult {
+        self.process_inner(
+            frame,
+            frame_id,
+            prev_tracks,
+            locked_tracks,
+            emotion_fresh_tracks,
+            &[],
+            Some(persons),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_inner(
+        &mut self,
+        frame: &image::DynamicImage,
+        frame_id: u64,
+        prev_tracks: &[mvm_core::BBox],
+        locked_tracks: &[mvm_core::BBox],
+        emotion_fresh_tracks: &[mvm_core::BBox],
+        predicted_rois: &[mvm_core::BBox],
+        pretracked_persons: Option<&[mvm_posture::detector::Person]>,
+    ) -> FrameResult {
         let mut overlay = scene_debug::DetectorOverlay::default();
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         let mut bodies: Vec<BodyData> = Vec::new();
@@ -227,6 +272,7 @@ impl BodyPrimaryPipeline {
             emotion_fresh_tracks,
             predicted_rois,
             recheck,
+            pretracked_persons,
         );
 
         // ── Scene objects (phase 8.E) on a cadence ──────────────────────────
@@ -656,14 +702,19 @@ fn build_body_primary(
     emotion_fresh_tracks: &[mvm_core::BBox],
     predicted_rois: &[mvm_core::BBox],
     recheck: bool,
+    pretracked_persons: Option<&[mvm_posture::detector::Person]>,
 ) -> Vec<Detection> {
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
     let body_dets = native_pose
         .as_deref_mut()
-        .map(|np| {
-            np.bodies_byte_recover(frame, predicted_rois)
-                .unwrap_or_default()
+        .map(|np| match pretracked_persons {
+            Some(persons) => np
+                .bodies_byte_from_detections(frame, persons)
+                .unwrap_or_default(),
+            None => np
+                .bodies_byte_recover(frame, predicted_rois)
+                .unwrap_or_default(),
         })
         .unwrap_or_default();
     let bodies = body_dets.bodies;

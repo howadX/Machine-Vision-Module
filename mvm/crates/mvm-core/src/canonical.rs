@@ -924,6 +924,7 @@ impl FusedSceneFrame {
             match &entity.kind {
                 SceneEntityKind::Person(facts) => {
                     people.push(PersonState {
+                        tracker_id: entity.key.track_id,
                         track_id: entity.display_id,
                         bbox,
                         face_bbox: None,

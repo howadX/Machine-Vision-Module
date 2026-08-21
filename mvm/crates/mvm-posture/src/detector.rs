@@ -20,6 +20,41 @@ pub struct Person {
     pub score: f32,
 }
 
+/// Confidence tier is evaluated only after detector-level proposal
+/// canonicalization, so one physical body cannot feed both BYTE stages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfidenceTier {
+    High,
+    Low,
+}
+
+impl Person {
+    /// Axis-aligned full-body proxy from MediaPipe's alignment points.
+    ///
+    /// Keypoint 0 is the crop centre and the distance to keypoint 1 is the
+    /// radius of the full-body crop. This is the unexpanded `POSE_RECTS`
+    /// geometry; the landmark model may expand it separately for inference.
+    pub fn body_bbox(&self) -> [f32; 4] {
+        let center = self.keypoints[0];
+        let scale = self.keypoints[1];
+        let radius = ((scale[0] - center[0]).powi(2) + (scale[1] - center[1]).powi(2)).sqrt();
+        [
+            center[0] - radius,
+            center[1] - radius,
+            center[0] + radius,
+            center[1] + radius,
+        ]
+    }
+
+    pub fn confidence_tier(&self, high_score: f32) -> ConfidenceTier {
+        if self.score >= high_score {
+            ConfidenceTier::High
+        } else {
+            ConfidenceTier::Low
+        }
+    }
+}
+
 pub struct PersonDetector {
     session: Session,
     anchors: Vec<[f32; 2]>,
@@ -130,11 +165,10 @@ impl PersonDetector {
         self.detect_scored(image, min_score)
     }
 
-    /// Detect at an explicit `min_score` floor (phase 9.4 ByteTrack). Lowering it
-    /// below `score_threshold` surfaces the weak boxes BYTE needs for recovery
-    /// without touching the validated `detect()` path. NMS is unchanged, so the
-    /// high-confidence kept set is identical to `detect()` — extra low boxes only
-    /// add non-overlapping survivors.
+    /// Detect at an explicit `min_score` floor and canonicalize raw proposals
+    /// before the BYTE high/low split. MediaPipe-compatible weighted NMS fuses
+    /// overlapping detector boxes; the alignment-point pass then collapses
+    /// vertically displaced face boxes that encode the same physical body.
     pub fn detect_scored(
         &mut self,
         image: &DynamicImage,
@@ -173,7 +207,52 @@ impl PersonDetector {
                 score: s,
             });
         }
-        Ok(nms(cand, self.nms_threshold))
+        Ok(canonicalize_body_proposals(cand, self.nms_threshold))
+    }
+
+    /// Frozen pre-canonicalization behaviour for the explicit legacy A/B path.
+    /// New production tracking uses [`Self::detect_scored`].
+    pub fn detect_scored_legacy(
+        &mut self,
+        image: &DynamicImage,
+        min_score: f32,
+    ) -> anyhow::Result<Vec<Person>> {
+        let (input, pad_x, pad_y, scale) = self.preprocess(image)?;
+        let outputs = self.session.run(ort::inputs!["input_1:0" => input])?;
+        let boxes = outputs["Identity:0"].try_extract_tensor::<f32>()?.1;
+        let scores = outputs["Identity_1:0"].try_extract_tensor::<f32>()?.1;
+        let mut cand = Vec::new();
+        for (i, &raw_score) in scores.iter().enumerate().take(N_ANCHORS) {
+            let score = 1.0 / (1.0 + (-raw_score.clamp(-100.0, 100.0)).exp());
+            if score < min_score {
+                continue;
+            }
+            let b = i * 12;
+            let [ax, ay] = self.anchors[i];
+            let cx = boxes[b] / INPUT as f32;
+            let cy = boxes[b + 1] / INPUT as f32;
+            let bw = boxes[b + 2] / INPUT as f32;
+            let bh = boxes[b + 3] / INPUT as f32;
+            let mut keypoints = [[0.0; 2]; 4];
+            for (keypoint, decoded) in keypoints
+                .iter_mut()
+                .zip(boxes[b + 4..b + 12].chunks_exact(2))
+            {
+                keypoint[0] = (decoded[0] / INPUT as f32 + ax) * scale - pad_x;
+                keypoint[1] = (decoded[1] / INPUT as f32 + ay) * scale - pad_y;
+            }
+            cand.push(Person {
+                bbox: [
+                    (cx - bw / 2.0 + ax) * scale - pad_x,
+                    (cy - bh / 2.0 + ay) * scale - pad_y,
+                    (cx + bw / 2.0 + ax) * scale - pad_x,
+                    (cy + bh / 2.0 + ay) * scale - pad_y,
+                ],
+                keypoints,
+                score,
+            });
+        }
+        Ok(hard_nms(cand, self.nms_threshold))
     }
 }
 
@@ -189,8 +268,8 @@ fn iou(a: &[f32; 4], b: &[f32; 4]) -> f32 {
     if union <= 0.0 { 0.0 } else { inter / union }
 }
 
-fn nms(mut cand: Vec<Person>, thr: f32) -> Vec<Person> {
-    cand.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+fn hard_nms(mut cand: Vec<Person>, thr: f32) -> Vec<Person> {
+    cand.sort_by(|a, b| b.score.total_cmp(&a.score));
     let mut keep: Vec<Person> = Vec::new();
     for p in cand {
         if keep.iter().all(|k| iou(&k.bbox, &p.bbox) <= thr) {
@@ -200,9 +279,263 @@ fn nms(mut cand: Vec<Person>, thr: f32) -> Vec<Person> {
     keep
 }
 
+fn weighted_person(seed: &Person, group: &[Person]) -> Person {
+    let total_score: f32 = group.iter().map(|person| person.score).sum();
+    if !total_score.is_finite() || total_score <= f32::EPSILON {
+        return seed.clone();
+    }
+    let mut bbox = [0.0; 4];
+    let mut keypoints = [[0.0; 2]; 4];
+    for person in group {
+        for (value, source) in bbox.iter_mut().zip(person.bbox) {
+            *value += source * person.score;
+        }
+        for (target, source) in keypoints.iter_mut().zip(person.keypoints) {
+            target[0] += source[0] * person.score;
+            target[1] += source[1] * person.score;
+        }
+    }
+    for value in &mut bbox {
+        *value /= total_score;
+    }
+    for point in &mut keypoints {
+        point[0] /= total_score;
+        point[1] /= total_score;
+    }
+    Person {
+        bbox,
+        keypoints,
+        // MediaPipe keeps the highest-scoring seed's confidence while it
+        // averages the location and keypoints of the overlap group.
+        score: seed.score,
+    }
+}
+
+fn weighted_nms(mut candidates: Vec<Person>, threshold: f32) -> Vec<Person> {
+    candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let mut kept = Vec::new();
+    while !candidates.is_empty() {
+        // Remove the seed unconditionally so malformed/degenerate geometry
+        // cannot reinsert itself forever when IoU(seed, seed) is 0 or NaN.
+        let seed = candidates.remove(0);
+        let mut group = vec![seed.clone()];
+        let mut remaining = Vec::new();
+        for candidate in candidates.drain(..) {
+            if iou(&seed.bbox, &candidate.bbox) > threshold {
+                group.push(candidate);
+            } else {
+                remaining.push(candidate);
+            }
+        }
+        kept.push(weighted_person(&seed, &group));
+        candidates = remaining;
+    }
+    kept
+}
+
+fn alignment_geometry(person: &Person) -> Option<([f32; 2], f32, [f32; 2])> {
+    if !person.bbox.into_iter().all(f32::is_finite) {
+        return None;
+    }
+    let center = person.keypoints[0];
+    let vector = [
+        person.keypoints[1][0] - center[0],
+        person.keypoints[1][1] - center[1],
+    ];
+    let radius = vector[0].hypot(vector[1]);
+    let raw_width = (person.bbox[2] - person.bbox[0]).max(0.0);
+    let raw_height = (person.bbox[3] - person.bbox[1]).max(0.0);
+    let raw_long_side = raw_width.max(raw_height);
+    if !center.into_iter().all(f32::is_finite)
+        || !vector.into_iter().all(f32::is_finite)
+        || !radius.is_finite()
+        || radius < 1.0
+        // The full-body crop diameter cannot honestly be smaller than the
+        // detector's own raw anchor box. Such keypoints are a regressed
+        // fragment, not valid body geometry for a confident observation.
+        || radius * 2.0 < raw_long_side
+    {
+        return None;
+    }
+    Some((center, radius, [vector[0] / radius, vector[1] / radius]))
+}
+
+/// Strict same-body gate. Missing or ambiguous geometry deliberately fails
+/// open: a temporary duplicate is safer than merging two real people.
+fn same_body_alignment(a: &Person, b: &Person) -> bool {
+    const MAX_CENTER_FRACTION: f32 = 0.20;
+    const MAX_SCALE_RATIO: f32 = 1.25;
+    const MIN_DIRECTION_COSINE: f32 = 0.94; // about 20 degrees
+    let (Some((ca, ra, ua)), Some((cb, rb, ub))) = (alignment_geometry(a), alignment_geometry(b))
+    else {
+        return false;
+    };
+    let center_distance = (ca[0] - cb[0]).hypot(ca[1] - cb[1]);
+    let scale_ratio = ra.max(rb) / ra.min(rb);
+    let direction_cosine = ua[0] * ub[0] + ua[1] * ub[1];
+    center_distance <= ra.min(rb) * MAX_CENTER_FRACTION
+        && scale_ratio <= MAX_SCALE_RATIO
+        && direction_cosine >= MIN_DIRECTION_COSINE
+}
+
+fn canonicalize_body_proposals(candidates: Vec<Person>, nms_threshold: f32) -> Vec<Person> {
+    let mut candidates = weighted_nms(candidates, nms_threshold);
+    candidates.retain(|candidate| alignment_geometry(candidate).is_some());
+    candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let mut canonical = Vec::new();
+    while !candidates.is_empty() {
+        // As above, progress must not depend on self-comparison geometry.
+        let seed = candidates.remove(0);
+        let mut group = vec![seed.clone()];
+        let mut remaining = Vec::new();
+        for candidate in candidates.drain(..) {
+            if same_body_alignment(&seed, &candidate) {
+                group.push(candidate);
+            } else {
+                remaining.push(candidate);
+            }
+        }
+        canonical.push(weighted_person(&seed, &group));
+        candidates = remaining;
+    }
+    canonical
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn person(bbox: [f32; 4], hip: [f32; 2], scale: [f32; 2], score: f32) -> Person {
+        Person {
+            bbox,
+            keypoints: [hip, scale, [hip[0], hip[1] - 20.0], [hip[0], hip[1] - 40.0]],
+            score,
+        }
+    }
+
+    #[test]
+    fn weighted_nms_fuses_box_and_alignment_points_but_keeps_seed_score() {
+        let detections = vec![
+            person(
+                [100.0, 40.0, 180.0, 120.0],
+                [140.0, 300.0],
+                [140.0, 100.0],
+                0.9,
+            ),
+            person(
+                [104.0, 44.0, 184.0, 124.0],
+                [144.0, 304.0],
+                [144.0, 104.0],
+                0.6,
+            ),
+        ];
+
+        let kept = weighted_nms(detections, 0.3);
+
+        assert_eq!(kept.len(), 1);
+        assert!((kept[0].score - 0.9).abs() < f32::EPSILON);
+        assert!((kept[0].bbox[0] - 101.6).abs() < 0.01);
+        assert!((kept[0].keypoints[0][0] - 141.6).abs() < 0.01);
+    }
+
+    #[test]
+    fn weighted_nms_always_consumes_a_degenerate_seed() {
+        let degenerate = person(
+            [100.0, 100.0, 100.0, 100.0],
+            [140.0, 300.0],
+            [140.0, 100.0],
+            0.9,
+        );
+
+        let kept = weighted_nms(vec![degenerate.clone()], 0.3);
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].bbox, degenerate.bbox);
+        assert!((kept[0].score - degenerate.score).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn canonicalization_drops_non_finite_bbox_geometry() {
+        let malformed = person(
+            [f32::NAN, 20.0, 180.0, 100.0],
+            [140.0, 300.0],
+            [140.0, 100.0],
+            0.9,
+        );
+
+        assert!(canonicalize_body_proposals(vec![malformed], 0.3).is_empty());
+    }
+
+    #[test]
+    fn vertical_face_boxes_for_one_body_collapse_before_high_low_split() {
+        let detections = vec![
+            person(
+                [100.0, 20.0, 180.0, 100.0],
+                [140.0, 300.0],
+                [140.0, 100.0],
+                0.72,
+            ),
+            // Raw face boxes do not overlap enough for the detector IoU NMS,
+            // but the independent body alignment points agree.
+            person(
+                [101.0, 105.0, 181.0, 185.0],
+                [143.0, 302.0],
+                [143.0, 102.0],
+                0.41,
+            ),
+        ];
+
+        let kept = canonicalize_body_proposals(detections, 0.3);
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].confidence_tier(0.5), ConfidenceTier::High);
+    }
+
+    #[test]
+    fn close_but_distinct_people_survive_body_duplicate_gate() {
+        let detections = vec![
+            person(
+                [100.0, 20.0, 180.0, 100.0],
+                [140.0, 300.0],
+                [140.0, 100.0],
+                0.8,
+            ),
+            person(
+                [190.0, 30.0, 270.0, 110.0],
+                [230.0, 305.0],
+                [230.0, 105.0],
+                0.75,
+            ),
+        ];
+
+        let kept = canonicalize_body_proposals(detections, 0.3);
+
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn body_bbox_is_centered_on_hip_and_uses_full_body_radius() {
+        let detection = person(
+            [100.0, 20.0, 180.0, 100.0],
+            [140.0, 300.0],
+            [140.0, 100.0],
+            0.8,
+        );
+
+        assert_eq!(detection.body_bbox(), [-60.0, 100.0, 340.0, 500.0]);
+    }
+
+    #[test]
+    fn malformed_full_body_scale_cannot_become_a_high_observation() {
+        let malformed = person(
+            [100.0, 20.0, 180.0, 100.0],
+            [140.0, 120.0],
+            [150.0, 120.0],
+            0.9,
+        );
+
+        assert!(canonicalize_body_proposals(vec![malformed], 0.3).is_empty());
+    }
 
     fn models_dir() -> std::path::PathBuf {
         std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../models"))

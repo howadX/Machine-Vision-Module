@@ -47,7 +47,7 @@ fn attach_person_masks(
     }
 }
 
-pub(crate) struct HumanAgent {
+pub(crate) struct LegacyHumanAgent {
     pipeline: BodyPrimaryPipeline,
     tracker: mvm_core::PersonTracker,
     scene_observations: SceneObservationBus,
@@ -58,7 +58,7 @@ pub(crate) struct HumanAgent {
     calibration_capture: Option<super::TrackerCalibrationCapture>,
 }
 
-impl HumanAgent {
+impl LegacyHumanAgent {
     pub(crate) fn new(
         pipeline: BodyPrimaryPipeline,
         tracker: mvm_core::PersonTracker,
@@ -93,7 +93,7 @@ impl HumanAgent {
     }
 }
 
-impl Agent for HumanAgent {
+impl Agent for LegacyHumanAgent {
     fn name(&self) -> String {
         "human".into()
     }
@@ -225,12 +225,12 @@ impl Agent for HumanAgent {
                 let stamp = ObservationStamp::from_frame(&frame);
                 let people = collect_people(&self.tracker, &result.bodies, stamp.produced_at);
                 let published_ids: std::collections::HashSet<u32> =
-                    people.iter().map(|person| person.track_id).collect();
-                let current_ids: Vec<u32> = people.iter().map(|person| person.track_id).collect();
+                    people.iter().map(|person| person.tracker_id).collect();
+                let current_ids: Vec<u32> = people.iter().map(|person| person.tracker_id).collect();
                 let occluded_people = collect_occluded_people(&self.tracker, stamp.produced_at);
                 let occluded_ids: Vec<u32> = occluded_people
                     .iter()
-                    .map(|person| person.track_id)
+                    .map(|person| person.tracker_id)
                     .collect();
                 let retained_ids = self.tracker.retained_ids();
                 let retirements = self.tracker.retirements().to_vec();
@@ -243,6 +243,7 @@ impl Agent for HumanAgent {
                         &result.detections,
                         &result.low_conf,
                         &result.landmarks,
+                        None,
                         &self.tracker.diagnostics(),
                         &current_ids,
                         &occluded_ids,

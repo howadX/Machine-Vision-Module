@@ -387,6 +387,7 @@ mod tests {
 
     fn person(id: u32, bbox: BBox) -> PersonState {
         PersonState {
+            tracker_id: id,
             track_id: id,
             bbox,
             face_bbox: None,

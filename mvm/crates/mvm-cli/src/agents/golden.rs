@@ -145,6 +145,7 @@ fn run_instance(inst: &serde_json::Value) -> RunResult {
             let p3 = r["pos3d"].as_array().unwrap();
             let wr = r["wrists"].as_array().unwrap();
             people.push(PersonState {
+                tracker_id: id,
                 track_id: tracker.all().get(&id).map(|t| t.display_id).unwrap_or(id),
                 bbox: BBox {
                     x1: b[0],

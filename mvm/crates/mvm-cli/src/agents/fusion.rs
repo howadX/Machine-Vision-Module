@@ -1012,6 +1012,7 @@ mod tests {
 
     fn person(z: f32) -> PersonState {
         PersonState {
+            tracker_id: 10,
             track_id: 10,
             bbox: BBox {
                 x1: 0.3,
@@ -1388,6 +1389,7 @@ mod tests {
 
     fn person_id(id: u32) -> PersonState {
         let mut p = person(1.0);
+        p.tracker_id = id;
         p.track_id = id;
         p.position_3d = None; // keep people_together out of these tests
         p

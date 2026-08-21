@@ -11,6 +11,10 @@ use crate::sensor::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 
+/// Stable 30 FPS cadence for deterministic tracker compatibility/test bindings.
+/// Production bindings always carry capture's authoritative monotonic stamp.
+pub const SYNTHETIC_TRACKER_TICK_NS: u64 = 33_333_333;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrackerFrameBinding {
@@ -102,7 +106,9 @@ impl TrackerFrameBinding {
             rgb_height: 1,
             rgb_stamp: SensorStamp {
                 source_sequence: frame_id,
-                host_monotonic_ns: frame_id.saturating_add(1),
+                host_monotonic_ns: frame_id
+                    .saturating_add(1)
+                    .saturating_mul(SYNTHETIC_TRACKER_TICK_NS),
                 wall_clock_unix_ms: 0,
                 clock_domain: crate::sensor::SensorClockDomain::HostMonotonic,
                 device_timestamp_raw: None,
@@ -147,6 +153,7 @@ pub enum GeometryReason {
     InsufficientSamples,
     LowValidRatio,
     HighBoundaryContamination,
+    NotSampledByAssociationGate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -270,12 +277,59 @@ impl AssociationGeometry {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct PersonBirthConflict {
+    /// Scene tick that supplied the contradictory object observation.
+    pub scene_source_frame_id: u64,
+    /// Stable ObjectTracker id, kept only as replayable evidence provenance.
+    pub object_track_id: u32,
+    /// Narrow typed class set. Other objects are not personhood vetoes.
+    pub display_class: StaticDisplayClass,
+    /// Whether the Scene packet observed the object on its current tick or
+    /// retained an already-established display through a short detector gap.
+    pub object_evidence: SceneObjectEvidence,
+    /// Intersection area divided by the person proposal area.
+    pub person_coverage: f32,
+}
+
+impl PersonBirthConflict {
+    pub fn validate_for(&self, person_source_frame_id: u64) -> Result<(), &'static str> {
+        if self.scene_source_frame_id > person_source_frame_id
+            || !self.person_coverage.is_finite()
+            || !(0.0..=1.0).contains(&self.person_coverage)
+        {
+            return Err("invalid person birth conflict");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StaticDisplayClass {
+    Tv,
+    Laptop,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneObjectEvidence {
+    Retained,
+    Current,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AssociationObservation {
     pub detection_key: u32,
     pub source: TrackerFrameBinding,
     pub bbox: BBox,
     pub detector_score: f32,
     pub geometry: AssociationGeometry,
+    /// Optional cross-expert contradiction used only for pre-confirmation
+    /// personhood admission. Association geometry remains authoritative for
+    /// matching and this evidence never deletes an established person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_birth_conflict: Option<PersonBirthConflict>,
 }
 
 /// Calibrated scalar-only interpretation of one pre-association metric sample.
@@ -306,7 +360,9 @@ pub const METRIC_IMPOSSIBLE_XYZ_JUMP_M: f32 = 2.0;
 pub fn metric_evidence_quality(geometry: &AssociationGeometry) -> MetricEvidenceQuality {
     if geometry.status == AssociationGeometryStatus::Observed
         && geometry.valid_ratio >= METRIC_MIN_VALID_RATIO
-        && geometry.depth_mad_m.is_some_and(|mad| mad <= METRIC_MAX_DEPTH_MAD_M)
+        && geometry
+            .depth_mad_m
+            .is_some_and(|mad| mad <= METRIC_MAX_DEPTH_MAD_M)
         && geometry.boundary_contamination <= METRIC_MAX_BOUNDARY_CONTAMINATION
         && geometry.sample_count >= METRIC_MIN_SAMPLES
     {
@@ -321,15 +377,25 @@ pub fn metric_candidate_cue(
     current: &AssociationGeometry,
 ) -> MetricCandidateCue {
     let Some(previous) = previous else {
-        return MetricCandidateCue { residual: None, impossible: false };
+        return MetricCandidateCue {
+            residual: None,
+            impossible: false,
+        };
     };
     if metric_evidence_quality(previous) != MetricEvidenceQuality::Corroborating
         || metric_evidence_quality(current) != MetricEvidenceQuality::Corroborating
     {
-        return MetricCandidateCue { residual: None, impossible: false };
+        return MetricCandidateCue {
+            residual: None,
+            impossible: false,
+        };
     }
-    let previous_xyz = previous.centroid_xyz_m.expect("corroborating geometry has centroid");
-    let current_xyz = current.centroid_xyz_m.expect("corroborating geometry has centroid");
+    let previous_xyz = previous
+        .centroid_xyz_m
+        .expect("corroborating geometry has centroid");
+    let current_xyz = current
+        .centroid_xyz_m
+        .expect("corroborating geometry has centroid");
     let dz = (current_xyz[2] - previous_xyz[2]).abs();
     let dxyz = previous_xyz
         .iter()
@@ -358,6 +424,7 @@ impl AssociationObservation {
             bbox,
             detector_score,
             geometry: AssociationGeometry::unavailable(source, GeometryReason::DepthUnavailable),
+            person_birth_conflict: None,
         }
     }
 
@@ -372,7 +439,11 @@ impl AssociationObservation {
         {
             return Err("invalid association observation");
         }
-        self.geometry.validate_for(&self.source)
+        self.geometry.validate_for(&self.source)?;
+        if let Some(conflict) = &self.person_birth_conflict {
+            conflict.validate_for(self.source.source_frame_id)?;
+        }
+        Ok(())
     }
 }
 
@@ -619,6 +690,32 @@ mod tests {
     }
 
     #[test]
+    fn person_birth_conflict_is_typed_and_cannot_come_from_the_future() {
+        let binding = TrackerFrameBinding::rgb_only(7);
+        let bbox = BBox {
+            x1: 0.1,
+            y1: 0.1,
+            x2: 0.4,
+            y2: 0.7,
+        };
+        let mut observation = AssociationObservation::unavailable(0, &binding, bbox, 0.9);
+        observation.person_birth_conflict = Some(PersonBirthConflict {
+            scene_source_frame_id: 7,
+            object_track_id: 10_000,
+            display_class: StaticDisplayClass::Laptop,
+            object_evidence: SceneObjectEvidence::Current,
+            person_coverage: 0.4,
+        });
+        observation.validate().unwrap();
+        observation
+            .person_birth_conflict
+            .as_mut()
+            .unwrap()
+            .scene_source_frame_id = 8;
+        assert_eq!(observation.validate(), Err("invalid person birth conflict"));
+    }
+
+    #[test]
     fn metric_quality_is_unknown_neutral_and_quality_bounded() {
         let binding = TrackerFrameBinding::rgb_only(7);
         let unknown = AssociationGeometry::unavailable(&binding, GeometryReason::DepthUnavailable);
@@ -645,7 +742,10 @@ mod tests {
         let nearby = observed_geometry([0.1, 0.0, 1.1], 0.02);
         let cue = metric_candidate_cue(Some(&previous), &nearby);
         assert!(!cue.impossible);
-        assert!(cue.residual.is_some_and(|value| value > 0.0 && value <= 1.0));
+        assert!(
+            cue.residual
+                .is_some_and(|value| value > 0.0 && value <= 1.0)
+        );
         let impossible = observed_geometry([0.0, 0.0, 3.1], 0.02);
         let cue = metric_candidate_cue(Some(&previous), &impossible);
         assert!(cue.impossible);

@@ -15,7 +15,8 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const SCHEMA: &str = "mvm-tracker-tick-capture/1.1";
+const SCHEMA: &str = "mvm-tracker-tick-capture/1.4";
+const ENRICHMENT_SCHEMA: &str = "mvm-tracker-enrichment-application/1.0";
 const METADATA_SCHEMA: &str = "mvm-tracker-capture-metadata/1.0";
 pub(crate) const TRACE_CAPACITY: usize = 16_384;
 
@@ -84,6 +85,18 @@ pub(crate) struct TrackerCalibrationCapture {
     root: Arc<PathBuf>,
     human: Arc<Mutex<BufWriter<File>>>,
     scene: Arc<Mutex<BufWriter<File>>>,
+    enrichment: Arc<Mutex<BufWriter<File>>>,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct EnrichmentApplication<'a> {
+    schema: &'static str,
+    source_binding: &'a TrackerFrameBinding,
+    applied_before_binding: &'a TrackerFrameBinding,
+    handle: mvm_core::PersonTrackHandle,
+    outcome: &'static str,
+    patch: &'a mvm_core::PersonEnrichment,
 }
 
 #[derive(Serialize)]
@@ -125,6 +138,8 @@ struct HumanDetection<'a> {
     identity_confidence: Option<f32>,
     mask: Option<MaskRle>,
     landmarks: Option<&'a [[f32; 4]]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposal_geometry: Option<ProposalGeometry>,
 }
 
 #[derive(Serialize)]
@@ -133,6 +148,28 @@ struct LowDetection {
     detection_key: u32,
     bbox: BBox,
     detector_score: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proposal_geometry: Option<ProposalGeometry>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ProposalGeometry {
+    /// The detector model's raw face box, before conversion to a body ROI.
+    raw_bbox_px: [f32; 4],
+    /// hip centre, full-body scale/rotation, shoulder centre, upper-body scale.
+    keypoints_px: [[f32; 2]; 4],
+    association_bbox_kind: &'static str,
+}
+
+impl From<&mvm_posture::detector::Person> for ProposalGeometry {
+    fn from(person: &mvm_posture::detector::Person) -> Self {
+        Self {
+            raw_bbox_px: person.bbox,
+            keypoints_px: person.keypoints,
+            association_bbox_kind: "raw_detector_anchor",
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -189,10 +226,12 @@ impl TrackerCalibrationCapture {
         metadata_file.flush()?;
         let human = create_new(&root.join("human-ticks.jsonl"))?;
         let scene = create_new(&root.join("scene-ticks.jsonl"))?;
+        let enrichment = create_new(&root.join("human-enrichment-applications.jsonl"))?;
         Ok(Self {
             root: Arc::new(root),
             human: Arc::new(Mutex::new(BufWriter::new(human))),
             scene: Arc::new(Mutex::new(BufWriter::new(scene))),
+            enrichment: Arc::new(Mutex::new(BufWriter::new(enrichment))),
         })
     }
 
@@ -200,6 +239,7 @@ impl TrackerCalibrationCapture {
         self.root.as_path()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_human(
         &self,
         binding: &TrackerFrameBinding,
@@ -209,6 +249,10 @@ impl TrackerCalibrationCapture {
         high: &[Detection],
         low: &[BBox],
         landmarks: &[Option<mvm_core::motion::Landmarks33>],
+        proposals: Option<(
+            &[mvm_posture::detector::Person],
+            &[mvm_posture::detector::Person],
+        )>,
         diagnostics: &TrackerDiagnosticsSnapshot,
         current_ids: &[u32],
         occluded_ids: &[u32],
@@ -223,27 +267,46 @@ impl TrackerCalibrationCapture {
             low_observations.len() == low.len(),
             "human capture low observation/detection alignment mismatch"
         );
+        if let Some((high_proposals, low_proposals)) = proposals {
+            anyhow::ensure!(
+                high_proposals.len() == high.len() && low_proposals.len() == low.len(),
+                "human capture proposal/detection alignment mismatch"
+            );
+        }
+        let (high_proposals, low_proposals) = proposals
+            .map(|(high, low)| (Some(high), Some(low)))
+            .unwrap_or((None, None));
         let high_inputs = high
             .iter()
             .zip(high_observations)
             .zip(landmarks)
-            .map(|((detection, observation), landmarks)| HumanDetection {
-                detection_key: observation.detection_key,
-                bbox: detection.bbox,
-                detector_score: observation.detector_score,
-                identity: &detection.identity,
-                identity_confidence: detection.identity_confidence,
-                mask: detection.mask.as_ref().map(MaskRle::from_mask),
-                landmarks: landmarks.as_ref().map(<[_; 33]>::as_slice),
-            })
+            .enumerate()
+            .map(
+                |(index, ((detection, observation), landmarks))| HumanDetection {
+                    detection_key: observation.detection_key,
+                    bbox: detection.bbox,
+                    detector_score: observation.detector_score,
+                    identity: &detection.identity,
+                    identity_confidence: detection.identity_confidence,
+                    mask: detection.mask.as_ref().map(MaskRle::from_mask),
+                    landmarks: landmarks.as_ref().map(<[_; 33]>::as_slice),
+                    proposal_geometry: high_proposals
+                        .and_then(|values| values.get(index))
+                        .map(ProposalGeometry::from),
+                },
+            )
             .collect();
         let low_inputs = low
             .iter()
             .zip(low_observations)
-            .map(|(bbox, observation)| LowDetection {
+            .enumerate()
+            .map(|(index, (bbox, observation))| LowDetection {
                 detection_key: observation.detection_key,
                 bbox: *bbox,
                 detector_score: observation.detector_score,
+                proposal_geometry: low_proposals
+                    .and_then(|values| values.get(index))
+                    .map(ProposalGeometry::from),
             })
             .collect();
         self.write(
@@ -268,6 +331,7 @@ impl TrackerCalibrationCapture {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn write_scene(
         &self,
         binding: &TrackerFrameBinding,
@@ -317,6 +381,40 @@ impl TrackerCalibrationCapture {
                 retirements,
             },
         )
+    }
+
+    pub(crate) fn write_enrichment_application(
+        &self,
+        source_binding: &TrackerFrameBinding,
+        applied_before_binding: &TrackerFrameBinding,
+        handle: mvm_core::PersonTrackHandle,
+        outcome: mvm_core::EnrichmentApply,
+        patch: &mvm_core::PersonEnrichment,
+    ) -> Result<()> {
+        let outcome = match outcome {
+            mvm_core::EnrichmentApply::Applied => "applied",
+            mvm_core::EnrichmentApply::StaleHandle => "stale_handle",
+            mvm_core::EnrichmentApply::InvalidTimestamp => "invalid_timestamp",
+            mvm_core::EnrichmentApply::StaleTimestamp => "stale_timestamp",
+        };
+        let mut sink = self
+            .enrichment
+            .lock()
+            .map_err(|_| anyhow::anyhow!("tracker enrichment capture lock poisoned"))?;
+        serde_json::to_writer(
+            &mut *sink,
+            &EnrichmentApplication {
+                schema: ENRICHMENT_SCHEMA,
+                source_binding,
+                applied_before_binding,
+                handle,
+                outcome,
+                patch,
+            },
+        )?;
+        sink.write_all(b"\n")?;
+        sink.flush()?;
+        Ok(())
     }
 
     fn write(&self, sink: &Mutex<BufWriter<File>>, record: TickRecord<'_>) -> Result<()> {
@@ -393,6 +491,13 @@ mod tests {
                 &binding,
                 mvm_core::GeometryReason::DepthUnavailable,
             ),
+            person_birth_conflict: Some(mvm_core::PersonBirthConflict {
+                scene_source_frame_id: 6,
+                object_track_id: 10_000,
+                display_class: mvm_core::StaticDisplayClass::Tv,
+                object_evidence: mvm_core::SceneObjectEvidence::Retained,
+                person_coverage: 0.4,
+            }),
         }];
         let decision = TrackerDecision::new(
             &binding,
@@ -415,6 +520,7 @@ mod tests {
                 &[Detection::bare(0.1, 0.1, 0.2, 0.3)],
                 &[],
                 &[None],
+                None,
                 &diagnostics,
                 &[],
                 &[],
@@ -424,10 +530,30 @@ mod tests {
             .unwrap();
         let line = std::fs::read_to_string(root.join("human-ticks.jsonl")).unwrap();
         let value: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(value["schema"], "mvm-tracker-tick-capture/1.4");
         assert_eq!(value["binding"]["source_frame_id"], 7);
         assert_eq!(value["decisions"][0]["kind"], "birth");
         assert_eq!(value["detector_inputs"]["kind"], "human");
         assert_eq!(value["detector_inputs"]["high"][0]["detection_key"], 0);
+        assert_eq!(
+            value["high_observations"][0]["person_birth_conflict"]["object_evidence"],
+            "retained"
+        );
+        capture
+            .write_enrichment_application(
+                &binding,
+                &binding,
+                mvm_core::PersonTrackHandle {
+                    internal_id: 10,
+                    generation: 1,
+                },
+                mvm_core::EnrichmentApply::Applied,
+                &mvm_core::PersonEnrichment {
+                    identity: Some("test-user".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         let mut bits = vec![0; mvm_core::mask::MASK_RES * mvm_core::mask::MASK_RES];
         bits[1] = 1;
         let mask = InstanceMask::from_bits(bits);
@@ -455,9 +581,22 @@ mod tests {
         let scene = std::fs::read_to_string(root.join("scene-ticks.jsonl")).unwrap();
         let scene: serde_json::Value = serde_json::from_str(scene.trim()).unwrap();
         assert_eq!(scene["detector_inputs"]["kind"], "object");
-        assert_eq!(scene["detector_inputs"]["detections"][0]["class_name"], "book");
-        assert_eq!(scene["detector_inputs"]["detections"][0]["mask"]["rle"], serde_json::json!([1, 1, 4094]));
+        assert_eq!(
+            scene["detector_inputs"]["detections"][0]["class_name"],
+            "book"
+        );
+        assert_eq!(
+            scene["detector_inputs"]["detections"][0]["mask"]["rle"],
+            serde_json::json!([1, 1, 4094])
+        );
         assert!(scene["decisions"].as_array().unwrap().is_empty());
+        let enrichment =
+            std::fs::read_to_string(root.join("human-enrichment-applications.jsonl")).unwrap();
+        let enrichment: serde_json::Value = serde_json::from_str(enrichment.trim()).unwrap();
+        assert_eq!(enrichment["source_binding"]["source_frame_id"], 7);
+        assert_eq!(enrichment["applied_before_binding"]["source_frame_id"], 7);
+        assert_eq!(enrichment["handle"]["generation"], 1);
+        assert_eq!(enrichment["outcome"], "applied");
         assert!(TrackerCalibrationCapture::create(root.clone(), &metadata).is_err());
         let _ = std::fs::remove_dir_all(root);
     }

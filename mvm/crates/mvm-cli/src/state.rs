@@ -2377,6 +2377,7 @@ mod tests {
 
     fn person_state(id: u32, bbox: mvm_core::BBox) -> mvm_core::PersonState {
         mvm_core::PersonState {
+            tracker_id: id,
             track_id: id,
             bbox,
             face_bbox: None,

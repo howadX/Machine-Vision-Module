@@ -5,9 +5,13 @@ use mvm_core::{
     GeometrySampling, InstanceMask, RegisteredDepthOwners, TrackerFrameBinding,
 };
 
+use crate::roi::{
+    sample_registered_owner_mask_validated, sample_registered_owner_roi_validated,
+    validate_owner_spec,
+};
 use crate::{
     CameraIntrinsics, GeometryError, MetricRoi, ReferenceFrame, RegisteredMetricDepth,
-    SamplingSpec, measure_roi, sample_registered_owner_mask, sample_registered_owner_roi,
+    SamplingSpec, measure_roi,
 };
 
 const INNER_BBOX_INSET: f32 = 0.20;
@@ -27,31 +31,46 @@ pub fn measure_association_geometry(
     bbox: BBox,
     current_mask: Option<&InstanceMask>,
 ) -> AssociationGeometry {
+    measure_association_geometries(binding, depth, owners, &[(bbox, current_mask)])
+        .pop()
+        .expect("one association geometry input")
+}
+
+/// Batch variant for one exact packet. Expensive owner-map validation is done
+/// once, then every high/low candidate reuses the admitted packet contract.
+pub fn measure_association_geometries(
+    binding: &TrackerFrameBinding,
+    depth: Option<&RegisteredMetricDepth>,
+    owners: Option<&RegisteredDepthOwners>,
+    inputs: &[(BBox, Option<&InstanceMask>)],
+) -> Vec<AssociationGeometry> {
+    let repeat = |status, reason| {
+        inputs
+            .iter()
+            .map(|_| unavailable(binding, status, reason))
+            .collect()
+    };
     let Some(depth) = depth else {
-        return unavailable(
-            binding,
+        return repeat(
             AssociationGeometryStatus::Unknown,
             GeometryReason::DepthUnavailable,
         );
     };
     if binding.depth_stamp.as_ref() != Some(&depth.frame().stamp) {
-        return unavailable(
-            binding,
+        return repeat(
             AssociationGeometryStatus::Unknown,
             GeometryReason::DepthStale,
         );
     }
     if binding.calibration_revision.as_deref() != Some(depth.calibration().revision_sha256.as_str())
     {
-        return unavailable(
-            binding,
+        return repeat(
             AssociationGeometryStatus::Withheld,
             GeometryReason::CalibrationMismatch,
         );
     }
     let Some(owners) = owners else {
-        return unavailable(
-            binding,
+        return repeat(
             AssociationGeometryStatus::Withheld,
             GeometryReason::MissingOwnerAssociation,
         );
@@ -68,14 +87,33 @@ pub fn measure_association_geometry(
     ) {
         Ok(value) => value,
         Err(_) => {
-            return unavailable(
-                binding,
+            return repeat(
                 AssociationGeometryStatus::Withheld,
                 GeometryReason::InvalidOwnerAssociation,
             );
         }
     };
 
+    if let Err(error) = validate_owner_spec(depth, owners, &intrinsics, SPEC) {
+        return repeat(AssociationGeometryStatus::Withheld, geometry_reason(error));
+    }
+
+    inputs
+        .iter()
+        .map(|(bbox, current_mask)| {
+            measure_validated(binding, depth, owners, &intrinsics, *bbox, *current_mask)
+        })
+        .collect()
+}
+
+fn measure_validated(
+    binding: &TrackerFrameBinding,
+    depth: &RegisteredMetricDepth,
+    owners: &RegisteredDepthOwners,
+    intrinsics: &CameraIntrinsics,
+    bbox: BBox,
+    current_mask: Option<&InstanceMask>,
+) -> AssociationGeometry {
     let (sampling, samples) = match current_mask {
         Some(mask) if mask.is_empty() => {
             return unavailable_with_sampling(
@@ -87,7 +125,7 @@ pub fn measure_association_geometry(
         }
         Some(mask) => (
             GeometrySampling::Mask,
-            sample_registered_owner_mask(depth, owners, &intrinsics, mask, SPEC),
+            sample_registered_owner_mask_validated(depth, owners, intrinsics, mask, SPEC),
         ),
         None => {
             let Some(roi) = inner_bbox_roi(bbox, owners.registered_width, owners.registered_height)
@@ -100,7 +138,7 @@ pub fn measure_association_geometry(
             };
             (
                 GeometrySampling::InnerBbox,
-                sample_registered_owner_roi(depth, owners, &intrinsics, roi, SPEC),
+                sample_registered_owner_roi_validated(depth, owners, intrinsics, roi, SPEC),
             )
         }
     };
@@ -334,6 +372,36 @@ mod tests {
         assert_eq!(masked.sampling, GeometrySampling::Mask);
         assert_eq!(masked.median_z_m, Some(2.0));
         masked.validate_for(&binding).unwrap();
+    }
+
+    #[test]
+    fn batch_measurement_matches_individual_results() {
+        let (binding, depth, owners) = fixture();
+        let left = BBox {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 0.5,
+            y2: 1.0,
+        };
+        let right = BBox {
+            x1: 0.5,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let batch = measure_association_geometries(
+            &binding,
+            Some(&depth),
+            Some(&owners),
+            &[(left, None), (right, None)],
+        );
+        assert_eq!(
+            batch,
+            vec![
+                measure_association_geometry(&binding, Some(&depth), Some(&owners), left, None,),
+                measure_association_geometry(&binding, Some(&depth), Some(&owners), right, None,),
+            ]
+        );
     }
 
     #[test]

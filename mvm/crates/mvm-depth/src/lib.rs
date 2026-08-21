@@ -27,7 +27,7 @@ mod roi;
 mod unproject;
 mod visibility;
 
-pub use association::measure_association_geometry;
+pub use association::{measure_association_geometries, measure_association_geometry};
 pub use metric::{
     GeometryError, GeometryMeasurement, GeometryStatus, MAX_GEOMETRY_SAMPLES, MetricPoint,
     ReferenceFrame,

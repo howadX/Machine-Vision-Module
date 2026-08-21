@@ -24,23 +24,28 @@ mod fusion;
 #[cfg(test)]
 mod golden;
 mod human;
+mod human_enrichment;
 mod observations;
 mod policy;
 mod scene;
 mod statefile;
 mod tracker_capture;
+mod tracking;
 
 pub(crate) use capture::CaptureAgent;
 pub(crate) use cortex::CortexAgent;
 pub(crate) use dataset_writer::DatasetWriterAgent;
 pub(crate) use depth::MonocularDepthProvider;
 pub(crate) use fusion::{FusionAgent, infer_activities};
-pub(crate) use human::HumanAgent;
+pub(crate) use human::LegacyHumanAgent;
+pub(crate) use human_enrichment::HumanAgent;
 pub(crate) use observations::{
     AssociationMeasurementContext, AttentionPolicyBus, CortexFrameBus, DepthEvidence,
     DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
-    FusedFramePacket, HumanObservationBus, HumanObservationFrame, ObservationStamp,
-    PolicyOutcomeBus, SceneObservationBus, SceneObservationFrame, registered_metric_from_frame,
+    FusedFramePacket, HumanEnrichmentBus, HumanEnrichmentFrame, HumanEnrichmentItem,
+    HumanObservationBus, HumanObservationFrame, HumanWorkBus, HumanWorkItem, ObservationStamp,
+    PolicyOutcomeBus, SceneObservationBus, SceneObservationFrame, TrackedPersonWork,
+    registered_metric_from_frame,
 };
 pub(crate) use policy::{
     DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,
@@ -48,9 +53,8 @@ pub(crate) use policy::{
 };
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
-pub(crate) use tracker_capture::{
-    ModelDigest, TrackerCalibrationCapture, TrackerCaptureMetadata,
-};
+pub(crate) use tracker_capture::{ModelDigest, TrackerCalibrationCapture, TrackerCaptureMetadata};
+pub(crate) use tracking::TrackingAgent;
 
 use crate::pipeline::BodyData;
 use mvm_core::{BBox, ObjectState, PersonState, PersonTracker, Position3D};

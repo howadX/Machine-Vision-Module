@@ -93,11 +93,17 @@ the production baseline.
   occluded tracks are available only through the explicit lifecycle handoff.
 - Human/Scene observations carry four disjoint meanings: current, occluded evidence, retained IDs,
   and tick-local retirements. Metric geometry is filtered to current published IDs.
+- Person lifecycle handoff, metric association geometry, and `CanonicalFusion` use the stable
+  internal tracker id. The gallery-aware display id remains presentation/identity metadata and may
+  change after late recognition without changing the canonical key or incarnation.
 - `CanonicalFusion` reserves existing incarnations for retained IDs without publishing presence.
   Exit/disappear and zone-free transitions wait for retirement; a retained return keeps the same key.
 - Compatibility StateFile/Scene JSON and relative-depth anchoring filter person and object
   hypotheses through the same publication boundary. AgentMesh WorldState, activities, zones,
   DatasetWriter, MCP, and Cortex continue to consume only immutable canonical current facts.
+- Candidate person birth can consume a typed contradiction from the Scene-owned current/retained
+  `tv`/`laptop` lifecycle. It is captured inside the stamped association observation and blocks only
+  motion-based anonymous birth; it does not create a second object store or mutate established people.
 
 ## T1 resolution
 

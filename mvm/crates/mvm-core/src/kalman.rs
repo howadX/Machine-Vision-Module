@@ -22,9 +22,9 @@ use crate::types::BBox;
 
 // ── Tuning points ─────────────────────────────────────────────────────────────
 
-/// Process noise on position (cx, cy, w, h). Raise for erratic movement.
+/// Position process noise at the legacy nominal tick. Raise for erratic movement.
 const Q_POS: f32 = 1.0;
-/// Process noise on velocity. Small = smooth velocity estimate.
+/// Velocity process noise at the legacy nominal tick. Small = smooth velocity estimate.
 const Q_VEL: f32 = 0.01;
 /// Measurement noise for centroid (cx, cy). Lower = trust detector more.
 const R_POS: f32 = 1.0;
@@ -34,11 +34,15 @@ const R_SIZE: f32 = 10.0;
 const P_POS_INIT: f32 = 10.0;
 /// Initial velocity covariance (high = velocity is unknown at birth).
 const P_VEL_INIT: f32 = 100.0;
+/// Reference cadence of the original tuned per-tick filter. State velocity is
+/// now units/second, so legacy velocity covariance/noise is converted from this
+/// reference rather than silently changing the filter's nominal behaviour.
+const NOMINAL_DT_SECS: f32 = 1.0 / 30.0;
 
 // ── Scalar 2D Kalman filter ───────────────────────────────────────────────────
 
 /// Scalar Kalman filter: state = [pos, vel], observation = pos.
-/// F = [[1,1],[0,1]] (constant-velocity), H = [1,0].
+/// F = [[1,dt],[0,1]] (constant-velocity), H = [1,0].
 #[derive(Debug, Clone, Copy)]
 struct ScalarKF {
     pos: f32,
@@ -58,20 +62,29 @@ impl ScalarKF {
             vel: 0.0,
             p_pp: P_POS_INIT,
             p_pv: 0.0,
-            p_vv: P_VEL_INIT,
-            q_pos,
-            q_vel,
+            p_vv: P_VEL_INIT / (NOMINAL_DT_SECS * NOMINAL_DT_SECS),
+            q_pos: q_pos / NOMINAL_DT_SECS,
+            q_vel: q_vel / (NOMINAL_DT_SECS * NOMINAL_DT_SECS * NOMINAL_DT_SECS),
             r,
         }
     }
 
-    /// Predict: advance state by one step. Returns predicted position.
-    fn predict(&mut self) -> f32 {
-        self.pos += self.vel;
-        // P_pred = F P F^T + Q  (expanded for F = [[1,1],[0,1]])
-        let p_pp = self.p_pp + 2.0 * self.p_pv + self.p_vv + self.q_pos;
-        let p_pv = self.p_pv + self.p_vv;
-        let p_vv = self.p_vv + self.q_vel;
+    /// Predict by `dt_secs`. `q_pos` is a continuous position random-walk
+    /// density and `q_vel` a white-acceleration density, integrated analytically
+    /// over the interval. The caller owns validation/bounding of elapsed time.
+    fn predict(&mut self, dt_secs: f32) -> f32 {
+        debug_assert!(dt_secs.is_finite() && dt_secs >= 0.0);
+        let dt2 = dt_secs * dt_secs;
+        let dt3 = dt2 * dt_secs;
+        self.pos += self.vel * dt_secs;
+        // P_pred = F P F^T + Q(dt), expanded for F = [[1,dt],[0,1]].
+        let p_pp = self.p_pp
+            + 2.0 * dt_secs * self.p_pv
+            + dt2 * self.p_vv
+            + self.q_pos * dt_secs
+            + self.q_vel * dt3 / 3.0;
+        let p_pv = self.p_pv + dt_secs * self.p_vv + self.q_vel * dt2 / 2.0;
+        let p_vv = self.p_vv + self.q_vel * dt_secs;
         self.p_pp = p_pp;
         self.p_pv = p_pv;
         self.p_vv = p_vv;
@@ -107,9 +120,9 @@ impl ScalarKF {
 /// decomposed into 4 independent scalar filters.
 ///
 /// Usage in the tracker (State-Gating pattern):
-/// 1. `predict()` before IoU matching → use predicted bbox for matching.
+/// 1. `predict(dt_secs)` before IoU matching → use predicted bbox for matching.
 /// 2. `update(observed)` after a match → smoothed bbox.
-/// 3. On missed frames: `predict()` advances the bbox by inertia; no `update`.
+/// 3. On missed frames: `predict(dt_secs)` advances the bbox by inertia; no `update`.
 #[derive(Debug, Clone, Copy)]
 pub struct KalmanBBox {
     cx: ScalarKF,
@@ -129,13 +142,14 @@ impl KalmanBBox {
         }
     }
 
-    /// Advance the filter one step. Returns the predicted bbox.
+    /// Advance the filter by a bounded physical interval. Returns the predicted bbox.
     /// Call this **before** IoU matching (State-Gating).
-    pub fn predict(&mut self) -> BBox {
-        let cx = self.cx.predict();
-        let cy = self.cy.predict();
-        let w = self.w.predict().max(0.0);
-        let h = self.h.predict().max(0.0);
+    pub fn predict(&mut self, dt_secs: f32) -> BBox {
+        assert!(dt_secs.is_finite() && dt_secs >= 0.0, "invalid Kalman dt");
+        let cx = self.cx.predict(dt_secs);
+        let cy = self.cy.predict(dt_secs);
+        let w = self.w.predict(dt_secs).max(0.0);
+        let h = self.h.predict(dt_secs).max(0.0);
         from_cwh(cx, cy, w, h)
     }
 
@@ -190,6 +204,8 @@ fn from_cwh(cx: f32, cy: f32, w: f32, h: f32) -> BBox {
 mod tests {
     use super::*;
 
+    const DT: f32 = 1.0 / 30.0;
+
     fn bbox(x1: f32, y1: f32, x2: f32, y2: f32) -> BBox {
         BBox { x1, y1, x2, y2 }
     }
@@ -200,10 +216,10 @@ mod tests {
         let b = bbox(0.3, 0.3, 0.7, 0.7);
         let mut kf = KalmanBBox::new(b);
         for _ in 0..20 {
-            kf.predict();
+            kf.predict(DT);
             kf.update(b);
         }
-        let pred = kf.predict();
+        let pred = kf.predict(DT);
         assert!((pred.x1 - 0.3).abs() < 0.01, "x1 drifted: {:.4}", pred.x1);
         assert!((pred.x2 - 0.7).abs() < 0.01, "x2 drifted: {:.4}", pred.x2);
     }
@@ -214,11 +230,11 @@ mod tests {
         let mut kf = KalmanBBox::new(bbox(0.1, 0.3, 0.3, 0.7));
         for i in 0..15u32 {
             let x1 = 0.1 + i as f32 * 0.02;
-            kf.predict();
+            kf.predict(DT);
             kf.update(bbox(x1, 0.3, x1 + 0.2, 0.7));
         }
         let last_x1 = 0.1 + 14.0 * 0.02; // 0.38
-        let pred = kf.predict();
+        let pred = kf.predict(DT);
         assert!(
             pred.x1 > last_x1,
             "pred.x1={:.4} not extrapolated past {:.4}",
@@ -231,7 +247,7 @@ mod tests {
     #[test]
     fn kalman_update_corrects_prediction() {
         let mut kf = KalmanBBox::new(bbox(0.0, 0.0, 0.2, 0.2));
-        kf.predict();
+        kf.predict(DT);
         // Observation far from init
         kf.update(bbox(0.5, 0.5, 0.7, 0.7));
         let smoothed = kf.smoothed_bbox();
@@ -250,13 +266,13 @@ mod tests {
         let mut kf = KalmanBBox::new(b);
         // Stabilize filter
         for _ in 0..20 {
-            kf.predict();
+            kf.predict(DT);
             kf.update(b);
         }
         let u_stable = kf.position_uncertainty();
         // Predict without updates (simulate occluded frames)
         for _ in 0..15 {
-            kf.predict();
+            kf.predict(DT);
         }
         let u_missed = kf.position_uncertainty();
         assert!(
@@ -264,6 +280,42 @@ mod tests {
             "uncertainty should grow on missed frames: {:.4} vs {:.4}",
             u_missed,
             u_stable
+        );
+    }
+
+    #[test]
+    fn irregular_dt_tracks_constant_velocity_in_seconds() {
+        let mut kf = KalmanBBox::new(bbox(0.10, 0.40, 0.30, 0.60));
+        let mut elapsed = 0.0_f32;
+        for dt in [0.04, 0.11, 0.03, 0.20, 0.07, 0.15, 0.05, 0.10] {
+            elapsed += dt;
+            kf.predict(dt);
+            let x1 = 0.10 + 0.20 * elapsed;
+            kf.update(bbox(x1, 0.40, x1 + 0.20, 0.60));
+        }
+        let before = kf.smoothed_bbox();
+        let predicted = kf.predict(0.25);
+        let displacement = predicted.x1 - before.x1;
+        assert!(
+            (displacement - 0.05).abs() < 0.035,
+            "0.20 units/s over 0.25 s should move about 0.05, got {displacement}"
+        );
+    }
+
+    #[test]
+    fn delayed_prediction_grows_uncertainty_more_than_short_tick() {
+        let b = bbox(0.3, 0.3, 0.7, 0.7);
+        let mut short = KalmanBBox::new(b);
+        for _ in 0..20 {
+            short.predict(DT);
+            short.update(b);
+        }
+        let mut delayed = short;
+        short.predict(0.05);
+        delayed.predict(0.50);
+        assert!(
+            delayed.position_uncertainty() > short.position_uncertainty(),
+            "longer physical gap must grow uncertainty more"
         );
     }
 

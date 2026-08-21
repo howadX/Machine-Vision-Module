@@ -10,6 +10,37 @@ use mvm_mesh::{Frame, LatestValue};
 use std::sync::Arc;
 use std::time::Instant;
 
+#[derive(Clone)]
+pub(crate) struct TrackedPersonWork {
+    pub handle: mvm_core::PersonTrackHandle,
+    pub person: mvm_posture::detector::Person,
+}
+
+/// Exact latest-wins RGB work packet for semantic Human enrichment.
+#[derive(Clone)]
+pub(crate) struct HumanWorkItem {
+    pub frame: Frame,
+    pub binding: mvm_core::TrackerFrameBinding,
+    pub people: Arc<Vec<TrackedPersonWork>>,
+    pub previous_tracks: Arc<Vec<BBox>>,
+    pub locked_tracks: Arc<Vec<BBox>>,
+    pub emotion_fresh_tracks: Arc<Vec<BBox>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct HumanEnrichmentItem {
+    pub handle: mvm_core::PersonTrackHandle,
+    pub patch: mvm_core::PersonEnrichment,
+}
+
+#[derive(Clone)]
+pub(crate) struct HumanEnrichmentFrame {
+    pub source_frame_id: u64,
+    pub binding: mvm_core::TrackerFrameBinding,
+    pub items: Arc<Vec<HumanEnrichmentItem>>,
+    pub bodies: Arc<Vec<crate::pipeline::BodyData>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ObservationStamp {
     pub source_frame_id: u64,
@@ -266,7 +297,55 @@ impl AssociationMeasurementContext {
                     geometry
                 },
             ),
+            person_birth_conflict: None,
         }
+    }
+
+    pub(crate) fn observations(
+        &self,
+        inputs: &[(u32, BBox, f32, Option<&InstanceMask>, bool)],
+    ) -> Vec<mvm_core::AssociationObservation> {
+        if self.forced_reason.is_some() {
+            return inputs
+                .iter()
+                .map(|(key, bbox, score, mask, _)| self.observation(*key, *bbox, *score, *mask))
+                .collect();
+        }
+        let sampling: Vec<_> = inputs
+            .iter()
+            .filter(|(_, _, _, _, measure)| *measure)
+            .map(|(_, bbox, _, mask, _)| (*bbox, *mask))
+            .collect();
+        let measured = mvm_depth::measure_association_geometries(
+            &self.binding,
+            self.depth.as_ref(),
+            self.owners.as_deref(),
+            &sampling,
+        );
+        let mut measured = measured.into_iter();
+        inputs
+            .iter()
+            .map(|(detection_key, bbox, detector_score, _, measure)| {
+                let geometry = if *measure {
+                    measured.next().expect("measured association input")
+                } else {
+                    let mut geometry = mvm_core::AssociationGeometry::unavailable(
+                        &self.binding,
+                        mvm_core::GeometryReason::NotSampledByAssociationGate,
+                    );
+                    geometry.status = mvm_core::AssociationGeometryStatus::Withheld;
+                    geometry
+                };
+                mvm_core::AssociationObservation {
+                    detection_key: *detection_key,
+                    source: self.binding.clone(),
+                    bbox: *bbox,
+                    detector_score: *detector_score,
+                    geometry,
+                    person_birth_conflict: None,
+                }
+            })
+            .collect()
     }
 }
 
@@ -285,6 +364,8 @@ pub(crate) struct FusedFramePacket {
 }
 
 pub(crate) type HumanObservationBus = LatestValue<HumanObservationFrame>;
+pub(crate) type HumanWorkBus = LatestValue<HumanWorkItem>;
+pub(crate) type HumanEnrichmentBus = LatestValue<HumanEnrichmentFrame>;
 pub(crate) type SceneObservationBus = LatestValue<SceneObservationFrame>;
 pub(crate) type DepthObservationBus = LatestValue<DepthObservationFrame>;
 pub(crate) type FusedFrameBus = LatestValue<FusedFramePacket>;

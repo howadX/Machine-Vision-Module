@@ -269,6 +269,7 @@ mod tests {
 
     fn person(track_id: u32, posture: Option<&str>) -> PersonState {
         PersonState {
+            tracker_id: track_id,
             track_id,
             bbox: BBox {
                 x1: 0.3,

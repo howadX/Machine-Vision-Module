@@ -50,6 +50,9 @@ pub struct HandState {
 /// Outward projection of a tracked person (group G₁ Human).
 #[derive(Debug, Clone)]
 pub struct PersonState {
+    /// Stable tracker-local association id for the lifetime of this person track.
+    /// Unlike `track_id`, it never changes when gallery identity becomes known.
+    pub tracker_id: u32,
     /// Shown id (reserved 0–9 for gallery users, ≥10 ephemeral) — `PersonTrack::display_id`.
     pub track_id: u32,
     pub bbox: BBox,
@@ -131,6 +134,7 @@ impl PersonState {
             _ => None,
         };
         Self {
+            tracker_id: t.id,
             track_id: t.display_id,
             bbox: t.bbox,
             // Face bbox is per-frame, attached by the agent from body data (like
@@ -389,6 +393,7 @@ mod tests {
     fn person_state_from_track_projects_id_and_bbox() {
         let now = Instant::now();
         let ps = PersonState::from_track(&track(10), now);
+        assert_eq!(ps.tracker_id, 99);
         assert_eq!(ps.track_id, 10);
         assert!((ps.bbox.x1 - 0.2).abs() < 1e-6);
         assert!(

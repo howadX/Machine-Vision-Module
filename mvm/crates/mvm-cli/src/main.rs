@@ -216,6 +216,23 @@ mod tests {
     }
 
     #[test]
+    fn person_tracking_mode_is_legacy_by_default_and_parses_candidate() {
+        let default: Vec<String> = ["mvm", "run"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            parse_mesh_args(&default).person_tracking_mode,
+            PersonTrackingMode::Legacy
+        );
+        let candidate: Vec<String> = ["mvm", "run", "--person-tracking-mode", "candidate"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            parse_mesh_args(&candidate).person_tracking_mode,
+            PersonTrackingMode::Candidate
+        );
+    }
+
+    #[test]
     fn native_camera_alias_maps_legacy_cadence_to_canonical_mesh() {
         let raw: Vec<String> = [
             "mvm",
@@ -567,6 +584,32 @@ fn run_native_loop(
 // ── `mesh` subcommand (phase 8.D) ───────────────────────────────────────────
 
 /// Args for `mvm-cli mesh [--stub] [--max-frames N] [--dump-json] [--dump-landmarks] [--interval-ms N]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PersonTrackingMode {
+    Legacy,
+    Shadow,
+    Candidate,
+}
+
+impl PersonTrackingMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "legacy" => Some(Self::Legacy),
+            "shadow" => Some(Self::Shadow),
+            "candidate" => Some(Self::Candidate),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Legacy => "legacy",
+            Self::Shadow => "shadow",
+            Self::Candidate => "candidate",
+        }
+    }
+}
+
 struct MeshArgs {
     /// Optional CLI override for `[sensor].backend`.
     sensor_backend: Option<String>,
@@ -587,6 +630,7 @@ struct MeshArgs {
     /// Opt-in per-expert-tick association capture for an explicitly consented
     /// calibration take. This is replay evidence, never semantic history.
     tracker_capture: Option<PathBuf>,
+    person_tracking_mode: PersonTrackingMode,
     /// Flags shared with the legacy sync root path (phase 13.A1).
     common: CommonFlags,
 }
@@ -600,6 +644,7 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
         interval_ms: None,
         scheduling_mode: agents::SchedulingMode::SceneAndDepth,
         tracker_capture: None,
+        person_tracking_mode: PersonTrackingMode::Legacy,
         common: CommonFlags::default(),
     };
     let mut i = 2; // skip program name + subcommand (`mesh` / `run`)
@@ -635,6 +680,15 @@ fn parse_mesh_args(raw: &[String]) -> MeshArgs {
                     i += 1;
                 }
             }
+            "--person-tracking-mode" => {
+                if let Some(mode) = raw
+                    .get(i + 1)
+                    .and_then(|value| PersonTrackingMode::parse(value))
+                {
+                    a.person_tracking_mode = mode;
+                    i += 1;
+                }
+            }
             "--scheduling-mode" => {
                 if let Some(mode) = raw
                     .get(i + 1)
@@ -664,6 +718,7 @@ fn parse_native_camera_alias(raw: &[String]) -> Result<MeshArgs> {
         interval_ms: None,
         scheduling_mode: agents::SchedulingMode::SceneAndDepth,
         tracker_capture: None,
+        person_tracking_mode: PersonTrackingMode::Legacy,
         common: CommonFlags::default(),
     };
     let mut i = 1;
@@ -995,6 +1050,21 @@ fn build_live_mesh(
     detector.set_score_threshold(0.5); // undo the loose gallery threshold
     eprintln!("  posture: loading native BlazePose");
     let native_pose = mvm_posture::NativePose::init(&config)?;
+    let (tracking_detector, native_pose) = match args.person_tracking_mode {
+        PersonTrackingMode::Legacy => (None, native_pose),
+        PersonTrackingMode::Candidate => {
+            let (detector, pose_only) = native_pose.split_detector()?;
+            (Some(detector), pose_only)
+        }
+        PersonTrackingMode::Shadow => {
+            let detector = mvm_posture::detector::PersonDetector::from_path(
+                &config
+                    .models_path
+                    .join("person_detection_mediapipe_2023mar.onnx"),
+            )?;
+            (Some(detector), native_pose)
+        }
+    };
     let hands = load_hands(&config);
 
     // Optional heavy detectors (own agents). A Kinect run without explicit
@@ -1025,7 +1095,7 @@ fn build_live_mesh(
     // Person tracker (body-primary: torso-3D from detections, no face pinhole).
     let mut person_tracker = mvm_core::PersonTracker::with_config(&config);
     person_tracker.pinhole = None;
-    let mut names = identity.gallery_names();
+    let mut names: Vec<String> = identity.gallery_names().into_iter().cloned().collect();
     names.sort();
     for name in &names {
         let uid = person_tracker.register_user(name);
@@ -1051,6 +1121,8 @@ fn build_live_mesh(
     // Typed latest-wins observation channels (phase 18.1). Expert packets keep
     // their source frame; Fusion is their only facts assembler.
     let human_observations = agents::HumanObservationBus::new();
+    let human_work = agents::HumanWorkBus::new();
+    let human_enrichment = agents::HumanEnrichmentBus::new();
     let scene_observations = agents::SceneObservationBus::new();
     let depth_observations = agents::DepthObservationBus::new();
     let fused_frames = agents::FusedFrameBus::new();
@@ -1084,6 +1156,12 @@ fn build_live_mesh(
             names.clone(),
             serde_json::json!({
                 "revision": "tracker-t3-pre-t4",
+                "person_tracking_mode": args.person_tracking_mode.as_str(),
+                "person_detector_postprocess": match args.person_tracking_mode {
+                    PersonTrackingMode::Legacy => "legacy_hard_nms",
+                    PersonTrackingMode::Shadow | PersonTrackingMode::Candidate =>
+                        "weighted_nms_alignment_dedup_v1",
+                },
                 "person": {
                     "iou_gate": 0.3,
                     "confirmation_age": mvm_core::tracker::PERSON_CONFIRM_AGE,
@@ -1123,8 +1201,9 @@ fn build_live_mesh(
     let camera = open_product_sensor(product, args.sensor_backend.as_deref())?;
     let (cam_w, cam_h) = camera.dimensions();
     eprintln!(
-        "▶ sensor {} ({cam_w}×{cam_h}) · data {} · snapshot {}ms",
+        "▶ sensor {} ({cam_w}×{cam_h}) · person-tracking {} · data {} · snapshot {}ms",
         camera.device(),
+        args.person_tracking_mode.as_str(),
         product.data_dir.display(),
         interval.as_millis()
     );
@@ -1135,18 +1214,76 @@ fn build_live_mesh(
         Box::new(camera),
         args.max_frames,
     )));
-    mesh.add(Box::new(
-        agents::HumanAgent::new(
-            pipeline,
-            person_tracker,
-            scene_observations.clone(),
-            human_observations.clone(),
-            config.object_cadence,
-            scheduling_metrics.clone(),
-            product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
-        )
-        .with_calibration_capture(tracker_capture.clone()),
-    ));
+    match args.person_tracking_mode {
+        PersonTrackingMode::Legacy => {
+            mesh.add(Box::new(
+                agents::LegacyHumanAgent::new(
+                    pipeline,
+                    person_tracker,
+                    scene_observations.clone(),
+                    human_observations.clone(),
+                    config.object_cadence,
+                    scheduling_metrics.clone(),
+                    product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
+                )
+                .with_calibration_capture(tracker_capture.clone()),
+            ));
+        }
+        PersonTrackingMode::Candidate => {
+            mesh.add(Box::new(
+                agents::TrackingAgent::new(
+                    tracking_detector.expect("candidate detector loaded"),
+                    person_tracker,
+                    scene_observations.clone(),
+                    human_observations.clone(),
+                    Some(human_work.clone()),
+                    Some(human_enrichment.clone()),
+                    true,
+                    config.object_cadence,
+                    scheduling_metrics.clone(),
+                    product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
+                )
+                .with_calibration_capture(tracker_capture.clone()),
+            ));
+            mesh.add(Box::new(agents::HumanAgent::new(
+                pipeline,
+                human_work,
+                human_enrichment,
+                scheduling_metrics.clone(),
+            )));
+        }
+        PersonTrackingMode::Shadow => {
+            let mut shadow_tracker = mvm_core::PersonTracker::with_config(&config);
+            shadow_tracker.pinhole = None;
+            for name in &names {
+                shadow_tracker.register_user(name);
+            }
+            mesh.add(Box::new(
+                agents::LegacyHumanAgent::new(
+                    pipeline,
+                    person_tracker,
+                    scene_observations.clone(),
+                    human_observations.clone(),
+                    config.object_cadence,
+                    scheduling_metrics.clone(),
+                    product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
+                )
+                .with_calibration_capture(tracker_capture.clone()),
+            ));
+            mesh.add(Box::new(agents::TrackingAgent::new(
+                tracking_detector.expect("shadow detector loaded"),
+                shadow_tracker,
+                scene_observations.clone(),
+                agents::HumanObservationBus::new(),
+                None,
+                None,
+                false,
+                config.object_cadence,
+                scheduling_metrics.clone(),
+                product.kinect_v1_max_pair_skew_ms.saturating_mul(1_000_000),
+            )));
+        }
+    }
     if let Some(yolo) = yolo {
         mesh.add(Box::new(
             agents::SceneAgent::new(

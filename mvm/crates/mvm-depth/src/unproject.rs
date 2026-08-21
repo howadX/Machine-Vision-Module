@@ -221,6 +221,23 @@ impl RegisteredMetricDepth {
             .validate()
             .map_err(|_| GeometryError::InvalidOwnerAssociation)?;
         native_intrinsics.validate()?;
+        self.unproject_registered_owner_validated(
+            registered_x,
+            registered_y,
+            owners,
+            native_intrinsics,
+        )
+    }
+
+    /// Crate-private hot-path primitive for a packet whose owner map and
+    /// intrinsics were validated once by the batch caller.
+    pub(crate) fn unproject_registered_owner_validated(
+        &self,
+        registered_x: u32,
+        registered_y: u32,
+        owners: &RegisteredDepthOwners,
+        native_intrinsics: &CameraIntrinsics,
+    ) -> Result<Option<MetricPoint>, GeometryError> {
         let frame = self.frame();
         if frame.width != owners.registered_width
             || frame.height != owners.registered_height

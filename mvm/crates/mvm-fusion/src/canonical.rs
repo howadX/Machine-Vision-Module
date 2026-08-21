@@ -147,7 +147,7 @@ impl CanonicalFusion {
         validate_metric_geometry_input(&input)?;
         self.sync_tracked_domain(
             TrackDomain::Person,
-            input.people.iter().map(|person| person.track_id),
+            input.people.iter().map(|person| person.tracker_id),
             input.retained_people,
             input.retired_people,
         )?;
@@ -179,12 +179,16 @@ impl CanonicalFusion {
 
         let mut entities = Vec::new();
         for person in input.people {
-            let key = self.key(TrackDomain::Person, person.track_id);
+            let key = self.key(TrackDomain::Person, person.tracker_id);
             entities.push(person_entity(
                 person,
                 key,
                 human_source,
-                metric_geometry(input.metric_geometry, TrackDomain::Person, person.track_id),
+                metric_geometry(
+                    input.metric_geometry,
+                    TrackDomain::Person,
+                    person.tracker_id,
+                ),
             ));
         }
         for object in input.objects {
@@ -1312,6 +1316,7 @@ mod tests {
 
     fn person(id: u32) -> PersonState {
         PersonState {
+            tracker_id: id,
             track_id: id,
             bbox: BBox {
                 x1: 0.1,
@@ -1555,6 +1560,33 @@ mod tests {
     }
 
     #[test]
+    fn gallery_recognition_changes_display_id_without_reincarnating_person() {
+        let mut fusion = CanonicalFusion::new("run");
+        let mut anonymous = person(10);
+        let first = fusion
+            .assemble(input(1, std::slice::from_ref(&anonymous)))
+            .unwrap();
+        let key = first.entities[0].key.clone();
+        assert_eq!(first.entities[0].display_id, 10);
+
+        anonymous.track_id = 0;
+        anonymous.identity = Some(("alice".into(), 0.9));
+        let recognized = fusion
+            .assemble(input(2, std::slice::from_ref(&anonymous)))
+            .unwrap();
+
+        assert_eq!(recognized.entities[0].key, key);
+        assert_eq!(recognized.entities[0].display_id, 0);
+        assert!(recognized.events.events.iter().all(|event| !matches!(
+            event.kind,
+            SceneEventKind::EntityAppeared
+                | SceneEventKind::EntityDisappeared
+                | SceneEventKind::PersonEntered
+                | SceneEventKind::PersonExited
+        )));
+    }
+
+    #[test]
     fn mask_aware_direct_centroid_and_reference_frame_serialize() {
         let mut fusion = CanonicalFusion::new("run");
         let object = object(10_000);
@@ -1616,7 +1648,7 @@ mod tests {
             z: 2.2,
             confidence: 0.6,
         });
-        let geometry = [metric(TrackDomain::Person, person.track_id)];
+        let geometry = [metric(TrackDomain::Person, person.tracker_id)];
         let mut sources = metric_sources(1);
         sources.push(
             SourceStamp::at_frame(FactSource::Human, 1, 1_001)

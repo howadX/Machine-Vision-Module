@@ -4,6 +4,9 @@ The historical one-person procedure remains at
 `benchmark/tracker-depth/CAPTURE.md`. It is exploratory and does not satisfy
 this active protocol.
 
+The concrete operator choreography, split allocation, per-take checklist and
+minimum first tranche are defined in `corpus-plan.md`.
+
 ## Required producer evidence
 
 - record every Human association tick and every Scene detection tick;

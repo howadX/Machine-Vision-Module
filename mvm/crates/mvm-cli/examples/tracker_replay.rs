@@ -257,6 +257,7 @@ fn main() -> Result<()> {
                     detection.bbox,
                     None,
                 ),
+                person_birth_conflict: None,
             })
             .collect();
         let low_observations: Vec<_> = low
@@ -274,6 +275,7 @@ fn main() -> Result<()> {
                     *bbox,
                     None,
                 ),
+                person_birth_conflict: None,
             })
             .collect();
         person
@@ -320,6 +322,7 @@ fn main() -> Result<()> {
                     detection.bbox,
                     None,
                 ),
+                person_birth_conflict: None,
             })
             .collect();
         object
@@ -379,6 +382,8 @@ mod tests {
 
     const FIXTURE: &str =
         include_str!("../../../benchmark/tracker-reliability/replay/production-baseline.json");
+    const IRREGULAR: &str =
+        include_str!("../../../benchmark/tracker-reliability/replay/person-irregular-cadence.json");
 
     #[test]
     fn fixture_hash_is_frozen() {
@@ -399,5 +404,61 @@ mod tests {
 
         let malformed = FIXTURE.replacen('{', "{\"unknown\":true,", 1);
         assert!(serde_json::from_str::<ReplayInput>(&malformed).is_err());
+    }
+
+    #[test]
+    fn irregular_cadence_reentry_keeps_one_person_id() {
+        assert_eq!(
+            format!("{:x}", Sha256::digest(IRREGULAR.as_bytes())),
+            "9175befdfe700b016752a996d72307d114ad810e12be5a03fd5fb195861df721"
+        );
+        let replay: ReplayInput = serde_json::from_str(IRREGULAR).unwrap();
+        validate_header(&replay).unwrap();
+        let mut tracker = PersonTracker::new();
+        for frame in replay.frames {
+            frame.sensor.validate(replay.max_pair_skew_ns).unwrap();
+            let binding = TrackerFrameBinding::from_sensor_parts(
+                frame.sensor.rgb_stamp.source_sequence,
+                &frame.sensor.source,
+                frame.sensor.rgb_width,
+                frame.sensor.rgb_height,
+                &frame.sensor.rgb_stamp,
+                &frame.sensor.depth_status,
+                None,
+                None,
+                replay.max_pair_skew_ns,
+            )
+            .unwrap();
+            let detections: Vec<_> = frame
+                .people_high
+                .iter()
+                .map(|person| {
+                    let bbox = bbox(person.bbox).unwrap();
+                    Detection::bare(bbox.x1, bbox.y1, bbox.x2, bbox.y2)
+                })
+                .collect();
+            let observations: Vec<_> = detections
+                .iter()
+                .enumerate()
+                .map(|(index, detection)| {
+                    AssociationObservation::unavailable(index as u32, &binding, detection.bbox, 1.0)
+                })
+                .collect();
+            tracker
+                .tick_motion_observed_bound(
+                    &binding,
+                    &observations,
+                    &[],
+                    &detections,
+                    &[],
+                    &[],
+                    0.0,
+                )
+                .unwrap();
+        }
+        assert_eq!(tracker.track_count(), 1);
+        let track = tracker.all().values().next().unwrap();
+        assert_eq!(track.age, 4, "all four observations attach to one id");
+        assert_eq!(track.missed, 0);
     }
 }

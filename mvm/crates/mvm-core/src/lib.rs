@@ -40,15 +40,18 @@ pub use sensor::{
     SensorClockDomain, SensorHealth, SensorReplayEnvelope, SensorSourceId, SensorStamp,
 };
 pub use space::ScaleCalibrator;
-pub use tracker::PersonTracker;
+pub use tracker::{EnrichmentApply, PersonEnrichment, PersonTrackHandle, PersonTracker};
 pub use tracking::{
     AssociationGeometry, AssociationGeometryStatus, AssociationObservation, AxisAlignedExtent,
     GeometryReason, GeometrySampling, MetricCandidateCue, MetricEvidenceQuality,
-    TrackedAssociationGeometry, TrackerDecision, TrackerDecisionKind, TrackerDiagnostics,
-    TrackerDiagnosticsSnapshot, TrackerDomain, TrackerFrameBinding, metric_candidate_cue,
-    metric_evidence_quality,
+    PersonBirthConflict, SceneObjectEvidence, StaticDisplayClass, TrackedAssociationGeometry,
+    TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
+    TrackerDomain, TrackerFrameBinding, metric_candidate_cue, metric_evidence_quality,
 };
-pub use types::{BBox, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind, Scene};
+pub use types::{
+    BBox, BodyObservation, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind,
+    Scene,
+};
 pub use world::{
     Activity, AudioEvent, HandState, ObjectState, PersonState, Position3D, WorldState,
 };

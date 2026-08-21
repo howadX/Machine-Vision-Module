@@ -742,6 +742,7 @@ mod tests {
 
     fn person(id: u32, now: Instant, anon: bool) -> PersonState {
         PersonState {
+            tracker_id: id,
             track_id: id,
             bbox: BBox {
                 x1: 0.25,
