@@ -3,6 +3,8 @@
 //! Spawns `sight_bridge.py` from the old MVM repo and reads JSON detections.
 //! Ported from sightd v0.3 `src/camera.rs`.
 
+#[cfg(feature = "kinect-v1")]
+pub mod kinect_v1;
 pub mod native;
 pub mod source;
 

@@ -18,8 +18,10 @@ pub mod module;
 pub mod motion;
 pub mod posture;
 pub mod recap;
+pub mod sensor;
 pub mod space;
 pub mod tracker;
+pub mod tracking;
 pub mod types;
 pub mod world;
 
@@ -33,9 +35,23 @@ pub use emotion::{
 pub use mask::{InstanceMask, MASK_RES};
 pub use module::{Module, ModuleMetadata};
 pub use motion::{LandmarkHistory, Landmarks33};
+pub use sensor::{
+    CalibrationRef, DepthGeometry, DepthStatus, MetricDepthFrame, RegisteredDepthOwners,
+    SensorClockDomain, SensorHealth, SensorReplayEnvelope, SensorSourceId, SensorStamp,
+};
 pub use space::ScaleCalibrator;
-pub use tracker::PersonTracker;
-pub use types::{BBox, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind, Scene};
+pub use tracker::{EnrichmentApply, PersonEnrichment, PersonTrackHandle, PersonTracker};
+pub use tracking::{
+    AssociationGeometry, AssociationGeometryStatus, AssociationObservation, AxisAlignedExtent,
+    GeometryReason, GeometrySampling, MetricCandidateCue, MetricEvidenceQuality,
+    PersonBirthConflict, SceneObjectEvidence, StaticDisplayClass, TrackedAssociationGeometry,
+    TrackerDecision, TrackerDecisionKind, TrackerDiagnostics, TrackerDiagnosticsSnapshot,
+    TrackerDomain, TrackerFrameBinding, metric_candidate_cue, metric_evidence_quality,
+};
+pub use types::{
+    BBox, BodyObservation, Detection, Entity, EntityKind, PersonTrack, Relation, RelationKind,
+    Scene,
+};
 pub use world::{
     Activity, AudioEvent, HandState, ObjectState, PersonState, Position3D, WorldState,
 };

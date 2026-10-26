@@ -85,6 +85,7 @@ fn attach_posture(det: &mut Detection, pose: &mvm_posture::classifier::PoseResul
 /// Per-body landmark data, kept grouped by body (not flattened) so the mesh can
 /// attach each person's wrists + hands to their track (phase 8.F interaction by
 /// landmarks). All coordinates normalised [0,1].
+#[derive(Clone)]
 pub(crate) struct BodyData {
     pub bbox: mvm_core::BBox,
     /// Visible wrist points (BlazePose 15/16, visibility-gated).
@@ -101,9 +102,13 @@ pub(crate) struct FrameResult {
     /// Bodies (+ fallback faces), fully enriched — feed to the tracker as the
     /// ByteTrack high-confidence stage.
     pub detections: Vec<Detection>,
+    /// Detector confidence aligned 1:1 with `detections`.
+    pub detection_scores: Vec<f32>,
     /// Weak, bbox-only body boxes (phase 9.4) — the ByteTrack low-confidence
     /// recovery stage (`tick_byte`'s `low`). Never enriched, never spawn tracks.
     pub low_conf: Vec<mvm_core::BBox>,
+    /// Detector confidence aligned 1:1 with `low_conf`.
+    pub low_conf_scores: Vec<f32>,
     /// Per-detection pixel landmarks (phase 9.8), aligned 1:1 with `detections`:
     /// `Some` for a body, `None` for a fallback face. Fed to `tick_motion`.
     pub landmarks: Vec<Option<mvm_core::motion::Landmarks33>>,
@@ -139,7 +144,7 @@ pub(crate) struct BodyPrimaryPipeline {
     /// body tracks that overlap them as likely-animals (persist between runs).
     latest_animals: Vec<mvm_scene::ObjectDetection>,
     /// Latest relative depth map (persist between cadence runs).
-    latest_depth: Option<mvm_depth::DepthMap>,
+    latest_depth: Option<mvm_depth::RelativeDepthMap>,
 }
 
 impl BodyPrimaryPipeline {
@@ -189,10 +194,56 @@ impl BodyPrimaryPipeline {
         emotion_fresh_tracks: &[mvm_core::BBox],
         predicted_rois: &[mvm_core::BBox],
     ) -> FrameResult {
+        self.process_inner(
+            frame,
+            frame_id,
+            prev_tracks,
+            locked_tracks,
+            emotion_fresh_tracks,
+            predicted_rois,
+            None,
+        )
+    }
+
+    /// Human enrichment over the exact detections already admitted by the
+    /// TrackingAgent. The split NativePose owns no detector session here.
+    pub(crate) fn process_pretracked(
+        &mut self,
+        frame: &image::DynamicImage,
+        frame_id: u64,
+        prev_tracks: &[mvm_core::BBox],
+        locked_tracks: &[mvm_core::BBox],
+        emotion_fresh_tracks: &[mvm_core::BBox],
+        persons: &[mvm_posture::detector::Person],
+    ) -> FrameResult {
+        self.process_inner(
+            frame,
+            frame_id,
+            prev_tracks,
+            locked_tracks,
+            emotion_fresh_tracks,
+            &[],
+            Some(persons),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_inner(
+        &mut self,
+        frame: &image::DynamicImage,
+        frame_id: u64,
+        prev_tracks: &[mvm_core::BBox],
+        locked_tracks: &[mvm_core::BBox],
+        emotion_fresh_tracks: &[mvm_core::BBox],
+        predicted_rois: &[mvm_core::BBox],
+        pretracked_persons: Option<&[mvm_posture::detector::Person]>,
+    ) -> FrameResult {
         let mut overlay = scene_debug::DetectorOverlay::default();
         let mut emotion_debug_entries: Vec<state::EmotionDebugEntry> = Vec::new();
         let mut bodies: Vec<BodyData> = Vec::new();
         let mut low_conf: Vec<mvm_core::BBox> = Vec::new();
+        let mut detection_scores: Vec<f32> = Vec::new();
+        let mut low_conf_scores: Vec<f32> = Vec::new();
         let mut landmarks: Vec<Option<mvm_core::motion::Landmarks33>> = Vec::new();
 
         // SFace re-check cadence (phase 9.6): every Nth frame re-identify all bodies
@@ -210,6 +261,8 @@ impl BodyPrimaryPipeline {
             &mut overlay,
             &mut bodies,
             &mut low_conf,
+            &mut detection_scores,
+            &mut low_conf_scores,
             &mut landmarks,
             &self.config,
             self.emotion_debug,
@@ -219,6 +272,7 @@ impl BodyPrimaryPipeline {
             emotion_fresh_tracks,
             predicted_rois,
             recheck,
+            pretracked_persons,
         );
 
         // ── Scene objects (phase 8.E) on a cadence ──────────────────────────
@@ -306,7 +360,9 @@ impl BodyPrimaryPipeline {
 
         FrameResult {
             detections,
+            detection_scores,
             low_conf,
+            low_conf_scores,
             landmarks,
             bodies,
             overlay,
@@ -346,6 +402,10 @@ impl BodyPrimaryPipeline {
 
 /// Depth-anchor tracked objects to metric 3D (phase 8.E.2).
 ///
+/// This synchronous path is the compatibility fallback. It has no paired sensor
+/// packet or exact owner map, so it must never label these estimates as direct
+/// metric RGB-D measurements; canonical Fusion stamps them separately.
+///
 /// Depth-Anything outputs an affine-relative **inverse** depth (larger = nearer),
 /// so for a metric Z and depth value d, `Z·d ≈ k` is roughly constant. People
 /// supply the anchor: each has a metric torso-Z (body-primary) and a depth sample,
@@ -357,7 +417,7 @@ impl BodyPrimaryPipeline {
 /// no fabricated distance.
 fn anchor_objects_depth(
     objects: &mut [mvm_scene::TrackedObject],
-    depth: &mvm_depth::DepthMap,
+    depth: &mvm_depth::RelativeDepthMap,
     tracker: &mvm_core::PersonTracker,
     config: &mvm_core::Config,
     frame: &image::DynamicImage,
@@ -367,7 +427,7 @@ fn anchor_objects_depth(
     const Z_MAX: f32 = 8.0;
 
     let mut ks: Vec<f32> = Vec::new();
-    for t in tracker.active() {
+    for t in tracker.published() {
         if let (Some(z), Some(d)) = (t.position_z, depth.median_in_bbox(&t.bbox))
             && d > 1e-3
             && z > 0.0
@@ -631,6 +691,8 @@ fn build_body_primary(
     overlay: &mut scene_debug::DetectorOverlay,
     bodies_out: &mut Vec<BodyData>,
     low_conf_out: &mut Vec<mvm_core::BBox>,
+    detection_scores_out: &mut Vec<f32>,
+    low_conf_scores_out: &mut Vec<f32>,
     landmarks_out: &mut Vec<Option<mvm_core::motion::Landmarks33>>,
     config: &mvm_core::Config,
     emotion_debug: bool,
@@ -640,20 +702,26 @@ fn build_body_primary(
     emotion_fresh_tracks: &[mvm_core::BBox],
     predicted_rois: &[mvm_core::BBox],
     recheck: bool,
+    pretracked_persons: Option<&[mvm_posture::detector::Person]>,
 ) -> Vec<Detection> {
     let pinhole = mvm_core::space::Pinhole::from_config(config);
     let (fw, fh) = (frame.width() as f32, frame.height() as f32);
     let body_dets = native_pose
         .as_deref_mut()
-        .map(|np| {
-            np.bodies_byte_recover(frame, predicted_rois)
-                .unwrap_or_default()
+        .map(|np| match pretracked_persons {
+            Some(persons) => np
+                .bodies_byte_from_detections(frame, persons)
+                .unwrap_or_default(),
+            None => np
+                .bodies_byte_recover(frame, predicted_rois)
+                .unwrap_or_default(),
         })
         .unwrap_or_default();
     let bodies = body_dets.bodies;
     // Weak boxes ride straight through to the tracker's recovery stage (9.4) —
     // never posed, enriched, or turned into a BodyData.
     low_conf_out.extend(body_dets.low_conf.iter().map(|l| l.bbox));
+    low_conf_scores_out.extend(body_dets.low_conf.iter().map(|l| l.score));
     // RGB frame for hand ROIs (only materialised when the hand model is loaded).
     let hand_rgb = hand_landmarker.as_ref().map(|_| frame.to_rgb8());
     let body_bboxes: Vec<mvm_core::BBox> = bodies.iter().map(|b| b.bbox).collect();
@@ -782,6 +850,7 @@ fn build_body_primary(
             );
         }
         dets.push(det);
+        detection_scores_out.push(body.score);
         // Pixel landmarks travel alongside the detection (phase 9.8) → the tracker
         // folds them into this body's track motion ring. Aligned 1:1 with `dets`.
         landmarks_out.push(Some(*lm));
@@ -855,6 +924,7 @@ fn build_body_primary(
             face_lm = Some(lm);
         }
         dets.push(det);
+        detection_scores_out.push(f.score);
         landmarks_out.push(face_lm); // Some when posture recovered from the face ROI
     }
 
@@ -1117,7 +1187,7 @@ mod tests {
     fn anchor_no_people_leaves_objects_depthless() {
         let config = mvm_core::Config::default();
         let tracker = mvm_core::PersonTracker::with_config(&config); // empty → no active tracks
-        let depth = mvm_depth::DepthMap {
+        let depth = mvm_depth::RelativeDepthMap {
             data: vec![0.5; 16],
             w: 4,
             h: 4,
@@ -1134,6 +1204,7 @@ mod tests {
             score: 0.9,
             age: 1,
             missed: 0,
+            lifecycle: mvm_core::types::LifecycleState::Tentative,
             pos_3d: Some([1.0, 1.0, 1.0]),
             pos_conf: 0.4,
             mask: None,
@@ -1198,7 +1269,9 @@ mod tests {
         let mut pdet = Detection::bare(0.0, 0.0, 0.5, 1.0);
         pdet.distance = Some(2.0); // gates the body-primary 3D passthrough
         pdet.position_z = Some(2.0);
-        tracker.tick(&[pdet]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[pdet.clone()]);
+        }
 
         // 8×8 inverse-depth grid (larger = nearer). Left half = person (d=1.0).
         // Right half: top (y<0.5) is the object silhouette d=2.0 (near), bottom
@@ -1215,7 +1288,7 @@ mod tests {
                 };
             }
         }
-        let depth = mvm_depth::DepthMap { data, w: 8, h: 8 };
+        let depth = mvm_depth::RelativeDepthMap { data, w: 8, h: 8 };
         let frame = image::DynamicImage::new_rgb8(64, 64);
 
         // Object box = whole right half (straddles near object + far background).
@@ -1232,6 +1305,7 @@ mod tests {
             score: 0.9,
             age: 1,
             missed: 0,
+            lifecycle: mvm_core::types::LifecycleState::Tentative,
             pos_3d: None,
             pos_conf: 0.0,
             mask,

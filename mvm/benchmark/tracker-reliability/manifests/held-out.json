@@ -1,0 +1,11 @@
+{
+  "schema": "mvm-tracker-reliability-manifest/1.0",
+  "split": "held-out",
+  "status": "not_collected",
+  "production_promotion_eligible": false,
+  "limitations": [
+    "no qualifying captured held-out sessions are frozen",
+    "this split must remain unseen while policies and thresholds are selected"
+  ],
+  "artifacts": []
+}

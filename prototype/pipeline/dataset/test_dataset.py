@@ -150,6 +150,52 @@ def test_pixel_loaders(sdir: Path):
     assert r1.load_depth() is None
 
 
+def test_metric_depth_loader_preserves_exact_u16_mm():
+    with tempfile.TemporaryDirectory() as td:
+        sdir = Path(td)
+        (sdir / "depth").mkdir()
+        o = _obs(0, 100, with_depth=False)
+        o["schema_version"] = "16.8.0"
+        o["frame"]["depth_path"] = "depth/000000.png"
+        o["frame"]["depth"] = {
+            "encoding": "metric_mm_u16", "units": "millimetres",
+            "width": 3, "height": 2, "invalid_value": 0,
+        }
+        expected = np.array([[0, 500, 1000], [1500, 2047, 65535]], dtype=np.uint16)
+        Image.fromarray(expected).save(sdir / "depth/000000.png")
+        rec = record_from_obs(o, sdir)
+        actual = rec.load_depth()
+        assert actual.dtype == np.uint16
+        assert np.array_equal(actual, expected)
+
+
+def test_validate_metric_depth_decodes_uint16_without_crashing():
+    from validate import validate_session
+
+    with tempfile.TemporaryDirectory() as td:
+        sdir = Path(td)
+        (sdir / "frames").mkdir()
+        (sdir / "depth").mkdir()
+        Image.new("RGB", (2, 2)).save(sdir / "frames/000000.jpg")
+        depth = np.array([[0, 500], [1000, 2000]], dtype=np.uint16)
+        Image.fromarray(depth).save(sdir / "depth/000000.png")
+        obs = _obs(0, 1)
+        obs["schema_version"] = "16.8.0"
+        obs["frame"].pop("depth_range")
+        obs["frame"]["depth"] = {
+            "encoding": "metric_mm_u16",
+            "units": "millimetres",
+            "width": 2,
+            "height": 2,
+            "invalid_value": 0,
+            "valid_ratio": 0.75,
+        }
+        (sdir / "labels.jsonl").write_text(json.dumps(obs) + "\n")
+
+        report = validate_session(sdir)
+        assert report.errors == 0, report.issues
+
+
 def test_filters(sdir: Path):
     recs = list(iter_session(sdir))
 
@@ -264,6 +310,8 @@ def main() -> int:
         test_rle_round_trip()
         test_parse_records(sdir)
         test_pixel_loaders(sdir)
+        test_metric_depth_loader_preserves_exact_u16_mm()
+        test_validate_metric_depth_decodes_uint16_without_crashing()
         test_filters(sdir)
         test_filters_from_yaml()
         test_pytorch_dataset(sdir)

@@ -3,26 +3,20 @@
 //! slot at the camera's own tempo. When its optional frame budget is exhausted
 //! (or the source dies), it signals the mesh to stop — it is the driver.
 
-use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext};
+use mvm_mesh::{Agent, AgentHealth, Frame, MeshContext, SensorFrameBundle};
 use std::time::Instant;
 
 /// A source of frames the `CaptureAgent` pulls from. `NativeCamera` implements
 /// it directly; tests use a synthetic source (so the agent is testable without
 /// hardware).
 pub(crate) trait FrameSource: Send {
-    fn read(&mut self) -> anyhow::Result<image::DynamicImage>;
-}
-
-impl FrameSource for mvm_pipeline::native::NativeCamera {
-    fn read(&mut self) -> anyhow::Result<image::DynamicImage> {
-        mvm_pipeline::native::NativeCamera::read(self)
-    }
+    fn read(&mut self) -> anyhow::Result<mvm_pipeline::source::CapturedSensorFrame>;
 }
 
 /// The production camera arrives through the platform seam (phase 14.0.3) as a
-/// boxed [`CameraSource`](mvm_pipeline::source::CameraSource).
-impl FrameSource for Box<dyn mvm_pipeline::source::CameraSource> {
-    fn read(&mut self) -> anyhow::Result<image::DynamicImage> {
+/// boxed [`SensorSource`](mvm_pipeline::source::SensorSource).
+impl FrameSource for Box<dyn mvm_pipeline::source::SensorSource> {
+    fn read(&mut self) -> anyhow::Result<mvm_pipeline::source::CapturedSensorFrame> {
         self.as_mut().read()
     }
 }
@@ -56,9 +50,22 @@ impl Agent for CaptureAgent {
                 break;
             }
             match self.source.read() {
-                Ok(img) => {
-                    ctx.frames
-                        .publish(Frame::new(frame_id, img, Instant::now()));
+                Ok(packet) => {
+                    let captured = Instant::now();
+                    ctx.frames.publish(Frame::from_sensor(
+                        frame_id,
+                        packet.rgb,
+                        captured,
+                        SensorFrameBundle {
+                            source: packet.source,
+                            rgb_stamp: packet.rgb_stamp,
+                            depth_status: packet.depth_status,
+                            metric_depth: packet.metric_depth,
+                            registered_depth_owners: packet.registered_depth_owners,
+                            calibration: packet.calibration,
+                            health: packet.health,
+                        },
+                    ));
                     frame_id += 1;
                     ticks += 1;
                 }
@@ -93,12 +100,16 @@ mod tests {
         remaining: u64,
     }
     impl FrameSource for StubSource {
-        fn read(&mut self) -> anyhow::Result<image::DynamicImage> {
+        fn read(&mut self) -> anyhow::Result<mvm_pipeline::source::CapturedSensorFrame> {
             if self.remaining == 0 {
                 anyhow::bail!("eof");
             }
             self.remaining -= 1;
-            Ok(image::DynamicImage::new_rgb8(8, 8))
+            Ok(mvm_pipeline::source::CapturedSensorFrame::rgb_only(
+                image::DynamicImage::new_rgb8(8, 8),
+                "stub",
+                self.remaining,
+            ))
         }
     }
 
@@ -128,6 +139,13 @@ mod tests {
             4,
             "latest frame id = budget-1"
         );
+        let latest = c.frames.latest().unwrap();
+        assert_eq!(
+            latest.sensor.depth_status,
+            mvm_core::DepthStatus::Unavailable
+        );
+        assert!(latest.sensor.metric_depth.is_none());
+        assert_eq!(latest.image.width(), 8);
         assert!(!c.running(), "capture requests stop when done");
     }
 

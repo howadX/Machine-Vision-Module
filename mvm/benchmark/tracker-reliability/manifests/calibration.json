@@ -1,0 +1,31 @@
+{
+  "schema": "mvm-tracker-reliability-manifest/1.0",
+  "split": "calibration",
+  "status": "insufficient_evidence",
+  "production_promotion_eligible": false,
+  "limitations": [
+    "C03 is captured and exact-replayable but its truth annotation still requires operator signoff",
+    "required person occlusion, pose, multi-person and object manipulation scenarios are not yet captured",
+    "P2 is unavailable for calibration today; held-out person data must use a non-calibration participant"
+  ],
+  "artifacts": [
+    {
+      "path": "mvm/benchmark/tracker-reliability/artifacts/C03-fast-motion-edges-20260813-a.json",
+      "sha256": "dcc463470fa58e48eedfe1764a9bb2ad432cc3d03333cd335df715e015bfc6ab",
+      "role": "captured_rgbd_session_descriptor",
+      "evidence_class": "captured_calibration_provisional"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/artifacts/C03-fast-motion-edges-20260813-a-SHA256SUMS",
+      "sha256": "eb3c885e1939f31f86aa18bd847caa0fda117fb9f8e134daab53f6115e851b80",
+      "role": "captured_rgbd_tree_checksums",
+      "evidence_class": "captured_calibration_provisional"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/annotations/C03-fast-motion-edges-20260813-a.json",
+      "sha256": "b5e4a5af0b8418f9e4a6a3ad3d8a38253bee3592b8bf78ec991f3ee32cea745f",
+      "role": "manual_truth_annotation",
+      "evidence_class": "captured_calibration_provisional"
+    }
+  ]
+}

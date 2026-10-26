@@ -1,0 +1,125 @@
+{
+  "schema": "mvm-depth-tracker-replay/1.0",
+  "status": "synthetic_replay",
+  "variants": {
+    "A": {
+      "assa_proxy": 0.75,
+      "by_domain": {
+        "object": {
+          "assa_proxy": 1.0,
+          "false_births": 0,
+          "false_merges": 0,
+          "fragmentations": 0,
+          "hota_proxy": 1.0,
+          "id_switches": 0,
+          "idf1_proxy": 1.0,
+          "idtp": 3,
+          "observations": 3
+        },
+        "person": {
+          "assa_proxy": 0.7297297297297297,
+          "false_births": 2,
+          "false_merges": 4,
+          "fragmentations": 1,
+          "hota_proxy": 0.8320502943378437,
+          "id_switches": 9,
+          "idf1_proxy": 0.7297297297297297,
+          "idtp": 27,
+          "observations": 37
+        }
+      },
+      "false_births": 2,
+      "false_merges": 4,
+      "fragmentations": 1,
+      "hota_proxy": 0.8451542547285166,
+      "id_switches": 9,
+      "idf1_proxy": 0.75,
+      "idtp": 30,
+      "mean_runtime_us_per_scenario": 13.47897146153846,
+      "observations": 40,
+      "runtime_delta_percent": 0.0,
+      "scenario_count": 13
+    },
+    "B": {
+      "assa_proxy": 0.75,
+      "by_domain": {
+        "object": {
+          "assa_proxy": 1.0,
+          "false_births": 0,
+          "false_merges": 0,
+          "fragmentations": 0,
+          "hota_proxy": 1.0,
+          "id_switches": 0,
+          "idf1_proxy": 1.0,
+          "idtp": 3,
+          "observations": 3
+        },
+        "person": {
+          "assa_proxy": 0.7297297297297297,
+          "false_births": 2,
+          "false_merges": 0,
+          "fragmentations": 1,
+          "hota_proxy": 0.8320502943378437,
+          "id_switches": 9,
+          "idf1_proxy": 0.7297297297297297,
+          "idtp": 27,
+          "observations": 37
+        }
+      },
+      "false_births": 2,
+      "false_merges": 0,
+      "fragmentations": 1,
+      "hota_proxy": 0.8451542547285166,
+      "id_switches": 9,
+      "idf1_proxy": 0.75,
+      "idtp": 30,
+      "mean_runtime_us_per_scenario": 14.626186815384617,
+      "observations": 40,
+      "runtime_delta_percent": 8.511149067417168,
+      "scenario_count": 13
+    },
+    "C": {
+      "assa_proxy": 0.75,
+      "by_domain": {
+        "object": {
+          "assa_proxy": 1.0,
+          "false_births": 0,
+          "false_merges": 0,
+          "fragmentations": 0,
+          "hota_proxy": 1.0,
+          "id_switches": 0,
+          "idf1_proxy": 1.0,
+          "idtp": 3,
+          "observations": 3
+        },
+        "person": {
+          "assa_proxy": 0.7297297297297297,
+          "false_births": 2,
+          "false_merges": 0,
+          "fragmentations": 1,
+          "hota_proxy": 0.8320502943378437,
+          "id_switches": 9,
+          "idf1_proxy": 0.7297297297297297,
+          "idtp": 27,
+          "observations": 37
+        }
+      },
+      "false_births": 2,
+      "false_merges": 0,
+      "fragmentations": 1,
+      "hota_proxy": 0.8451542547285166,
+      "id_switches": 9,
+      "idf1_proxy": 0.75,
+      "idtp": 30,
+      "mean_runtime_us_per_scenario": 15.918517523076922,
+      "observations": 40,
+      "runtime_delta_percent": 18.09890367747702,
+      "scenario_count": 13
+    }
+  },
+  "verdict": {
+    "production_change": false,
+    "reason": "reject depth cues: no captured replay and/or no target-metric improvement within merge/runtime gates",
+    "selected": "A"
+  }
+}

@@ -19,7 +19,11 @@
 use anyhow::Context;
 use image::DynamicImage;
 use image::GenericImageView;
-use mvm_core::BBox;
+use mvm_core::types::LifecycleState;
+use mvm_core::{
+    AssociationObservation, BBox, TrackedAssociationGeometry, TrackerDecision, TrackerDecisionKind,
+    TrackerDiagnostics, TrackerDiagnosticsSnapshot, TrackerDomain, TrackerFrameBinding,
+};
 use ort::{session::Session, value::Tensor};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -262,6 +266,8 @@ pub struct TrackedObject {
     pub age: u32,
     /// Consecutive frames missed (0 when currently visible).
     pub missed: u32,
+    /// Explicit publication lifecycle. Objects never use `IdLocked`.
+    pub lifecycle: LifecycleState,
     /// Metric 3D position [x,y,z], set by the CLI from depth-anchoring (phase
     /// 8.E.2) — `None` when no depth map / no metric anchor is available. The
     /// tracker itself never sets this (it has no depth); it is filled in after
@@ -297,7 +303,16 @@ pub struct ObjectTracker {
     /// object doesn't walk away, so holding its last box is safe and keeps
     /// hand-on-keyboard `typing` attributable.
     static_hold: u32,
+    diagnostics: TrackerDiagnostics,
+    frame_binding: TrackerFrameBinding,
+    compatibility_frame_id: u64,
+    association_geometry: Vec<TrackedAssociationGeometry>,
+    retirements: Vec<u32>,
 }
+
+/// Consecutive observations required before an object can leave tracker-local
+/// diagnostics and become a downstream scene entity.
+pub const OBJECT_CONFIRM_AGE: u32 = 2;
 
 /// Confirmations (matched detection-frames) a static object needs before the
 /// permanence hold trusts it — one clean flicker must not mint a multi-second
@@ -329,6 +344,11 @@ impl ObjectTracker {
             timeout,
             ema_alpha,
             static_hold: DEFAULT_STATIC_HOLD,
+            diagnostics: TrackerDiagnostics::default(),
+            frame_binding: TrackerFrameBinding::rgb_only(0),
+            compatibility_frame_id: 0,
+            association_geometry: Vec::new(),
+            retirements: Vec::new(),
         }
     }
 
@@ -362,8 +382,114 @@ impl ObjectTracker {
     /// Update with this frame's detections; return the currently-visible tracks
     /// (those matched or created this frame). Call once per detection (cadence) frame.
     pub fn update(&mut self, dets: &[ObjectDetection]) -> Vec<TrackedObject> {
+        self.compatibility_frame_id = self.compatibility_frame_id.saturating_add(1);
+        self.frame_binding = TrackerFrameBinding::rgb_only(self.compatibility_frame_id);
+        self.update_current(dets, None)
+    }
+
+    /// Update from one exact live/replay RGB or paired RGB-D packet.
+    pub fn update_bound(
+        &mut self,
+        binding: &TrackerFrameBinding,
+        dets: &[ObjectDetection],
+    ) -> Vec<TrackedObject> {
+        self.frame_binding = binding.clone();
+        self.update_current(dets, None)
+    }
+
+    pub fn update_observed_bound(
+        &mut self,
+        binding: &TrackerFrameBinding,
+        observations: &[AssociationObservation],
+        dets: &[ObjectDetection],
+    ) -> Result<Vec<TrackedObject>, &'static str> {
+        if observations.len() != dets.len() {
+            return Err("association observation count differs from object detections");
+        }
+        let mut keys = std::collections::HashSet::with_capacity(observations.len());
+        for (observation, detection) in observations.iter().zip(dets) {
+            observation.validate()?;
+            if &observation.source != binding
+                || observation.bbox != detection.bbox
+                || observation.detector_score != detection.score
+            {
+                return Err("association observation differs from object detection");
+            }
+            if !keys.insert(observation.detection_key) {
+                return Err("duplicate object detection key");
+            }
+        }
+        self.frame_binding = binding.clone();
+        Ok(self.update_current(dets, Some(observations)))
+    }
+
+    pub fn set_diagnostic_capacity(&mut self, capacity: usize) {
+        self.diagnostics.set_capacity(capacity);
+    }
+
+    pub fn diagnostics(&self) -> TrackerDiagnosticsSnapshot {
+        self.diagnostics.snapshot()
+    }
+
+    /// Current internal track table for image-free replay/reporting.
+    pub fn all(&self) -> &[TrackedObject] {
+        &self.tracks
+    }
+
+    pub fn association_geometry(&self) -> &[TrackedAssociationGeometry] {
+        &self.association_geometry
+    }
+
+    pub fn occluded(&self) -> impl Iterator<Item = &TrackedObject> {
+        self.tracks
+            .iter()
+            .filter(|track| track.lifecycle == LifecycleState::Occluded)
+    }
+
+    pub fn retained_ids(&self) -> Vec<u32> {
+        let mut ids: Vec<u32> = self
+            .tracks
+            .iter()
+            .filter(|track| {
+                track.age >= OBJECT_CONFIRM_AGE && track.lifecycle != LifecycleState::Tentative
+            })
+            .map(|track| track.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    pub fn retirements(&self) -> &[u32] {
+        &self.retirements
+    }
+
+    fn update_current(
+        &mut self,
+        dets: &[ObjectDetection],
+        observations: Option<&[AssociationObservation]>,
+    ) -> Vec<TrackedObject> {
+        self.retirements.clear();
+        self.diagnostics.record(TrackerDecision::new(
+            &self.frame_binding,
+            TrackerDomain::Object,
+            TrackerDecisionKind::Admission,
+            "accepted",
+        ));
+        if self.diagnostics.is_tracing() {
+            for track in &self.tracks {
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Object,
+                    TrackerDecisionKind::Prediction,
+                    "not_supported_greedy_baseline",
+                );
+                event.track_id = Some(track.id);
+                self.diagnostics.record(event);
+            }
+        }
         let mut track_used = vec![false; self.tracks.len()];
         let mut det_used = vec![false; dets.len()];
+        let mut det_track_ids = vec![None; dets.len()];
 
         // Process detections high-score first for stable greedy matching.
         let mut order: Vec<usize> = (0..dets.len()).collect();
@@ -374,10 +500,45 @@ impl ObjectTracker {
             let mut best = self.iou_thresh;
             let mut best_t = None;
             for (ti, t) in self.tracks.iter().enumerate() {
-                if track_used[ti] || t.class_name != d.class_name {
+                if track_used[ti] {
+                    continue;
+                }
+                if t.class_name != d.class_name {
+                    if self.diagnostics.is_tracing() {
+                        let mut event = TrackerDecision::new(
+                            &self.frame_binding,
+                            TrackerDomain::Object,
+                            TrackerDecisionKind::Candidate,
+                            "vetoed",
+                        );
+                        event.detection_index = Some(di);
+                        event.track_id = Some(t.id);
+                        event.reason = Some("class_mismatch".into());
+                        event.cue = Some("class_iou".into());
+                        self.diagnostics.record(event);
+                    }
                     continue;
                 }
                 let iou = t.bbox.iou(&d.bbox);
+                if self.diagnostics.is_tracing() {
+                    let mut event = TrackerDecision::new(
+                        &self.frame_binding,
+                        TrackerDomain::Object,
+                        TrackerDecisionKind::Candidate,
+                        if iou >= self.iou_thresh {
+                            "eligible"
+                        } else {
+                            "vetoed"
+                        },
+                    );
+                    event.detection_index = Some(di);
+                    event.track_id = Some(t.id);
+                    event.iou = Some(iou);
+                    event.score = (iou >= self.iou_thresh).then_some(iou);
+                    event.cue = Some("class_iou".into());
+                    event.reason = (iou < self.iou_thresh).then(|| "iou_gate".into());
+                    self.diagnostics.record(event);
+                }
                 if iou >= best {
                     best = iou;
                     best_t = Some(ti);
@@ -392,6 +553,22 @@ impl ObjectTracker {
                 t.score = d.score;
                 t.age += 1;
                 t.missed = 0;
+                t.lifecycle = if t.age >= OBJECT_CONFIRM_AGE {
+                    LifecycleState::Confirmed
+                } else {
+                    LifecycleState::Tentative
+                };
+                det_track_ids[di] = Some(t.id);
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Object,
+                    TrackerDecisionKind::Assignment,
+                    "matched_greedy_baseline",
+                );
+                event.detection_index = Some(di);
+                event.track_id = Some(t.id);
+                event.iou = Some(best);
+                self.diagnostics.record(event);
             }
         }
 
@@ -408,16 +585,70 @@ impl ObjectTracker {
                 score: d.score,
                 age: 1,
                 missed: 0,
+                lifecycle: LifecycleState::Tentative,
                 pos_3d: None,
                 pos_conf: 0.0,
                 mask: None,
             });
+            det_track_ids[di] = Some(id);
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Object,
+                TrackerDecisionKind::Birth,
+                "born",
+            );
+            event.detection_index = Some(di);
+            event.track_id = Some(id);
+            self.diagnostics.record(event);
         }
 
         // Unmatched tracks age out; expired ids return to the free-list.
         for (ti, used) in track_used.iter().enumerate() {
             if !used {
                 self.tracks[ti].missed += 1;
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Object,
+                    TrackerDecisionKind::Miss,
+                    "remembered_or_aging",
+                );
+                event.track_id = Some(self.tracks[ti].id);
+                self.diagnostics.record(event);
+            }
+        }
+        let lifecycle_limits: Vec<(u32, u32)> = self
+            .tracks
+            .iter()
+            .map(|track| (self.hold_limit(track), self.timeout))
+            .collect();
+        for (track, (hold_limit, timeout)) in self.tracks.iter_mut().zip(lifecycle_limits) {
+            let before = track.lifecycle;
+            track.lifecycle = if track.missed == 0 {
+                if track.age >= OBJECT_CONFIRM_AGE {
+                    LifecycleState::Confirmed
+                } else {
+                    LifecycleState::Tentative
+                }
+            } else if track.age < OBJECT_CONFIRM_AGE {
+                LifecycleState::Lost
+            } else if hold_limit > timeout && track.missed <= hold_limit {
+                LifecycleState::Occluded
+            } else if track.missed >= timeout {
+                LifecycleState::Lost
+            } else {
+                LifecycleState::Occluded
+            };
+            if before != track.lifecycle {
+                let mut event = TrackerDecision::new(
+                    &self.frame_binding,
+                    TrackerDomain::Object,
+                    TrackerDecisionKind::Lifecycle,
+                    "transition",
+                );
+                event.track_id = Some(track.id);
+                event.lifecycle_before = Some(before.as_str().into());
+                event.lifecycle_after = Some(track.lifecycle.as_str().into());
+                self.diagnostics.record(event);
             }
         }
         // Expiry: a confirmed static fixture rides the long permanence hold
@@ -434,18 +665,62 @@ impl ObjectTracker {
             keep
         });
         for id in freed {
+            self.retirements.push(id);
             self.free_ids.push(Reverse(id));
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Object,
+                TrackerDecisionKind::Expire,
+                "expired",
+            );
+            event.track_id = Some(id);
+            self.diagnostics.record(event);
         }
 
         // Emit currently-seen tracks plus *remembered* static fixtures — a
         // keyboard held under the operating hands still anchors `typing`
         // (phase 11 object-permanence). `TrackedObject.missed > 0` marks the
         // remembered ones so consumers can tell "held" from "seen".
-        self.tracks
+        let emitted: Vec<TrackedObject> = self
+            .tracks
             .iter()
-            .filter(|t| t.missed == 0 || self.hold_limit(t) > self.timeout)
+            .filter(|track| track.missed == 0 && track.lifecycle == LifecycleState::Confirmed)
             .cloned()
-            .collect()
+            .collect();
+        for track in &self.tracks {
+            let mut event = TrackerDecision::new(
+                &self.frame_binding,
+                TrackerDomain::Object,
+                TrackerDecisionKind::Publication,
+                if track.missed == 0 && track.lifecycle == LifecycleState::Confirmed {
+                    "observed"
+                } else if track.lifecycle == LifecycleState::Tentative {
+                    "tentative_suppressed"
+                } else if track.lifecycle == LifecycleState::Occluded {
+                    "occluded_handoff"
+                } else {
+                    "not_current"
+                },
+            );
+            event.track_id = Some(track.id);
+            event.lifecycle_after = Some(track.lifecycle.as_str().into());
+            self.diagnostics.record(event);
+        }
+        self.association_geometry = observations.map_or_else(Vec::new, |observations| {
+            observations
+                .iter()
+                .zip(det_track_ids)
+                .filter_map(|(observation, track_id)| {
+                    track_id.map(|track_id| TrackedAssociationGeometry {
+                        track_id,
+                        detection_key: observation.detection_key,
+                        source_frame_id: observation.source.source_frame_id,
+                        geometry: observation.geometry.clone(),
+                    })
+                })
+                .collect()
+        });
+        emitted
     }
 }
 
@@ -1350,15 +1625,84 @@ mod tests {
     fn tracker_first_detection_gets_id_at_base() {
         let mut t = ObjectTracker::new();
         let out = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].id, OBJECT_ID_BASE);
-        assert_eq!(out[0].age, 1);
+        assert!(out.is_empty(), "birth is tentative and not published");
+        assert_eq!(t.all()[0].id, OBJECT_ID_BASE);
+        assert_eq!(t.all()[0].age, 1);
+    }
+
+    #[test]
+    fn single_frame_object_detection_is_not_published() {
+        let mut tracker = ObjectTracker::new();
+        let detection = ObjectDetection {
+            class_id: 41,
+            class_name: "cup",
+            bbox: BBox {
+                x1: 0.2,
+                y1: 0.2,
+                x2: 0.4,
+                y2: 0.5,
+            },
+            score: 0.9,
+        };
+        assert!(tracker.update(&[detection]).is_empty());
+        assert_eq!(
+            tracker.all().len(),
+            1,
+            "tentative hypothesis stays internal"
+        );
+    }
+
+    #[test]
+    fn object_publication_handoff_confirms_coasts_and_retires() {
+        let mut tracker = ObjectTracker::with_params(0.3, 1, 0.5).with_static_hold(0);
+        let detection = ObjectDetection {
+            class_id: 41,
+            class_name: "cup",
+            bbox: BBox {
+                x1: 0.2,
+                y1: 0.2,
+                x2: 0.4,
+                y2: 0.5,
+            },
+            score: 0.9,
+        };
+        assert!(tracker.update(std::slice::from_ref(&detection)).is_empty());
+        let confirmed = tracker.update(std::slice::from_ref(&detection));
+        assert_eq!(confirmed.len(), 1);
+        let id = confirmed[0].id;
+        assert_eq!(confirmed[0].lifecycle, LifecycleState::Confirmed);
+        assert_eq!(tracker.retained_ids(), vec![id]);
+
+        assert!(tracker.update(&[]).is_empty());
+        assert_eq!(tracker.all()[0].lifecycle, LifecycleState::Lost);
+        assert_eq!(tracker.retained_ids(), vec![id]);
+        assert!(tracker.retirements().is_empty());
+
+        assert!(tracker.update(&[]).is_empty());
+        assert!(tracker.retained_ids().is_empty());
+        assert_eq!(tracker.retirements(), &[id]);
+    }
+
+    #[test]
+    fn observed_object_step_maps_same_packet_geometry_to_track() {
+        let binding = TrackerFrameBinding::rgb_only(12);
+        let detection = od("cup", 0.4, 0.4, 0.5, 0.55, 0.8);
+        let observation =
+            AssociationObservation::unavailable(3, &binding, detection.bbox, detection.score);
+        let mut tracker = ObjectTracker::new();
+        let out = tracker
+            .update_observed_bound(&binding, &[observation], &[detection])
+            .unwrap();
+        assert!(out.is_empty());
+        assert_eq!(tracker.association_geometry()[0].track_id, OBJECT_ID_BASE);
+        assert_eq!(tracker.association_geometry()[0].source_frame_id, 12);
     }
 
     #[test]
     fn tracker_same_object_keeps_id_across_frames() {
         let mut t = ObjectTracker::new();
-        let id1 = t.update(&[od("cup", 0.40, 0.40, 0.50, 0.55, 0.8)])[0].id;
+        t.update(&[od("cup", 0.40, 0.40, 0.50, 0.55, 0.8)]);
+        let id1 = t.all()[0].id;
         // Slightly moved next frame → high IoU, same class → same id.
         let f2 = t.update(&[od("cup", 0.41, 0.41, 0.51, 0.56, 0.8)]);
         assert_eq!(f2[0].id, id1);
@@ -1368,18 +1712,27 @@ mod tests {
     #[test]
     fn tracker_same_box_different_class_gets_new_id() {
         let mut t = ObjectTracker::new();
-        let cup = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
-        let kbd = t.update(&[od("keyboard", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
+        t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
+        let cup = t.all()[0].id;
+        t.update(&[od("keyboard", 0.4, 0.4, 0.5, 0.55, 0.8)]);
+        let kbd = t
+            .all()
+            .iter()
+            .find(|track| track.class_name == "keyboard")
+            .unwrap()
+            .id;
         assert_ne!(cup, kbd, "class-aware matching must not merge cup↔keyboard");
     }
 
     #[test]
     fn tracker_two_objects_distinct_ids() {
         let mut t = ObjectTracker::new();
-        let out = t.update(&[
+        let detections = [
             od("cup", 0.1, 0.1, 0.2, 0.2, 0.8),
             od("laptop", 0.6, 0.6, 0.9, 0.9, 0.8),
-        ]);
+        ];
+        assert!(t.update(&detections).is_empty());
+        let out = t.update(&detections);
         assert_eq!(out.len(), 2);
         assert_ne!(out[0].id, out[1].id);
     }
@@ -1387,14 +1740,17 @@ mod tests {
     #[test]
     fn tracker_disappeared_object_expires_and_frees_id() {
         let mut t = ObjectTracker::with_params(0.3, 2, 0.5); // timeout 2
-        let id1 = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
+        let cup = od("cup", 0.4, 0.4, 0.5, 0.55, 0.8);
+        t.update(std::slice::from_ref(&cup));
+        let id1 = t.update(std::slice::from_ref(&cup))[0].id;
         // Absent for > timeout frames → track expires.
         for _ in 0..4 {
             let visible = t.update(&[]);
             assert!(visible.is_empty(), "no object visible while absent");
         }
         // New object reuses the freed id.
-        let id2 = t.update(&[od("bottle", 0.1, 0.1, 0.2, 0.3, 0.7)])[0].id;
+        t.update(&[od("bottle", 0.1, 0.1, 0.2, 0.3, 0.7)]);
+        let id2 = t.all()[0].id;
         assert_eq!(id2, id1, "freed id should be reused");
     }
 
@@ -1403,22 +1759,22 @@ mod tests {
     #[test]
     fn static_fixture_held_under_hand_occlusion_then_resumes() {
         // Confirm a keyboard (age≥2), then occlude it for many frames > timeout:
-        // it keeps being *emitted* (remembered), keeps its id, and resumes on
-        // re-detection — hand-on-keyboard `typing` stays attributable.
+        // it stays in the explicit occluded handoff, keeps its id, and resumes
+        // on re-detection without becoming current interaction evidence.
         let mut t = ObjectTracker::with_params(0.3, 3, 0.5).with_static_hold(20);
         t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
         let id = t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)])[0].id; // age 2 → confirmed
         for k in 0..10 {
             // absent (hands cover it) — well past timeout=3.
             let vis = t.update(&[]);
-            assert_eq!(
-                vis.len(),
-                1,
-                "held keyboard still emitted at miss {}",
+            assert!(
+                vis.is_empty(),
+                "occluded object is not current at miss {}",
                 k + 1
             );
-            assert_eq!(vis[0].id, id, "same id");
-            assert!(vis[0].missed > 0, "flagged as remembered");
+            let held = t.occluded().next().expect("held in occluded handoff");
+            assert_eq!(held.id, id, "same id");
+            assert!(held.missed > 0);
         }
         let back = t.update(&[od("keyboard", 0.41, 0.4, 0.61, 0.55, 0.6)]);
         assert_eq!(back[0].id, id, "re-detection resumes the same track");
@@ -1444,9 +1800,11 @@ mod tests {
         t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]);
         t.update(&[od("keyboard", 0.4, 0.4, 0.6, 0.55, 0.5)]); // confirmed
         for _ in 0..5 {
-            assert_eq!(t.update(&[]).len(), 1, "held within the window");
+            assert!(t.update(&[]).is_empty(), "not published while occluded");
+            assert_eq!(t.occluded().count(), 1, "retained within the window");
         }
         assert!(t.update(&[]).is_empty(), "expires past the static hold");
+        assert!(t.all().is_empty());
     }
 
     #[test]
@@ -1476,7 +1834,9 @@ mod tests {
     #[test]
     fn tracker_brief_flicker_keeps_id() {
         let mut t = ObjectTracker::with_params(0.3, 5, 0.5);
-        let id1 = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)])[0].id;
+        let cup = od("cup", 0.4, 0.4, 0.5, 0.55, 0.8);
+        t.update(std::slice::from_ref(&cup));
+        let id1 = t.update(std::slice::from_ref(&cup))[0].id;
         let _ = t.update(&[]); // missed one frame (within timeout)
         let back = t.update(&[od("cup", 0.4, 0.4, 0.5, 0.55, 0.8)]);
         assert_eq!(
@@ -1533,6 +1893,7 @@ mod tests {
             score: 0.8,
             age: 2,
             missed: 0,
+            lifecycle: LifecycleState::Confirmed,
             pos_3d: None,
             pos_conf: 0.0,
             mask: None,

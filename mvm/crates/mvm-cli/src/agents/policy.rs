@@ -56,12 +56,18 @@ impl SchedulingMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MetricAgent {
+    Tracking,
+    TrackingDetector,
+    TrackingAssociation,
     Human,
     Fusion,
 }
 
 #[derive(Default)]
 struct MetricsState {
+    tracking_us: Vec<u64>,
+    tracking_detector_us: Vec<u64>,
+    tracking_association_us: Vec<u64>,
     human_us: Vec<u64>,
     fusion_us: Vec<u64>,
     scene_extra_runs: u64,
@@ -75,6 +81,9 @@ struct MetricsState {
     unavailable: u64,
     dispatch_wait_frames: Vec<u64>,
     resolution_wait_frames: Vec<u64>,
+    tracking_ticks: u64,
+    tracking_last_source_frame: Option<u64>,
+    tracking_dropped_source_frames: u64,
 }
 
 /// Bounded, runtime-only instrumentation. It is deliberately not a Cortex
@@ -97,6 +106,14 @@ pub(crate) struct SchedulingReport {
     pub(crate) resolved: u64,
     pub(crate) expired: u64,
     pub(crate) unavailable: u64,
+    pub(crate) tracking_ms_p50: Option<f64>,
+    pub(crate) tracking_ms_p95: Option<f64>,
+    pub(crate) tracking_detector_ms_p50: Option<f64>,
+    pub(crate) tracking_detector_ms_p95: Option<f64>,
+    pub(crate) tracking_association_ms_p50: Option<f64>,
+    pub(crate) tracking_association_ms_p95: Option<f64>,
+    pub(crate) tracking_ticks: u64,
+    pub(crate) tracking_dropped_frame_ratio: f64,
     pub(crate) human_ms_p50: Option<f64>,
     pub(crate) human_ms_p95: Option<f64>,
     pub(crate) fusion_ms_p50: Option<f64>,
@@ -120,6 +137,9 @@ impl SchedulingMetrics {
     pub(crate) fn record_duration(&self, agent: MetricAgent, duration: Duration) {
         let mut state = self.state.lock().unwrap();
         let samples = match agent {
+            MetricAgent::Tracking => &mut state.tracking_us,
+            MetricAgent::TrackingDetector => &mut state.tracking_detector_us,
+            MetricAgent::TrackingAssociation => &mut state.tracking_association_us,
             MetricAgent::Human => &mut state.human_us,
             MetricAgent::Fusion => &mut state.fusion_us,
         };
@@ -127,6 +147,18 @@ impl SchedulingMetrics {
             samples,
             u64::try_from(duration.as_micros()).unwrap_or(u64::MAX),
         );
+    }
+
+    pub(crate) fn record_tracking_frame(&self, source_frame_id: u64) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(previous) = state.tracking_last_source_frame
+            && let Some(gap) = source_frame_id.checked_sub(previous.saturating_add(1))
+        {
+            state.tracking_dropped_source_frames =
+                state.tracking_dropped_source_frames.saturating_add(gap);
+        }
+        state.tracking_last_source_frame = Some(source_frame_id);
+        state.tracking_ticks = state.tracking_ticks.saturating_add(1);
     }
 
     pub(crate) fn record_extra_run(&self, target: ObservationTarget) {
@@ -176,6 +208,23 @@ impl SchedulingMetrics {
             resolved: state.resolved,
             expired: state.expired,
             unavailable: state.unavailable,
+            tracking_ms_p50: percentile_ms(&state.tracking_us, 50),
+            tracking_ms_p95: percentile_ms(&state.tracking_us, 95),
+            tracking_detector_ms_p50: percentile_ms(&state.tracking_detector_us, 50),
+            tracking_detector_ms_p95: percentile_ms(&state.tracking_detector_us, 95),
+            tracking_association_ms_p50: percentile_ms(&state.tracking_association_us, 50),
+            tracking_association_ms_p95: percentile_ms(&state.tracking_association_us, 95),
+            tracking_ticks: state.tracking_ticks,
+            tracking_dropped_frame_ratio: {
+                let delivered = state
+                    .tracking_ticks
+                    .saturating_add(state.tracking_dropped_source_frames);
+                if delivered == 0 {
+                    0.0
+                } else {
+                    state.tracking_dropped_source_frames as f64 / delivered as f64
+                }
+            },
             human_ms_p50: percentile_ms(&state.human_us, 50),
             human_ms_p95: percentile_ms(&state.human_us, 95),
             fusion_ms_p50: percentile_ms(&state.fusion_us, 50),
@@ -190,7 +239,7 @@ impl SchedulingMetrics {
     pub(crate) fn emit_report(&self) {
         let report = self.report();
         eprintln!(
-            "  scheduling-metrics mode={} scene_extra={} depth_extra={} outcomes=accepted:{}/deferred:{}/rejected:{}/dispatched:{}/resolved:{}/expired:{}/unavailable:{} human_ms=p50:{:?},p95:{:?} fusion_ms=p50:{:?},p95:{:?} dispatch_wait_frames=p50:{:?},p95:{:?} resolution_wait_frames=p50:{:?},p95:{:?}",
+            "  scheduling-metrics mode={} scene_extra={} depth_extra={} outcomes=accepted:{}/deferred:{}/rejected:{}/dispatched:{}/resolved:{}/expired:{}/unavailable:{} tracking_ms=p50:{:?},p95:{:?} detector_ms=p50:{:?},p95:{:?} association_ms=p50:{:?},p95:{:?} tracking_ticks={} tracking_dropped_ratio={:.4} human_ms=p50:{:?},p95:{:?} fusion_ms=p50:{:?},p95:{:?} dispatch_wait_frames=p50:{:?},p95:{:?} resolution_wait_frames=p50:{:?},p95:{:?}",
             report.mode.as_str(),
             report.scene_extra_runs,
             report.depth_extra_runs,
@@ -201,6 +250,14 @@ impl SchedulingMetrics {
             report.resolved,
             report.expired,
             report.unavailable,
+            report.tracking_ms_p50,
+            report.tracking_ms_p95,
+            report.tracking_detector_ms_p50,
+            report.tracking_detector_ms_p95,
+            report.tracking_association_ms_p50,
+            report.tracking_association_ms_p95,
+            report.tracking_ticks,
+            report.tracking_dropped_frame_ratio,
             report.human_ms_p50,
             report.human_ms_p95,
             report.fusion_ms_p50,
@@ -671,6 +728,17 @@ mod tests {
         metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(1));
         metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(3));
         metrics.record_duration(MetricAgent::Human, std::time::Duration::from_millis(5));
+        metrics.record_duration(MetricAgent::Tracking, std::time::Duration::from_millis(7));
+        metrics.record_duration(
+            MetricAgent::TrackingDetector,
+            std::time::Duration::from_millis(4),
+        );
+        metrics.record_duration(
+            MetricAgent::TrackingAssociation,
+            std::time::Duration::from_millis(2),
+        );
+        metrics.record_tracking_frame(10);
+        metrics.record_tracking_frame(12);
         metrics.record_extra_run(ObservationTarget::Scene);
         metrics.record_outcome(&RequestOutcome::Accepted {
             dispatch_deadline_frame: 9,
@@ -684,6 +752,12 @@ mod tests {
         assert_eq!(report.accepted, 1);
         assert_eq!(report.human_ms_p50, Some(3.0));
         assert_eq!(report.human_ms_p95, Some(5.0));
+        assert_eq!(report.tracking_ms_p50, Some(7.0));
+        assert_eq!(report.tracking_ms_p95, Some(7.0));
+        assert_eq!(report.tracking_detector_ms_p95, Some(4.0));
+        assert_eq!(report.tracking_association_ms_p95, Some(2.0));
+        assert_eq!(report.tracking_ticks, 2);
+        assert!((report.tracking_dropped_frame_ratio - 1.0 / 3.0).abs() < f64::EPSILON);
         assert_eq!(report.dispatch_wait_frames_p50, Some(2));
         assert_eq!(report.resolution_wait_frames_p95, Some(4));
     }

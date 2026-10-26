@@ -17,6 +17,6 @@ pub mod mesh;
 pub mod stubs;
 
 pub use agent::{Agent, AgentError, AgentHealth, MeshContext};
-pub use frame::{Frame, LatestFrame, LatestValue};
+pub use frame::{Frame, LatestFrame, LatestValue, SensorFrameBundle};
 pub use mesh::AgentMesh;
 pub use stubs::{FrameCounterAgent, StubCaptureAgent};

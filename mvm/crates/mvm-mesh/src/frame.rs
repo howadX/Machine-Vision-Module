@@ -7,6 +7,10 @@
 //! (an `ArcSwap` would be the lock-free production variant; semantics identical).
 
 use image::DynamicImage;
+use mvm_core::{
+    CalibrationRef, DepthStatus, MetricDepthFrame, RegisteredDepthOwners, SensorHealth,
+    SensorSourceId, SensorStamp,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -17,6 +21,22 @@ pub struct Frame {
     pub image: Arc<DynamicImage>,
     pub captured: Instant,
     pub captured_at_unix_ms: i64,
+    /// Sensor provenance/evidence attached to the RGB clock tick.
+    pub sensor: Arc<SensorFrameBundle>,
+}
+
+/// Immutable sensor packet. RGB stays directly accessible on [`Frame`] for
+/// compatibility; optional metric evidence is carried here without promotion to
+/// canonical scene facts.
+#[derive(Clone)]
+pub struct SensorFrameBundle {
+    pub source: SensorSourceId,
+    pub rgb_stamp: SensorStamp,
+    pub depth_status: DepthStatus,
+    pub metric_depth: Option<Arc<MetricDepthFrame>>,
+    pub registered_depth_owners: Option<Arc<RegisteredDepthOwners>>,
+    pub calibration: Option<CalibrationRef>,
+    pub health: SensorHealth,
 }
 
 impl Frame {
@@ -31,11 +51,43 @@ impl Frame {
         captured: Instant,
         captured_at_unix_ms: i64,
     ) -> Self {
+        let image = Arc::new(image);
+        let host_monotonic_ns = monotonic_ns();
         Self {
             id,
-            image: Arc::new(image),
+            image,
             captured,
             captured_at_unix_ms,
+            sensor: Arc::new(SensorFrameBundle {
+                source: SensorSourceId::v4l2("compatibility"),
+                rgb_stamp: SensorStamp {
+                    source_sequence: id,
+                    host_monotonic_ns,
+                    wall_clock_unix_ms: captured_at_unix_ms,
+                    clock_domain: mvm_core::SensorClockDomain::HostMonotonic,
+                    device_timestamp_raw: None,
+                },
+                depth_status: DepthStatus::Unavailable,
+                metric_depth: None,
+                registered_depth_owners: None,
+                calibration: None,
+                health: SensorHealth::default(),
+            }),
+        }
+    }
+
+    pub fn from_sensor(
+        id: u64,
+        image: Arc<DynamicImage>,
+        captured: Instant,
+        bundle: SensorFrameBundle,
+    ) -> Self {
+        Self {
+            id,
+            image,
+            captured,
+            captured_at_unix_ms: bundle.rgb_stamp.wall_clock_unix_ms,
+            sensor: Arc::new(bundle),
         }
     }
 }
@@ -44,6 +96,17 @@ fn unix_ms(time: std::time::SystemTime) -> i64 {
     time.duration_since(std::time::UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
+}
+
+fn monotonic_ns() -> u64 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    EPOCH
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_nanos()
+        .try_into()
+        .unwrap_or(u64::MAX)
+        .max(1)
 }
 
 /// Generic single-slot latest-value cell shared between one producer and any
@@ -159,5 +222,22 @@ mod tests {
         assert_eq!(consumer_a.latest(), Some(42));
         assert_eq!(consumer_b.latest(), Some(42));
         assert_eq!(consumer_a.latest(), Some(42));
+    }
+
+    #[test]
+    fn compatibility_frame_is_explicitly_rgb_only() {
+        let frame = frame(9);
+        assert_eq!(frame.sensor.depth_status, DepthStatus::Unavailable);
+        assert!(frame.sensor.metric_depth.is_none());
+        assert_eq!(frame.sensor.rgb_stamp.source_sequence, 9);
+        assert_eq!(frame.image.width(), 8);
+    }
+
+    #[test]
+    fn cloned_frame_shares_immutable_sensor_payload() {
+        let frame = frame(4);
+        let cloned = frame.clone();
+        assert!(Arc::ptr_eq(&frame.image, &cloned.image));
+        assert!(Arc::ptr_eq(&frame.sensor, &cloned.sensor));
     }
 }

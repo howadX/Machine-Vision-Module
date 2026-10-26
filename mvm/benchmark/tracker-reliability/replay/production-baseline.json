@@ -1,0 +1,58 @@
+{
+  "schema": "mvm-tracker-production-replay/1.0",
+  "split": "development",
+  "max_pair_skew_ns": 20000000,
+  "frames": [
+    {
+      "sensor": {
+        "case_id": "paired-100",
+        "source": {"backend": "kinect_v1", "logical_name": "replay", "serial": "KINECT-TEST"},
+        "rgb_width": 1,
+        "rgb_height": 1,
+        "rgb_stamp": {"source_sequence": 100, "host_monotonic_ns": 1000000000, "wall_clock_unix_ms": 1700000000000, "clock_domain": "kinect_v1_rgb", "device_timestamp_raw": 1000},
+        "depth_status": "paired",
+        "metric_depth": {"width": 1, "height": 1, "depth_mm": [1800], "invalid_value": 0, "stamp": {"source_sequence": 100, "host_monotonic_ns": 1001000000, "wall_clock_unix_ms": 1700000000001, "clock_domain": "kinect_v1_depth", "device_timestamp_raw": 1001}, "geometry": "registered_to_rgb", "calibration_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid_ratio": 1.0, "rgb_depth_skew_ns": 1000000},
+        "calibration": {"schema": "kinect-v1-sensor-calibration/1.0", "camera_serial": "KINECT-TEST", "revision_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        "health": {"paired": 1, "rgb_only": 0, "depth_dropped": 0, "rgb_gaps": 0, "depth_gaps": 0, "duplicate_timestamps": 0, "out_of_order_timestamps": 0, "resync_errors": 0}
+      },
+      "people_high": [{"bbox": [0.10, 0.10, 0.30, 0.80]}],
+      "objects": [{"class_name": "cup", "bbox": [0.65, 0.45, 0.75, 0.65], "score": 0.90}]
+    },
+    {
+      "sensor": {
+        "case_id": "paired-101",
+        "source": {"backend": "kinect_v1", "logical_name": "replay", "serial": "KINECT-TEST"},
+        "rgb_width": 1, "rgb_height": 1,
+        "rgb_stamp": {"source_sequence": 101, "host_monotonic_ns": 1033333333, "wall_clock_unix_ms": 1700000000033, "clock_domain": "kinect_v1_rgb", "device_timestamp_raw": 1033},
+        "depth_status": "paired",
+        "metric_depth": {"width": 1, "height": 1, "depth_mm": [1790], "invalid_value": 0, "stamp": {"source_sequence": 101, "host_monotonic_ns": 1034333333, "wall_clock_unix_ms": 1700000000034, "clock_domain": "kinect_v1_depth", "device_timestamp_raw": 1034}, "geometry": "registered_to_rgb", "calibration_revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid_ratio": 1.0, "rgb_depth_skew_ns": 1000000},
+        "calibration": {"schema": "kinect-v1-sensor-calibration/1.0", "camera_serial": "KINECT-TEST", "revision_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      },
+      "people_high": [{"bbox": [0.12, 0.10, 0.32, 0.80]}],
+      "objects": [{"class_name": "cup", "bbox": [0.65, 0.45, 0.75, 0.65], "score": 0.91}]
+    },
+    {
+      "sensor": {
+        "case_id": "rgb-102",
+        "source": {"backend": "v4l2", "logical_name": "replay-rgb"},
+        "rgb_width": 1, "rgb_height": 1,
+        "rgb_stamp": {"source_sequence": 102, "host_monotonic_ns": 1066666666, "wall_clock_unix_ms": 1700000000066, "clock_domain": "host_monotonic"},
+        "depth_status": "unavailable"
+      },
+      "people_high": [{"bbox": [0.14, 0.10, 0.34, 0.80]}],
+      "objects": []
+    },
+    {
+      "sensor": {
+        "case_id": "rgb-103",
+        "source": {"backend": "v4l2", "logical_name": "replay-rgb"},
+        "rgb_width": 1, "rgb_height": 1,
+        "rgb_stamp": {"source_sequence": 103, "host_monotonic_ns": 1099999999, "wall_clock_unix_ms": 1700000000099, "clock_domain": "host_monotonic"},
+        "depth_status": "unavailable"
+      },
+      "people_high": [],
+      "people_low": [[0.16, 0.10, 0.36, 0.80]],
+      "objects": [{"class_name": "cup", "bbox": [0.65, 0.45, 0.75, 0.65], "score": 0.89}]
+    }
+  ]
+}

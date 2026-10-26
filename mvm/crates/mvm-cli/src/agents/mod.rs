@@ -8,8 +8,8 @@
 //! exercised live in the `mesh` subcommand, 8.D).
 //!
 //! Decision 8.C.5: depth-anchoring is **not** here — it runs on the fusion step
-//! (8.C.7) where both people and objects are visible. The `DepthAgent` only
-//! publishes the raw `DepthMap` to a shared slot. Keeping that slot in `mvm-cli`
+//! (8.C.7) where both people and objects are visible. The monocular provider only
+//! publishes the raw `RelativeDepthMap` to a shared slot. Keeping that slot in `mvm-cli`
 //! (not `MeshContext`) lets `mvm-mesh` stay detector-agnostic (no `mvm-depth` dep
 //! → no cycle).
 
@@ -24,22 +24,28 @@ mod fusion;
 #[cfg(test)]
 mod golden;
 mod human;
+mod human_enrichment;
 mod observations;
 mod policy;
 mod scene;
 mod statefile;
+mod tracker_capture;
+mod tracking;
 
 pub(crate) use capture::CaptureAgent;
 pub(crate) use cortex::CortexAgent;
 pub(crate) use dataset_writer::DatasetWriterAgent;
-pub(crate) use depth::DepthAgent;
+pub(crate) use depth::MonocularDepthProvider;
 pub(crate) use fusion::{FusionAgent, infer_activities};
-pub(crate) use human::HumanAgent;
+pub(crate) use human::LegacyHumanAgent;
+pub(crate) use human_enrichment::HumanAgent;
 pub(crate) use observations::{
-    AttentionPolicyBus, CortexFrameBus, DepthObservationBus, DepthObservationFrame,
-    FrameEvidenceHandles, FusedFrameBus, FusedFramePacket, HumanObservationBus,
-    HumanObservationFrame, ObservationStamp, PolicyOutcomeBus, SceneObservationBus,
-    SceneObservationFrame,
+    AssociationMeasurementContext, AttentionPolicyBus, CortexFrameBus, DepthEvidence,
+    DepthObservationBus, DepthObservationFrame, FrameEvidenceHandles, FusedFrameBus,
+    FusedFramePacket, HumanEnrichmentBus, HumanEnrichmentFrame, HumanEnrichmentItem,
+    HumanObservationBus, HumanObservationFrame, HumanWorkBus, HumanWorkItem, ObservationStamp,
+    PolicyOutcomeBus, SceneObservationBus, SceneObservationFrame, TrackedPersonWork,
+    registered_metric_from_frame,
 };
 pub(crate) use policy::{
     DepthExecutionControl, MetricAgent, PolicySchedulerAgent, PolicySchedulerWiring,
@@ -47,6 +53,8 @@ pub(crate) use policy::{
 };
 pub(crate) use scene::SceneAgent;
 pub(crate) use statefile::{JournalCfg, StateFileWriter};
+pub(crate) use tracker_capture::{ModelDigest, TrackerCalibrationCapture, TrackerCaptureMetadata};
+pub(crate) use tracking::TrackingAgent;
 
 use crate::pipeline::BodyData;
 use mvm_core::{BBox, ObjectState, PersonState, PersonTracker, Position3D};
@@ -68,7 +76,7 @@ pub(crate) fn collect_people(
     now: Instant,
 ) -> Vec<PersonState> {
     tracker
-        .active()
+        .published()
         .map(|t| {
             let mut p = PersonState::from_track(t, now);
             if let Some(b) = best_body_for_bbox(&p.bbox, bodies) {
@@ -78,6 +86,13 @@ pub(crate) fn collect_people(
             }
             p
         })
+        .collect()
+}
+
+pub(crate) fn collect_occluded_people(tracker: &PersonTracker, now: Instant) -> Vec<PersonState> {
+    tracker
+        .occluded()
+        .map(|track| PersonState::from_track(track, now))
         .collect()
 }
 
@@ -145,6 +160,17 @@ mod tests {
     }
 
     #[test]
+    fn tentative_person_is_not_projected_downstream() {
+        let mut tracker = PersonTracker::new();
+        tracker.tick(&[Detection::bare(0.2, 0.1, 0.5, 0.9)]);
+        assert_eq!(tracker.active().count(), 1, "tracker keeps its hypothesis");
+        assert!(
+            collect_people(&tracker, &[], Instant::now()).is_empty(),
+            "one-frame tentative detection must not become a PersonState"
+        );
+    }
+
+    #[test]
     fn cadence_due_every_nth() {
         assert!(cadence_due(0, 3));
         assert!(!cadence_due(1, 3));
@@ -157,15 +183,17 @@ mod tests {
     fn project_people_writes_active_tracks() {
         let config = Config::default();
         let mut tracker = PersonTracker::with_config(&config);
-        // One body detection → one active track after a tick.
+        // Publication is bounded by the explicit confirmation window.
         let mut det = Detection::bare(0.2, 0.2, 0.4, 0.6);
         det.position_z = Some(1.5);
-        tracker.tick(&[det]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[det.clone()]);
+        }
 
         let now = Instant::now();
         let people = collect_people(&tracker, &[], now);
 
-        assert_eq!(people.len(), 1, "one active track → one PersonState");
+        assert_eq!(people.len(), 1, "one confirmed track → one PersonState");
     }
 
     #[test]
@@ -184,6 +212,7 @@ mod tests {
                 score: 0.8,
                 age: 3,
                 missed: 0,
+                lifecycle: mvm_core::types::LifecycleState::Confirmed,
                 pos_3d: Some([0.5, 0.1, 0.7]),
                 pos_conf: 0.4,
                 mask: None,
@@ -200,6 +229,7 @@ mod tests {
                 score: 0.6,
                 age: 1,
                 missed: 0,
+                lifecycle: mvm_core::types::LifecycleState::Tentative,
                 pos_3d: None,
                 pos_conf: 0.0,
                 mask: None,

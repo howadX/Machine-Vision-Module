@@ -54,6 +54,7 @@ pub enum FactSource {
     Human,
     Scene,
     Depth,
+    MetricDepth,
     Tracker,
     Fusion,
     Activity,
@@ -474,7 +475,85 @@ pub struct SceneEntity {
     pub existence: SceneFact<Existence>,
     pub bbox: SceneFact<BBox>,
     pub position_3d: SceneFact<Position3D>,
+    /// Additive metric geometry contract. `position_3d` remains the preferred
+    /// compatibility projection; this field preserves direct and fallback
+    /// evidence separately.
+    #[serde(default)]
+    pub geometry: Box<EntityGeometryFacts>,
     pub kinematics: SceneFact<Kinematics>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntityGeometryFacts {
+    #[serde(default = "unknown_fact")]
+    pub direct_metric: SceneFact<DirectMetricGeometry>,
+    #[serde(default = "unknown_fact")]
+    pub fallback_position: SceneFact<Position3D>,
+}
+
+impl Default for EntityGeometryFacts {
+    fn default() -> Self {
+        Self {
+            direct_metric: unknown_fact(),
+            fallback_position: unknown_fact(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeometryReferenceFrame {
+    CameraOptical,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DirectMetricGeometry {
+    pub centroid_m: [f32; 3],
+    pub aabb_min_m: [f32; 3],
+    pub aabb_max_m: [f32; 3],
+    pub median_z_m: f32,
+    pub median_absolute_deviation_m: f32,
+    pub sample_count: u32,
+    pub valid_ratio: f32,
+    pub boundary_contamination: f32,
+    pub reference_frame: GeometryReferenceFrame,
+    pub calibration_revision: String,
+    pub mask_aware: bool,
+}
+
+impl DirectMetricGeometry {
+    fn validate(&self) -> Result<(), CanonicalContractError> {
+        let finite = self
+            .centroid_m
+            .iter()
+            .chain(self.aabb_min_m.iter())
+            .chain(self.aabb_max_m.iter())
+            .chain([
+                &self.median_z_m,
+                &self.median_absolute_deviation_m,
+                &self.valid_ratio,
+                &self.boundary_contamination,
+            ])
+            .all(|value| value.is_finite());
+        if !finite
+            || self.sample_count == 0
+            || self.median_z_m <= 0.0
+            || self.median_absolute_deviation_m < 0.0
+            || !(0.0..=1.0).contains(&self.valid_ratio)
+            || !(0.0..=1.0).contains(&self.boundary_contamination)
+            || self.calibration_revision.len() != 64
+            || !self
+                .calibration_revision
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || (0..3).any(|axis| self.aabb_min_m[axis] > self.aabb_max_m[axis])
+        {
+            return Err(CanonicalContractError::new(
+                "invalid direct metric geometry",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -702,6 +781,22 @@ impl FusedSceneFrame {
             entity.existence.validate()?;
             entity.bbox.validate()?;
             entity.position_3d.validate()?;
+            entity.geometry.direct_metric.validate()?;
+            entity.geometry.fallback_position.validate()?;
+            if let Some(metric) = &entity.geometry.direct_metric.value {
+                metric.validate()?;
+                if entity
+                    .geometry
+                    .direct_metric
+                    .evidence
+                    .iter()
+                    .any(|evidence| evidence.source != FactSource::MetricDepth)
+                {
+                    return Err(CanonicalContractError::new(
+                        "direct metric geometry must cite metric_depth evidence",
+                    ));
+                }
+            }
             entity.kinematics.validate()?;
             match &entity.kind {
                 SceneEntityKind::Person(facts) => {
@@ -829,6 +924,7 @@ impl FusedSceneFrame {
             match &entity.kind {
                 SceneEntityKind::Person(facts) => {
                     people.push(PersonState {
+                        tracker_id: entity.key.track_id,
                         track_id: entity.display_id,
                         bbox,
                         face_bbox: None,

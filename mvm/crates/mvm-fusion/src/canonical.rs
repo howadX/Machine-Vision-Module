@@ -6,13 +6,13 @@
 
 use crate::{ZoneTracker, build_scene};
 use mvm_core::canonical::{
-    AnimalFacts, BodyCoverage, EntityKey, EventTailView, Existence, FactEvidenceRef, FactReason,
-    FactSource, FactStatus, FrameStamp, FusedSceneFrame, GalleryIdentity, HandFact, HandGesture,
-    HandInteractionFact, HandInteractionKind, HandSide, HeadFacing, HeadOrientationFact,
-    IncarnationRegistry, Kinematics, ObjectFacts, PersonFacts, PersonSensoryFacts, SceneActivity,
-    SceneEntity, SceneEntityKind, SceneEvent, SceneEventKind, SceneEventPayload, SceneFact,
-    SceneQuality, SceneRelation, SceneRelationKind, SceneZone, SourceFreshness, SourceStamp,
-    TrackDomain,
+    AnimalFacts, BodyCoverage, DirectMetricGeometry, EntityGeometryFacts, EntityKey, EventTailView,
+    Existence, FactEvidenceRef, FactReason, FactSource, FactStatus, FrameStamp, FusedSceneFrame,
+    GalleryIdentity, GeometryReferenceFrame, HandFact, HandGesture, HandInteractionFact,
+    HandInteractionKind, HandSide, HeadFacing, HeadOrientationFact, IncarnationRegistry,
+    Kinematics, ObjectFacts, PersonFacts, PersonSensoryFacts, SceneActivity, SceneEntity,
+    SceneEntityKind, SceneEvent, SceneEventKind, SceneEventPayload, SceneFact, SceneQuality,
+    SceneRelation, SceneRelationKind, SceneZone, SourceFreshness, SourceStamp, TrackDomain,
 };
 use mvm_core::types::{Entity, EntityKind, RelationKind};
 use mvm_core::{Activity, ActivityEvent, BBox, ObjectState, PersonState, Position3D};
@@ -38,6 +38,33 @@ pub struct CanonicalFusionInput<'a> {
     pub activities: &'a [Activity],
     pub ended_activities: &'a [ActivityEvent],
     pub anomaly_score: f32,
+    pub metric_geometry: &'a [MetricGeometryObservation],
+    /// Established local ids that remain alive even without a current
+    /// observation. They reserve incarnation only and never create entities.
+    pub retained_people: &'a [u32],
+    pub retired_people: &'a [u32],
+    pub retained_objects: &'a [u32],
+    pub retired_objects: &'a [u32],
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetricGeometryObservation {
+    pub track_domain: TrackDomain,
+    pub track_id: u32,
+    pub source_frame_id: u64,
+    pub produced_at_unix_ms: i64,
+    pub source_freshness: SourceFreshness,
+    pub centroid_m: [f32; 3],
+    pub aabb_min_m: [f32; 3],
+    pub aabb_max_m: [f32; 3],
+    pub median_z_m: f32,
+    pub median_absolute_deviation_m: f32,
+    pub sample_count: u32,
+    pub valid_ratio: f32,
+    pub boundary_contamination: f32,
+    pub calibration_revision: String,
+    pub mask_aware: bool,
+    pub weak: bool,
 }
 
 pub struct CanonicalFusion {
@@ -75,6 +102,27 @@ struct ActivityKey {
     participants: Vec<EntityKey>,
 }
 
+fn validate_metric_geometry_input(input: &CanonicalFusionInput<'_>) -> anyhow::Result<()> {
+    let mut seen = BTreeSet::new();
+    for value in input.metric_geometry {
+        anyhow::ensure!(
+            value.source_frame_id <= input.stamp.frame_id,
+            "metric geometry for {:?}/{} comes from future frame {} > {}",
+            value.track_domain,
+            value.track_id,
+            value.source_frame_id,
+            input.stamp.frame_id
+        );
+        anyhow::ensure!(
+            seen.insert((value.track_domain, value.track_id)),
+            "duplicate metric geometry for {:?}/{}",
+            value.track_domain,
+            value.track_id
+        );
+    }
+    Ok(())
+}
+
 impl CanonicalFusion {
     pub fn new(run_id: impl Into<String>) -> Self {
         let run_id = run_id.into();
@@ -96,18 +144,34 @@ impl CanonicalFusion {
     }
 
     pub fn assemble(&mut self, input: CanonicalFusionInput<'_>) -> anyhow::Result<FusedSceneFrame> {
-        self.sync_domain(
+        validate_metric_geometry_input(&input)?;
+        self.sync_tracked_domain(
             TrackDomain::Person,
-            input.people.iter().map(|person| person.track_id),
-        );
-        self.sync_domain(
+            input.people.iter().map(|person| person.tracker_id),
+            input.retained_people,
+            input.retired_people,
+        )?;
+        self.sync_tracked_domain(
             TrackDomain::Object,
             input.objects.iter().map(|object| object.id),
-        );
+            input.retained_objects,
+            input.retired_objects,
+        )?;
         self.sync_domain(
             TrackDomain::Animal,
             input.animals.iter().map(|animal| animal.track_id),
         );
+        let retained_entity_keys: BTreeSet<EntityKey> = input
+            .retained_people
+            .iter()
+            .filter_map(|id| self.active.get(&(TrackDomain::Person, *id)).cloned())
+            .chain(
+                input
+                    .retained_objects
+                    .iter()
+                    .filter_map(|id| self.active.get(&(TrackDomain::Object, *id)).cloned()),
+            )
+            .collect();
 
         let human_source = source(&input.sources, FactSource::Human);
         let scene_source = source(&input.sources, FactSource::Scene);
@@ -115,12 +179,27 @@ impl CanonicalFusion {
 
         let mut entities = Vec::new();
         for person in input.people {
-            let key = self.key(TrackDomain::Person, person.track_id);
-            entities.push(person_entity(person, key, human_source));
+            let key = self.key(TrackDomain::Person, person.tracker_id);
+            entities.push(person_entity(
+                person,
+                key,
+                human_source,
+                metric_geometry(
+                    input.metric_geometry,
+                    TrackDomain::Person,
+                    person.tracker_id,
+                ),
+            ));
         }
         for object in input.objects {
             let key = self.key(TrackDomain::Object, object.id);
-            entities.push(object_entity(object, key, scene_source, depth_source));
+            entities.push(object_entity(
+                object,
+                key,
+                scene_source,
+                depth_source,
+                metric_geometry(input.metric_geometry, TrackDomain::Object, object.id),
+            ));
         }
         for animal in input.animals {
             let key = self.key(TrackDomain::Animal, animal.track_id);
@@ -144,7 +223,7 @@ impl CanonicalFusion {
             &activities,
             &zones,
             input.anomaly_score,
-            &input.stamp,
+            (&input.stamp, &retained_entity_keys),
         )?;
 
         let anomaly = if input.anomaly_score.is_finite() {
@@ -206,6 +285,50 @@ impl CanonicalFusion {
                 .entry((domain, id))
                 .or_insert_with(|| self.registry.activate(domain, id));
         }
+    }
+
+    fn sync_tracked_domain(
+        &mut self,
+        domain: TrackDomain,
+        current_ids: impl Iterator<Item = u32>,
+        retained_ids: &[u32],
+        retirements: &[u32],
+    ) -> anyhow::Result<()> {
+        let current: BTreeSet<u32> = current_ids.collect();
+        let retained: BTreeSet<u32> = retained_ids.iter().copied().collect();
+        let retired: BTreeSet<u32> = retirements.iter().copied().collect();
+        anyhow::ensure!(
+            current.is_disjoint(&retired) && retained.is_disjoint(&retired),
+            "{domain:?} tracker handoff retains and retires the same id"
+        );
+
+        for id in &retired {
+            if let Some(key) = self.active.remove(&(domain, *id)) {
+                self.registry.retire(&key);
+            }
+        }
+
+        let desired: BTreeSet<u32> = current.union(&retained).copied().collect();
+        let implicitly_retired: Vec<(TrackDomain, u32)> = self
+            .active
+            .keys()
+            .filter(|(active_domain, id)| *active_domain == domain && !desired.contains(id))
+            .copied()
+            .collect();
+        for slot in implicitly_retired {
+            if let Some(key) = self.active.remove(&slot) {
+                self.registry.retire(&key);
+            }
+        }
+
+        // A retained-only id never creates a canonical identity out of thin air;
+        // it can only keep an already-active incarnation reserved.
+        for id in current {
+            self.active
+                .entry((domain, id))
+                .or_insert_with(|| self.registry.activate(domain, id));
+        }
+        Ok(())
     }
 
     fn key(&self, domain: TrackDomain, id: u32) -> EntityKey {
@@ -285,15 +408,18 @@ impl CanonicalFusion {
             .zones
             .update(&scene.zones, &scene.entities)
             .iter()
-            .map(|zone| SceneZone {
-                id: u64::from(zone.id),
-                label: zone.label.map(str::to_owned),
-                members: zone
+            .filter_map(|zone| {
+                let members: Vec<_> = zone
                     .members
                     .iter()
                     .filter_map(|id| keys.get(id).cloned())
-                    .collect(),
-                age_frames: u64::from(zone.age),
+                    .collect();
+                (!members.is_empty()).then(|| SceneZone {
+                    id: u64::from(zone.id),
+                    label: zone.label.map(str::to_owned),
+                    members,
+                    age_frames: u64::from(zone.age),
+                })
             })
             .collect();
         Ok((relations, zones))
@@ -306,15 +432,16 @@ impl CanonicalFusion {
         activities: &[SceneActivity],
         zones: &[SceneZone],
         anomaly_score: f32,
-        stamp: &FrameStamp,
+        context: (&FrameStamp, &BTreeSet<EntityKey>),
     ) -> anyhow::Result<()> {
+        let (stamp, retained_entity_keys) = context;
         // Snapshot before emitting: publication mutates the event tail, never
         // the previous-tick evidence used to classify this transition.
         let previous_entities = self.previous_entities.clone();
         let previous_activities = self.previous_activities.clone();
         let previous_zones = self.previous_zones.clone();
         let have_previous_tick = self.has_previous_tick;
-        let current: BTreeMap<EntityKey, PreviousEntity> = entities
+        let mut current: BTreeMap<EntityKey, PreviousEntity> = entities
             .iter()
             .map(|entity| {
                 (
@@ -347,7 +474,10 @@ impl CanonicalFusion {
             }
         }
         for (key, entity) in &previous_entities {
-            if have_previous_tick && !current.contains_key(key) {
+            if have_previous_tick
+                && !current.contains_key(key)
+                && !retained_entity_keys.contains(key)
+            {
                 self.push_event(
                     SceneEventKind::EntityDisappeared,
                     vec![key.clone()],
@@ -445,7 +575,7 @@ impl CanonicalFusion {
                 }
             }
         }
-        let current_zones: BTreeMap<u64, Vec<EntityKey>> = zones
+        let mut current_zones: BTreeMap<u64, Vec<EntityKey>> = zones
             .iter()
             .filter(|zone| !zone.members.is_empty())
             .map(|zone| (zone.id, zone.members.clone()))
@@ -466,7 +596,12 @@ impl CanonicalFusion {
             }
         }
         for (id, members) in &previous_zones {
-            if have_previous_tick && !current_zones.contains_key(id) {
+            if have_previous_tick
+                && !current_zones.contains_key(id)
+                && !members
+                    .iter()
+                    .any(|member| retained_entity_keys.contains(member))
+            {
                 self.push_event(SceneEventKind::ZoneFreed, members.clone(), 1.0, stamp, None)?;
             }
         }
@@ -508,6 +643,27 @@ impl CanonicalFusion {
                     stamp,
                     None,
                 )?;
+            }
+        }
+        // Retention reserves identity and transition history, not presence. This
+        // prevents a short accepted occlusion from fabricating exit/enter and
+        // zone-free/occupied event pairs while the current frame stays empty.
+        for key in retained_entity_keys {
+            if !current.contains_key(key)
+                && let Some(previous) = previous_entities.get(key)
+            {
+                current.insert(key.clone(), previous.clone());
+            }
+        }
+        for (id, members) in previous_zones {
+            if let std::collections::btree_map::Entry::Vacant(entry) = current_zones.entry(id) {
+                let retained_members: Vec<_> = members
+                    .into_iter()
+                    .filter(|member| retained_entity_keys.contains(member))
+                    .collect();
+                if !retained_members.is_empty() {
+                    entry.insert(retained_members);
+                }
             }
         }
         self.previous_entities = current;
@@ -675,10 +831,88 @@ fn position_fact(
     }
 }
 
+fn metric_geometry(
+    observations: &[MetricGeometryObservation],
+    domain: TrackDomain,
+    track_id: u32,
+) -> Option<&MetricGeometryObservation> {
+    observations
+        .iter()
+        .find(|value| value.track_domain == domain && value.track_id == track_id)
+}
+
+fn direct_metric_fact(
+    measurement: Option<&MetricGeometryObservation>,
+    entity: &EntityKey,
+) -> SceneFact<DirectMetricGeometry> {
+    let Some(value) = measurement else {
+        return SceneFact::unknown(FactReason::MissingSource);
+    };
+    if matches!(
+        value.source_freshness,
+        SourceFreshness::Stale | SourceFreshness::Unavailable
+    ) {
+        return SceneFact::unknown(FactReason::StaleSource);
+    }
+    let confidence = (value.valid_ratio * (1.0 - value.boundary_contamination)).clamp(0.0, 1.0);
+    let status = if value.weak || value.boundary_contamination > 0.5 || confidence < 0.5 {
+        FactStatus::Weak
+    } else {
+        FactStatus::Observed
+    };
+    SceneFact::claimed(
+        status,
+        DirectMetricGeometry {
+            centroid_m: value.centroid_m,
+            aabb_min_m: value.aabb_min_m,
+            aabb_max_m: value.aabb_max_m,
+            median_z_m: value.median_z_m,
+            median_absolute_deviation_m: value.median_absolute_deviation_m,
+            sample_count: value.sample_count,
+            valid_ratio: value.valid_ratio,
+            boundary_contamination: value.boundary_contamination,
+            reference_frame: GeometryReferenceFrame::CameraOptical,
+            calibration_revision: value.calibration_revision.clone(),
+            mask_aware: value.mask_aware,
+        },
+        confidence,
+        vec![evidence(
+            FactSource::MetricDepth,
+            value.source_frame_id,
+            Some(entity.clone()),
+        )],
+    )
+    .expect("validated direct metric measurement is canonical")
+}
+
+fn preferred_position(
+    direct: &SceneFact<DirectMetricGeometry>,
+    fallback: &SceneFact<Position3D>,
+) -> SceneFact<Position3D> {
+    direct.value.as_ref().map_or_else(
+        || fallback.clone(),
+        |metric| {
+            SceneFact::claimed(
+                direct.status,
+                Position3D {
+                    x: metric.centroid_m[0],
+                    y: metric.centroid_m[1],
+                    z: metric.centroid_m[2],
+                    confidence: direct.confidence.unwrap_or(0.0),
+                },
+                direct.confidence.unwrap_or(0.0),
+                direct.evidence.clone(),
+            )
+            .expect("direct metric position is canonical")
+        },
+    )
+}
+
 fn person_entity(
     person: &PersonState,
     key: EntityKey,
     source: Option<&SourceStamp>,
+    metric: Option<&MetricGeometryObservation>,
 ) -> SceneEntity {
     let posture = match &person.posture {
         Some((label, confidence)) => {
@@ -709,6 +943,9 @@ fn person_entity(
             )
         },
     );
+    let fallback_position = position_fact(person.position_3d, FactSource::Human, source, &key);
+    let direct_metric = direct_metric_fact(metric, &key);
+    let position_3d = preferred_position(&direct_metric, &fallback_position);
     SceneEntity {
         key: key.clone(),
         display_id: person.track_id,
@@ -724,7 +961,11 @@ fn person_entity(
         }),
         existence: observed(Existence::Present, 1.0, FactSource::Human, source, &key),
         bbox: observed(person.bbox, 1.0, FactSource::Human, source, &key),
-        position_3d: position_fact(person.position_3d, FactSource::Human, source, &key),
+        position_3d,
+        geometry: Box::new(EntityGeometryFacts {
+            direct_metric,
+            fallback_position,
+        }),
         // Legacy `PersonState.velocity` is scalar speed without direction; it
         // cannot honestly populate vector-valued canonical kinematics.
         kinematics: SceneFact::unknown(FactReason::MissingSource),
@@ -900,6 +1141,7 @@ fn object_entity(
     key: EntityKey,
     scene: Option<&SourceStamp>,
     depth: Option<&SourceStamp>,
+    metric: Option<&MetricGeometryObservation>,
 ) -> SceneEntity {
     let status = if object.remembered {
         FactStatus::Remembered
@@ -918,6 +1160,9 @@ fn object_entity(
         )
         .expect("tracked object confidence is valid")
     };
+    let fallback_position = position_fact(object.position_3d, FactSource::Depth, depth, &key);
+    let direct_metric = direct_metric_fact(metric, &key);
+    let position_3d = preferred_position(&direct_metric, &fallback_position);
     SceneEntity {
         key: key.clone(),
         display_id: object.id,
@@ -947,7 +1192,11 @@ fn object_entity(
             scene,
             &key,
         ),
-        position_3d: position_fact(object.position_3d, FactSource::Depth, depth, &key),
+        position_3d,
+        geometry: Box::new(EntityGeometryFacts {
+            direct_metric,
+            fallback_position,
+        }),
         kinematics: SceneFact::unknown(FactReason::MissingSource),
     }
 }
@@ -1001,6 +1250,7 @@ fn animal_entity(
             &key,
         ),
         position_3d: SceneFact::unknown(FactReason::Uncalibrated),
+        geometry: Box::default(),
         kinematics: SceneFact::unknown(FactReason::MissingSource),
     }
 }
@@ -1066,6 +1316,7 @@ mod tests {
 
     fn person(id: u32) -> PersonState {
         PersonState {
+            tracker_id: id,
             track_id: id,
             bbox: BBox {
                 x1: 0.1,
@@ -1130,7 +1381,294 @@ mod tests {
             activities: &[],
             ended_activities: &[],
             anomaly_score: 0.0,
+            metric_geometry: &[],
+            retained_people: &[],
+            retired_people: &[],
+            retained_objects: &[],
+            retired_objects: &[],
         }
+    }
+
+    fn metric(domain: TrackDomain, track_id: u32) -> MetricGeometryObservation {
+        MetricGeometryObservation {
+            track_domain: domain,
+            track_id,
+            source_frame_id: 1,
+            produced_at_unix_ms: 1_001,
+            source_freshness: SourceFreshness::Fresh,
+            centroid_m: [0.1, -0.2, 1.5],
+            aabb_min_m: [0.0, -0.3, 1.4],
+            aabb_max_m: [0.2, -0.1, 1.6],
+            median_z_m: 1.5,
+            median_absolute_deviation_m: 0.02,
+            sample_count: 128,
+            valid_ratio: 0.9,
+            boundary_contamination: 0.1,
+            calibration_revision: "a".repeat(64),
+            mask_aware: false,
+            weak: false,
+        }
+    }
+
+    fn metric_sources(frame_id: u64) -> Vec<SourceStamp> {
+        vec![
+            SourceStamp::at_frame(FactSource::Scene, frame_id, 1_001)
+                .relative_to(frame_id, 0, 0)
+                .unwrap(),
+            SourceStamp::at_frame(FactSource::Depth, frame_id, 1_001)
+                .relative_to(frame_id, 0, 0)
+                .unwrap(),
+            SourceStamp::at_frame(FactSource::MetricDepth, frame_id, 1_001)
+                .relative_to(frame_id, 0, 0)
+                .unwrap(),
+        ]
+    }
+
+    #[test]
+    fn object_without_person_uses_direct_metric_position_and_provenance() {
+        let mut fusion = CanonicalFusion::new("run");
+        let object = object(10_000);
+        let geometry = [metric(TrackDomain::Object, object.id)];
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources: metric_sources(1),
+                objects: std::slice::from_ref(&object),
+                metric_geometry: &geometry,
+                ..input(1, &[])
+            })
+            .unwrap();
+        let entity = &frame.entities[0];
+        assert_eq!(entity.position_3d.value.unwrap().z, 1.5);
+        assert_eq!(
+            entity.geometry.direct_metric.evidence[0].source,
+            FactSource::MetricDepth
+        );
+        assert_eq!(entity.geometry.direct_metric.evidence[0].source_frame_id, 1);
+        assert_eq!(
+            entity
+                .geometry
+                .direct_metric
+                .value
+                .as_ref()
+                .unwrap()
+                .reference_frame,
+            GeometryReferenceFrame::CameraOptical
+        );
+    }
+
+    #[test]
+    fn future_or_duplicate_metric_geometry_is_rejected_before_fusion() {
+        let object = object(10_000);
+        let mut future = metric(TrackDomain::Object, object.id);
+        future.source_frame_id = 2;
+        let mut fusion = CanonicalFusion::new("run");
+        assert!(
+            fusion
+                .assemble(CanonicalFusionInput {
+                    objects: std::slice::from_ref(&object),
+                    metric_geometry: std::slice::from_ref(&future),
+                    ..input(1, &[])
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("future frame")
+        );
+
+        let duplicate = metric(TrackDomain::Object, object.id);
+        let geometry = [duplicate.clone(), duplicate];
+        assert!(
+            fusion
+                .assemble(CanonicalFusionInput {
+                    objects: std::slice::from_ref(&object),
+                    metric_geometry: &geometry,
+                    ..input(1, &[])
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("duplicate metric geometry")
+        );
+    }
+
+    #[test]
+    fn retained_gap_keeps_incarnation_until_explicit_retirement() {
+        let mut fusion = CanonicalFusion::new("run");
+        let observed = person(10);
+        let retained = [10];
+        let first = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(1, std::slice::from_ref(&observed))
+            })
+            .unwrap();
+        let first_key = first.entities[0].key.clone();
+
+        let gap = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(2, &[])
+            })
+            .unwrap();
+        assert!(gap.entities.is_empty());
+        assert!(gap.activities.is_empty());
+        assert!(gap.relations.is_empty());
+        assert!(gap.zones.is_empty());
+        assert!(
+            gap.events.events.iter().all(|event| !matches!(
+                event.kind,
+                SceneEventKind::EntityDisappeared | SceneEventKind::PersonExited
+            )),
+            "retained absence is not a canonical disappearance"
+        );
+
+        let returned = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(3, std::slice::from_ref(&observed))
+            })
+            .unwrap();
+        assert_eq!(returned.entities[0].key, first_key);
+        assert!(
+            returned.events.events.iter().all(|event| !matches!(
+                event.kind,
+                SceneEventKind::EntityAppeared | SceneEventKind::PersonEntered
+            )),
+            "return inside retention must not fabricate a new arrival"
+        );
+
+        let retired = [10];
+        let expiry = fusion
+            .assemble(CanonicalFusionInput {
+                retired_people: &retired,
+                ..input(4, &[])
+            })
+            .unwrap();
+        assert!(expiry.events.events.iter().any(|event| {
+            event.kind == SceneEventKind::EntityDisappeared
+                && event.entity_keys == [first_key.clone()]
+        }));
+        assert!(expiry.events.events.iter().any(|event| {
+            event.kind == SceneEventKind::PersonExited && event.entity_keys == [first_key.clone()]
+        }));
+        let reincarnated = fusion
+            .assemble(CanonicalFusionInput {
+                retained_people: &retained,
+                ..input(5, std::slice::from_ref(&observed))
+            })
+            .unwrap();
+        assert_ne!(reincarnated.entities[0].key, first_key);
+        assert_eq!(reincarnated.entities[0].key.incarnation, 1);
+    }
+
+    #[test]
+    fn gallery_recognition_changes_display_id_without_reincarnating_person() {
+        let mut fusion = CanonicalFusion::new("run");
+        let mut anonymous = person(10);
+        let first = fusion
+            .assemble(input(1, std::slice::from_ref(&anonymous)))
+            .unwrap();
+        let key = first.entities[0].key.clone();
+        assert_eq!(first.entities[0].display_id, 10);
+
+        anonymous.track_id = 0;
+        anonymous.identity = Some(("alice".into(), 0.9));
+        let recognized = fusion
+            .assemble(input(2, std::slice::from_ref(&anonymous)))
+            .unwrap();
+
+        assert_eq!(recognized.entities[0].key, key);
+        assert_eq!(recognized.entities[0].display_id, 0);
+        assert!(recognized.events.events.iter().all(|event| !matches!(
+            event.kind,
+            SceneEventKind::EntityAppeared
+                | SceneEventKind::EntityDisappeared
+                | SceneEventKind::PersonEntered
+                | SceneEventKind::PersonExited
+        )));
+    }
+
+    #[test]
+    fn mask_aware_direct_centroid_and_reference_frame_serialize() {
+        let mut fusion = CanonicalFusion::new("run");
+        let object = object(10_000);
+        let mut measured = metric(TrackDomain::Object, object.id);
+        measured.mask_aware = true;
+        measured.centroid_m = [0.3, 0.4, 0.8];
+        let geometry = [measured];
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources: metric_sources(1),
+                objects: std::slice::from_ref(&object),
+                metric_geometry: &geometry,
+                ..input(1, &[])
+            })
+            .unwrap();
+        let json = serde_json::to_value(&frame).unwrap();
+        assert_eq!(
+            json["entities"][0]["geometry"]["direct_metric"]["value"]["mask_aware"],
+            true
+        );
+        assert_eq!(
+            json["entities"][0]["geometry"]["direct_metric"]["value"]["reference_frame"],
+            "camera_optical"
+        );
+    }
+
+    #[test]
+    fn invalid_boundary_coverage_downgrades_direct_measurement_to_weak() {
+        let mut fusion = CanonicalFusion::new("run");
+        let object = object(10_000);
+        let mut measured = metric(TrackDomain::Object, object.id);
+        measured.boundary_contamination = 0.75;
+        let geometry = [measured];
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources: metric_sources(1),
+                objects: std::slice::from_ref(&object),
+                metric_geometry: &geometry,
+                ..input(1, &[])
+            })
+            .unwrap();
+        assert_eq!(
+            frame.entities[0].geometry.direct_metric.status,
+            FactStatus::Weak
+        );
+        assert_eq!(
+            frame.entities[0].geometry.direct_metric.confidence,
+            Some(0.225)
+        );
+    }
+
+    #[test]
+    fn person_direct_geometry_preserves_separately_stamped_fallback() {
+        let mut fusion = CanonicalFusion::new("run");
+        let mut person = person(10);
+        person.position_3d = Some(Position3D {
+            x: 0.0,
+            y: 0.0,
+            z: 2.2,
+            confidence: 0.6,
+        });
+        let geometry = [metric(TrackDomain::Person, person.tracker_id)];
+        let mut sources = metric_sources(1);
+        sources.push(
+            SourceStamp::at_frame(FactSource::Human, 1, 1_001)
+                .relative_to(1, 0, 0)
+                .unwrap(),
+        );
+        let frame = fusion
+            .assemble(CanonicalFusionInput {
+                sources,
+                metric_geometry: &geometry,
+                ..input(1, std::slice::from_ref(&person))
+            })
+            .unwrap();
+        let entity = &frame.entities[0];
+        assert_eq!(entity.position_3d.value.unwrap().z, 1.5);
+        assert_eq!(entity.geometry.fallback_position.value.unwrap().z, 2.2);
+        assert_eq!(
+            entity.geometry.fallback_position.evidence[0].source,
+            FactSource::Human
+        );
     }
 
     #[test]

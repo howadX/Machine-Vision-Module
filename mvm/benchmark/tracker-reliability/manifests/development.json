@@ -1,0 +1,75 @@
+{
+  "schema": "mvm-tracker-reliability-manifest/1.0",
+  "split": "development",
+  "status": "exploratory_only",
+  "production_promotion_eligible": false,
+  "limitations": [
+    "synthetic A/B/C is a Python adapter, not production Rust replay",
+    "captured replay contains one physical person and 39 sampled observations",
+    "no captured multi-person crossing",
+    "no captured object or mask slice",
+    "XYZ is selected MVM output, not independent surveyed ground truth"
+  ],
+  "artifacts": [
+    {
+      "path": "mvm/benchmark/tracker-depth/manifest.json",
+      "sha256": "03b07f3cfd684432f291eb76c6a81b9f1a62cea3b83072e86f69f7fad6dcc3cd",
+      "role": "historical_synthetic_contract",
+      "evidence_class": "synthetic_adapter"
+    },
+    {
+      "path": "mvm/benchmark/tracker-depth/replay.json",
+      "sha256": "16de552ebe25532502cb4a9196a0e2b5c009dd20acd33fe0bbdad2d77bbbc959",
+      "role": "historical_synthetic_replay",
+      "evidence_class": "synthetic_adapter"
+    },
+    {
+      "path": "mvm/benchmark/tracker-depth/results.json",
+      "sha256": "94461b57224f6e4f4083183ffa4e872815acd37ddaf6f259cd6f19935eb032a9",
+      "role": "historical_synthetic_result",
+      "evidence_class": "synthetic_adapter"
+    },
+    {
+      "path": "mvm/benchmark/tracker-depth/captured-2026-08-13-annotations.json",
+      "sha256": "f65b4a262e75fe6e7004a54fdf2f5cbbde0fb229c8a0e369f250003f83e69568",
+      "role": "exploratory_human_annotations",
+      "evidence_class": "captured_exploratory"
+    },
+    {
+      "path": "mvm/benchmark/tracker-depth/captured-2026-08-13-replay.json",
+      "sha256": "50074d6ae2ae3e1b366be32795fd71a2f9deaf99f787f7049bea32c8a0adef61",
+      "role": "exploratory_captured_replay",
+      "evidence_class": "captured_exploratory"
+    },
+    {
+      "path": "mvm/benchmark/tracker-depth/captured-2026-08-13-results.json",
+      "sha256": "f3d98c3f18aa00fb9719bbbf217b789caad729347db49fc7108a01f6563be924",
+      "role": "exploratory_captured_result",
+      "evidence_class": "captured_exploratory"
+    },
+    {
+      "path": "mvm/benchmark/baselines/kinect-v1-tracker-depth-I-2026-08-13.md",
+      "sha256": "0fad36975416c0d66168b79a9177e55889787d482ca9f32331de29dc71cf7c5a",
+      "role": "historical_block_i_decision",
+      "evidence_class": "decision_record"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/replay/production-baseline.json",
+      "sha256": "b99dfab66f9615b7b3119ee06ae7f95f25924a7cc0f96e20b976e9e571fca8b8",
+      "role": "production_rust_replay_input",
+      "evidence_class": "production_parity_synthetic"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/reports/T1-production-replay.md",
+      "sha256": "dfa59f1271d66fdd6b16c23d1cd4838efefb5763a203be06dd24aa6a9f59aa16",
+      "role": "production_rust_replay_record",
+      "evidence_class": "production_parity_synthetic"
+    },
+    {
+      "path": "mvm/benchmark/tracker-reliability/reports/T2-pre-association-measurement.md",
+      "sha256": "84adf5f42fe87fd930bf12aff768da72a92fd857d0965ddf9901bd6f6e7a4b10",
+      "role": "pre_association_measurement_record",
+      "evidence_class": "production_parity_synthetic"
+    }
+  ]
+}

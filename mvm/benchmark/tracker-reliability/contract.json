@@ -1,0 +1,46 @@
+{
+  "schema": "mvm-tracker-reliability-contract/1.0",
+  "plan": "docs/tracker-reliability-rgbd-plan.md",
+  "baseline_commit": "f67f5eab",
+  "domains": [
+    "person",
+    "object"
+  ],
+  "authority": {
+    "person_tracker": "mvm-core::PersonTracker",
+    "object_tracker": "mvm-scene::ObjectTracker",
+    "canonical_facts": "mvm-fusion::CanonicalFusion",
+    "durable_semantic_history": "labels.jsonl"
+  },
+  "required_splits": [
+    "development",
+    "calibration",
+    "held-out"
+  ],
+  "production_replay": {
+    "schema": "mvm-tracker-production-replay/1.0",
+    "runner": "cargo run -p mvm-cli --example tracker_replay",
+    "exact_frame_binding_required": true,
+    "held_out_execution_by_development_runner": false,
+    "durable_trace_allowed": false
+  },
+  "promotion": {
+    "production_rust_replay_required": true,
+    "captured_calibration_required": true,
+    "captured_held_out_required": true,
+    "person_and_object_decisions_separate": true,
+    "max_throughput_regression_percent": 5.0,
+    "false_merges_allowed": 0,
+    "false_relinks_allowed": 0,
+    "honesty_violations_allowed": 0,
+    "synthetic_or_adapter_only_may_promote": false
+  },
+  "allowed_manifest_statuses": [
+    "exploratory_only",
+    "not_collected",
+    "frozen",
+    "accepted",
+    "rejected",
+    "insufficient_evidence"
+  ]
+}

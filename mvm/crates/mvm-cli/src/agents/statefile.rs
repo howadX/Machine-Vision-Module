@@ -257,6 +257,11 @@ mod tests {
                 activities: &[],
                 ended_activities: &[],
                 anomaly_score: 0.0,
+                metric_geometry: &[],
+                retained_people: &[],
+                retired_people: &[],
+                retained_objects: &[],
+                retired_objects: &[],
             })
             .unwrap();
         let fused = FusedFrameBus::new();
@@ -309,6 +314,7 @@ mod tests {
         let mut world = WorldState::new(now);
         world.frame_id = 7;
         world.people.push(PersonState {
+            tracker_id: 10,
             track_id: 10,
             bbox: BBox {
                 x1: 0.3,
@@ -378,6 +384,7 @@ mod tests {
         let mut world = WorldState::new(now);
         world.frame_id = 3;
         world.people.push(PersonState {
+            tracker_id: 0,
             track_id: 0,
             bbox: BBox {
                 x1: 0.3,
@@ -517,6 +524,7 @@ mod tests {
         let mut world = WorldState::new(now);
         world.frame_id = 4;
         let mut p = PersonState {
+            tracker_id: 0,
             track_id: 0,
             bbox: BBox {
                 x1: 0.3,

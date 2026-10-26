@@ -860,6 +860,7 @@ mod tests {
 
     fn full_person(id: u32) -> PersonState {
         PersonState {
+            tracker_id: id,
             track_id: id,
             bbox: BBox {
                 x1: 0.25,

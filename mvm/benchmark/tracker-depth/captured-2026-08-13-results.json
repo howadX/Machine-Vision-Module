@@ -1,0 +1,121 @@
+{
+  "production_tracker": {
+    "detection_recall": 0.8108108108108109,
+    "duplicate_predictions": 6,
+    "false_negatives": 7,
+    "false_positives": 11,
+    "fragmentations": 4,
+    "id_switches": 14,
+    "idf1": 0.3076923076923077,
+    "idfn": 25,
+    "idfp": 29,
+    "idtp": 12,
+    "matched_samples": 30,
+    "prediction_count": 41,
+    "sample_count": 39,
+    "stale_predictions_on_absent": 4,
+    "truth_positive_samples": 37,
+    "unique_selected_track_ids": [
+      10,
+      13,
+      15,
+      17,
+      18,
+      19,
+      22,
+      23,
+      26,
+      28
+    ]
+  },
+  "schema": "mvm-depth-tracker-replay/1.0",
+  "status": "captured_replay",
+  "variants": {
+    "A": {
+      "assa_proxy": 0.7027027027027027,
+      "by_domain": {
+        "person": {
+          "assa_proxy": 0.7027027027027027,
+          "false_births": 0,
+          "false_merges": 0,
+          "fragmentations": 1,
+          "hota_proxy": 0.8382736442849094,
+          "id_switches": 4,
+          "idf1_proxy": 0.7027027027027027,
+          "idtp": 26,
+          "observations": 37
+        }
+      },
+      "false_births": 0,
+      "false_merges": 0,
+      "fragmentations": 1,
+      "hota_proxy": 0.8382736442849094,
+      "id_switches": 4,
+      "idf1_proxy": 0.7027027027027027,
+      "idtp": 26,
+      "mean_runtime_us_per_scenario": 132.66623420000002,
+      "observations": 37,
+      "runtime_delta_percent": 0.0,
+      "scenario_count": 1
+    },
+    "B": {
+      "assa_proxy": 0.7027027027027027,
+      "by_domain": {
+        "person": {
+          "assa_proxy": 0.7027027027027027,
+          "false_births": 0,
+          "false_merges": 0,
+          "fragmentations": 1,
+          "hota_proxy": 0.8382736442849094,
+          "id_switches": 4,
+          "idf1_proxy": 0.7027027027027027,
+          "idtp": 26,
+          "observations": 37
+        }
+      },
+      "false_births": 0,
+      "false_merges": 0,
+      "fragmentations": 1,
+      "hota_proxy": 0.8382736442849094,
+      "id_switches": 4,
+      "idf1_proxy": 0.7027027027027027,
+      "idtp": 26,
+      "mean_runtime_us_per_scenario": 132.5843602,
+      "observations": 37,
+      "runtime_delta_percent": -0.061714271527901765,
+      "scenario_count": 1
+    },
+    "C": {
+      "assa_proxy": 0.4864864864864865,
+      "by_domain": {
+        "person": {
+          "assa_proxy": 0.4864864864864865,
+          "false_births": 0,
+          "false_merges": 0,
+          "fragmentations": 1,
+          "hota_proxy": 0.6974858324629157,
+          "id_switches": 7,
+          "idf1_proxy": 0.4864864864864865,
+          "idtp": 18,
+          "observations": 37
+        }
+      },
+      "false_births": 0,
+      "false_merges": 0,
+      "fragmentations": 1,
+      "hota_proxy": 0.6974858324629157,
+      "id_switches": 7,
+      "idf1_proxy": 0.4864864864864865,
+      "idtp": 18,
+      "mean_runtime_us_per_scenario": 164.52124780000003,
+      "observations": 37,
+      "runtime_delta_percent": 24.01139505624108,
+      "scenario_count": 1
+    }
+  },
+  "verdict": {
+    "production_change": false,
+    "reason": "reject depth cues: no target-metric improvement within merge/runtime gates",
+    "selected": "A"
+  }
+}

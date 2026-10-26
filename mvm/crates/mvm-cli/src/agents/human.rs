@@ -2,11 +2,11 @@
 //! and owns its own `PersonTracker`. Every frame: process → track → project the
 //! active tracks into a stamped immutable observation. The pipeline is constructed with no
 //! scene/depth detector (those are their own agents now), so it does only the
-//! body-primary chain; objects/depth come from `SceneAgent`/`DepthAgent`.
+//! body-primary chain; objects/depth come from `SceneAgent`/typed depth providers.
 
 use crate::agents::{
-    HumanObservationBus, HumanObservationFrame, ObservationStamp, SceneObservationBus,
-    collect_people,
+    AssociationMeasurementContext, HumanObservationBus, HumanObservationFrame, ObservationStamp,
+    SceneObservationBus, collect_occluded_people, collect_people,
 };
 use crate::pipeline::BodyPrimaryPipeline;
 use mvm_core::{BBox, Detection, mask::InstanceMask};
@@ -47,16 +47,18 @@ fn attach_person_masks(
     }
 }
 
-pub(crate) struct HumanAgent {
+pub(crate) struct LegacyHumanAgent {
     pipeline: BodyPrimaryPipeline,
     tracker: mvm_core::PersonTracker,
     scene_observations: SceneObservationBus,
     observations: HumanObservationBus,
     max_mask_age_frames: u64,
     metrics: super::SchedulingMetrics,
+    max_pair_skew_ns: u64,
+    calibration_capture: Option<super::TrackerCalibrationCapture>,
 }
 
-impl HumanAgent {
+impl LegacyHumanAgent {
     pub(crate) fn new(
         pipeline: BodyPrimaryPipeline,
         tracker: mvm_core::PersonTracker,
@@ -64,6 +66,7 @@ impl HumanAgent {
         observations: HumanObservationBus,
         object_cadence: u32,
         metrics: super::SchedulingMetrics,
+        max_pair_skew_ns: u64,
     ) -> Self {
         Self {
             pipeline,
@@ -72,17 +75,32 @@ impl HumanAgent {
             observations,
             max_mask_age_frames: u64::from(object_cadence.max(1)) * 2,
             metrics,
+            max_pair_skew_ns,
+            calibration_capture: None,
         }
+    }
+
+    pub(crate) fn with_calibration_capture(
+        mut self,
+        capture: Option<super::TrackerCalibrationCapture>,
+    ) -> Self {
+        if capture.is_some() {
+            self.tracker
+                .set_diagnostic_capacity(super::tracker_capture::TRACE_CAPACITY);
+        }
+        self.calibration_capture = capture;
+        self
     }
 }
 
-impl Agent for HumanAgent {
+impl Agent for LegacyHumanAgent {
     fn name(&self) -> String {
         "human".into()
     }
 
     fn run(&mut self, ctx: &MeshContext) -> AgentHealth {
         let mut ticks = 0u64;
+        let mut errors = 0u64;
         let mut last_id: Option<u64> = None;
         let mut epoch: Option<std::time::Instant> = None; // motion timestamp origin (9.8)
         while ctx.running() {
@@ -130,12 +148,14 @@ impl Agent for HumanAgent {
                 // can use them. Lagged (seg cadence) and cross-thread — a race
                 // that misses just leaves detections maskless (term degrades to
                 // zero). The ≥2-people gate lives in the tracker.
+                let mut current_mask_frame = false;
                 if let Some(scene) = self.scene_observations.latest()
                     && scene
                         .stamp
                         .age_at(frame.id)
                         .is_some_and(|age| age <= self.max_mask_age_frames)
                 {
+                    current_mask_frame = scene.stamp.source_frame_id == frame.id;
                     attach_person_masks(
                         &mut result.detections,
                         &scene.person_masks,
@@ -147,20 +167,109 @@ impl Agent for HumanAgent {
                     .captured
                     .duration_since(*epoch.get_or_insert(frame.captured))
                     .as_secs_f64();
-                self.tracker.tick_motion(
+                let measurement = match AssociationMeasurementContext::from_frame(
+                    &frame,
+                    self.max_pair_skew_ns,
+                ) {
+                    Ok(measurement) => measurement,
+                    Err(error) => {
+                        eprintln!("  human: rejected sensor binding: {error}");
+                        errors += 1;
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        continue;
+                    }
+                };
+                let high_observations: Vec<_> = result
+                    .detections
+                    .iter()
+                    .zip(&result.detection_scores)
+                    .enumerate()
+                    .map(|(index, (detection, score))| {
+                        measurement.observation(
+                            u32::try_from(index).unwrap_or(u32::MAX),
+                            detection.bbox,
+                            *score,
+                            current_mask_frame
+                                .then_some(detection.mask.as_ref())
+                                .flatten(),
+                        )
+                    })
+                    .collect();
+                let low_observations: Vec<_> = result
+                    .low_conf
+                    .iter()
+                    .zip(&result.low_conf_scores)
+                    .enumerate()
+                    .map(|(index, (bbox, score))| {
+                        measurement.observation(
+                            u32::try_from(result.detections.len() + index).unwrap_or(u32::MAX),
+                            *bbox,
+                            *score,
+                            None,
+                        )
+                    })
+                    .collect();
+                if let Err(error) = self.tracker.tick_motion_observed_bound(
+                    measurement.binding(),
+                    &high_observations,
+                    &low_observations,
                     &result.detections,
                     &result.low_conf,
                     &result.landmarks,
                     t_secs,
-                );
+                ) {
+                    eprintln!("  human: rejected association observations: {error}");
+                    errors += 1;
+                    continue;
+                }
                 let stamp = ObservationStamp::from_frame(&frame);
+                let people = collect_people(&self.tracker, &result.bodies, stamp.produced_at);
+                let published_ids: std::collections::HashSet<u32> =
+                    people.iter().map(|person| person.tracker_id).collect();
+                let current_ids: Vec<u32> = people.iter().map(|person| person.tracker_id).collect();
+                let occluded_people = collect_occluded_people(&self.tracker, stamp.produced_at);
+                let occluded_ids: Vec<u32> = occluded_people
+                    .iter()
+                    .map(|person| person.tracker_id)
+                    .collect();
+                let retained_ids = self.tracker.retained_ids();
+                let retirements = self.tracker.retirements().to_vec();
+                if let Some(capture) = &self.calibration_capture
+                    && let Err(error) = capture.write_human(
+                        measurement.binding(),
+                        &frame.sensor.health,
+                        &high_observations,
+                        &low_observations,
+                        &result.detections,
+                        &result.low_conf,
+                        &result.landmarks,
+                        None,
+                        &self.tracker.diagnostics(),
+                        &current_ids,
+                        &occluded_ids,
+                        &retained_ids,
+                        &retirements,
+                    )
+                {
+                    eprintln!("  human: calibration capture failed: {error:#}");
+                    errors += 1;
+                    ctx.request_stop();
+                    continue;
+                }
                 self.observations.publish(HumanObservationFrame {
                     stamp,
-                    people: Arc::new(collect_people(
-                        &self.tracker,
-                        &result.bodies,
-                        stamp.produced_at,
-                    )),
+                    people: Arc::new(people),
+                    occluded_people: Arc::new(occluded_people),
+                    retained_track_ids: Arc::new(retained_ids),
+                    retirements: Arc::new(retirements),
+                    metric_geometry: Arc::new(
+                        self.tracker
+                            .association_geometry()
+                            .iter()
+                            .filter(|value| published_ids.contains(&value.track_id))
+                            .cloned()
+                            .collect(),
+                    ),
                 });
                 self.metrics
                     .record_duration(super::MetricAgent::Human, started.elapsed());
@@ -171,7 +280,7 @@ impl Agent for HumanAgent {
         AgentHealth {
             name: self.name(),
             ticks,
-            errors: 0,
+            errors,
         }
     }
 }
@@ -188,7 +297,9 @@ mod tests {
     fn anonymous_body_has_no_identity() {
         let config = Config::default();
         let mut tracker = mvm_core::PersonTracker::with_config(&config);
-        tracker.tick(&[Detection::bare(0.2, 0.2, 0.4, 0.6)]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[Detection::bare(0.2, 0.2, 0.4, 0.6)]);
+        }
 
         let people = collect_people(&tracker, &[], Instant::now());
 
@@ -204,10 +315,12 @@ mod tests {
     fn two_bodies_project_two_people() {
         let config = Config::default();
         let mut tracker = mvm_core::PersonTracker::with_config(&config);
-        tracker.tick(&[
-            Detection::bare(0.05, 0.2, 0.25, 0.7),
-            Detection::bare(0.65, 0.2, 0.85, 0.7),
-        ]);
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(&[
+                Detection::bare(0.05, 0.2, 0.25, 0.7),
+                Detection::bare(0.65, 0.2, 0.85, 0.7),
+            ]);
+        }
 
         let people = collect_people(&tracker, &[], Instant::now());
 

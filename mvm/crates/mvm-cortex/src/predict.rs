@@ -630,6 +630,7 @@ mod tests {
                     confidence: 0.9,
                 },
             ),
+            geometry: Box::default(),
             kinematics: SceneFact::claimed(
                 FactStatus::Temporal,
                 Kinematics {

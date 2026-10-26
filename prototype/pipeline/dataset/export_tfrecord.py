@@ -38,9 +38,12 @@ def _example(rec: Record):
         feats["image"] = _bytes(rec.frame_path.read_bytes())
     if rec.has_depth and rec.depth_path and rec.depth_path.exists():
         feats["depth_png"] = _bytes(rec.depth_path.read_bytes())
-        lo, hi = rec.depth_range or (0.0, 1.0)
-        feats["depth_min"] = tf.train.Feature(float_list=tf.train.FloatList(value=[lo]))
-        feats["depth_max"] = tf.train.Feature(float_list=tf.train.FloatList(value=[hi]))
+        if rec.depth_meta:
+            feats["depth_metadata_json"] = _bytes(json.dumps(rec.depth_meta, sort_keys=True).encode())
+        if rec.depth_range:
+            lo, hi = rec.depth_range
+            feats["depth_min"] = tf.train.Feature(float_list=tf.train.FloatList(value=[lo]))
+            feats["depth_max"] = tf.train.Feature(float_list=tf.train.FloatList(value=[hi]))
     return tf.train.Example(features=tf.train.Features(feature=feats))
 
 

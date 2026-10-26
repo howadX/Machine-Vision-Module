@@ -17,6 +17,8 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct FileConfig {
     #[serde(default)]
+    pub sensor: SensorSection,
+    #[serde(default)]
     pub camera: CameraSection,
     #[serde(default)]
     pub output: OutputSection,
@@ -30,6 +32,28 @@ pub struct FileConfig {
     /// `mvm-dataset`; here it is just deserialized and its `dir` tilde-expanded.
     #[serde(default)]
     pub dataset: mvm_dataset::DatasetConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SensorSection {
+    /// `auto`, `v4l2`, or `kinect_v1`. Replay is reserved for the replay CLI.
+    pub backend: Option<String>,
+    pub device: Option<String>,
+    pub logical_name: Option<String>,
+    #[serde(default)]
+    pub kinect_v1: KinectV1Section,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KinectV1Section {
+    pub serial: Option<String>,
+    pub calibration: Option<String>,
+    pub library_prefix: Option<String>,
+    pub depth_geometry: Option<String>,
+    pub monocular_fallback: Option<bool>,
+    pub max_pair_skew_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -71,6 +95,13 @@ pub struct CadenceSection {
 /// Fully resolved product config — what the rest of the CLI consumes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProductConfig {
+    pub sensor_backend: String,
+    pub sensor_logical_name: String,
+    pub kinect_v1_serial: String,
+    pub kinect_v1_calibration: PathBuf,
+    pub kinect_v1_library_prefix: PathBuf,
+    pub kinect_v1_max_pair_skew_ms: u64,
+    pub kinect_v1_monocular_fallback: bool,
     /// "auto" or a device path like "/dev/video2".
     pub camera_device: String,
     pub camera_width: u32,
@@ -85,6 +116,19 @@ pub struct ProductConfig {
     pub dataset: mvm_dataset::DatasetConfig,
 }
 
+#[cfg(feature = "kinect-v1")]
+impl ProductConfig {
+    pub fn kinect_v1_config(&self) -> mvm_pipeline::kinect_v1::KinectV1Config {
+        mvm_pipeline::kinect_v1::KinectV1Config {
+            serial: self.kinect_v1_serial.clone(),
+            logical_name: self.sensor_logical_name.clone(),
+            calibration_path: self.kinect_v1_calibration.clone(),
+            library_prefix: self.kinect_v1_library_prefix.clone(),
+            max_pair_skew_ms: self.kinect_v1_max_pair_skew_ms,
+        }
+    }
+}
+
 type EnvFn<'a> = &'a dyn Fn(&str) -> Option<String>;
 
 fn std_env(key: &str) -> Option<String> {
@@ -97,7 +141,34 @@ fn std_env(key: &str) -> Option<String> {
 pub fn load() -> anyhow::Result<ProductConfig> {
     let path = crate::paths::config_dir().join("config.toml");
     let file = read_file_config(&path)?;
-    Ok(resolve(file, &std_env, &|p| p.exists()))
+    validate_sensor_config(file.as_ref())?;
+    let resolved = resolve(file, &std_env, &|p| p.exists());
+    anyhow::ensure!(
+        matches!(
+            resolved.sensor_backend.as_str(),
+            "auto" | "v4l2" | "kinect_v1"
+        ),
+        "unsupported [sensor].backend {:?}; expected auto, v4l2, or kinect_v1",
+        resolved.sensor_backend
+    );
+    anyhow::ensure!(
+        resolved.kinect_v1_max_pair_skew_ms > 0,
+        "[sensor.kinect_v1].max_pair_skew_ms must be positive"
+    );
+    Ok(resolved)
+}
+
+fn validate_sensor_config(file: Option<&FileConfig>) -> anyhow::Result<()> {
+    let Some(kinect) = file.map(|file| &file.sensor.kinect_v1) else {
+        return Ok(());
+    };
+    if let Some(geometry) = &kinect.depth_geometry {
+        anyhow::ensure!(
+            geometry == "registered_to_rgb",
+            "Kinect v1 foundation supports only depth_geometry = registered_to_rgb"
+        );
+    }
+    Ok(())
 }
 
 /// Parse `config.toml` at `path`. Missing file → `None` (defaults); malformed
@@ -129,8 +200,38 @@ pub(crate) fn resolve(
             .or_else(|| file_val.cloned())
     };
 
-    let camera_device =
-        pick("MVM_CAMERA_DEVICE", file.camera.device.as_ref()).unwrap_or_else(|| "auto".into());
+    let camera_device = pick("MVM_SENSOR_DEVICE", file.sensor.device.as_ref())
+        .or_else(|| pick("MVM_CAMERA_DEVICE", file.camera.device.as_ref()))
+        .unwrap_or_else(|| "auto".into());
+    let sensor_backend =
+        pick("MVM_SENSOR_BACKEND", file.sensor.backend.as_ref()).unwrap_or_else(|| "auto".into());
+    let sensor_logical_name =
+        pick("MVM_SENSOR_LOGICAL_NAME", file.sensor.logical_name.as_ref()).unwrap_or_default();
+    let kinect_v1_serial = pick(
+        "MVM_KINECT_V1_SERIAL",
+        file.sensor.kinect_v1.serial.as_ref(),
+    )
+    .unwrap_or_default();
+    let kinect_v1_calibration = pick(
+        "MVM_KINECT_V1_CALIBRATION",
+        file.sensor.kinect_v1.calibration.as_ref(),
+    )
+    .map(|value| expand_tilde(&value, &home))
+    .unwrap_or_else(|| PathBuf::from(&home).join(".config/kinect-v1/calibration.json"));
+    let kinect_v1_library_prefix = pick(
+        "MVM_KINECT_V1_LIBRARY_PREFIX",
+        file.sensor.kinect_v1.library_prefix.as_ref(),
+    )
+    .map(|value| expand_tilde(&value, &home))
+    .unwrap_or_else(|| PathBuf::from(&home).join(".local/opt/libfreenect-0.7.5"));
+    let kinect_v1_max_pair_skew_ms = pick("MVM_KINECT_V1_MAX_PAIR_SKEW_MS", None)
+        .and_then(|value| value.parse().ok())
+        .or(file.sensor.kinect_v1.max_pair_skew_ms)
+        .unwrap_or(20);
+    let kinect_v1_monocular_fallback = pick("MVM_KINECT_V1_MONOCULAR_FALLBACK", None)
+        .and_then(|value| value.parse().ok())
+        .or(file.sensor.kinect_v1.monocular_fallback)
+        .unwrap_or(false);
     let camera_width = pick("MVM_CAMERA_WIDTH", None)
         .and_then(|v| v.parse().ok())
         .or(file.camera.width)
@@ -174,6 +275,13 @@ pub(crate) fn resolve(
         .into_owned();
 
     ProductConfig {
+        sensor_backend,
+        sensor_logical_name,
+        kinect_v1_serial,
+        kinect_v1_calibration,
+        kinect_v1_library_prefix,
+        kinect_v1_max_pair_skew_ms,
+        kinect_v1_monocular_fallback,
         camera_device,
         camera_width,
         camera_height,
@@ -238,6 +346,19 @@ mod tests {
     fn full_toml_parses() {
         let cfg: FileConfig = toml::from_str(
             r#"
+            [sensor]
+            backend = "kinect_v1"
+            device = "kinect-v1-main"
+            logical_name = "kinect-v1-main"
+
+            [sensor.kinect_v1]
+            serial = "A00364911518102A"
+            calibration = "~/.config/kinect-v1/calibration.json"
+            library_prefix = "~/.local/opt/libfreenect-0.7.5"
+            depth_geometry = "registered_to_rgb"
+            monocular_fallback = false
+            max_pair_skew_ms = 20
+
             [camera]
             device = "/dev/video2"
             width = 640
@@ -258,6 +379,8 @@ mod tests {
             "#,
         )
         .unwrap();
+        assert_eq!(cfg.sensor.backend.as_deref(), Some("kinect_v1"));
+        assert_eq!(cfg.sensor.kinect_v1.max_pair_skew_ms, Some(20));
         assert_eq!(cfg.camera.device.as_deref(), Some("/dev/video2"));
         assert_eq!(cfg.camera.width, Some(640));
         assert_eq!(cfg.output.data_dir.as_deref(), Some("~/mydata"));
@@ -284,6 +407,9 @@ mod tests {
         let env = env_of(&[("HOME", "/home/u")]);
         let c = resolve(None, &env, NOTHING_EXISTS);
         assert_eq!(c.camera_device, "auto");
+        assert_eq!(c.sensor_backend, "auto");
+        assert_eq!(c.kinect_v1_max_pair_skew_ms, 20);
+        assert!(!c.kinect_v1_monocular_fallback);
         assert_eq!((c.camera_width, c.camera_height), (1280, 720));
         assert_eq!(c.data_dir, PathBuf::from("/home/u/.local/share/mvm"));
         assert_eq!(
@@ -314,6 +440,37 @@ mod tests {
             PathBuf::from("/home/u/vision/current_state.md")
         );
         assert_eq!(c.snapshot_ms, 250);
+    }
+
+    #[test]
+    fn kinect_config_resolves_explicit_identity_and_paths() {
+        let file: FileConfig = toml::from_str(
+            "[sensor]\nbackend = \"kinect_v1\"\nlogical_name = \"kinect-v1-main\"\n[sensor.kinect_v1]\nserial = \"A00364911518102A\"\ncalibration = \"~/.config/kinect-v1/calibration.json\"\nlibrary_prefix = \"~/libfreenect\"\nmax_pair_skew_ms = 20\n",
+        )
+        .unwrap();
+        let c = resolve(Some(file), &env_of(&[("HOME", "/home/u")]), NOTHING_EXISTS);
+        assert_eq!(c.sensor_backend, "kinect_v1");
+        assert_eq!(c.sensor_logical_name, "kinect-v1-main");
+        assert_eq!(c.kinect_v1_serial, "A00364911518102A");
+        assert_eq!(
+            c.kinect_v1_calibration,
+            PathBuf::from("/home/u/.config/kinect-v1/calibration.json")
+        );
+        assert_eq!(
+            c.kinect_v1_library_prefix,
+            PathBuf::from("/home/u/libfreenect")
+        );
+    }
+
+    #[test]
+    fn kinect_monocular_fallback_is_explicit_and_default_off() {
+        let file: FileConfig = toml::from_str(
+            "[sensor]\nbackend = \"kinect_v1\"\n[sensor.kinect_v1]\nmonocular_fallback = true\n",
+        )
+        .unwrap();
+        validate_sensor_config(Some(&file)).unwrap();
+        let c = resolve(Some(file), &env_of(&[("HOME", "/home/u")]), NOTHING_EXISTS);
+        assert!(c.kinect_v1_monocular_fallback);
     }
 
     #[test]

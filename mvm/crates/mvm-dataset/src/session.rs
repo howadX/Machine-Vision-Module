@@ -18,6 +18,8 @@ pub struct SessionMeta {
     pub activities: BTreeMap<String, u32>,
     pub anomalies: AnomaliesBlock,
     pub objects: ObjectsBlock,
+    #[serde(default)]
+    pub depth: DepthBlock,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -46,6 +48,14 @@ pub struct AnomaliesBlock {
 pub struct ObjectsBlock {
     #[serde(default)]
     pub top: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DepthBlock {
+    #[serde(default)]
+    pub encodings: Vec<String>,
+    #[serde(default)]
+    pub calibration_revisions: Vec<String>,
 }
 
 /// One session as seen on disk. `meta` is `None` for an in-progress session whose
@@ -196,6 +206,7 @@ mod tests {
             objects: ObjectsBlock {
                 top: vec!["cup".into()],
             },
+            depth: DepthBlock::default(),
         }
     }
 

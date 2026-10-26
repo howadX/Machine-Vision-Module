@@ -217,6 +217,16 @@ impl LifecycleState {
     }
 }
 
+/// Authority carried by the spatial evidence accepted on the current tracker
+/// tick. A Kalman prediction is deliberately not an observation, and a weak
+/// Byte recovery is deliberately not a confident current-person claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackObservationAuthority {
+    None,
+    High,
+    LowRecovery,
+}
+
 /// A tracked person — persistent across frames.
 #[derive(Debug, Clone)]
 pub struct PersonTrack {
@@ -231,6 +241,49 @@ pub struct PersonTrack {
     pub kalman: crate::kalman::KalmanBBox,
     pub age: u64,
     pub missed: u64,
+    /// Lifetime count of timestamp-valid high detector observations. This is
+    /// admission evidence; unlike `age`, low-confidence recovery cannot change it.
+    pub high_hits: u64,
+    /// Lifetime count of timestamp-valid low-confidence recoveries. Diagnostic
+    /// and motion-continuity evidence only; never personhood evidence.
+    pub low_recoveries: u64,
+    /// Uninterrupted high-observation run. Any low-only or prediction-only tick
+    /// resets the run without erasing lifetime high evidence.
+    pub consecutive_high_hits: u64,
+    /// Tracking ticks since the last high observation. Kept for diagnostics and
+    /// compatibility only; lifecycle TTL authority is monotonic time below.
+    pub missed_high: u64,
+    /// Authoritative monotonic stamps for strong and any accepted spatial
+    /// observations. Runtime-only and never wall-clock derived.
+    pub last_high_monotonic_ns: Option<u64>,
+    pub last_any_monotonic_ns: Option<u64>,
+    pub created_at_monotonic_ns: Option<u64>,
+    /// Positive body/pose votes bound to this exact generation-safe track.
+    pub body_validation_votes: u64,
+    pub last_body_validation_monotonic_ns: Option<u64>,
+    /// Sticky admission result for this exact track generation. The evidence
+    /// must be consecutive, but a later short observation gap must not erase a
+    /// personhood decision that was already made.
+    pub personhood_confirmed: bool,
+    /// The fast detector-only path needs evidence independent of the detector
+    /// and pose expert before it may promote an anonymous birth. Legacy paths
+    /// already arrive after synchronous Human processing and leave this false.
+    pub requires_independent_birth_evidence: bool,
+    /// Raw detector bbox that started the current uninterrupted high-confidence
+    /// run, plus the largest scale-normalized center displacement in that run.
+    /// Both are runtime-only admission evidence and reset after any high gap.
+    pub high_run_anchor_bbox: BBox,
+    pub high_run_max_displacement_ratio: f32,
+    /// A fresh Scene expert observed a confirmed TV/laptop covering the person
+    /// proposal during this uninterrupted high run. This blocks motion-only
+    /// birth but never revokes face evidence or an established person.
+    pub display_conflict_in_high_run: bool,
+    /// The lean TrackingAgent path admits raw high proposals before asynchronous
+    /// pose. Compatibility callers and the synchronous body-primary path do not.
+    pub requires_body_validation: bool,
+    /// Evidence authority for the current tick; publication reads this instead
+    /// of inferring observation quality from `missed == 0`.
+    pub observation_authority: TrackObservationAuthority,
     /// Best identity seen for this track (highest confidence).
     pub identity: Option<String>,
     pub identity_confidence: Option<f32>,
@@ -275,8 +328,8 @@ pub struct PersonTrack {
     /// not a drifted filter state. `None` until the first observation.
     pub last_obs_center: Option<[f32; 2]>,
     /// EMA-smoothed **observation-centric velocity** `[vx, vy]` in normalised
-    /// units per frame (OC-SORT momentum, phase 9.2). Built from the deltas
-    /// between successive *observations* (gap-normalised), not the Kalman
+    /// image units per second (OC-SORT momentum, phase 9.2). Built from the deltas
+    /// between successive timestamped *observations*, not the Kalman
     /// velocity — robust through occlusion. Its *direction* drives the momentum
     /// term in association (OCM) and the virtual trajectory in recovery (OCR).
     /// `None` until two observations exist.
@@ -321,6 +374,22 @@ impl PersonTrack {
             kalman: crate::kalman::KalmanBBox::new(bbox),
             age: 1,
             missed: 0,
+            high_hits: 0,
+            low_recoveries: 0,
+            consecutive_high_hits: 0,
+            missed_high: 0,
+            last_high_monotonic_ns: None,
+            last_any_monotonic_ns: None,
+            created_at_monotonic_ns: None,
+            body_validation_votes: 0,
+            last_body_validation_monotonic_ns: None,
+            personhood_confirmed: false,
+            requires_independent_birth_evidence: false,
+            high_run_anchor_bbox: bbox,
+            high_run_max_displacement_ratio: 0.0,
+            display_conflict_in_high_run: false,
+            requires_body_validation: false,
+            observation_authority: TrackObservationAuthority::None,
             identity: None,
             identity_confidence: None,
             emotion: None,

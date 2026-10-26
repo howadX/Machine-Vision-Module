@@ -761,8 +761,14 @@ impl StateFile {
         let now = Local::now().with_timezone(&self.tz);
         let timestamp = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
-        let mut active_tracks: Vec<_> = tracker.active().collect();
+        let mut active_tracks: Vec<_> = tracker.published().collect();
         active_tracks.sort_by_key(|t| t.display_id);
+        let published_objects: Vec<_> = objects
+            .iter()
+            .filter(|object| {
+                object.missed == 0 && object.lifecycle == mvm_core::types::LifecycleState::Confirmed
+            })
+            .collect();
         let face_count = active_tracks.len();
 
         let status = if face_count > 0 { "occupied" } else { "empty" };
@@ -855,15 +861,15 @@ impl StateFile {
         }
 
         // Objects (phase 8.E, G₂ Scene group): scene context beyond the person.
-        if objects.is_empty() {
+        if published_objects.is_empty() {
             lines.push("- Objects visible: none".to_string());
         } else {
-            let summary: Vec<String> = objects
+            let summary: Vec<String> = published_objects
                 .iter()
                 .map(|o| format!("{} ({:.2})", o.class_name, o.score))
                 .collect();
             lines.push(format!("- Objects visible: {}", summary.join(", ")));
-            for (i, o) in objects.iter().enumerate() {
+            for (i, o) in published_objects.iter().enumerate() {
                 lines.push(format!("- Object_{}:", i + 1));
                 lines.push(format!("  - id: {}", o.id));
                 lines.push(format!("  - class: {}", o.class_name));
@@ -900,8 +906,15 @@ impl StateFile {
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
-        let mut active: Vec<_> = tracker.active().collect();
+        let mut active: Vec<_> = tracker.published().collect();
         active.sort_by_key(|t| t.display_id);
+        let published_objects: Vec<_> = objects
+            .iter()
+            .filter(|object| {
+                object.missed == 0 && object.lifecycle == mvm_core::types::LifecycleState::Confirmed
+            })
+            .cloned()
+            .collect();
         let status = if active.is_empty() {
             "empty"
         } else {
@@ -933,9 +946,9 @@ impl StateFile {
 
         // Object nodes (phase 8.E): fed into the same object-agnostic graph so
         // person↔object overlap relations ("context outward from the human") emerge.
-        entities.extend(object_entities(objects));
+        entities.extend(object_entities(&published_objects));
 
-        let json_objects: Vec<JsonObject> = objects
+        let json_objects: Vec<JsonObject> = published_objects
             .iter()
             .map(|o| JsonObject {
                 id: o.id,
@@ -992,7 +1005,7 @@ impl StateFile {
                 p
             })
             .collect();
-        let obj_states: Vec<mvm_core::ObjectState> = objects
+        let obj_states: Vec<mvm_core::ObjectState> = published_objects
             .iter()
             .map(|o| mvm_core::ObjectState {
                 id: o.id,
@@ -1314,7 +1327,7 @@ impl StateFile {
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z");
 
-        let active: Vec<_> = tracker.active().collect();
+        let active: Vec<_> = tracker.published().collect();
         let face_count = active.len();
         let status = if face_count > 0 { "occupied" } else { "empty" };
 
@@ -1427,7 +1440,7 @@ impl StateFile {
         let now = Local::now().with_timezone(&self.tz);
         let ts = now.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
 
-        let mut active: Vec<_> = tracker.active().collect();
+        let mut active: Vec<_> = tracker.published().collect();
         active.sort_by_key(|t| t.display_id);
         let status = if active.is_empty() {
             "empty"
@@ -1513,6 +1526,12 @@ mod tests {
         Detection::bare(x1, y1, x2, y2)
     }
 
+    fn confirm(tracker: &mut PersonTracker, detections: &[Detection]) {
+        for _ in 0..mvm_core::tracker::PERSON_CONFIRM_AGE {
+            tracker.tick(detections);
+        }
+    }
+
     #[test]
     fn state_empty_room() {
         let path = temp_state_path("test_empty.md");
@@ -1535,35 +1554,38 @@ mod tests {
 
         let mut tracker = PersonTracker::new();
         tracker.register_user("Вадим");
-        tracker.tick(&[Detection {
-            bbox: mvm_core::BBox {
-                x1: 0.2,
-                y1: 0.3,
-                x2: 0.5,
-                y2: 0.7,
-            },
-            identity: Some("Вадим".into()),
-            identity_confidence: Some(0.72),
-            emotion: Some("Neutral".into()),
-            emotion_confidence: Some(0.65),
-            posture: Some("сидит".into()),
-            posture_confidence: Some(0.95),
-            distance: None,
-            position_x: None,
-            position_y: None,
-            position_z: None,
-            ws_confidence: None,
-            recon_error: None,
-            plausibility: None,
-            torso_flexion: None,
-            body_coverage: None,
-            torso_attitude: None,
-            emotion_distribution: None,
-            embedding: None,
-            head_yaw: None,
-            head_facing: None,
-            mask: None,
-        }]);
+        confirm(
+            &mut tracker,
+            &[Detection {
+                bbox: mvm_core::BBox {
+                    x1: 0.2,
+                    y1: 0.3,
+                    x2: 0.5,
+                    y2: 0.7,
+                },
+                identity: Some("Вадим".into()),
+                identity_confidence: Some(0.72),
+                emotion: Some("Neutral".into()),
+                emotion_confidence: Some(0.65),
+                posture: Some("сидит".into()),
+                posture_confidence: Some(0.95),
+                distance: None,
+                position_x: None,
+                position_y: None,
+                position_z: None,
+                ws_confidence: None,
+                recon_error: None,
+                plausibility: None,
+                torso_flexion: None,
+                body_coverage: None,
+                torso_attitude: None,
+                emotion_distribution: None,
+                embedding: None,
+                head_yaw: None,
+                head_facing: None,
+                mask: None,
+            }],
+        );
 
         sf.write(&tracker, 25.5, &[]).unwrap();
 
@@ -1583,7 +1605,7 @@ mod tests {
         let sf = StateFile::open_at(path.clone()).unwrap();
 
         let mut tracker = PersonTracker::new();
-        tracker.tick(&[det(0.2, 0.3, 0.5, 0.7)]);
+        confirm(&mut tracker, &[det(0.2, 0.3, 0.5, 0.7)]);
 
         sf.write(&tracker, 30.0, &[]).unwrap();
 
@@ -1602,66 +1624,69 @@ mod tests {
         let mut tracker = PersonTracker::new();
         tracker.register_user("Вадим");
         tracker.register_user("Даня");
-        tracker.tick(&[
-            Detection {
-                bbox: mvm_core::BBox {
-                    x1: 0.1,
-                    y1: 0.1,
-                    x2: 0.3,
-                    y2: 0.5,
+        confirm(
+            &mut tracker,
+            &[
+                Detection {
+                    bbox: mvm_core::BBox {
+                        x1: 0.1,
+                        y1: 0.1,
+                        x2: 0.3,
+                        y2: 0.5,
+                    },
+                    identity: Some("Вадим".into()),
+                    identity_confidence: Some(0.8),
+                    emotion: Some("Neutral".into()),
+                    emotion_confidence: Some(0.6),
+                    posture: Some("сидит".into()),
+                    posture_confidence: Some(0.9),
+                    distance: None,
+                    position_x: None,
+                    position_y: None,
+                    position_z: None,
+                    ws_confidence: None,
+                    recon_error: None,
+                    plausibility: None,
+                    torso_flexion: None,
+                    body_coverage: None,
+                    torso_attitude: None,
+                    emotion_distribution: None,
+                    embedding: None,
+                    head_yaw: None,
+                    head_facing: None,
+                    mask: None,
                 },
-                identity: Some("Вадим".into()),
-                identity_confidence: Some(0.8),
-                emotion: Some("Neutral".into()),
-                emotion_confidence: Some(0.6),
-                posture: Some("сидит".into()),
-                posture_confidence: Some(0.9),
-                distance: None,
-                position_x: None,
-                position_y: None,
-                position_z: None,
-                ws_confidence: None,
-                recon_error: None,
-                plausibility: None,
-                torso_flexion: None,
-                body_coverage: None,
-                torso_attitude: None,
-                emotion_distribution: None,
-                embedding: None,
-                head_yaw: None,
-                head_facing: None,
-                mask: None,
-            },
-            Detection {
-                bbox: mvm_core::BBox {
-                    x1: 0.6,
-                    y1: 0.2,
-                    x2: 0.9,
-                    y2: 0.7,
+                Detection {
+                    bbox: mvm_core::BBox {
+                        x1: 0.6,
+                        y1: 0.2,
+                        x2: 0.9,
+                        y2: 0.7,
+                    },
+                    identity: Some("Даня".into()),
+                    identity_confidence: Some(0.75),
+                    emotion: Some("Happiness".into()),
+                    emotion_confidence: Some(0.7),
+                    posture: Some("стоит".into()),
+                    posture_confidence: Some(0.85),
+                    distance: None,
+                    position_x: None,
+                    position_y: None,
+                    position_z: None,
+                    ws_confidence: None,
+                    recon_error: None,
+                    plausibility: None,
+                    torso_flexion: None,
+                    body_coverage: None,
+                    torso_attitude: None,
+                    emotion_distribution: None,
+                    embedding: None,
+                    head_yaw: None,
+                    head_facing: None,
+                    mask: None,
                 },
-                identity: Some("Даня".into()),
-                identity_confidence: Some(0.75),
-                emotion: Some("Happiness".into()),
-                emotion_confidence: Some(0.7),
-                posture: Some("стоит".into()),
-                posture_confidence: Some(0.85),
-                distance: None,
-                position_x: None,
-                position_y: None,
-                position_z: None,
-                ws_confidence: None,
-                recon_error: None,
-                plausibility: None,
-                torso_flexion: None,
-                body_coverage: None,
-                torso_attitude: None,
-                emotion_distribution: None,
-                embedding: None,
-                head_yaw: None,
-                head_facing: None,
-                mask: None,
-            },
-        ]);
+            ],
+        );
 
         sf.write(&tracker, 29.9, &[]).unwrap();
 
@@ -1735,35 +1760,38 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_json_face.md")).unwrap();
         let mut tracker = PersonTracker::new();
         tracker.register_user("Вадим");
-        tracker.tick(&[Detection {
-            bbox: mvm_core::BBox {
-                x1: 0.2,
-                y1: 0.3,
-                x2: 0.5,
-                y2: 0.7,
-            },
-            identity: Some("Вадим".into()),
-            identity_confidence: Some(0.69),
-            emotion: Some("Happiness".into()),
-            emotion_confidence: Some(1.0),
-            posture: Some("сидит_за_ПК".into()),
-            posture_confidence: Some(0.89),
-            distance: Some(2.75),
-            position_x: Some(0.75),
-            position_y: Some(0.36),
-            position_z: Some(2.75),
-            ws_confidence: Some(0.9),
-            recon_error: None,
-            plausibility: None,
-            torso_flexion: None,
-            body_coverage: None,
-            torso_attitude: None,
-            emotion_distribution: None,
-            embedding: None,
-            head_yaw: None,
-            head_facing: None,
-            mask: None,
-        }]);
+        confirm(
+            &mut tracker,
+            &[Detection {
+                bbox: mvm_core::BBox {
+                    x1: 0.2,
+                    y1: 0.3,
+                    x2: 0.5,
+                    y2: 0.7,
+                },
+                identity: Some("Вадим".into()),
+                identity_confidence: Some(0.69),
+                emotion: Some("Happiness".into()),
+                emotion_confidence: Some(1.0),
+                posture: Some("сидит_за_ПК".into()),
+                posture_confidence: Some(0.89),
+                distance: Some(2.75),
+                position_x: Some(0.75),
+                position_y: Some(0.36),
+                position_z: Some(2.75),
+                ws_confidence: Some(0.9),
+                recon_error: None,
+                plausibility: None,
+                torso_flexion: None,
+                body_coverage: None,
+                torso_attitude: None,
+                emotion_distribution: None,
+                embedding: None,
+                head_yaw: None,
+                head_facing: None,
+                mask: None,
+            }],
+        );
         let line = sf.to_json_line(&tracker, 29.9, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let face = &v["faces"][0];
@@ -1788,6 +1816,29 @@ mod tests {
         assert_eq!(v["faces"].as_array().unwrap().len(), 0);
     }
 
+    #[test]
+    fn tentative_hypotheses_do_not_reach_legacy_state_json() {
+        let sf = StateFile::open_at(temp_state_path("test_json_tentative.md")).unwrap();
+        let mut tracker = PersonTracker::new();
+        tracker.tick(&[det(0.2, 0.2, 0.4, 0.7)]);
+        let mut object = obj(0, "cup", 0.5, 0.4, 0.6, 0.6, 0.8);
+        object.lifecycle = mvm_core::types::LifecycleState::Tentative;
+
+        let value: serde_json::Value =
+            serde_json::from_str(&sf.to_json_line(&tracker, 30.0, &[object], &[], &[])).unwrap();
+
+        assert_eq!(value["status"], "empty");
+        assert!(value["faces"].as_array().unwrap().is_empty());
+        for field in ["objects", "relations", "activities"] {
+            assert!(
+                value
+                    .get(field)
+                    .is_none_or(|items| items.as_array().is_some_and(Vec::is_empty)),
+                "{field} must be absent or empty"
+            );
+        }
+    }
+
     // ── Object scene-nodes (phase 8.E) ──────────────────────────────────────
 
     fn obj(
@@ -1806,6 +1857,7 @@ mod tests {
             score,
             age: 1,
             missed: 0,
+            lifecycle: mvm_core::types::LifecycleState::Confirmed,
             pos_3d: None,
             pos_conf: 0.0,
             mask: None,
@@ -1969,7 +2021,7 @@ mod tests {
         let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
         d.distance = Some(1.0);
         d.position_z = Some(1.0);
-        tracker.tick(&[d]);
+        confirm(&mut tracker, &[d]);
         let body = crate::pipeline::BodyData {
             bbox: mvm_core::BBox {
                 x1: 0.3,
@@ -2017,7 +2069,7 @@ mod tests {
             d.position_z = Some(1.0);
             d
         };
-        tracker.tick(&[mk(0.1, 0.25, 0.0), mk(0.6, 0.75, 0.3)]); // ~0.3 m apart
+        confirm(&mut tracker, &[mk(0.1, 0.25, 0.0), mk(0.6, 0.75, 0.3)]); // ~0.3 m apart
         let v: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&tracker, 30.0, &[], &[], &[])).unwrap();
         let acts = v["activities"].as_array().expect("activities present");
@@ -2031,7 +2083,7 @@ mod tests {
         t2.pinhole = None;
         let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
         d.distance = Some(1.0);
-        t2.tick(&[d]);
+        confirm(&mut t2, &[d]);
         let body = crate::pipeline::BodyData {
             bbox: mvm_core::BBox {
                 x1: 0.3,
@@ -2072,7 +2124,7 @@ mod tests {
             d.position_z = Some(1.0);
             d
         };
-        tracker.tick(&[mk(0.1, 0.25, 0.0), mk(0.6, 0.9, 0.3)]);
+        confirm(&mut tracker, &[mk(0.1, 0.25, 0.0), mk(0.6, 0.9, 0.3)]);
         let dog = mvm_scene::ObjectDetection {
             class_id: 16,
             class_name: "dog",
@@ -2124,7 +2176,7 @@ mod tests {
         // faceless track: no emotion, no identity.
         let mut t1 = PersonTracker::new();
         t1.pinhole = None;
-        t1.tick(&[mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7)]);
+        confirm(&mut t1, &[mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7)]);
         let v1: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&t1, 30.0, &[], &[], &[])).unwrap();
         assert_eq!(
@@ -2137,7 +2189,7 @@ mod tests {
         let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
         d.emotion = Some("Neutral".to_string());
         d.emotion_confidence = Some(0.9);
-        t2.tick(&[d]);
+        confirm(&mut t2, &[d]);
         let v2: serde_json::Value =
             serde_json::from_str(&sf.to_json_line(&t2, 30.0, &[], &[], &[])).unwrap();
         assert_eq!(
@@ -2153,7 +2205,7 @@ mod tests {
         tracker.pinhole = None;
         let mut d = mvm_core::Detection::bare(0.3, 0.3, 0.5, 0.7);
         d.distance = Some(1.0);
-        tracker.tick(&[d]);
+        confirm(&mut tracker, &[d]);
         // A body far from the track (no IoU) → its hands must NOT leak onto it.
         let body = crate::pipeline::BodyData {
             bbox: mvm_core::BBox {
@@ -2189,7 +2241,7 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_json_rel.md")).unwrap();
         let mut tracker = PersonTracker::new();
         // Anonymous body → ephemeral id 10 (FIRST_EPHEMERAL_ID).
-        tracker.tick(&[det(0.3, 0.3, 0.6, 0.8)]);
+        confirm(&mut tracker, &[det(0.3, 0.3, 0.6, 0.8)]);
         let pid = tracker.active().next().unwrap().display_id;
         // A cup whose bbox overlaps the body bbox → "overlapping" edge (no 3D needed).
         let oid = mvm_scene::OBJECT_ID_BASE;
@@ -2228,35 +2280,38 @@ mod tests {
         let sf = StateFile::open_at(temp_state_path("test_json_debug.md")).unwrap();
         let mut tracker = PersonTracker::new();
         tracker.register_user("Вадим");
-        tracker.tick(&[Detection {
-            bbox: mvm_core::BBox {
-                x1: 0.2,
-                y1: 0.3,
-                x2: 0.5,
-                y2: 0.7,
-            },
-            identity: Some("Вадим".into()),
-            identity_confidence: Some(0.75),
-            emotion: Some("Happiness".into()),
-            emotion_confidence: Some(0.80),
-            posture: None,
-            posture_confidence: None,
-            distance: None,
-            position_x: None,
-            position_y: None,
-            position_z: None,
-            ws_confidence: None,
-            recon_error: None,
-            plausibility: None,
-            torso_flexion: None,
-            body_coverage: None,
-            torso_attitude: None,
-            emotion_distribution: None,
-            embedding: None,
-            head_yaw: None,
-            head_facing: None,
-            mask: None,
-        }]);
+        confirm(
+            &mut tracker,
+            &[Detection {
+                bbox: mvm_core::BBox {
+                    x1: 0.2,
+                    y1: 0.3,
+                    x2: 0.5,
+                    y2: 0.7,
+                },
+                identity: Some("Вадим".into()),
+                identity_confidence: Some(0.75),
+                emotion: Some("Happiness".into()),
+                emotion_confidence: Some(0.80),
+                posture: None,
+                posture_confidence: None,
+                distance: None,
+                position_x: None,
+                position_y: None,
+                position_z: None,
+                ws_confidence: None,
+                recon_error: None,
+                plausibility: None,
+                torso_flexion: None,
+                body_coverage: None,
+                torso_attitude: None,
+                emotion_distribution: None,
+                embedding: None,
+                head_yaw: None,
+                head_facing: None,
+                mask: None,
+            }],
+        );
         let debug = vec![EmotionDebugEntry {
             id: 0,
             rust_emotion: "Happiness".into(),
@@ -2281,35 +2336,38 @@ mod tests {
     fn json_debug_no_entries_omits_emotion_debug_field() {
         let sf = StateFile::open_at(temp_state_path("test_json_nodebug.md")).unwrap();
         let mut tracker = PersonTracker::new();
-        tracker.tick(&[Detection {
-            bbox: mvm_core::BBox {
-                x1: 0.2,
-                y1: 0.3,
-                x2: 0.5,
-                y2: 0.7,
-            },
-            identity: None,
-            identity_confidence: None,
-            emotion: Some("Sadness".into()),
-            emotion_confidence: Some(0.6),
-            posture: None,
-            posture_confidence: None,
-            distance: None,
-            position_x: None,
-            position_y: None,
-            position_z: None,
-            ws_confidence: None,
-            recon_error: None,
-            plausibility: None,
-            torso_flexion: None,
-            body_coverage: None,
-            torso_attitude: None,
-            emotion_distribution: None,
-            embedding: None,
-            head_yaw: None,
-            head_facing: None,
-            mask: None,
-        }]);
+        confirm(
+            &mut tracker,
+            &[Detection {
+                bbox: mvm_core::BBox {
+                    x1: 0.2,
+                    y1: 0.3,
+                    x2: 0.5,
+                    y2: 0.7,
+                },
+                identity: None,
+                identity_confidence: None,
+                emotion: Some("Sadness".into()),
+                emotion_confidence: Some(0.6),
+                posture: None,
+                posture_confidence: None,
+                distance: None,
+                position_x: None,
+                position_y: None,
+                position_z: None,
+                ws_confidence: None,
+                recon_error: None,
+                plausibility: None,
+                torso_flexion: None,
+                body_coverage: None,
+                torso_attitude: None,
+                emotion_distribution: None,
+                embedding: None,
+                head_yaw: None,
+                head_facing: None,
+                mask: None,
+            }],
+        );
         let line = sf.to_json_line_debug(&tracker, 29.9, &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!(v["faces"][0]["emotion_debug"].is_null());
@@ -2319,6 +2377,7 @@ mod tests {
 
     fn person_state(id: u32, bbox: mvm_core::BBox) -> mvm_core::PersonState {
         mvm_core::PersonState {
+            tracker_id: id,
             track_id: id,
             bbox,
             face_bbox: None,
@@ -2930,7 +2989,7 @@ mod tests {
         let mut d = det(0.2, 0.3, 0.5, 0.7);
         d.head_yaw = Some(5.0);
         d.head_facing = Some("camera");
-        tracker.tick(&[d]);
+        confirm(&mut tracker, &[d]);
         let line = sf.to_json_line(&tracker, 30.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert!((v["faces"][0]["head_yaw"].as_f64().unwrap() - 5.0).abs() < 1e-3);
@@ -2948,7 +3007,7 @@ mod tests {
         det.emotion_distribution = Some(one_hot);
         det.recon_error = Some(0.12);
         det.plausibility = Some("low".into());
-        tracker.tick(&[det]);
+        confirm(&mut tracker, &[det]);
         let line = sf.to_json_line(&tracker, 30.0, &[], &[], &[]);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         let f = &v["faces"][0];

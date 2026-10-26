@@ -117,7 +117,7 @@ fn bbox_from_landmarks(lm: &Landmarks33, w: f32, h: f32) -> mvm_core::BBox {
 /// Multi-persona by construction (one pose inference per detected person) — this is
 /// what fixes #3 (the MediaPipe `.task` only ever returned a single pose).
 pub struct NativePose {
-    detector: PersonDetector,
+    detector: Option<PersonDetector>,
     pose: PoseEstimator,
     head: PoseHead,
 }
@@ -128,7 +128,7 @@ impl NativePose {
         pose_est: &std::path::Path,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            detector: PersonDetector::from_path(person_det)?,
+            detector: Some(PersonDetector::from_path(person_det)?),
             pose: PoseEstimator::from_path(pose_est)?,
             head: PoseHead::load(),
         })
@@ -146,7 +146,7 @@ impl NativePose {
     #[cfg(feature = "embed-model")]
     pub fn from_embedded() -> anyhow::Result<Self> {
         Ok(Self {
-            detector: PersonDetector::from_bytes(PERSON_DET_BYTES)?,
+            detector: Some(PersonDetector::from_bytes(PERSON_DET_BYTES)?),
             pose: PoseEstimator::from_bytes(POSE_EST_BYTES)?,
             head: PoseHead::load(),
         })
@@ -159,7 +159,11 @@ impl NativePose {
         image: &DynamicImage,
     ) -> anyhow::Result<Vec<Landmarks33>> {
         let rgb = image.to_rgb8();
-        let persons = self.detector.detect(image)?;
+        let persons = self
+            .detector
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("person detector was split into TrackingAgent"))?
+            .detect(image)?;
         let mut out = Vec::with_capacity(persons.len());
         for p in &persons {
             if let Some(lm) = self.pose.infer(&rgb, p)? {
@@ -182,16 +186,39 @@ impl NativePose {
     /// **Pose inference runs only on high-conf boxes** — cost is unchanged vs
     /// [`Self::bodies`]; the weak boxes ride along for tracker recovery only.
     pub fn bodies_byte(&mut self, image: &DynamicImage) -> anyhow::Result<BodyDetections> {
+        let persons = self
+            .detector
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("person detector was split into TrackingAgent"))?
+            .detect_scored_legacy(image, BYTE_LOW_SCORE)?;
+        self.bodies_byte_from_detections(image, &persons)
+    }
+
+    /// Consume the single detector session and retain only pose/classification.
+    /// This is the ownership seam used by the fast TrackingAgent path.
+    pub fn split_detector(mut self) -> anyhow::Result<(PersonDetector, Self)> {
+        let detector = self
+            .detector
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("person detector already split"))?;
+        Ok((detector, self))
+    }
+
+    /// Pose an already detected set without running person detection again.
+    pub fn bodies_byte_from_detections(
+        &mut self,
+        image: &DynamicImage,
+        persons: &[detector::Person],
+    ) -> anyhow::Result<BodyDetections> {
         let rgb = image.to_rgb8();
         let (w, h) = (image.width() as f32, image.height() as f32);
-        let persons = self.detector.detect_scored(image, BYTE_LOW_SCORE)?;
         let mut out = BodyDetections::default();
-        for p in &persons {
+        for p in persons {
             let bbox = mvm_core::BBox {
-                x1: p.bbox[0] / w,
-                y1: p.bbox[1] / h,
-                x2: p.bbox[2] / w,
-                y2: p.bbox[3] / h,
+                x1: (p.bbox[0] / w).clamp(0.0, 1.0),
+                y1: (p.bbox[1] / h).clamp(0.0, 1.0),
+                x2: (p.bbox[2] / w).clamp(0.0, 1.0),
+                y2: (p.bbox[3] / h).clamp(0.0, 1.0),
             };
             if p.score < BYTE_HIGH_SCORE {
                 // Weak box: keep for recovery only, no pose inference.
@@ -358,7 +385,11 @@ impl NativePose {
     ) -> anyhow::Result<Vec<(mvm_core::BBox, PoseResult)>> {
         let rgb = image.to_rgb8();
         let (w, h) = (image.width() as f32, image.height() as f32);
-        let persons = self.detector.detect(image)?;
+        let persons = self
+            .detector
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("person detector was split into TrackingAgent"))?
+            .detect(image)?;
         let mut out = Vec::with_capacity(persons.len());
         for p in &persons {
             if let Some(lm) = self.pose.infer(&rgb, p)? {

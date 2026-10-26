@@ -13,6 +13,7 @@ path = "src/main.rs"
 [features]
 default = []
 embed-models = ["mvm-detect/embed-model", "mvm-posture/embed-model"]
+kinect-v1 = ["mvm-pipeline/kinect-v1"]
 
 [dependencies]
 mvm-core = { path = "../mvm-core" }

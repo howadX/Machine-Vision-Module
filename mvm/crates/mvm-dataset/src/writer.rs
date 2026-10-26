@@ -2,7 +2,8 @@
 //!
 //! Отвечает за **логику** записи, не за пиксели: жизненный цикл сессии (открытие/
 //! закрытие через [`WorldState`]), раскладку на диске, маршрутизацию кадра в
-//! [`CanonicalObservation`], дозапись `labels.jsonl` и финализацию `session.toml`.
+//! [`CanonicalObservation`], транзакционный барьер pixel artifacts перед
+//! `labels.jsonl` и финализацию `session.toml`.
 //!
 //! Кодирование RGB/depth/масок и privacy-blur применяет вызывающая сторона
 //! (mesh-агент в `mvm-cli`, крейт `image`): writer выделяет пути и записывает их в
@@ -11,9 +12,11 @@
 //! логику полностью unit-тестируемой (tempdir, без камеры).
 
 use crate::config::DatasetConfig;
-use crate::observation::CanonicalObservation;
+use crate::observation::{CanonicalObservation, DepthFrameMetadata};
 use crate::router::{RouteContext, SceneRelations, route_with_relations};
-use crate::session::{AnomaliesBlock, ObjectsBlock, ParticipantsBlock, SessionBlock, SessionMeta};
+use crate::session::{
+    AnomaliesBlock, DepthBlock, ObjectsBlock, ParticipantsBlock, SessionBlock, SessionMeta,
+};
 use mvm_core::world::WorldState;
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -36,9 +39,12 @@ pub struct RecordResult {
 pub struct RecordAnnotations<'a> {
     pub relations: &'a SceneRelations,
     pub canonical_events: &'a [serde_json::Value],
+    pub depth: Option<DepthFrameMetadata>,
 }
 
-/// Записанный кадр: наблюдение уже в `labels.jsonl`, пиксели пишет вызывающий.
+/// Подготовленный кадр. При transactional API вызывающий сначала пишет pixel
+/// artifacts по этим путям; writer публикует observation в `labels.jsonl` только
+/// после успешного возврата artifact callback.
 #[derive(Debug)]
 pub struct FrameRecord {
     pub session_id: String,
@@ -65,6 +71,8 @@ struct SessionStats {
     anomaly_max: f32,
     anomaly_sum: f64,
     anomaly_n: u64,
+    depth_encodings: std::collections::BTreeSet<String>,
+    calibration_revisions: std::collections::BTreeSet<String>,
 }
 
 impl SessionStats {
@@ -80,6 +88,8 @@ impl SessionStats {
             anomaly_max: 0.0,
             anomaly_sum: 0.0,
             anomaly_n: 0,
+            depth_encodings: std::collections::BTreeSet::new(),
+            calibration_revisions: std::collections::BTreeSet::new(),
         }
     }
 
@@ -102,6 +112,21 @@ impl SessionStats {
         self.anomaly_max = self.anomaly_max.max(world.anomaly_score);
         self.anomaly_sum += world.anomaly_score as f64;
         self.anomaly_n += 1;
+    }
+
+    fn accumulate_depth(&mut self, depth: Option<&DepthFrameMetadata>) {
+        let Some(depth) = depth else { return };
+        self.depth_encodings.insert(
+            match depth.encoding {
+                crate::observation::DepthEncoding::RelativeAffineU16 => "relative_affine_u16",
+                crate::observation::DepthEncoding::MetricMmU16 => "metric_mm_u16",
+            }
+            .into(),
+        );
+        if let Some(calibration) = &depth.calibration {
+            self.calibration_revisions
+                .insert(calibration.revision_sha256.clone());
+        }
     }
 
     fn into_meta(self, ended: String) -> SessionMeta {
@@ -131,6 +156,10 @@ impl SessionStats {
                 mean,
             },
             objects: ObjectsBlock { top },
+            depth: DepthBlock {
+                encodings: self.depth_encodings.into_iter().collect(),
+                calibration_revisions: self.calibration_revisions.into_iter().collect(),
+            },
         }
     }
 }
@@ -192,7 +221,35 @@ impl DatasetWriter {
         depth_range: Option<[f32; 2]>,
         relations: &SceneRelations,
     ) -> anyhow::Result<RecordResult> {
-        self.record_frame_with_annotations(
+        self.record_frame_transactional(
+            world,
+            now,
+            wallclock_iso,
+            new_session_stamp,
+            depth_range,
+            relations,
+            |_| Ok(()),
+        )
+    }
+
+    /// Pixel-safe variant: `persist_artifacts` must durably place every artifact
+    /// referenced by the prepared record. The label, stats and sequence are
+    /// committed only after that callback succeeds.
+    #[allow(clippy::too_many_arguments)] // mirrors record_frame plus one commit callback
+    pub fn record_frame_transactional<F>(
+        &mut self,
+        world: &mut WorldState,
+        now: Instant,
+        wallclock_iso: &str,
+        new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
+        relations: &SceneRelations,
+        persist_artifacts: F,
+    ) -> anyhow::Result<RecordResult>
+    where
+        F: FnOnce(&FrameRecord) -> anyhow::Result<()>,
+    {
+        self.record_frame_with_annotations_transactional(
             world,
             now,
             wallclock_iso,
@@ -201,7 +258,22 @@ impl DatasetWriter {
             RecordAnnotations {
                 relations,
                 canonical_events: &[],
+                depth: depth_range.map(|_| DepthFrameMetadata {
+                    encoding: crate::observation::DepthEncoding::RelativeAffineU16,
+                    units: crate::observation::DepthUnits::AffineRelative,
+                    width: None,
+                    height: None,
+                    invalid_value: None,
+                    valid_ratio: None,
+                    geometry: None,
+                    source: None,
+                    rgb_stamp: None,
+                    depth_stamp: None,
+                    rgb_depth_skew_ns: None,
+                    calibration: None,
+                }),
             },
+            persist_artifacts,
         )
     }
 
@@ -216,11 +288,94 @@ impl DatasetWriter {
         depth_range: Option<[f32; 2]>,
         annotations: RecordAnnotations<'_>,
     ) -> anyhow::Result<RecordResult> {
+        self.record_frame_with_annotations_transactional(
+            world,
+            now,
+            wallclock_iso,
+            new_session_stamp,
+            depth_range,
+            annotations,
+            |_| Ok(()),
+        )
+    }
+
+    /// Annotation-rich transactional variant used by the canonical Dataset
+    /// agent. See [`Self::record_frame_transactional`] for the commit ordering.
+    #[allow(clippy::too_many_arguments)] // mirrors annotated writer plus one commit callback
+    pub fn record_frame_with_annotations_transactional<F>(
+        &mut self,
+        world: &mut WorldState,
+        now: Instant,
+        wallclock_iso: &str,
+        new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
+        annotations: RecordAnnotations<'_>,
+        persist_artifacts: F,
+    ) -> anyhow::Result<RecordResult>
+    where
+        F: FnOnce(&FrameRecord) -> anyhow::Result<()>,
+    {
+        self.record_frame_with_annotations_mode_transactional(
+            world,
+            now,
+            wallclock_iso,
+            new_session_stamp,
+            depth_range,
+            annotations,
+            false,
+            persist_artifacts,
+        )
+    }
+
+    /// Calibration-only variant: opens and keeps a session even while the scene
+    /// is empty, so false-birth evaluation retains its consented RGB-D evidence.
+    /// Normal Dataset Factory grouping remains presence-driven.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_calibration_frame_with_annotations_transactional<F>(
+        &mut self,
+        world: &mut WorldState,
+        now: Instant,
+        wallclock_iso: &str,
+        new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
+        annotations: RecordAnnotations<'_>,
+        persist_artifacts: F,
+    ) -> anyhow::Result<RecordResult>
+    where
+        F: FnOnce(&FrameRecord) -> anyhow::Result<()>,
+    {
+        self.record_frame_with_annotations_mode_transactional(
+            world,
+            now,
+            wallclock_iso,
+            new_session_stamp,
+            depth_range,
+            annotations,
+            true,
+            persist_artifacts,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn record_frame_with_annotations_mode_transactional<F>(
+        &mut self,
+        world: &mut WorldState,
+        now: Instant,
+        wallclock_iso: &str,
+        new_session_stamp: &str,
+        depth_range: Option<[f32; 2]>,
+        annotations: RecordAnnotations<'_>,
+        force_empty_calibration: bool,
+        persist_artifacts: F,
+    ) -> anyhow::Result<RecordResult>
+    where
+        F: FnOnce(&FrameRecord) -> anyhow::Result<()>,
+    {
         let mut res = RecordResult::default();
         let has_people = !world.people.is_empty();
 
         // 1. Presence + open.
-        if has_people {
+        if has_people || force_empty_calibration {
             world.mark_people_seen(now);
             if !world.session_active() {
                 let sid = new_session_stamp.to_string();
@@ -250,7 +405,7 @@ impl DatasetWriter {
                 .then(|| format!("frames/{:06}.{}", seq, self.cfg.frame_format.ext()));
             // Record a depth path only when depth is enabled AND actually available
             // this frame (range given) — otherwise the label would dangle.
-            let depth_rel = match (self.cfg.save_depth, depth_range) {
+            let depth_rel = match (self.cfg.save_depth, annotations.depth.as_ref()) {
                 (true, Some(_)) => Some(format!("depth/{seq:06}.png")),
                 _ => None,
             };
@@ -266,21 +421,28 @@ impl DatasetWriter {
             obs.frame.frame_path = frame_rel.clone();
             obs.frame.depth_path = depth_rel.clone();
             obs.frame.depth_range = depth_rel.as_ref().and(depth_range);
-
-            self.append_label(&sid, &obs)?;
-            if let Some(stats) = self.stats.as_mut() {
-                stats.accumulate(world);
-            }
-            self.seq_in_session += 1;
+            obs.frame.depth = depth_rel.as_ref().and(annotations.depth);
 
             let dir = self.session_dir(&sid);
-            res.frame = Some(FrameRecord {
-                session_id: sid,
+            let record = FrameRecord {
+                session_id: sid.clone(),
                 seq,
                 frame_path: frame_rel.map(|r| dir.join(r)),
                 depth_path: depth_rel.map(|d| dir.join(d)),
                 observation: obs,
-            });
+            };
+
+            // Durable ordering: referenced artifacts first, label last. A failed
+            // callback may leave an unreferenced artifact, but never a dangling
+            // durable label; sequence and session stats also remain uncommitted.
+            persist_artifacts(&record)?;
+            self.append_label(&sid, &record.observation)?;
+            if let Some(stats) = self.stats.as_mut() {
+                stats.accumulate(world);
+                stats.accumulate_depth(record.observation.frame.depth.as_ref());
+            }
+            self.seq_in_session += 1;
+            res.frame = Some(record);
         }
 
         // 3. Close-on-timeout (a people-frame just refreshed the clock, so won't fire).
@@ -375,6 +537,7 @@ mod tests {
 
     fn person(track_id: u32, now: Instant) -> PersonState {
         PersonState {
+            tracker_id: track_id,
             track_id,
             bbox: BBox {
                 x1: 0.0,
@@ -451,6 +614,51 @@ mod tests {
         assert_eq!(obs.session_id, "2026-07-17_153000");
         assert_eq!(obs.frame.frame_path.as_deref(), Some("frames/000000.jpg"));
         assert_eq!(obs.entities.len(), 1);
+    }
+
+    #[test]
+    fn failed_artifact_transaction_does_not_append_label_or_advance_sequence() {
+        let root = temp_root();
+        let mut w = writer(&root);
+        let t0 = Instant::now();
+        let mut world = WorldState::new(t0);
+        world.frame_id = 100;
+        world.people.push(person(1, t0));
+
+        let error = w
+            .record_frame_transactional(
+                &mut world,
+                t0,
+                "2026-07-17T15:30:00.000",
+                "2026-07-17_153000",
+                None,
+                &SceneRelations::default(),
+                |_| anyhow::bail!("injected pixel failure"),
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("injected pixel failure"));
+        let labels = root.join("sessions/2026-07-17_153000/labels.jsonl");
+        assert!(
+            !labels.exists(),
+            "a failed pixel transaction must not leave a durable label"
+        );
+
+        let retry = w
+            .record_frame(
+                &mut world,
+                t0,
+                "2026-07-17T15:30:00.001",
+                "unused",
+                None,
+                &SceneRelations::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            retry.frame.unwrap().seq,
+            0,
+            "failed frame did not commit seq"
+        );
+        assert_eq!(read_lines(&labels).len(), 1);
     }
 
     #[test]
@@ -694,6 +902,39 @@ mod tests {
         let obs1 = &r.frame.unwrap().observation;
         assert_eq!(obs1.frame.depth_path.as_deref(), Some("depth/000001.png"));
         assert_eq!(obs1.frame.depth_range, Some([0.2, 3.5]));
+        assert_eq!(
+            obs1.frame.depth.as_ref().unwrap().encoding,
+            crate::observation::DepthEncoding::RelativeAffineU16
+        );
+    }
+
+    #[test]
+    fn text_only_mode_never_records_dense_depth_metadata() {
+        let root = temp_root();
+        let cfg = DatasetConfig {
+            save_frames: false,
+            save_depth: false,
+            ..Default::default()
+        };
+        let mut writer = DatasetWriter::new(cfg, root, "mvm_sessions");
+        let now = Instant::now();
+        let mut world = WorldState::new(now);
+        world.people.push(person(1, now));
+        let result = writer
+            .record_frame(
+                &mut world,
+                now,
+                "iso",
+                "text-only",
+                Some([0.2, 3.5]),
+                &SceneRelations::default(),
+            )
+            .unwrap();
+        let frame = result.frame.unwrap().observation.frame;
+        assert!(frame.frame_path.is_none());
+        assert!(frame.depth_path.is_none());
+        assert!(frame.depth_range.is_none());
+        assert!(frame.depth.is_none());
     }
 
     #[test]
